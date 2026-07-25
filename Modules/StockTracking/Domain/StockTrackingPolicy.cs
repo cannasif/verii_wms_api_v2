@@ -33,6 +33,7 @@ public sealed class StockTrackingPolicy : BaseEntity
     public StockTrackingType TrackingType { get; set; } = StockTrackingType.None;
     public bool RequireSerial { get; set; }
     public SerialQuantityRule SerialQuantityRule { get; set; }
+    public bool AutoGenerateSerials { get; set; }
     public bool RequireLot { get; set; }
     public bool RequireManufacturingDate { get; set; }
     public bool RequireExpirationDate { get; set; }

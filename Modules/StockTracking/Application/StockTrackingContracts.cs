@@ -7,7 +7,7 @@ namespace verii_wms_api_v2.Modules.StockTracking.Application;
 public sealed record StockTrackingPolicyUpsertRequest(
     string BranchCode, string PolicyCode, string DisplayName, StockTrackingPolicyScope Scope,
     long? StockId, string? StockGroupCode, int Priority, StockTrackingType TrackingType,
-    bool RequireSerial, SerialQuantityRule SerialQuantityRule, bool RequireLot,
+    bool RequireSerial, SerialQuantityRule SerialQuantityRule, bool AutoGenerateSerials, bool RequireLot,
     bool RequireManufacturingDate, bool RequireExpirationDate, int? MinimumRemainingShelfLifeDays,
     bool IsActive, DateTimeOffset EffectiveFromUtc, DateTimeOffset? EffectiveToUtc, string? Description);
 
@@ -15,28 +15,30 @@ public sealed record StockTrackingPolicyRow(
     long Id, string BranchCode, string PolicyCode, string DisplayName, StockTrackingPolicyScope Scope,
     long? StockId, string? StockCode, string? StockName, string? StockGroupCode,
     int Version, int Priority, StockTrackingType TrackingType, bool RequireSerial,
-    SerialQuantityRule SerialQuantityRule, bool RequireLot, bool RequireManufacturingDate,
+    SerialQuantityRule SerialQuantityRule, bool AutoGenerateSerials, bool RequireLot, bool RequireManufacturingDate,
     bool RequireExpirationDate, int? MinimumRemainingShelfLifeDays, bool IsActive,
     DateTimeOffset EffectiveFromUtc, DateTimeOffset? EffectiveToUtc, string? Description,
     byte[] ConcurrencyToken, long? CreatedBy, DateTime? CreatedDate);
 
 public sealed record EffectiveStockTrackingPolicy(
     long StockId, string StockCode, string? StockGroupCode, StockTrackingType TrackingType,
-    bool RequireSerial, SerialQuantityRule SerialQuantityRule, bool RequireLot,
+    bool RequireSerial, SerialQuantityRule SerialQuantityRule, bool AutoGenerateSerials, bool RequireLot,
     bool RequireManufacturingDate, bool RequireExpirationDate, int? MinimumRemainingShelfLifeDays,
     bool HasPolicy, string Source, long? PolicyId, int? PolicyVersion, string? PolicyCode);
 
 public sealed record StockTrackingSettings(
     long StockId, string StockCode, string StockName, string BranchCode, string? StockGroupCode,
     StockTrackingType TrackingType, bool RequireSerial, SerialQuantityRule SerialQuantityRule,
-    bool RequireLot, bool RequireManufacturingDate, bool RequireExpirationDate,
+    bool AutoGenerateSerials, string? SerialMaskTemplate, long? NextSerialSequence,
+    string? SerialRuleConcurrencyToken, bool RequireLot, bool RequireManufacturingDate, bool RequireExpirationDate,
     int? MinimumRemainingShelfLifeDays, bool HasStockOverride, string Source,
     int? Version, string? ConcurrencyToken);
 
 public sealed record UpdateStockTrackingSettingsRequest(
     string BranchCode, bool RequireSerial, SerialQuantityRule SerialQuantityRule,
-    bool RequireLot, bool RequireManufacturingDate, bool RequireExpirationDate,
-    int? MinimumRemainingShelfLifeDays, string? ConcurrencyToken);
+    bool AutoGenerateSerials, string? SerialMaskTemplate, bool RequireLot,
+    bool RequireManufacturingDate, bool RequireExpirationDate,
+    int? MinimumRemainingShelfLifeDays, string? ConcurrencyToken, string? SerialRuleConcurrencyToken);
 
 public sealed record StockTrackingCapture(
     decimal Quantity, string? LotNo, string? SerialNo, DateOnly? ManufacturingDate, DateOnly? ExpirationDate);

@@ -16,6 +16,18 @@ public sealed record SerialRuleRow(long Id, string BranchCode, string RuleCode, 
 public sealed record ValidateSerialRequest(string BranchCode, long StockId, long? YapCodeId, string? SerialNo);
 public sealed record SerialValidationResult(string? NormalizedSerial, bool IsValid, string Source,
     long? RuleId, int? RuleVersion, string? RuleCode, string? MaskTemplate, string? Error);
+public sealed record GenerateStockSerialsRequest(
+    string BranchCode, long StockId, int Quantity, string IdempotencyKey,
+    string? SourceOperationType, long? SourceOperationId);
+public sealed record GeneratedStockSerial(
+    long RegistryId, string SerialNo, long SequenceNumber, int Ordinal, string Status);
+public sealed record GenerateStockSerialsResult(
+    long StockId, string StockCode, long? RuleId, string MaskTemplate,
+    bool Replayed, IReadOnlyList<GeneratedStockSerial> Serials);
+public sealed record VoidGeneratedSerialsRequest(
+    string BranchCode, long StockId, string IdempotencyKey, string Reason);
+public sealed record VoidGeneratedSerialsResult(
+    long StockId, string IdempotencyKey, int VoidedCount, bool Replayed);
 
 public interface ISerialNumberPolicyService
 {
@@ -24,8 +36,15 @@ public interface ISerialNumberPolicyService
     Task<long> CreateNextVersionAsync(long id, SerialRuleUpsertRequest request, long actor, string? concurrencyToken, CancellationToken ct = default);
     Task DeleteAsync(long id, long actor, CancellationToken ct = default);
     Task<SerialValidationResult> ValidateAsync(ValidateSerialRequest request, CancellationToken ct = default);
+    Task<GenerateStockSerialsResult> GenerateAsync(GenerateStockSerialsRequest request, long actor, CancellationToken ct = default);
+    Task<VoidGeneratedSerialsResult> VoidAsync(VoidGeneratedSerialsRequest request, long actor, CancellationToken ct = default);
 }
 public interface ISerialNumberPolicyResolver
 {
     Task<SerialValidationResult> ValidateAsync(string branchCode, long stockId, long? yapCodeId, string? serialNo, CancellationToken ct = default);
+}
+
+public interface ISerialSequenceAllocator
+{
+    Task<long> AllocateAsync(long ruleId, int count, CancellationToken ct = default);
 }

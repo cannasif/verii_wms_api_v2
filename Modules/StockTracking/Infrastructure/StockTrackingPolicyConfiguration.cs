@@ -16,6 +16,7 @@ public sealed class StockTrackingPolicyConfiguration : BaseEntityConfiguration<S
         b.Property(x => x.StockGroupCode).HasMaxLength(50);
         b.Property(x => x.TrackingType).HasConversion<string>().HasMaxLength(30);
         b.Property(x => x.SerialQuantityRule).HasConversion<string>().HasMaxLength(30);
+        b.Property(x => x.AutoGenerateSerials).HasDefaultValue(false);
         b.Property(x => x.Description).HasMaxLength(500);
         b.Property(x => x.RowVersion).IsRowVersion();
         b.HasIndex(x => new { x.BranchCode, x.PolicyCode, x.Version }).IsUnique()

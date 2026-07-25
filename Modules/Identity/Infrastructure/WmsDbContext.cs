@@ -103,6 +103,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<QualityInspection> QualityInspections => Set<QualityInspection>();
     public DbSet<QualityInspectionLine> QualityInspectionLines => Set<QualityInspectionLine>();
     public DbSet<SerialNumberRule> SerialNumberRules => Set<SerialNumberRule>();
+    public DbSet<StockSerialRegistry> StockSerialRegistry => Set<StockSerialRegistry>();
     public DbSet<StockTrackingPolicy> StockTrackingPolicies => Set<StockTrackingPolicy>();
     public DbSet<BarcodeTemplate> BarcodeTemplates => Set<BarcodeTemplate>();
     public DbSet<BarcodeTemplateVersion> BarcodeTemplateVersions => Set<BarcodeTemplateVersion>();
@@ -231,6 +232,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new QualityInspectionConfiguration());
         modelBuilder.ApplyConfiguration(new QualityInspectionLineConfiguration());
         modelBuilder.ApplyConfiguration(new SerialNumberRuleConfiguration());
+        modelBuilder.ApplyConfiguration(new StockSerialRegistryConfiguration());
         modelBuilder.ApplyConfiguration(new StockTrackingPolicyConfiguration());
         modelBuilder.ApplyConfiguration(new BarcodeTemplateConfiguration());
         modelBuilder.ApplyConfiguration(new BarcodeTemplateVersionConfiguration());
@@ -465,6 +467,11 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         if (ChangeTracker.Entries<StockMovementOperation>().Any(x => x.State is EntityState.Modified or EntityState.Deleted)
             || ChangeTracker.Entries<StockMovementEntry>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Stok hareket defteri immutable yapıdadır; kayıtlar güncellenemez veya silinemez. Ters kayıt kullanın.");
+
+        if (ChangeTracker.Entries<StockSerialRegistry>().Any(x =>
+                x.State == EntityState.Deleted
+                || (x.State == EntityState.Modified && x.Entity.IsDeleted)))
+            throw new InvalidOperationException("Stok seri sicili silinemez. Kullanılmayacak serileri Voided durumuna alın.");
 
         if (ChangeTracker.Entries<GoodsReceiptStatusHistory>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Mal kabul durum geçmişi immutable yapıdadır; kayıtlar güncellenemez veya silinemez.");

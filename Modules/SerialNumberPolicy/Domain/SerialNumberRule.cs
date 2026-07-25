@@ -23,10 +23,44 @@ public sealed class SerialNumberRule : BaseEntity
     public int MaxLength { get; set; } = 100;
     public bool TrimWhitespace { get; set; } = true;
     public bool NormalizeToUpper { get; set; } = true;
+    public long NextSequence { get; set; } = 1;
     public bool IsRequired { get; set; } = true;
     public bool IsActive { get; set; } = true;
     public DateTimeOffset EffectiveFromUtc { get; set; }
     public DateTimeOffset? EffectiveToUtc { get; set; }
     public string? Description { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+}
+
+public enum StockSerialStatus
+{
+    Reserved = 1,
+    Available = 2,
+    Consumed = 3,
+    Voided = 4
+}
+
+/// <summary>
+/// Central, non-reusable serial registry. Serial uniqueness is always StockId + NormalizedSerialNo.
+/// Rows are never deleted; cancelled generations are marked Voided and remain reserved forever.
+/// </summary>
+public sealed class StockSerialRegistry : BaseEntity
+{
+    public long StockId { get; set; }
+    public string SerialNo { get; set; } = string.Empty;
+    public string NormalizedSerialNo { get; set; } = string.Empty;
+    public StockSerialStatus Status { get; set; } = StockSerialStatus.Reserved;
+    public long? SerialNumberRuleId { get; set; }
+    public long SequenceNumber { get; set; }
+    public string GenerationRequestKey { get; set; } = string.Empty;
+    public int GenerationOrdinal { get; set; }
+    public string? SourceOperationType { get; set; }
+    public long? SourceOperationId { get; set; }
+    public DateTimeOffset ReservedAtUtc { get; set; }
+    public DateTimeOffset? ActivatedAtUtc { get; set; }
+    public DateTimeOffset? ConsumedAtUtc { get; set; }
+    public DateTimeOffset? VoidedAtUtc { get; set; }
+    public string? VoidedReason { get; set; }
+    public long? LastStockMovementOperationId { get; set; }
     public byte[] RowVersion { get; set; } = [];
 }

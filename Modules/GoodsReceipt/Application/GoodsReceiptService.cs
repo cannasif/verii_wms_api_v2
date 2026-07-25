@@ -1,4 +1,6 @@
 using System.Data;
+using System.Security.Cryptography;
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using verii_wms_api_v2.Modules.Audit.Application;
@@ -10,6 +12,7 @@ using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Quality.Application;
 using verii_wms_api_v2.Modules.Quality.Domain;
+using verii_wms_api_v2.Modules.SerialNumberPolicy.Application;
 using verii_wms_api_v2.Modules.StockTracking.Application;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
@@ -27,6 +30,7 @@ public sealed class GoodsReceiptService(
     IGoodsReceiptPolicyService receiptPolicyService,
     IQualityPolicyResolver qualityPolicyResolver,
     IStockTrackingPolicyResolver trackingPolicyResolver,
+    ISerialNumberPolicyService serialNumberPolicyService,
     IDocumentNumberAllocator numberAllocator,
     IAuditLogWriter audit,
     IStringLocalizer<GoodsReceiptResource> localizer) : IGoodsReceiptService
@@ -94,6 +98,8 @@ public sealed class GoodsReceiptService(
             var trackingPolicies = new Dictionary<long, EffectiveStockTrackingPolicy>();
             foreach (var stock in stocks)
                 trackingPolicies[stock.Id] = await trackingPolicyResolver.ResolveAsync(branch, stock.Id, ct);
+            sourceSelected = await ApplyAutomaticSerialsAsync(
+                sourceSelected, stockByCode, trackingPolicies, branch, request.IdempotencyKey, actorUserId, ct);
             var requiresQuality = receiptPolicy.RequireQualityApproval || qualityPolicies.Values.Any(x => x.InspectionMode != QualityInspectionMode.NoCheck);
 
             var yapCodes = sourceSelected.Select(x => x.Source.YapCode).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -232,6 +238,71 @@ public sealed class GoodsReceiptService(
             || request.Lines.GroupBy(x => (x.OrderNumber.Trim(), x.OrderId)).Any(x => x.Count() > 1))
             throw AppException.BadRequest(Message(GoodsReceiptMessageKeys.InvalidRequest));
     }
+
+    private async Task<List<(ReserveGoodsReceiptOrderLineRequest Request, GoodsReceiptOrderSourceLine Source)>> ApplyAutomaticSerialsAsync(
+        IReadOnlyList<(ReserveGoodsReceiptOrderLineRequest Request, GoodsReceiptOrderSourceLine Source)> items,
+        IReadOnlyDictionary<string, StockEntity> stocks,
+        IReadOnlyDictionary<long, EffectiveStockTrackingPolicy> policies,
+        string branch,
+        Guid operationKey,
+        long actor,
+        CancellationToken ct)
+    {
+        var result = new List<(ReserveGoodsReceiptOrderLineRequest, GoodsReceiptOrderSourceLine)>(items.Count);
+        foreach (var item in items)
+        {
+            var stock = stocks[item.Source.StockCode!];
+            var policy = policies[stock.Id];
+            var trackings = item.Request.Trackings ?? [];
+            if (!policy.AutoGenerateSerials)
+            {
+                result.Add(item);
+                continue;
+            }
+
+            var serialCount = trackings.Count(x => !string.IsNullOrWhiteSpace(x.SerialNo));
+            if (serialCount == trackings.Count && serialCount > 0)
+            {
+                result.Add(item);
+                continue;
+            }
+            if (serialCount > 0)
+                throw AppException.BadRequest("Otomatik seri kullanılan kalemde manuel ve otomatik seri birlikte kullanılamaz.");
+            if (item.Request.Quantity != decimal.Truncate(item.Request.Quantity)
+                || item.Request.Quantity is < 1 or > 10_000)
+                throw AppException.BadRequest("Otomatik seri üretilecek miktar 1-10.000 arasında tam sayı olmalıdır.");
+
+            var quantity = decimal.ToInt32(item.Request.Quantity);
+            if (trackings.Count > 0
+                && (trackings.Count != quantity || trackings.Any(x => x.Quantity != 1)))
+                throw AppException.BadRequest("Otomatik seride her stok birimi için miktarı 1 olan ayrı takip satırı bulunmalıdır.");
+
+            var generated = await serialNumberPolicyService.GenerateAsync(
+                new(branch, stock.Id, quantity,
+                    BuildSerialGenerationKey("GR", operationKey, item.Request.OrderNumber, item.Request.OrderId),
+                    "GoodsReceiptOrderDraft", null),
+                actor,
+                ct);
+            var planned = trackings.Count == 0
+                ? generated.Serials.Select(x => new PlanGoodsReceiptTrackingRequest(
+                    1, null, x.SerialNo, null, null, "Stok kuralına göre otomatik üretildi.")).ToArray()
+                : trackings.Zip(generated.Serials, (tracking, serial) => tracking with
+                    { SerialNo = serial.SerialNo }).ToArray();
+            result.Add((item.Request with
+            {
+                TrackingType = policy.TrackingType,
+                Trackings = planned
+            }, item.Source));
+        }
+        return result;
+    }
+
+    private static string BuildSerialGenerationKey(string prefix, Guid operationKey, string orderNumber, int orderId)
+    {
+        var input = $"{operationKey:N}|{orderNumber.Trim().ToUpperInvariant()}|{orderId}";
+        return $"{prefix}-{Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(input)))}";
+    }
+
     private static void ValidateTrackingPlans(
         IReadOnlyList<(ReserveGoodsReceiptOrderLineRequest Request, GoodsReceiptOrderSourceLine Source)> items,
         IReadOnlyDictionary<string, StockEntity> stocks,

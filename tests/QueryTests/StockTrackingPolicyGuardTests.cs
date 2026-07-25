@@ -101,7 +101,7 @@ public sealed class StockTrackingPolicyGuardTests
         bool lot = false,
         bool serial = false,
         SerialQuantityRule serialRule = SerialQuantityRule.NotApplicable) =>
-        new(1, "TEST-STOCK", "TEST", type, serial, serialRule, lot, false, false, null,
+        new(1, "TEST-STOCK", "TEST", type, serial, serialRule, false, lot, false, false, null,
             true, "Stock", 1, 1, "TEST-POLICY");
 
     private static StockTrackingCapture Capture(string serial) => new(1, null, serial, null, null);

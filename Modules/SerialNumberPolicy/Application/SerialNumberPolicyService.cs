@@ -1,10 +1,13 @@
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Data;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.SerialNumberPolicy.Domain;
 using verii_wms_api_v2.Modules.Stock.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
+using verii_wms_api_v2.Modules.StockTracking.Domain;
+using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -12,10 +15,11 @@ using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
 
 namespace verii_wms_api_v2.Modules.SerialNumberPolicy.Application;
 
-public sealed class SerialNumberPolicyService(IUnitOfWork uow, IAuditLogWriter audit)
+public sealed class SerialNumberPolicyService(IUnitOfWork uow, IAuditLogWriter audit, ISerialSequenceAllocator sequenceAllocator)
     : ISerialNumberPolicyService, ISerialNumberPolicyResolver
 {
     private IGenericRepository<SerialNumberRule> Rules => uow.Repository<SerialNumberRule>();
+    private IGenericRepository<StockSerialRegistry> SerialRegistry => uow.Repository<StockSerialRegistry>();
 
     public async Task<PagedResponse<SerialRuleRow>> GetPagedAsync(PagedRequest request, CancellationToken ct = default)
     {
@@ -47,7 +51,7 @@ public sealed class SerialNumberPolicyService(IUnitOfWork uow, IAuditLogWriter a
     {
         var current=await Rules.FindByIdAsync(id,true,ct)??throw AppException.NotFound("Seri kuralı bulunamadı.");
         ApplyVersion(current,token); var next=new SerialNumberRule(); await Apply(next,request,current.Id,ct);
-        next.RuleCode=current.RuleCode; next.Version=current.Version+1; next.CreatedBy=actor; next.CreatedDate=DateTime.UtcNow;
+        next.RuleCode=current.RuleCode; next.Version=current.Version+1; next.NextSequence=current.NextSequence; next.CreatedBy=actor; next.CreatedDate=DateTime.UtcNow;
         current.IsActive=false; current.EffectiveToUtc=DateTimeOffset.UtcNow; current.UpdatedBy=actor; current.UpdatedDate=DateTime.UtcNow;
         await Rules.AddAsync(next,ct); await uow.SaveChangesAsync(ct);
         await audit.WriteAsync(new("serial-rule.version",nameof(SerialNumberRule),next.Id.ToString(),"Succeeded","serial-number-policy",OldValues:Snapshot(current),NewValues:Snapshot(next),ChangedFields:["Version"]),ct);
@@ -86,6 +90,113 @@ public sealed class SerialNumberPolicyService(IUnitOfWork uow, IAuditLogWriter a
         return duplicate?Fail(rule,value,"Seri numarası seçilen benzersizlik kapsamında daha önce kullanılmış."):Pass(rule,value);
     }
 
+    public Task<GenerateStockSerialsResult> GenerateAsync(
+        GenerateStockSerialsRequest request, long actor, CancellationToken ct = default) =>
+        uow.ExecuteInTransactionAsync(async token =>
+        {
+            if (request.Quantity is < 1 or > 10000)
+                throw AppException.BadRequest("Tek istekte 1-10000 arasında seri üretilebilir.");
+            var requestKey = request.IdempotencyKey?.Trim();
+            if (string.IsNullOrWhiteSpace(requestKey) || requestKey.Length > 100)
+                throw AppException.BadRequest("Geçerli bir idempotency anahtarı zorunludur.");
+
+            var branch = Branch(request.BranchCode);
+            var stock = await uow.Repository<StockEntity>().FirstOrDefaultAsync(
+                x => x.Id == request.StockId && x.BranchCode == branch, false, token)
+                ?? throw AppException.NotFound("Stok bulunamadı.");
+            var existing = await SerialRegistry.Query()
+                .Where(x => x.StockId == stock.Id && x.GenerationRequestKey == requestKey)
+                .OrderBy(x => x.GenerationOrdinal).ToListAsync(token);
+            if (existing.Count > 0)
+            {
+                if (existing.Count != request.Quantity)
+                    throw AppException.Conflict("Aynı işlem anahtarı farklı seri adediyle tekrar kullanılamaz.");
+                return Result(stock, existing[0].SerialNumberRuleId, "Kayıtlı üretim", true, existing);
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            var policy = await ResolvePolicyAsync(branch, stock, now, token);
+            if (!policy.RequireSerial || !policy.AutoGenerateSerials)
+                throw AppException.BadRequest("Bu stokta otomatik seri üretimi açık değildir.");
+            if (policy.SerialQuantityRule != SerialQuantityRule.OneSerialPerBaseUnit)
+                throw AppException.Conflict("Otomatik seri üretimi için stok miktar kadar seriyle takip edilmelidir.");
+
+            var rule = await Rules.Query(true)
+                .Where(x => x.BranchCode == branch && x.Scope == SerialRuleScope.Stock
+                    && x.StockId == stock.Id && x.IsActive && x.EffectiveFromUtc <= now
+                    && (!x.EffectiveToUtc.HasValue || x.EffectiveToUtc > now))
+                .OrderByDescending(x => x.Version).FirstOrDefaultAsync(token)
+                ?? throw AppException.Conflict("Stok seri maskesi tanımlı değildir.");
+            ValidateAutomaticTemplate(rule.MaskTemplate);
+
+            var firstSequence = await sequenceAllocator.AllocateAsync(rule.Id, request.Quantity, token);
+            var rows = new List<StockSerialRegistry>(request.Quantity);
+            for (var ordinal = 0; ordinal < request.Quantity; ordinal++)
+            {
+                var sequence = firstSequence + ordinal;
+                var serial = Render(rule.MaskTemplate, stock.ErpStockCode, stock.GroupCode, sequence, now);
+                if (rule.NormalizeToUpper) serial = serial.ToUpperInvariant();
+                if (serial.Length < rule.MinLength || serial.Length > rule.MaxLength || !Allowed(serial, rule.CharacterSet))
+                    throw AppException.Conflict($"Üretilen seri stok kuralına uymuyor: {serial}");
+                rows.Add(new StockSerialRegistry
+                {
+                    BranchCode = branch, StockId = stock.Id, SerialNo = serial,
+                    NormalizedSerialNo = serial.ToUpperInvariant(), Status = StockSerialStatus.Reserved,
+                    SerialNumberRuleId = rule.Id, SequenceNumber = sequence,
+                    GenerationRequestKey = requestKey, GenerationOrdinal = ordinal + 1,
+                    SourceOperationType = Clean(request.SourceOperationType, 50),
+                    SourceOperationId = request.SourceOperationId, ReservedAtUtc = now,
+                    CreatedBy = actor, CreatedDate = DateTime.UtcNow
+                });
+            }
+            await SerialRegistry.AddRangeAsync(rows, token);
+            await uow.SaveChangesAsync(token);
+            await audit.WriteAsync(new("stock-serial.generate", nameof(StockSerialRegistry), requestKey,
+                "Succeeded", "serial-number-policy",
+                NewValues: new { stock.Id, stock.ErpStockCode, request.Quantity, FirstSequence = firstSequence },
+                ChangedFields: ["Serials"]), token);
+            return Result(stock, rule.Id, rule.MaskTemplate, false, rows);
+        }, ct, IsolationLevel.Serializable);
+
+    public Task<VoidGeneratedSerialsResult> VoidAsync(
+        VoidGeneratedSerialsRequest request, long actor, CancellationToken ct = default) =>
+        uow.ExecuteInTransactionAsync<VoidGeneratedSerialsResult>(async token =>
+        {
+            var branch = Branch(request.BranchCode);
+            var requestKey = request.IdempotencyKey?.Trim();
+            var reason = Clean(request.Reason, 500);
+            if (string.IsNullOrWhiteSpace(requestKey) || requestKey.Length > 100 || string.IsNullOrWhiteSpace(reason))
+                throw AppException.BadRequest("Seri üretim anahtarı ve iptal nedeni zorunludur.");
+
+            var rows = await SerialRegistry.Query(true)
+                .Where(x => x.BranchCode == branch && x.StockId == request.StockId
+                    && x.GenerationRequestKey == requestKey)
+                .OrderBy(x => x.GenerationOrdinal)
+                .ToListAsync(token);
+            if (rows.Count == 0)
+                throw AppException.NotFound("İptal edilecek otomatik seri üretimi bulunamadı.");
+            if (rows.All(x => x.Status == StockSerialStatus.Voided))
+                return new(request.StockId, requestKey, rows.Count, true);
+            if (rows.Any(x => x.Status != StockSerialStatus.Reserved))
+                throw AppException.Conflict("Kullanılmış veya stoğa alınmış seriler iptal edilemez.");
+
+            var now = DateTimeOffset.UtcNow;
+            foreach (var row in rows)
+            {
+                row.Status = StockSerialStatus.Voided;
+                row.VoidedAtUtc = now;
+                row.VoidedReason = reason;
+                row.UpdatedBy = actor;
+                row.UpdatedDate = DateTime.UtcNow;
+            }
+            await uow.SaveChangesAsync(token);
+            await audit.WriteAsync(new("stock-serial.void", nameof(StockSerialRegistry), requestKey,
+                "Succeeded", "serial-number-policy",
+                NewValues: new { request.StockId, VoidedCount = rows.Count, Reason = reason },
+                ChangedFields: ["Status", "VoidedAtUtc", "VoidedReason"]), token);
+            return new(request.StockId, requestKey, rows.Count, false);
+        }, ct, IsolationLevel.Serializable);
+
     private async Task Apply(SerialNumberRule e,SerialRuleUpsertRequest r,long? currentId,CancellationToken ct)
     {
         if(string.IsNullOrWhiteSpace(r.RuleCode)||string.IsNullOrWhiteSpace(r.DisplayName)||r.Priority is <0 or >1000
@@ -105,10 +216,45 @@ public sealed class SerialNumberPolicyService(IUnitOfWork uow, IAuditLogWriter a
     }
     private async Task<bool> IsDuplicate(SerialNumberRule r,long stockId,long? yapId,string value,CancellationToken ct)
     {
+        if (await SerialRegistry.AnyAsync(x => x.StockId == stockId && x.NormalizedSerialNo == value.ToUpper()
+            && x.Status != StockSerialStatus.Reserved, ct))
+            return true;
         var q=uow.Repository<StockMovementEntry>().Query().Where(x=>x.SerialNo==value);
         if(r.UniquenessScope!=SerialUniquenessScope.Global)q=q.Where(x=>x.StockId==stockId);
         if(r.UniquenessScope==SerialUniquenessScope.StockAndYapCode)q=q.Where(x=>x.YapCodeId==yapId);
         return await q.AnyAsync(ct);
+    }
+    private async Task<StockTrackingPolicy> ResolvePolicyAsync(string branch,StockEntity stock,DateTimeOffset now,CancellationToken ct)
+    {
+        var candidates=await uow.Repository<StockTrackingPolicy>().Query().Where(x=>
+            x.BranchCode==branch&&x.IsActive&&x.EffectiveFromUtc<=now
+            &&(!x.EffectiveToUtc.HasValue||x.EffectiveToUtc>now)
+            &&(x.Scope==StockTrackingPolicyScope.BranchDefault
+                ||(x.Scope==StockTrackingPolicyScope.Stock&&x.StockId==stock.Id)
+                ||(x.Scope==StockTrackingPolicyScope.StockGroup&&x.StockGroupCode==stock.GroupCode)))
+            .ToListAsync(ct);
+        return candidates.OrderByDescending(x=>x.Scope).ThenByDescending(x=>x.Priority)
+            .ThenByDescending(x=>x.Version).FirstOrDefault()
+            ??throw AppException.BadRequest("Stok takip ayarı bulunamadı.");
+    }
+    private static GenerateStockSerialsResult Result(
+        StockEntity stock,long? ruleId,string mask,bool replayed,IReadOnlyCollection<StockSerialRegistry> rows)=>
+        new(stock.Id,stock.ErpStockCode,ruleId,mask,replayed,rows.OrderBy(x=>x.GenerationOrdinal)
+            .Select(x=>new GeneratedStockSerial(x.Id,x.SerialNo,x.SequenceNumber,x.GenerationOrdinal,x.Status.ToString())).ToArray());
+    private static void ValidateAutomaticTemplate(string mask)
+    {
+        if(Regex.Matches(mask,@"\{N:[1-9]\d?\}").Count!=1||Regex.IsMatch(mask,@"\{[AX]:[1-9]\d?\}"))
+            throw AppException.Conflict("Otomatik seri maskesi bir adet {N:n} alanı içermeli ve rastgele A/X alanı içermemelidir.");
+    }
+    private static string Render(string mask,string stock,string? group,long sequence,DateTimeOffset now)
+    {
+        var result=Regex.Replace(mask,@"\{N:([1-9]\d?)\}",m=>sequence.ToString().PadLeft(int.Parse(m.Groups[1].Value),'0'));
+        return result.Replace("{STOCK}",stock.ToUpperInvariant(),StringComparison.Ordinal)
+            .Replace("{GROUP}",(group??string.Empty).ToUpperInvariant(),StringComparison.Ordinal)
+            .Replace("{YYYY}",now.Year.ToString("0000"),StringComparison.Ordinal)
+            .Replace("{YY}",(now.Year%100).ToString("00"),StringComparison.Ordinal)
+            .Replace("{MM}",now.Month.ToString("00"),StringComparison.Ordinal)
+            .Replace("{DD}",now.Day.ToString("00"),StringComparison.Ordinal);
     }
     private static string Compile(string mask,string stock,string? group)
     {

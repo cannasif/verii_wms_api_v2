@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.Location.Domain;
+using verii_wms_api_v2.Modules.SerialNumberPolicy.Domain;
 using verii_wms_api_v2.Modules.StockBalance.Application;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
@@ -25,6 +26,7 @@ public sealed class StockMovementService(IUnitOfWork unitOfWork, IAuditLogWriter
     private IGenericRepository<WarehouseLocation> Locations => unitOfWork.Repository<WarehouseLocation>();
     private IGenericRepository<Modules.YapCode.Domain.YapCode> YapCodes => unitOfWork.Repository<Modules.YapCode.Domain.YapCode>();
     private IGenericRepository<LocationStockBalance> LocationBalances => unitOfWork.Repository<LocationStockBalance>();
+    private IGenericRepository<StockSerialRegistry> SerialRegistry => unitOfWork.Repository<StockSerialRegistry>();
 
     public async Task<PagedResponse<StockMovementGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
@@ -95,6 +97,7 @@ public sealed class StockMovementService(IUnitOfWork unitOfWork, IAuditLogWriter
             };
             await Operations.AddAsync(operation, ct);
             await unitOfWork.SaveChangesAsync(ct);
+            await SynchronizeSerialRegistryAsync(drafts, operation, ct);
             var lineNo = 0;
             foreach (var draft in drafts) { draft.OperationId = operation.Id; draft.LineNo = ++lineNo; await Entries.AddAsync(draft, ct); }
             await unitOfWork.SaveChangesAsync(ct);
@@ -140,6 +143,7 @@ public sealed class StockMovementService(IUnitOfWork unitOfWork, IAuditLogWriter
                 Description = $"{original.OperationCode} operasyonunun ters kaydı", ReversalOfOperationId = original.Id
             };
             await Operations.AddAsync(operation, ct); await unitOfWork.SaveChangesAsync(ct);
+            await SynchronizeSerialRegistryAsync(drafts, operation, ct);
             var lineNo = 0;
             foreach (var draft in drafts) { draft.OperationId = operation.Id; draft.LineNo = ++lineNo; await Entries.AddAsync(draft, ct); }
             await unitOfWork.SaveChangesAsync(ct);
@@ -173,7 +177,7 @@ public sealed class StockMovementService(IUnitOfWork unitOfWork, IAuditLogWriter
             if (line.YapCodeId.HasValue && yapCodes[line.YapCodeId.Value].StockId.HasValue && yapCodes[line.YapCodeId.Value].StockId != stock.Id)
                 throw AppException.BadRequest("YAP kodu seçilen stokla uyuşmuyor.");
             var unit = NormalizeText(line.UnitCode, 20)?.ToUpperInvariant() ?? "ADET";
-            var lot = NormalizeText(line.LotNo, 100); var serial = NormalizeText(line.SerialNo, 100);
+            var lot = NormalizeText(line.LotNo, 100); var serial = NormalizeText(line.SerialNo, 100)?.ToUpperInvariant();
             var status = NormalizeText(line.StockStatus, 30) ?? "Available";
             var sourceStatus = NormalizeText(line.SourceStockStatus, 30) ?? status;
             var targetStatus = NormalizeText(line.TargetStockStatus, 30) ?? status;
@@ -245,6 +249,80 @@ public sealed class StockMovementService(IUnitOfWork unitOfWork, IAuditLogWriter
             if (resultingQuantity is < 0 or > 1)
                 throw AppException.Conflict($"Seri numarası tekil bir stok örneğidir; toplam bakiye 0 veya 1 olabilir. Seri: {group.First().SerialNo}.");
         }
+    }
+
+    private async Task SynchronizeSerialRegistryAsync(
+        IReadOnlyCollection<StockMovementEntry> drafts,
+        StockMovementOperation operation,
+        CancellationToken ct)
+    {
+        var groups = drafts.Where(x => !string.IsNullOrWhiteSpace(x.SerialNo))
+            .GroupBy(x => new { x.StockId, Serial = x.SerialNo!.Trim().ToUpperInvariant() })
+            .ToList();
+        var ordinal = 0;
+        foreach (var group in groups)
+        {
+            ordinal++;
+            var row = await SerialRegistry.FirstOrDefaultAsync(
+                x => x.StockId == group.Key.StockId && x.NormalizedSerialNo == group.Key.Serial,
+                true, ct);
+            var netQuantity = group.Sum(x => x.QuantityDelta);
+            if (row is null)
+            {
+                if (netQuantity <= 0)
+                    throw AppException.Conflict(
+                        $"Çıkış veya transfer işleminde yalnız mevcut stok serisi kullanılabilir. Seri: {group.First().SerialNo}");
+                row = new StockSerialRegistry
+                {
+                    BranchCode = group.First().BranchCode,
+                    StockId = group.Key.StockId,
+                    SerialNo = group.First().SerialNo!.Trim(),
+                    NormalizedSerialNo = group.Key.Serial,
+                    Status = StockSerialStatus.Available,
+                    SerialNumberRuleId = null,
+                    SequenceNumber = 0,
+                    GenerationRequestKey = $"MOV:{operation.Id}",
+                    GenerationOrdinal = ordinal,
+                    SourceOperationType = operation.OperationType,
+                    SourceOperationId = operation.Id,
+                    ReservedAtUtc = DateTimeOffset.UtcNow,
+                    ActivatedAtUtc = DateTimeOffset.UtcNow,
+                    LastStockMovementOperationId = operation.Id,
+                    CreatedDate = DateTime.UtcNow
+                };
+                await SerialRegistry.AddAsync(row, ct);
+                continue;
+            }
+
+            if (row.Status == StockSerialStatus.Voided)
+                throw AppException.Conflict($"İptal edilmiş seri kullanılamaz. Seri: {row.SerialNo}");
+
+            if (netQuantity > 0)
+            {
+                var isReturnOrReversal = operation.OperationType is StockMovementTypes.CustomerReturn or StockMovementTypes.Reversal;
+                if (row.Status == StockSerialStatus.Available
+                    || (row.Status == StockSerialStatus.Consumed && !isReturnOrReversal))
+                    throw AppException.Conflict($"Seri bu stok için daha önce kullanılmış. Seri: {row.SerialNo}");
+                row.Status = StockSerialStatus.Available;
+                row.ActivatedAtUtc ??= DateTimeOffset.UtcNow;
+                row.ConsumedAtUtc = null;
+            }
+            else if (netQuantity < 0)
+            {
+                if (row.Status != StockSerialStatus.Available)
+                    throw AppException.Conflict($"Yalnız kullanılabilir durumdaki seri çıkışa konu olabilir. Seri: {row.SerialNo}");
+                row.Status = StockSerialStatus.Consumed;
+                row.ConsumedAtUtc = DateTimeOffset.UtcNow;
+            }
+            else if (row.Status != StockSerialStatus.Available)
+            {
+                throw AppException.Conflict($"Transferde yalnız kullanılabilir stok serisi seçilebilir. Seri: {row.SerialNo}");
+            }
+
+            row.LastStockMovementOperationId = operation.Id;
+            row.UpdatedDate = DateTime.UtcNow;
+        }
+        await unitOfWork.SaveChangesAsync(ct);
     }
 
     private async Task<StockMovementPostResult> ReplayAsync(StockMovementOperation existing, string hash, CancellationToken ct)

@@ -1,6 +1,7 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
+using verii_wms_api_v2.Modules.SerialNumberPolicy.Domain;
 using verii_wms_api_v2.Modules.StockTracking.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Shared;
@@ -14,6 +15,7 @@ public sealed class StockTrackingPolicyService(IUnitOfWork uow, IAuditLogWriter 
     : IStockTrackingPolicyService, IStockTrackingPolicyResolver
 {
     private IGenericRepository<StockTrackingPolicy> Policies => uow.Repository<StockTrackingPolicy>();
+    private IGenericRepository<SerialNumberRule> SerialRules => uow.Repository<SerialNumberRule>();
 
     public async Task<PagedResponse<StockTrackingPolicyRow>> GetPagedAsync(PagedRequest request, CancellationToken ct = default)
     {
@@ -51,7 +53,7 @@ public sealed class StockTrackingPolicyService(IUnitOfWork uow, IAuditLogWriter 
                 x.Policy.Id, x.Policy.BranchCode, x.Policy.PolicyCode, x.Policy.DisplayName, x.Policy.Scope,
                 x.Policy.StockId, x.Stock == null ? null : x.Stock.ErpStockCode, x.Stock == null ? null : x.Stock.StockName,
                 x.Policy.StockGroupCode, x.Policy.Version, x.Policy.Priority, x.Policy.TrackingType, x.Policy.RequireSerial,
-                x.Policy.SerialQuantityRule, x.Policy.RequireLot, x.Policy.RequireManufacturingDate,
+                x.Policy.SerialQuantityRule, x.Policy.AutoGenerateSerials, x.Policy.RequireLot, x.Policy.RequireManufacturingDate,
                 x.Policy.RequireExpirationDate, x.Policy.MinimumRemainingShelfLifeDays, x.Policy.IsActive,
                 x.Policy.EffectiveFromUtc, x.Policy.EffectiveToUtc, x.Policy.Description,
                 x.Policy.RowVersion, x.Policy.CreatedBy, x.Policy.CreatedDate))
@@ -130,6 +132,16 @@ public sealed class StockTrackingPolicyService(IUnitOfWork uow, IAuditLogWriter 
                 false,
                 ct)
             : null;
+        var now = DateTimeOffset.UtcNow;
+        var serialRule = await SerialRules.Query()
+            .Where(x => x.BranchCode == branch
+                && x.Scope == SerialRuleScope.Stock
+                && x.StockId == stockId
+                && x.IsActive
+                && x.EffectiveFromUtc <= now
+                && (!x.EffectiveToUtc.HasValue || x.EffectiveToUtc > now))
+            .OrderByDescending(x => x.Version)
+            .FirstOrDefaultAsync(ct);
 
         return new StockTrackingSettings(
             stock.Id,
@@ -140,6 +152,10 @@ public sealed class StockTrackingPolicyService(IUnitOfWork uow, IAuditLogWriter 
             effective.TrackingType,
             effective.RequireSerial,
             effective.SerialQuantityRule,
+            effective.AutoGenerateSerials,
+            serialRule?.MaskTemplate,
+            serialRule?.NextSequence,
+            serialRule is null ? null : Convert.ToBase64String(serialRule.RowVersion),
             effective.RequireLot,
             effective.RequireManufacturingDate,
             effective.RequireExpirationDate,
@@ -172,16 +188,34 @@ public sealed class StockTrackingPolicyService(IUnitOfWork uow, IAuditLogWriter 
             var serialRule = request.RequireSerial
                 ? request.SerialQuantityRule
                 : SerialQuantityRule.NotApplicable;
+            var autoGenerateSerials = request.RequireSerial && request.AutoGenerateSerials;
+            var serialMask = request.RequireSerial
+                ? NormalizeSerialMask(request.SerialMaskTemplate, autoGenerateSerials)
+                : null;
+            if (autoGenerateSerials && serialRule != SerialQuantityRule.OneSerialPerBaseUnit)
+                throw AppException.BadRequest("Otomatik seri üretimi için her birim ayrı seriyle takip edilmelidir.");
+            var currentSerialRule = await SerialRules.Query(true)
+                .Where(x => x.BranchCode == branch
+                    && x.Scope == SerialRuleScope.Stock
+                    && x.StockId == stockId
+                    && x.IsActive)
+                .OrderByDescending(x => x.Version)
+                .FirstOrDefaultAsync(token);
 
             if (current is not null
                 && current.RequireSerial == request.RequireSerial
                 && current.SerialQuantityRule == serialRule
+                && current.AutoGenerateSerials == autoGenerateSerials
                 && current.RequireLot == request.RequireLot
                 && current.RequireManufacturingDate == request.RequireManufacturingDate
                 && current.RequireExpirationDate == request.RequireExpirationDate
-                && current.MinimumRemainingShelfLifeDays == request.MinimumRemainingShelfLifeDays)
+                && current.MinimumRemainingShelfLifeDays == request.MinimumRemainingShelfLifeDays
+                && ((!request.RequireSerial && currentSerialRule is null)
+                    || (request.RequireSerial && currentSerialRule?.MaskTemplate == serialMask)))
             {
                 ApplyVersion(current, request.ConcurrencyToken);
+                if (currentSerialRule is not null)
+                    ApplyVersion(currentSerialRule, request.SerialRuleConcurrencyToken);
                 return await GetStockSettingsAsync(branch, stockId, token);
             }
 
@@ -196,6 +230,7 @@ public sealed class StockTrackingPolicyService(IUnitOfWork uow, IAuditLogWriter 
                 DeriveTrackingType(request.RequireLot, request.RequireSerial),
                 request.RequireSerial,
                 serialRule,
+                autoGenerateSerials,
                 request.RequireLot,
                 request.RequireManufacturingDate,
                 request.RequireExpirationDate,
@@ -230,6 +265,16 @@ public sealed class StockTrackingPolicyService(IUnitOfWork uow, IAuditLogWriter 
             next.CreatedBy = actor;
             next.CreatedDate = DateTime.UtcNow;
             await Policies.AddAsync(next, token);
+            if (request.RequireSerial)
+                await UpsertStockSerialRuleAsync(stock, currentSerialRule, serialMask!, request.SerialRuleConcurrencyToken, actor, now, token);
+            else if (currentSerialRule is not null)
+            {
+                ApplyVersion(currentSerialRule, request.SerialRuleConcurrencyToken);
+                currentSerialRule.IsActive = false;
+                currentSerialRule.EffectiveToUtc = now;
+                currentSerialRule.UpdatedBy = actor;
+                currentSerialRule.UpdatedDate = DateTime.UtcNow;
+            }
             await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new(
                 current is null ? "stock.tracking-settings.create" : "stock.tracking-settings.update",
@@ -243,6 +288,7 @@ public sealed class StockTrackingPolicyService(IUnitOfWork uow, IAuditLogWriter 
                 [
                     nameof(next.RequireSerial),
                     nameof(next.SerialQuantityRule),
+                    nameof(next.AutoGenerateSerials),
                     nameof(next.RequireLot),
                     nameof(next.RequireManufacturingDate),
                     nameof(next.RequireExpirationDate),
@@ -269,10 +315,10 @@ public sealed class StockTrackingPolicyService(IUnitOfWork uow, IAuditLogWriter 
             .ThenByDescending(x => x.Version).FirstOrDefault();
         if (policy is null)
             return new(stock.Id, stock.ErpStockCode, stock.GroupCode, StockTrackingType.None,
-                false, SerialQuantityRule.NotApplicable, false, false, false, null,
+                false, SerialQuantityRule.NotApplicable, false, false, false, false, null,
                 false, "NoPolicy", null, null, null);
         return new(stock.Id, stock.ErpStockCode, stock.GroupCode, policy.TrackingType,
-            policy.RequireSerial, policy.SerialQuantityRule, policy.RequireLot,
+            policy.RequireSerial, policy.SerialQuantityRule, policy.AutoGenerateSerials, policy.RequireLot,
             policy.RequireManufacturingDate, policy.RequireExpirationDate,
             policy.MinimumRemainingShelfLifeDays, true, policy.Scope.ToString(),
             policy.Id, policy.Version, policy.PolicyCode);
@@ -291,6 +337,10 @@ public sealed class StockTrackingPolicyService(IUnitOfWork uow, IAuditLogWriter 
             throw AppException.BadRequest("Seri miktar kuralı yalnızca seri zorunlu olduğunda kullanılabilir.");
         if (request.RequireSerial && request.SerialQuantityRule == SerialQuantityRule.NotApplicable)
             throw AppException.BadRequest("Seri zorunluysa seri miktar kuralı seçilmelidir.");
+        if (request.AutoGenerateSerials && !request.RequireSerial)
+            throw AppException.BadRequest("Otomatik seri üretimi yalnızca seri takibi açık stoklarda kullanılabilir.");
+        if (request.AutoGenerateSerials && request.SerialQuantityRule != SerialQuantityRule.OneSerialPerBaseUnit)
+            throw AppException.BadRequest("Otomatik seri üretimi için her birim ayrı seriyle takip edilmelidir.");
         if (request.MinimumRemainingShelfLifeDays.HasValue && !request.RequireExpirationDate)
             throw AppException.BadRequest("Minimum raf ömrü için son kullanma tarihi zorunlu olmalıdır.");
 
@@ -316,6 +366,7 @@ public sealed class StockTrackingPolicyService(IUnitOfWork uow, IAuditLogWriter 
         entity.TrackingType = expectedType;
         entity.RequireSerial = request.RequireSerial;
         entity.SerialQuantityRule = request.SerialQuantityRule;
+        entity.AutoGenerateSerials = request.AutoGenerateSerials;
         entity.RequireLot = request.RequireLot;
         entity.RequireManufacturingDate = request.RequireManufacturingDate;
         entity.RequireExpirationDate = request.RequireExpirationDate;
@@ -338,7 +389,7 @@ public sealed class StockTrackingPolicyService(IUnitOfWork uow, IAuditLogWriter 
     private static object Snapshot(StockTrackingPolicy x) => new
     {
         x.Id, x.PolicyCode, x.Version, x.Scope, x.StockId, x.StockGroupCode, x.TrackingType,
-        x.RequireSerial, x.SerialQuantityRule, x.RequireLot, x.RequireManufacturingDate,
+        x.RequireSerial, x.SerialQuantityRule, x.AutoGenerateSerials, x.RequireLot, x.RequireManufacturingDate,
         x.RequireExpirationDate, x.MinimumRemainingShelfLifeDays, x.EffectiveFromUtc, x.EffectiveToUtc, x.IsActive
     };
 
@@ -347,6 +398,73 @@ public sealed class StockTrackingPolicyService(IUnitOfWork uow, IAuditLogWriter 
         if (string.IsNullOrWhiteSpace(value)) return;
         try { x.RowVersion = Convert.FromBase64String(value); }
         catch { throw AppException.Conflict("Kayıt güncellik bilgisi geçersiz."); }
+    }
+
+    private async Task UpsertStockSerialRuleAsync(
+        StockEntity stock, SerialNumberRule? current, string mask, string? concurrencyToken,
+        long actor, DateTimeOffset now, CancellationToken ct)
+    {
+        if (current is not null && current.MaskTemplate == mask)
+        {
+            ApplyVersion(current, concurrencyToken);
+            return;
+        }
+        if (current is not null)
+        {
+            ApplyVersion(current, concurrencyToken);
+            current.IsActive = false;
+            current.EffectiveToUtc = now;
+            current.UpdatedBy = actor;
+            current.UpdatedDate = DateTime.UtcNow;
+        }
+        await SerialRules.AddAsync(new SerialNumberRule
+        {
+            BranchCode = stock.BranchCode,
+            RuleCode = $"STOCK-{stock.Id}",
+            DisplayName = $"{stock.ErpStockCode} seri kuralı",
+            Scope = SerialRuleScope.Stock,
+            StockId = stock.Id,
+            Version = (current?.Version ?? 0) + 1,
+            Priority = 1000,
+            MaskTemplate = mask,
+            CharacterSet = SerialCharacterSet.UpperAlphaNumeric,
+            UniquenessScope = SerialUniquenessScope.Stock,
+            MinLength = 1,
+            MaxLength = 100,
+            TrimWhitespace = true,
+            NormalizeToUpper = true,
+            NextSequence = current?.NextSequence ?? 1,
+            IsRequired = true,
+            IsActive = true,
+            EffectiveFromUtc = now,
+            Description = "Stok kartından yönetilen seri üretim ve doğrulama kuralı.",
+            CreatedBy = actor,
+            CreatedDate = DateTime.UtcNow
+        }, ct);
+    }
+
+    private static void ApplyVersion(SerialNumberRule x, string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return;
+        try { x.RowVersion = Convert.FromBase64String(value); }
+        catch { throw AppException.Conflict("Seri kuralı güncellik bilgisi geçersiz."); }
+    }
+
+    private static string NormalizeSerialMask(string? value, bool automatic)
+    {
+        var mask = string.IsNullOrWhiteSpace(value) ? "{STOCK}-{YY}{MM}-{N:6}" : value.Trim();
+        if (mask.Length > 250)
+            throw AppException.BadRequest("Seri maskesi en fazla 250 karakter olabilir.");
+        var tokenPattern = @"\{(?:STOCK|GROUP|YYYY|YY|MM|DD|[NAX]:[1-9]\d?)\}";
+        var remainder = System.Text.RegularExpressions.Regex.Replace(mask, tokenPattern, string.Empty);
+        if (remainder.Contains('{') || remainder.Contains('}'))
+            throw AppException.BadRequest("Seri maskesinde desteklenmeyen alan var.");
+        var sequenceTokens = System.Text.RegularExpressions.Regex.Matches(mask, @"\{N:[1-9]\d?\}").Count;
+        if (automatic && sequenceTokens != 1)
+            throw AppException.BadRequest("Seri maskesinde tam bir adet sıra alanı bulunmalıdır. Örnek: {STOCK}-{YY}{MM}-{N:6}.");
+        if (automatic && System.Text.RegularExpressions.Regex.IsMatch(mask, @"\{[AX]:[1-9]\d?\}"))
+            throw AppException.BadRequest("Otomatik seri maskesinde rastgele A/X alanları kullanılamaz.");
+        return mask;
     }
 
     private static string Branch(string? value) => string.IsNullOrWhiteSpace(value) ? "0" : value.Trim();
