@@ -1,0 +1,283 @@
+using System.Data;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using verii_wms_api_v2.Modules.Audit.Application;
+using verii_wms_api_v2.Modules.Location.Domain;
+using verii_wms_api_v2.Modules.StockBalance.Application;
+using verii_wms_api_v2.Modules.StockBalance.Domain;
+using verii_wms_api_v2.Modules.StockMovement.Domain;
+using verii_wms_api_v2.Shared;
+using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
+using verii_wms_api_v2.Shared.Application.Exceptions;
+using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
+using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
+
+namespace verii_wms_api_v2.Modules.StockMovement.Application;
+
+public sealed class StockMovementService(IUnitOfWork unitOfWork, IAuditLogWriter audit, IStockBalanceService balanceProjection) : IStockMovementService
+{
+    private IGenericRepository<StockMovementOperation> Operations => unitOfWork.Repository<StockMovementOperation>();
+    private IGenericRepository<StockMovementEntry> Entries => unitOfWork.Repository<StockMovementEntry>();
+    private IGenericRepository<StockEntity> Stocks => unitOfWork.Repository<StockEntity>();
+    private IGenericRepository<WarehouseEntity> Warehouses => unitOfWork.Repository<WarehouseEntity>();
+    private IGenericRepository<WarehouseLocation> Locations => unitOfWork.Repository<WarehouseLocation>();
+    private IGenericRepository<Modules.YapCode.Domain.YapCode> YapCodes => unitOfWork.Repository<Modules.YapCode.Domain.YapCode>();
+    private IGenericRepository<LocationStockBalance> LocationBalances => unitOfWork.Repository<LocationStockBalance>();
+
+    public async Task<PagedResponse<StockMovementGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default)
+    {
+        var search = request.Search?.Trim();
+        var entries = Entries.Query();
+        var operations = Operations.Query();
+        var filteredOperations = operations.Where(x => string.IsNullOrWhiteSpace(search)
+            || x.OperationCode.ToString().Contains(search) || x.OperationType.Contains(search)
+            || (x.ReferenceNo != null && x.ReferenceNo.Contains(search)) || (x.Reason != null && x.Reason.Contains(search)));
+        var query = filteredOperations
+            .Select(x => new StockMovementGridRow(x.Id, x.OperationCode, x.OperationType,
+                operations.Any(reversal => reversal.ReversalOfOperationId == x.Id) ? StockMovementStatuses.Reversed : x.Status, x.ReferenceType, x.ReferenceNo,
+                x.OccurredAt, entries.Count(e => e.OperationId == x.Id),
+                entries.Where(e => e.OperationId == x.Id && e.QuantityDelta > 0).Sum(e => (decimal?)e.QuantityDelta) ?? 0,
+                -(entries.Where(e => e.OperationId == x.Id && e.QuantityDelta < 0).Sum(e => (decimal?)e.QuantityDelta) ?? 0),
+                x.Reason, x.ReversalOfOperationId, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate))
+            .ApplyAdvancedFilters(request)
+            .ApplySort(request, nameof(StockMovementGridRow.OccurredAt));
+        return await query.ToPagedResponseAsync(request, cancellationToken);
+    }
+
+    public async Task<StockMovementDetail> GetByIdAsync(long id, CancellationToken cancellationToken = default)
+    {
+        var operation = await Operations.Query().FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
+            ?? throw AppException.NotFound("Stok hareket operasyonu bulunamadı.");
+        var rows = await (from entry in Entries.Query()
+                          join stock in Stocks.Query(ignoreQueryFilters: true) on entry.StockId equals stock.Id
+                          join yap in YapCodes.Query(ignoreQueryFilters: true) on entry.YapCodeId equals yap.Id into yapJoin
+                          from yap in yapJoin.DefaultIfEmpty()
+                          join warehouse in Warehouses.Query(ignoreQueryFilters: true) on entry.WarehouseId equals warehouse.Id
+                          join location in Locations.Query(ignoreQueryFilters: true) on entry.LocationId equals location.Id
+                          where entry.OperationId == id
+                          orderby entry.LineNo
+                          select new StockMovementEntryRow(entry.Id, entry.LineNo, stock.Id, stock.ErpStockCode, stock.StockName,
+                              entry.YapCodeId, yap != null ? yap.ConfigurationCode : null,
+                              warehouse.Id, warehouse.WarehouseCode, warehouse.WarehouseName, location.Id, location.Code, location.Name,
+                              entry.QuantityDelta, entry.UnitCode, entry.LotNo, entry.SerialNo, entry.StockStatus, entry.OccurredAt))
+            .ToListAsync(cancellationToken);
+        var displayStatus = await Operations.AnyAsync(x => x.ReversalOfOperationId == operation.Id, cancellationToken) ? StockMovementStatuses.Reversed : operation.Status;
+        return new(operation.Id, operation.OperationCode, operation.IdempotencyKey, operation.OperationType, displayStatus,
+            operation.ReferenceType, operation.ReferenceNo, operation.ReferenceId, operation.OccurredAt, operation.Reason,
+            operation.Description, operation.ReversalOfOperationId, operation.CreatedBy, operation.CreatedDate, rows);
+    }
+
+    public async Task<StockMovementPostResult> PostAsync(PostStockMovementRequest request, CancellationToken cancellationToken = default)
+    {
+        var normalized = Normalize(request);
+        ValidateEnvelope(normalized);
+        var hash = Hash(normalized);
+        // The server-generated timestamp is deliberately assigned only after the
+        // request hash is calculated. Otherwise an exact retry with OccurredAt=null
+        // would produce a different hash and break idempotent replay semantics.
+        var effective = normalized with { OccurredAt = normalized.OccurredAt ?? DateTime.UtcNow };
+
+        return await unitOfWork.ExecuteInTransactionAsync(async ct =>
+        {
+            var existing = await Operations.Query().FirstOrDefaultAsync(x => x.IdempotencyKey == normalized.IdempotencyKey, ct);
+            if (existing is not null) return await ReplayAsync(existing, hash, ct);
+            var drafts = await BuildEntriesAsync(effective, ct);
+            await EnsureSufficientBalanceAsync(drafts, ct);
+            await EnsureSerialUniquenessAsync(drafts, ct);
+            var operation = new StockMovementOperation
+            {
+                IdempotencyKey = normalized.IdempotencyKey, RequestHash = hash, OperationType = normalized.OperationType,
+                Status = StockMovementStatuses.Posted, ReferenceType = normalized.ReferenceType, ReferenceNo = normalized.ReferenceNo,
+                ReferenceId = effective.ReferenceId, OccurredAt = effective.OccurredAt!.Value, Reason = effective.Reason,
+                Description = normalized.Description, BranchCode = drafts[0].BranchCode
+            };
+            await Operations.AddAsync(operation, ct);
+            await unitOfWork.SaveChangesAsync(ct);
+            var lineNo = 0;
+            foreach (var draft in drafts) { draft.OperationId = operation.Id; draft.LineNo = ++lineNo; await Entries.AddAsync(draft, ct); }
+            await unitOfWork.SaveChangesAsync(ct);
+            await balanceProjection.ApplyEntriesAsync(drafts, ct);
+            await audit.WriteAsync(new AuditLogWriteEntry("stock-movement.post", "StockMovementOperation", operation.Id.ToString(), "Succeeded", "stock-movement",
+                NewValues: new { operation.OperationCode, operation.OperationType, operation.ReferenceType, operation.ReferenceNo, EntryCount = drafts.Count },
+                ChangedFields: ["Operation", "Entries"]), ct);
+            return new StockMovementPostResult(operation.Id, operation.OperationCode, false, drafts.Count);
+        }, cancellationToken, IsolationLevel.Serializable);
+    }
+
+    public async Task<StockMovementPostResult> ReverseAsync(long operationId, ReverseStockMovementRequest request, CancellationToken cancellationToken = default)
+    {
+        var key = request.IdempotencyKey?.Trim() ?? string.Empty;
+        if (key.Length is < 8 or > 100 || string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Trim().Length > 500)
+            throw AppException.BadRequest("İdempotency anahtarı ve ters kayıt nedeni zorunludur.");
+        var requestedAt = request.OccurredAt.HasValue ? NormalizeDate(request.OccurredAt) : (DateTime?)null;
+        var hash = Hash(new { OperationId = operationId, IdempotencyKey = key, Reason = request.Reason.Trim(), OccurredAt = requestedAt });
+        return await unitOfWork.ExecuteInTransactionAsync(async ct =>
+        {
+            var replay = await Operations.Query().FirstOrDefaultAsync(x => x.IdempotencyKey == key, ct);
+            if (replay is not null) return await ReplayAsync(replay, hash, ct);
+            var original = await Operations.Query().FirstOrDefaultAsync(x => x.Id == operationId, ct)
+                ?? throw AppException.NotFound("Ters çevrilecek stok hareketi bulunamadı.");
+            if (original.OperationType == StockMovementTypes.Reversal) throw AppException.Conflict("Ters kayıt tekrar ters çevrilemez.");
+            if (await Operations.AnyAsync(x => x.ReversalOfOperationId == operationId, ct)) throw AppException.Conflict("Bu operasyon daha önce ters çevrilmiş.");
+            var originalEntries = await Entries.Query().Where(x => x.OperationId == operationId).OrderBy(x => x.LineNo).ToListAsync(ct);
+            if (originalEntries.Count == 0) throw AppException.Conflict("Operasyon hareket satırı içermiyor.");
+            var occurredAt = requestedAt ?? DateTime.UtcNow;
+            var drafts = originalEntries.Select(x => new StockMovementEntry
+            {
+                BranchCode = x.BranchCode, StockId = x.StockId, YapCodeId = x.YapCodeId, WarehouseId = x.WarehouseId, LocationId = x.LocationId,
+                QuantityDelta = -x.QuantityDelta, UnitCode = x.UnitCode, LotNo = x.LotNo, SerialNo = x.SerialNo,
+                StockStatus = x.StockStatus, OccurredAt = occurredAt
+            }).ToList();
+            await EnsureSufficientBalanceAsync(drafts, ct);
+            await EnsureSerialUniquenessAsync(drafts, ct);
+            var operation = new StockMovementOperation
+            {
+                BranchCode = original.BranchCode, IdempotencyKey = key, RequestHash = hash, OperationType = StockMovementTypes.Reversal,
+                Status = StockMovementStatuses.Posted, ReferenceType = original.ReferenceType, ReferenceNo = original.ReferenceNo,
+                ReferenceId = original.ReferenceId, OccurredAt = occurredAt, Reason = request.Reason.Trim(),
+                Description = $"{original.OperationCode} operasyonunun ters kaydı", ReversalOfOperationId = original.Id
+            };
+            await Operations.AddAsync(operation, ct); await unitOfWork.SaveChangesAsync(ct);
+            var lineNo = 0;
+            foreach (var draft in drafts) { draft.OperationId = operation.Id; draft.LineNo = ++lineNo; await Entries.AddAsync(draft, ct); }
+            await unitOfWork.SaveChangesAsync(ct);
+            await balanceProjection.ApplyEntriesAsync(drafts, ct);
+            await audit.WriteAsync(new AuditLogWriteEntry("stock-movement.reverse", "StockMovementOperation", operation.Id.ToString(), "Succeeded", "stock-movement",
+                NewValues: new { operation.OperationCode, ReversalOfOperationId = original.Id, EntryCount = drafts.Count }, ChangedFields: ["Reversal"]), ct);
+            return new StockMovementPostResult(operation.Id, operation.OperationCode, false, drafts.Count);
+        }, cancellationToken, IsolationLevel.Serializable);
+    }
+
+    private async Task<List<StockMovementEntry>> BuildEntriesAsync(PostStockMovementRequest request, CancellationToken ct)
+    {
+        var stockIds = request.Lines.Select(x => x.StockId).Distinct().ToList();
+        var yapCodeIds = request.Lines.Where(x => x.YapCodeId.HasValue).Select(x => x.YapCodeId!.Value).Distinct().ToList();
+        var warehouseIds = request.Lines.SelectMany(x => new[] { x.SourceWarehouseId, x.TargetWarehouseId }).Where(x => x.HasValue).Select(x => x!.Value).Distinct().ToList();
+        var locationIds = request.Lines.SelectMany(x => new[] { x.SourceLocationId, x.TargetLocationId }).Where(x => x.HasValue).Select(x => x!.Value).Distinct().ToList();
+        var stocks = await Stocks.Query().Where(x => stockIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct);
+        var yapCodes = await YapCodes.Query().Where(x => yapCodeIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct);
+        var warehouses = await Warehouses.Query().Where(x => warehouseIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct);
+        var locations = await Locations.Query().Where(x => locationIds.Contains(x.Id) && x.IsActive).ToDictionaryAsync(x => x.Id, ct);
+        if (stocks.Count != stockIds.Count) throw AppException.BadRequest("Geçersiz veya pasif stok seçildi.");
+        if (yapCodes.Count != yapCodeIds.Count) throw AppException.BadRequest("Geçersiz veya pasif YAP kodu seçildi.");
+        if (warehouses.Count != warehouseIds.Count) throw AppException.BadRequest("Geçersiz veya pasif depo seçildi.");
+        if (locations.Count != locationIds.Count) throw AppException.BadRequest("Geçersiz veya pasif raf seçildi.");
+
+        var result = new List<StockMovementEntry>(request.Lines.Count * 2);
+        foreach (var line in request.Lines)
+        {
+            if (line.Quantity <= 0 || line.Quantity > 999_999_999_999m) throw AppException.BadRequest("Hareket miktarı sıfırdan büyük olmalıdır.");
+            var stock = stocks[line.StockId];
+            if (line.YapCodeId.HasValue && yapCodes[line.YapCodeId.Value].StockId.HasValue && yapCodes[line.YapCodeId.Value].StockId != stock.Id)
+                throw AppException.BadRequest("YAP kodu seçilen stokla uyuşmuyor.");
+            var unit = NormalizeText(line.UnitCode, 20)?.ToUpperInvariant() ?? "ADET";
+            var lot = NormalizeText(line.LotNo, 100); var serial = NormalizeText(line.SerialNo, 100);
+            var status = NormalizeText(line.StockStatus, 30) ?? "Available";
+            var sourceStatus = NormalizeText(line.SourceStockStatus, 30) ?? status;
+            var targetStatus = NormalizeText(line.TargetStockStatus, 30) ?? status;
+            if (serial is not null && line.Quantity != 1) throw AppException.BadRequest("Seri numaralı hareketlerde miktar 1 olmalıdır.");
+
+            void Add(long? warehouseId, long? locationId, decimal delta, string entryStatus)
+            {
+                if (!warehouseId.HasValue || !locationId.HasValue) throw AppException.BadRequest("Hareket için depo ve raf zorunludur.");
+                var warehouse = warehouses[warehouseId.Value]; var location = locations[locationId.Value];
+                if (location.WarehouseId != warehouse.Id) throw AppException.BadRequest("Raf seçilen depoya ait değil.");
+                if (!string.Equals(stock.BranchCode, warehouse.BranchCode, StringComparison.OrdinalIgnoreCase)) throw AppException.BadRequest("Stok ve depo şubesi uyuşmuyor.");
+                result.Add(new StockMovementEntry { BranchCode = warehouse.BranchCode, StockId = stock.Id, YapCodeId = line.YapCodeId, WarehouseId = warehouse.Id,
+                    LocationId = location.Id, QuantityDelta = delta, UnitCode = unit, LotNo = lot, SerialNo = serial,
+                    StockStatus = entryStatus, OccurredAt = request.OccurredAt!.Value });
+            }
+
+            switch (request.OperationType)
+            {
+                case StockMovementTypes.Receipt or StockMovementTypes.AdjustmentIncrease or StockMovementTypes.CustomerReturn:
+                    if (line.SourceWarehouseId.HasValue || line.SourceLocationId.HasValue) throw AppException.BadRequest("Giriş hareketinde kaynak depo/raf gönderilemez.");
+                    Add(line.TargetWarehouseId, line.TargetLocationId, line.Quantity, targetStatus); break;
+                case StockMovementTypes.Shipment or StockMovementTypes.AdjustmentDecrease or StockMovementTypes.SupplierReturn:
+                    if (line.TargetWarehouseId.HasValue || line.TargetLocationId.HasValue) throw AppException.BadRequest("Çıkış hareketinde hedef depo/raf gönderilemez.");
+                    Add(line.SourceWarehouseId, line.SourceLocationId, -line.Quantity, sourceStatus); break;
+                case StockMovementTypes.Transfer:
+                    if (line.SourceWarehouseId == line.TargetWarehouseId && line.SourceLocationId == line.TargetLocationId
+                        && string.Equals(sourceStatus, targetStatus, StringComparison.OrdinalIgnoreCase))
+                        throw AppException.BadRequest("Transfer kaynağı/hedefi veya stok statüsü değişmelidir.");
+                    Add(line.SourceWarehouseId, line.SourceLocationId, -line.Quantity, sourceStatus);
+                    Add(line.TargetWarehouseId, line.TargetLocationId, line.Quantity, targetStatus); break;
+            }
+        }
+        if (result.Select(x => x.BranchCode).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 1) throw AppException.BadRequest("Tek operasyonda farklı şubeler kullanılamaz.");
+        return result;
+    }
+
+    private async Task EnsureSufficientBalanceAsync(IReadOnlyCollection<StockMovementEntry> drafts, CancellationToken ct)
+    {
+        var negatives = drafts.Where(x => x.QuantityDelta < 0).ToList();
+        if (negatives.Count == 0) return;
+        var stockIds = negatives.Select(x => x.StockId).Distinct().ToList();
+        var warehouseIds = negatives.Select(x => x.WarehouseId).Distinct().ToList();
+        var locationIds = negatives.Select(x => x.LocationId).Distinct().ToList();
+        var currentRows = await LocationBalances.Query().Where(x => stockIds.Contains(x.StockId) && warehouseIds.Contains(x.WarehouseId) && locationIds.Contains(x.LocationId))
+            .Select(x => new { x.StockId, x.YapCodeId, x.WarehouseId, x.LocationId, x.UnitCode, x.LotNo, x.SerialNo, x.StockStatus, x.AvailableQuantity }).ToListAsync(ct);
+        var current = currentRows.ToDictionary(
+            x => Key(x.StockId, x.YapCodeId, x.WarehouseId, x.LocationId, x.UnitCode, x.LotNo, x.SerialNo, x.StockStatus),
+            x => x.AvailableQuantity);
+        foreach (var group in negatives.GroupBy(x => Key(x.StockId, x.YapCodeId, x.WarehouseId, x.LocationId, x.UnitCode, x.LotNo, x.SerialNo, x.StockStatus)))
+        {
+            var available = current.GetValueOrDefault(group.Key); var requested = -group.Sum(x => x.QuantityDelta);
+            if (available < requested) throw AppException.Conflict($"Yetersiz raf bakiyesi. Kullanılabilir: {available}, istenen: {requested}.");
+        }
+    }
+
+    private async Task EnsureSerialUniquenessAsync(IReadOnlyCollection<StockMovementEntry> drafts, CancellationToken ct)
+    {
+        var serialDrafts = drafts.Where(x => !string.IsNullOrWhiteSpace(x.SerialNo)).ToList();
+        if (serialDrafts.Count == 0) return;
+        var stockIds = serialDrafts.Select(x => x.StockId).Distinct().ToList();
+        var serials = serialDrafts.Select(x => x.SerialNo!).Distinct().ToList();
+        var currentRows = await Entries.Query().Where(x => stockIds.Contains(x.StockId) && x.SerialNo != null && serials.Contains(x.SerialNo))
+            .Select(x => new { x.StockId, x.YapCodeId, x.UnitCode, x.LotNo, x.SerialNo, x.StockStatus, x.QuantityDelta }).ToListAsync(ct);
+        var current = currentRows.GroupBy(x => SerialKey(x.StockId, x.YapCodeId, x.UnitCode, x.LotNo, x.SerialNo!, x.StockStatus))
+            .ToDictionary(x => x.Key, x => x.Sum(v => v.QuantityDelta));
+        foreach (var group in serialDrafts.GroupBy(x => SerialKey(x.StockId, x.YapCodeId, x.UnitCode, x.LotNo, x.SerialNo!, x.StockStatus)))
+        {
+            var resultingQuantity = current.GetValueOrDefault(group.Key) + group.Sum(x => x.QuantityDelta);
+            if (resultingQuantity is < 0 or > 1)
+                throw AppException.Conflict($"Seri numarası tekil bir stok örneğidir; toplam bakiye 0 veya 1 olabilir. Seri: {group.First().SerialNo}.");
+        }
+    }
+
+    private async Task<StockMovementPostResult> ReplayAsync(StockMovementOperation existing, string hash, CancellationToken ct)
+    {
+        if (!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(existing.RequestHash), Convert.FromHexString(hash)))
+            throw AppException.Conflict("Aynı idempotency anahtarı farklı bir istek gövdesiyle kullanılamaz.");
+        return new(existing.Id, existing.OperationCode, true, await Entries.CountAsync(x => x.OperationId == existing.Id, ct));
+    }
+
+    private static PostStockMovementRequest Normalize(PostStockMovementRequest request)
+    {
+        var type = StockMovementTypes.All.FirstOrDefault(x => string.Equals(x, request.OperationType?.Trim(), StringComparison.OrdinalIgnoreCase)) ?? request.OperationType?.Trim() ?? string.Empty;
+        return request with { IdempotencyKey = request.IdempotencyKey?.Trim() ?? string.Empty, OperationType = type,
+            ReferenceType = NormalizeText(request.ReferenceType, 50), ReferenceNo = NormalizeText(request.ReferenceNo, 100),
+            OccurredAt = request.OccurredAt.HasValue ? NormalizeDate(request.OccurredAt) : null, Reason = NormalizeText(request.Reason, 500),
+            Description = NormalizeText(request.Description, 1000), Lines = request.Lines ?? [] };
+    }
+
+    private static void ValidateEnvelope(PostStockMovementRequest request)
+    {
+        if (request.IdempotencyKey.Length is < 8 or > 100) throw AppException.BadRequest("İdempotency anahtarı 8-100 karakter olmalıdır.");
+        if (!StockMovementTypes.All.Contains(request.OperationType)) throw AppException.BadRequest("Geçersiz stok hareket tipi.");
+        if (request.Lines.Count is < 1 or > 200) throw AppException.BadRequest("Operasyon 1-200 hareket satırı içermelidir.");
+    }
+
+    private static DateTime NormalizeDate(DateTime? value)
+    {
+        var date = value?.ToUniversalTime() ?? DateTime.UtcNow;
+        if (date > DateTime.UtcNow.AddMinutes(5)) throw AppException.BadRequest("Hareket zamanı gelecekte olamaz.");
+        return date;
+    }
+    private static string? NormalizeText(string? value, int max) { var text = string.IsNullOrWhiteSpace(value) ? null : value.Trim(); if (text?.Length > max) throw AppException.BadRequest($"Alan uzunluğu en fazla {max} olabilir."); return text; }
+    private static string Hash(object value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value))));
+    private static string Key(long stockId, long? yapCodeId, long warehouseId, long locationId, string unit, string? lot, string? serial, string status) => $"{stockId}|{yapCodeId?.ToString() ?? "0"}|{warehouseId}|{locationId}|{unit}|{lot ?? ""}|{serial ?? ""}|{status}";
+    private static string SerialKey(long stockId, long? yapCodeId, string unit, string? lot, string serial, string status) => $"{stockId}|{yapCodeId?.ToString() ?? "0"}|{unit}|{lot ?? ""}|{serial}|{status}";
+}

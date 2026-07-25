@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="Created" xml:space="preserve"><value>Mal kabul emri oluşturuldu ve sipariş miktarları rezerve edildi.</value></data>
+  <data name="InvalidRequest" xml:space="preserve"><value>Mal kabul emri bilgileri geçersiz.</value></data>
+  <data name="SupplierNotFound" xml:space="preserve"><value>Seçilen cari ERP eşlenmiş verilerinde bulunamadı.</value></data>
+  <data name="WarehouseNotFound" xml:space="preserve"><value>Seçilen depo ERP eşlenmiş verilerinde bulunamadı.</value></data>
+  <data name="ReceivingLocationNotFound" xml:space="preserve"><value>Seçilen mal kabul lokasyonu bulunamadı.</value></data>
+  <data name="InvalidReceivingLocation" xml:space="preserve"><value>Mal kabul lokasyonu aktif, seçilen depoya ait ve Receiving/Staging tipinde olmalıdır.</value></data>
+  <data name="SourceOrderChanged" xml:space="preserve"><value>Netsis sipariş verisi değişti. Siparişleri yenileyip tekrar deneyin.</value></data>
+  <data name="StockMirrorMissing" xml:space="preserve"><value>Sipariş satırındaki stok ERP mirror tablosunda bulunamadı. Önce stok eşlemesini çalıştırın.</value></data>
+  <data name="YapMirrorMissing" xml:space="preserve"><value>Sipariş satırındaki YAP kodu ERP mirror tablosunda bulunamadı.</value></data>
+  <data name="InvalidQuantity" xml:space="preserve"><value>Rezerve edilecek miktar sıfırdan büyük olmalıdır.</value></data>
+  <data name="QuantityExceedsAvailable" xml:space="preserve"><value>İstenen miktar güncel kullanılabilir sipariş miktarını aşıyor.</value></data>
+  <data name="InvalidAssignee" xml:space="preserve"><value>Emir için seçilen kullanıcılardan biri aktif değil veya bulunamadı.</value></data>
+  <data name="IdempotencyConflict" xml:space="preserve"><value>Aynı idempotency anahtarı farklı bir mal kabul isteğinde kullanılamaz.</value></data>
+  <data name="ConcurrencyConflict" xml:space="preserve"><value>Sipariş miktarı başka bir işlem tarafından değiştirildi. Veriyi yenileyip tekrar deneyin.</value></data>
+</root>

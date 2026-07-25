@@ -1,0 +1,60 @@
+# .NET build outputs
+**/bin/
+**/obj/
+**/artifacts/
+**/publish/
+**/TestResults/
+**/BenchmarkDotNet.Artifacts/
+
+# IDE and developer-specific files
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Test, coverage and runtime output
+coverage/
+coverage-*/
+*.coverage
+*.coveragexml
+*.trx
+*.nupkg
+*.snupkg
+*.log
+logs/
+runtime-logs/
+.sonarqube/
+.scannerwork/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+appsettings.Local.json
+appsettings.*.local.json
+secrets.json
+*.pfx
+*.p12
+*.snk
+efbundle
+efbundle.exe
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+*.mdf
+*.ldf
+
+# Runtime uploads: keep directory placeholders, never commit user content
+wwwroot/uploads/**
+!wwwroot/uploads/**/
+!wwwroot/uploads/**/.gitkeep
+
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini

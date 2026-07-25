@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="Created" xml:space="preserve"><value>Goods receipt task was created and order quantities were reserved.</value></data>
+  <data name="InvalidRequest" xml:space="preserve"><value>Goods receipt request is invalid.</value></data>
+  <data name="SupplierNotFound" xml:space="preserve"><value>The selected supplier was not found in ERP mirror data.</value></data>
+  <data name="WarehouseNotFound" xml:space="preserve"><value>The selected warehouse was not found in ERP mirror data.</value></data>
+  <data name="ReceivingLocationNotFound" xml:space="preserve"><value>The selected receiving location was not found.</value></data>
+  <data name="InvalidReceivingLocation" xml:space="preserve"><value>The receiving location must be active, belong to the selected warehouse, and be Receiving or Staging.</value></data>
+  <data name="SourceOrderChanged" xml:space="preserve"><value>Netsis order data changed. Refresh orders and try again.</value></data>
+  <data name="StockMirrorMissing" xml:space="preserve"><value>An order stock was not found in ERP mirror data. Run stock synchronization first.</value></data>
+  <data name="YapMirrorMissing" xml:space="preserve"><value>An order YAP code was not found in ERP mirror data.</value></data>
+  <data name="InvalidQuantity" xml:space="preserve"><value>Reserved quantity must be greater than zero.</value></data>
+  <data name="QuantityExceedsAvailable" xml:space="preserve"><value>Requested quantity exceeds the current available order quantity.</value></data>
+  <data name="InvalidAssignee" xml:space="preserve"><value>One of the selected task users is missing or inactive.</value></data>
+  <data name="IdempotencyConflict" xml:space="preserve"><value>The same idempotency key cannot be reused for a different goods receipt request.</value></data>
+  <data name="ConcurrencyConflict" xml:space="preserve"><value>Order quantity was changed by another operation. Refresh and try again.</value></data>
+</root>

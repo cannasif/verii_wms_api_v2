@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="LocationNotFound" xml:space="preserve"><value>Location was not found.</value></data>
+  <data name="WarehouseChangeBlocked" xml:space="preserve"><value>The warehouse of a location with child locations cannot be changed.</value></data>
+  <data name="DeleteHasChildren" xml:space="preserve"><value>A location with child locations cannot be deleted.</value></data>
+  <data name="InvalidCode" xml:space="preserve"><value>Location code must contain 1-50 characters and may only include letters, numbers, dots, hyphens and underscores.</value></data>
+  <data name="InvalidName" xml:space="preserve"><value>Location name must contain 2-150 characters.</value></data>
+  <data name="InvalidFieldLengths" xml:space="preserve"><value>One or more location fields exceed their allowed length.</value></data>
+  <data name="InvalidAddressNumber" xml:space="preserve"><value>Aisle, rack, level or bin number is invalid.</value></data>
+  <data name="NegativeCapacity" xml:space="preserve"><value>Capacity values cannot be negative.</value></data>
+  <data name="CapacityUnitRequired" xml:space="preserve"><value>Capacity unit is required when a capacity value is provided.</value></data>
+  <data name="QuarantineCannotBePickable" xml:space="preserve"><value>A quarantine location cannot be pickable.</value></data>
+  <data name="InvalidLocationType" xml:space="preserve"><value>Location type is invalid.</value></data>
+  <data name="InvalidBarcodeMode" xml:space="preserve"><value>Barcode entry mode is invalid.</value></data>
+  <data name="WarehouseNotFound" xml:space="preserve"><value>Warehouse was not found.</value></data>
+  <data name="DuplicateCode" xml:space="preserve"><value>The location code already exists in this warehouse.</value></data>
+  <data name="ManualBarcodeRequired" xml:space="preserve"><value>Barcode is required in manual barcode mode.</value></data>
+  <data name="GeneratedBarcodeTooLong" xml:space="preserve"><value>The generated location barcode exceeds 100 characters.</value></data>
+  <data name="DuplicateBarcode" xml:space="preserve"><value>The barcode is already used by another location.</value></data>
+  <data name="ParentRequired" xml:space="preserve"><value>A parent location is required for this location type.</value></data>
+  <data name="ParentNotFoundInWarehouse" xml:space="preserve"><value>The parent location was not found in the selected warehouse.</value></data>
+  <data name="InvalidParentType" xml:space="preserve"><value>A location of type {0} cannot be created under type {1}.</value></data>
+  <data name="HierarchyCycle" xml:space="preserve"><value>The location hierarchy cannot contain a cycle.</value></data>
+  <data name="ConcurrencyConflict" xml:space="preserve"><value>The location was changed by another user. Refresh the data and try again.</value></data>
+  <data name="Created" xml:space="preserve"><value>Location was created.</value></data>
+  <data name="Updated" xml:space="preserve"><value>Location was updated.</value></data>
+  <data name="Deleted" xml:space="preserve"><value>Location was deleted.</value></data>
+  <data name="Forbidden" xml:space="preserve"><value>You do not have permission to perform this action.</value></data>
+</root>

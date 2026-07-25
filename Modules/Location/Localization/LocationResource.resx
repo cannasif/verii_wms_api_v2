@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="LocationNotFound" xml:space="preserve"><value>Lokasyon bulunamadı.</value></data>
+  <data name="WarehouseChangeBlocked" xml:space="preserve"><value>Alt lokasyonları bulunan bir lokasyonun deposu değiştirilemez.</value></data>
+  <data name="DeleteHasChildren" xml:space="preserve"><value>Alt lokasyonları bulunan lokasyon silinemez.</value></data>
+  <data name="InvalidCode" xml:space="preserve"><value>Lokasyon kodu 1-50 karakter olmalı; yalnızca harf, rakam, nokta, tire ve alt çizgi içermelidir.</value></data>
+  <data name="InvalidName" xml:space="preserve"><value>Lokasyon adı 2-150 karakter olmalıdır.</value></data>
+  <data name="InvalidFieldLengths" xml:space="preserve"><value>Lokasyon alan uzunlukları geçersiz.</value></data>
+  <data name="InvalidAddressNumber" xml:space="preserve"><value>Koridor, raf, seviye veya göz numarası geçersiz.</value></data>
+  <data name="NegativeCapacity" xml:space="preserve"><value>Kapasite değerleri negatif olamaz.</value></data>
+  <data name="CapacityUnitRequired" xml:space="preserve"><value>Kapasite girildiğinde kapasite birimi zorunludur.</value></data>
+  <data name="QuarantineCannotBePickable" xml:space="preserve"><value>Karantina lokasyonu toplama lokasyonu olamaz.</value></data>
+  <data name="InvalidLocationType" xml:space="preserve"><value>Geçersiz lokasyon tipi.</value></data>
+  <data name="InvalidBarcodeMode" xml:space="preserve"><value>Geçersiz barkod giriş modu.</value></data>
+  <data name="WarehouseNotFound" xml:space="preserve"><value>Depo bulunamadı.</value></data>
+  <data name="DuplicateCode" xml:space="preserve"><value>Aynı depoda aynı lokasyon kodu zaten mevcut.</value></data>
+  <data name="ManualBarcodeRequired" xml:space="preserve"><value>Manuel barkod modunda barkod zorunludur.</value></data>
+  <data name="GeneratedBarcodeTooLong" xml:space="preserve"><value>Üretilen lokasyon barkodu 100 karakteri aşıyor.</value></data>
+  <data name="DuplicateBarcode" xml:space="preserve"><value>Aynı barkod başka bir lokasyonda kullanılıyor.</value></data>
+  <data name="ParentRequired" xml:space="preserve"><value>Bu lokasyon tipi için üst lokasyon zorunludur.</value></data>
+  <data name="ParentNotFoundInWarehouse" xml:space="preserve"><value>Üst lokasyon aynı depoda bulunamadı.</value></data>
+  <data name="InvalidParentType" xml:space="preserve"><value>{0} tipi, {1} tipinin altında oluşturulamaz.</value></data>
+  <data name="HierarchyCycle" xml:space="preserve"><value>Lokasyon hiyerarşisinde döngü oluşturulamaz.</value></data>
+  <data name="ConcurrencyConflict" xml:space="preserve"><value>Lokasyon başka bir kullanıcı tarafından değiştirildi. Veriyi yenileyip tekrar deneyin.</value></data>
+  <data name="Created" xml:space="preserve"><value>Lokasyon oluşturuldu.</value></data>
+  <data name="Updated" xml:space="preserve"><value>Lokasyon güncellendi.</value></data>
+  <data name="Deleted" xml:space="preserve"><value>Lokasyon silindi.</value></data>
+  <data name="Forbidden" xml:space="preserve"><value>Bu işlem için yetkiniz bulunmuyor.</value></data>
+</root>

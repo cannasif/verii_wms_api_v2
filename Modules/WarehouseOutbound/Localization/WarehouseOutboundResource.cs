@@ -1,0 +1,2 @@
+namespace verii_wms_api_v2.Modules.WarehouseOutbound.Localization;
+public sealed class WarehouseOutboundResource;
