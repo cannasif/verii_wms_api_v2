@@ -28,6 +28,7 @@ public sealed class VehicleCheckInService(IUnitOfWork uow,IProjectSettingsServic
         uow.ExecuteInTransactionAsync(async token=>{
             var branch=NormalizeBranch(request.BranchCode);var plate=NormalizePlate(request.PlateNo);
             if(plate.Length<5||plate.Length>25)throw AppException.BadRequest("Plaka 5-25 karakter arasında olmalıdır.");
+            if(request.SteelSheetCount<=0||request.SteelSheetCount>100000)throw AppException.BadRequest("Sac levha adedi 1-100.000 arasında olmalıdır.");
             var day=await BusinessDateAsync(token);var now=DateTimeOffset.UtcNow;
             var entity=request.Id.HasValue
                 ?await Headers.FindByIdAsync(request.Id.Value,true,token)
@@ -54,12 +55,12 @@ public sealed class VehicleCheckInService(IUnitOfWork uow,IProjectSettingsServic
             entity.PlateNo=DisplayPlate(request.PlateNo);entity.TrailerPlateNo=Clean(request.TrailerPlateNo,25)?.ToUpperInvariant();
             entity.TrailerPlateNoNormalized=NormalizeNullablePlate(request.TrailerPlateNo);entity.DriverFirstName=Clean(request.DriverFirstName,100);
             entity.DriverLastName=Clean(request.DriverLastName,100);entity.DriverPhone=Clean(request.DriverPhone,40);
-            entity.CarrierName=Clean(request.CarrierName,200);entity.CustomerId=customer?.Id;
+            entity.CarrierName=Clean(request.CarrierName,200);entity.SteelSheetCount=request.SteelSheetCount;entity.CustomerId=customer?.Id;
             entity.CustomerCodeSnapshot=customer?.CustomerCode;entity.CustomerNameSnapshot=customer?.CustomerName;
             entity.Note=Clean(request.Note,1000);if(created)entity.Status=VehicleCheckInStatus.CheckedIn;
             await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new(created?"vehicle-check-in.create":"vehicle-check-in.update",nameof(VehicleCheckInHeader),entity.Id.ToString(),"Succeeded","vehicle-check-in",
-                NewValues:new{entity.PlateNo,entity.TrailerPlateNo,entity.DriverFirstName,entity.DriverLastName,entity.CustomerId,entity.BusinessDate},ChangedFields:["Vehicle","Driver","Customer"]),token);
+                NewValues:new{entity.PlateNo,entity.TrailerPlateNo,entity.DriverFirstName,entity.DriverLastName,entity.SteelSheetCount,entity.CustomerId,entity.BusinessDate},ChangedFields:["Vehicle","Driver","SteelSheetCount","Customer"]),token);
             return await DetailAsync(entity,token);
         },ct,IsolationLevel.Serializable);
 
@@ -77,7 +78,7 @@ public sealed class VehicleCheckInService(IUnitOfWork uow,IProjectSettingsServic
             ||(x.DriverLastName!=null&&x.DriverLastName.Contains(s))||(x.CustomerCodeSnapshot!=null&&x.CustomerCodeSnapshot.Contains(s))
             ||(x.CustomerNameSnapshot!=null&&x.CustomerNameSnapshot.Contains(s)));
         var projected=q.Select(x=>new VehicleCheckInRow(x.Id,x.BranchCode,x.PlateNo,x.TrailerPlateNo,x.DriverFirstName,x.DriverLastName,
-            x.DriverPhone,x.CarrierName,x.CustomerId,x.CustomerCodeSnapshot,x.CustomerNameSnapshot,x.CheckedInAtUtc,x.BusinessDate,
+            x.DriverPhone,x.CarrierName,x.SteelSheetCount,x.CustomerId,x.CustomerCodeSnapshot,x.CustomerNameSnapshot,x.CheckedInAtUtc,x.BusinessDate,
             x.Status.ToString(),x.Note,x.Images.Count,x.CreatedBy,x.CreatedDate,x.UpdatedBy,x.UpdatedDate,Convert.ToBase64String(x.RowVersion)));
         return await projected.ApplyAdvancedFilters(request).ApplySort(request,nameof(VehicleCheckInRow.CheckedInAtUtc)).ToPagedResponseAsync(request,ct);
     }
@@ -116,7 +117,7 @@ public sealed class VehicleCheckInService(IUnitOfWork uow,IProjectSettingsServic
     private async Task<IReadOnlyList<VehicleCheckInImageRow>> ImageRowsAsync(long id,CancellationToken ct)=>await Images.Query().Where(x=>x.HeaderId==id)
         .OrderBy(x=>x.SortOrder).Select(x=>new VehicleCheckInImageRow(x.Id,x.HeaderId,x.FileName,x.ContentType,x.FileSize,x.SortOrder,x.CreatedDate)).ToListAsync(ct);
     private static VehicleCheckInRow ToRow(VehicleCheckInHeader x,int count)=>new(x.Id,x.BranchCode,x.PlateNo,x.TrailerPlateNo,x.DriverFirstName,x.DriverLastName,
-        x.DriverPhone,x.CarrierName,x.CustomerId,x.CustomerCodeSnapshot,x.CustomerNameSnapshot,x.CheckedInAtUtc,x.BusinessDate,x.Status.ToString(),
+        x.DriverPhone,x.CarrierName,x.SteelSheetCount,x.CustomerId,x.CustomerCodeSnapshot,x.CustomerNameSnapshot,x.CheckedInAtUtc,x.BusinessDate,x.Status.ToString(),
         x.Note,count,x.CreatedBy,x.CreatedDate,x.UpdatedBy,x.UpdatedDate,Convert.ToBase64String(x.RowVersion));
     private async Task<DateOnly> BusinessDateAsync(CancellationToken ct)
     {

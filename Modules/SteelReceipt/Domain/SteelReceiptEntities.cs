@@ -94,7 +94,7 @@ public sealed class SteelReceiptPlacement : BaseEntity
     public SteelReceiptPlanLine PlanLine { get; set; } = null!;
     public long WarehouseId { get; set; }
     public long LocationId { get; set; }
-    public SteelPlacementType PlacementType { get; set; } = SteelPlacementType.SideBySide;
+    public SteelPlacementType PlacementType { get; set; } = SteelPlacementType.Stacked;
     public int? RowNo { get; set; }
     public int? PositionNo { get; set; }
     public int? StackOrderNo { get; set; }

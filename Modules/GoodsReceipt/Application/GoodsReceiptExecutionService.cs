@@ -123,11 +123,16 @@ public sealed class GoodsReceiptExecutionService(
             QualityInspectionLine? inspectionLine = null;
             if (requiresQuality)
             {
-                inspection = Stamp(new QualityInspection
+                inspection = await uow.Repository<QualityInspection>().Query(true)
+                    .FirstOrDefaultAsync(x => x.SourceDocumentType == "GoodsReceipt"
+                        && x.SourceDocumentId == task.Header.Id
+                        && x.Status != QualityInspectionStatus.Cancelled, token);
+                var isNewInspection = inspection is null;
+                inspection ??= Stamp(new QualityInspection
                 {
                     BranchCode = task.BranchCode,
-                    CorrelationId = request.IdempotencyKey,
-                    InspectionNo = InspectionNo(task.Header.DocumentNo, request.IdempotencyKey),
+                    CorrelationId = Guid.NewGuid(),
+                    InspectionNo = $"QC-{task.Header.DocumentNo}",
                     SourceDocumentType = "GoodsReceipt",
                     SourceDocumentId = task.Header.Id,
                     SourceDocumentNo = task.Header.DocumentNo,
@@ -154,7 +159,8 @@ public sealed class GoodsReceiptExecutionService(
                     Decision = QualityDecision.Pending
                 }, actor);
                 inspection.Lines.Add(inspectionLine);
-                await uow.Repository<QualityInspection>().AddAsync(inspection, token);
+                if (isNewInspection)
+                    await uow.Repository<QualityInspection>().AddAsync(inspection, token);
                 await uow.SaveChangesAsync(token);
             }
 
@@ -238,6 +244,17 @@ public sealed class GoodsReceiptExecutionService(
                 task.CompletedAtUtc = now;
                 assignment.Status = GoodsReceiptAssignmentStatus.Completed;
                 assignment.CompletedAtUtc = now;
+                var queuedInspection = inspection ?? await uow.Repository<QualityInspection>().Query(true)
+                    .FirstOrDefaultAsync(x => x.SourceDocumentType == "GoodsReceipt"
+                        && x.SourceDocumentId == task.Header.Id
+                        && x.Status != QualityInspectionStatus.Cancelled, token);
+                if (queuedInspection is not null && queuedInspection.QueuedAtUtc is null)
+                {
+                    queuedInspection.QueuedAtUtc = now;
+                    queuedInspection.QueuedBy = actor;
+                    queuedInspection.UpdatedBy = actor;
+                    queuedInspection.UpdatedDate = DateTime.UtcNow;
+                }
             }
             else task.Status = GoodsReceiptTaskStatus.InProgress;
             task.Header.ReceivedAtUtc ??= now;

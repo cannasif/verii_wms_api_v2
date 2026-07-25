@@ -14,6 +14,7 @@ public sealed class VehicleCheckInHeader : BaseEntity
     public string? DriverLastName { get; set; }
     public string? DriverPhone { get; set; }
     public string? CarrierName { get; set; }
+    public int SteelSheetCount { get; set; }
     public long? CustomerId { get; set; }
     public string? CustomerCodeSnapshot { get; set; }
     public string? CustomerNameSnapshot { get; set; }

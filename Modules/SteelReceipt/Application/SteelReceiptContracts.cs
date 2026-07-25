@@ -29,9 +29,9 @@ public sealed record ConvertSteelReceiptRequest(Guid IdempotencyKey,DateOnly Doc
     IReadOnlyList<long>? AssignedUserIds,bool AssignToAllActiveUsers,byte Priority,string? Description);
 public sealed record ConvertSteelReceiptResult(long GoodsReceiptId,string DocumentNo,long TaskId,string TaskNo,int ConvertedLineCount,
     decimal ConvertedQuantity,bool Replayed);
-public sealed record PlaceSteelReceiptLineRequest(Guid IdempotencyKey,long LocationId,SteelPlacementType PlacementType,
-    int? RowNo,int? PositionNo,int? StackOrderNo,string RowVersion);
-public sealed record PlaceSteelReceiptLineResult(long PlacementId,long StockMovementOperationId,bool Replayed);
+public sealed record PlaceSteelReceiptLineRequest(Guid IdempotencyKey,long LocationId,string RowVersion);
+public sealed record PlaceSteelReceiptLineResult(long PlacementId,long StockMovementOperationId,bool Replayed,
+    long LocationId,SteelPlacementType PlacementType,int RowNo,int PositionNo,int StackOrderNo);
 public sealed record SteelReceiptAttachmentUpload(Stream Content,string FileName,string ContentType,long Length);
 public sealed record SteelReceiptAttachmentRow(long Id,long PlanLineId,string FileName,string ContentType,string Url,string? Caption,long FileSize,
     long? CreatedBy,DateTime? CreatedDate);

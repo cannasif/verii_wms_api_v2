@@ -9,7 +9,8 @@ public sealed class VehicleCheckInHeaderConfiguration:BaseEntityConfiguration<Ve
 {
     protected override void ConfigureEntity(EntityTypeBuilder<VehicleCheckInHeader> b)
     {
-        b.ToTable("RII_VEHICLE_CHECKIN_HEADER");
+        b.ToTable("RII_VEHICLE_CHECKIN_HEADER", t =>
+            t.HasCheckConstraint("CK_RII_VEHICLE_CHECKIN_STEEL_SHEET_COUNT", "[SteelSheetCount] >= 0"));
         b.Property(x=>x.PlateNo).HasMaxLength(25).IsRequired(); b.Property(x=>x.PlateNoNormalized).HasMaxLength(25).IsRequired();
         b.Property(x=>x.TrailerPlateNo).HasMaxLength(25); b.Property(x=>x.TrailerPlateNoNormalized).HasMaxLength(25);
         b.Property(x=>x.DriverFirstName).HasMaxLength(100); b.Property(x=>x.DriverLastName).HasMaxLength(100);

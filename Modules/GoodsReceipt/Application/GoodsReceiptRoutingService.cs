@@ -122,6 +122,29 @@ public sealed class GoodsReceiptRoutingService(
                 result.Id, result.DocumentNo, targetLines.Select(x => x.Id).ToArray(), request.Description, actor, ct);
         }, cancellationToken, IsolationLevel.Serializable);
 
+    public Task<GoodsReceiptSplitRoutingResult> CreateSplitAsync(
+        long goodsReceiptId,
+        CreateGoodsReceiptSplitRoutingRequest request,
+        long actor,
+        CancellationToken cancellationToken = default)
+    {
+        if (request.Transfer is null && request.Outbound is null)
+            throw AppException.BadRequest("En az bir transfer veya ambar çıkış dağıtımı girilmelidir.");
+        if (request.Transfer is not null && request.Outbound is not null
+            && request.Transfer.IdempotencyKey == request.Outbound.IdempotencyKey)
+            throw AppException.BadRequest("Transfer ve ambar çıkış işlemleri farklı idempotency anahtarları kullanmalıdır.");
+
+        return uow.ExecuteInTransactionAsync(async ct =>
+        {
+            var results = new List<GoodsReceiptRoutingResult>(2);
+            if (request.Transfer is not null)
+                results.Add(await CreateTransferAsync(goodsReceiptId, request.Transfer, actor, ct));
+            if (request.Outbound is not null)
+                results.Add(await CreateOutboundAsync(goodsReceiptId, request.Outbound, actor, ct));
+            return new GoodsReceiptSplitRoutingResult(results, results.Sum(x => x.RoutedQuantity));
+        }, cancellationToken, IsolationLevel.Serializable);
+    }
+
     private async Task<RoutingContext> PrepareAsync(
         long goodsReceiptId,
         IReadOnlyList<GoodsReceiptRoutingLineRequest> requests,

@@ -374,7 +374,7 @@ public sealed class GoodsReceiptOperationsService(
             inspection = Stamp(new QualityInspection { BranchCode = header.BranchCode, CorrelationId = request.IdempotencyKey,
                 InspectionNo = $"QC-{header.DocumentNo}", SourceDocumentType = "GoodsReceipt", SourceDocumentId = header.Id,
                 SourceDocumentNo = header.DocumentNo, WarehouseId = warehouse.Id, SupplierId = header.SupplierId,
-                Status = QualityInspectionStatus.Pending, CreatedAtUtc = now }, actor);
+                Status = QualityInspectionStatus.Pending, CreatedAtUtc = now, QueuedAtUtc = now, QueuedBy = actor }, actor);
             await unitOfWork.Repository<QualityInspection>().AddAsync(inspection, ct);
             foreach (var line in lines.Where(x => x.RequireQualityControl))
             {

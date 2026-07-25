@@ -3,10 +3,10 @@ using verii_wms_api_v2.Shared;
 namespace verii_wms_api_v2.Modules.VehicleCheckIn.Application;
 
 public sealed record SaveVehicleCheckInRequest(long? Id,string? RowVersion,string BranchCode,string PlateNo,string? TrailerPlateNo,string? DriverFirstName,
-    string? DriverLastName,string? DriverPhone,string? CarrierName,long? CustomerId,string? Note);
+    string? DriverLastName,string? DriverPhone,string? CarrierName,int SteelSheetCount,long? CustomerId,string? Note);
 public sealed record VehicleCheckInImageRow(long Id,long HeaderId,string FileName,string ContentType,long FileSize,int SortOrder,DateTime? CreatedDate);
 public sealed record VehicleCheckInRow(long Id,string BranchCode,string PlateNo,string? TrailerPlateNo,string? DriverFirstName,string? DriverLastName,
-    string? DriverPhone,string? CarrierName,long? CustomerId,string? CustomerCode,string? CustomerName,DateTimeOffset CheckedInAtUtc,
+    string? DriverPhone,string? CarrierName,int SteelSheetCount,long? CustomerId,string? CustomerCode,string? CustomerName,DateTimeOffset CheckedInAtUtc,
     DateOnly BusinessDate,string Status,string? Note,int ImageCount,long? CreatedBy,DateTime? CreatedDate,long? UpdatedBy,DateTime? UpdatedDate,string RowVersion);
 public sealed record VehicleCheckInDetail(VehicleCheckInRow Header,IReadOnlyList<VehicleCheckInImageRow> Images);
 public sealed record VehicleImageUpload(Stream Content,string FileName,string ContentType,long Length);

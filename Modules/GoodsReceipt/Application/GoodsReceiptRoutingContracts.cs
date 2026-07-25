@@ -32,9 +32,18 @@ public sealed record GoodsReceiptRoutingResult(
     decimal RoutedQuantity,
     bool Replayed);
 
+public sealed record CreateGoodsReceiptSplitRoutingRequest(
+    CreateGoodsReceiptTransferRequest? Transfer,
+    CreateGoodsReceiptOutboundRequest? Outbound);
+
+public sealed record GoodsReceiptSplitRoutingResult(
+    IReadOnlyList<GoodsReceiptRoutingResult> Routes,
+    decimal RoutedQuantity);
+
 public interface IGoodsReceiptRoutingService
 {
     Task<IReadOnlyDictionary<long, decimal>> GetActiveAllocatedQuantitiesAsync(IReadOnlyCollection<long> goodsReceiptLineIds, CancellationToken cancellationToken = default);
     Task<GoodsReceiptRoutingResult> CreateTransferAsync(long goodsReceiptId, CreateGoodsReceiptTransferRequest request, long actor, CancellationToken cancellationToken = default);
     Task<GoodsReceiptRoutingResult> CreateOutboundAsync(long goodsReceiptId, CreateGoodsReceiptOutboundRequest request, long actor, CancellationToken cancellationToken = default);
+    Task<GoodsReceiptSplitRoutingResult> CreateSplitAsync(long goodsReceiptId, CreateGoodsReceiptSplitRoutingRequest request, long actor, CancellationToken cancellationToken = default);
 }

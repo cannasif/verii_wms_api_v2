@@ -206,12 +206,18 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             var line=await Lines.Query(true).Include(x=>x.Placement).FirstOrDefaultAsync(x=>x.Id==lineId,token)??throw AppException.NotFound("SAC levhası bulunamadı.");
             ApplyVersion(line.RowVersion,request.RowVersion);
             if(line.ConversionStatus!=SteelReceiptConversionStatus.Created||!line.GoodsReceiptLineId.HasValue)throw AppException.Conflict("Levha önce ortak mal kabule aktarılmalıdır.");
-            if(line.PutawayStatus==SteelPutawayStatus.Placed&&line.Placement is not null)return new(line.Placement.Id,line.Placement.StockMovementOperationId,true);
-            if(!request.RowNo.HasValue||request.RowNo<=0||!request.PositionNo.HasValue||request.PositionNo<=0)throw AppException.BadRequest("SAC yerleşimi için sıra ve pozisyon numarası zorunludur.");
-            if(request.PlacementType==SteelPlacementType.Stacked&&(!request.StackOrderNo.HasValue||request.StackOrderNo<=0))throw AppException.BadRequest("İstif sıra numarası zorunludur.");
+            if(line.PutawayStatus==SteelPutawayStatus.Placed&&line.Placement is not null)
+                return new(line.Placement.Id,line.Placement.StockMovementOperationId,true,line.Placement.LocationId,
+                    line.Placement.PlacementType,line.Placement.RowNo??1,line.Placement.PositionNo??1,line.Placement.StackOrderNo??1);
             var dest=await uow.Repository<WarehouseLocation>().FindByIdAsync(request.LocationId,false,token)??throw AppException.BadRequest("Hedef raf bulunamadı.");
             if(!dest.IsActive||!dest.IsPutaway||dest.IsQuarantine||dest.WarehouseId!=line.TargetWarehouseId)throw AppException.BadRequest("Hedef raf yerleştirmeye uygun değil.");
-            if(await uow.Repository<SteelReceiptPlacement>().AnyAsync(x=>x.LocationId==request.LocationId&&x.RowNo==request.RowNo&&x.PositionNo==request.PositionNo&&x.StackOrderNo==request.StackOrderNo,token))
+            var occupancy=uow.Repository<SteelReceiptPlacement>().Query().Where(x=>x.LocationId==request.LocationId);
+            var occupiedCount=await occupancy.CountAsync(token);
+            var maximumStack=await occupancy.MaxAsync(x=>(int?)x.StackOrderNo,token)??0;
+            var stackOrder=Math.Max(occupiedCount,maximumStack)+1;
+            const int rowNo=1;
+            const int positionNo=1;
+            if(await uow.Repository<SteelReceiptPlacement>().AnyAsync(x=>x.LocationId==request.LocationId&&x.RowNo==rowNo&&x.PositionNo==positionNo&&x.StackOrderNo==stackOrder,token))
                 throw AppException.Conflict("Seçilen SAC yerleşim koordinatı dolu.");
             var status=await uow.Repository<GoodsReceiptExecutionLine>().Query().Where(x=>x.GrLineId==line.GoodsReceiptLineId)
                 .OrderByDescending(x=>x.Id).Select(x=>x.StockStatus).FirstOrDefaultAsync(token);
@@ -223,14 +229,15 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
                     line.TargetWarehouseId,dest.Id,line.UnitCode,line.HeatNumber,line.ApprovedQuantity==1?line.SupplierSerialNo:null,
                     "Available","Available","Available")]),token);
             var placement=Stamp(new SteelReceiptPlacement{BranchCode=line.BranchCode,PlanLine=line,WarehouseId=line.TargetWarehouseId,
-                LocationId=dest.Id,PlacementType=request.PlacementType,RowNo=request.RowNo,PositionNo=request.PositionNo,StackOrderNo=request.StackOrderNo,
+                LocationId=dest.Id,PlacementType=SteelPlacementType.Stacked,RowNo=rowNo,PositionNo=positionNo,StackOrderNo=stackOrder,
                 StockMovementOperationId=movement.OperationId,PlacedAtUtc=DateTimeOffset.UtcNow,PlacedBy=actor},actor);
             await uow.Repository<SteelReceiptPlacement>().AddAsync(placement,token);line.PutawayStatus=SteelPutawayStatus.Placed;
             line.UpdatedBy=actor;line.UpdatedDate=DateTime.UtcNow;await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("steel-receipt.place",nameof(SteelReceiptPlanLine),line.Id.ToString(),"Succeeded","steel-receipt",
                 NewValues:new{placement.LocationId,placement.PlacementType,placement.RowNo,placement.PositionNo,placement.StackOrderNo,movement.OperationId},
                 ChangedFields:["Placement","StockMovement"]),token);
-            return new(placement.Id,movement.OperationId,movement.IsReplay);
+            return new(placement.Id,movement.OperationId,movement.IsReplay,placement.LocationId,placement.PlacementType,
+                rowNo,positionNo,stackOrder);
         },ct,IsolationLevel.Serializable);
     }
 

@@ -38,8 +38,9 @@ public sealed class QualityInspectionGridRow
     public long Id { get; init; } public string BranchCode { get; init; } = "0"; public string InspectionNo { get; init; } = string.Empty;
     public string SourceDocumentType { get; init; } = string.Empty; public long SourceDocumentId { get; init; } public string SourceDocumentNo { get; init; } = string.Empty;
     public long WarehouseId { get; init; } public int? WarehouseCode { get; init; } public string? WarehouseName { get; init; } public long? SupplierId { get; init; }
+    public string? SourceWaybillNo { get; init; } public string? CreatedByName { get; init; }
     public string Status { get; init; } = string.Empty; public int LineCount { get; init; } public decimal TotalQuantity { get; init; }
-    public DateTimeOffset CreatedAtUtc { get; init; } public DateTimeOffset? DecidedAtUtc { get; init; } public long? InspectorUserId { get; init; }
+    public DateTimeOffset CreatedAtUtc { get; init; } public DateTimeOffset? QueuedAtUtc { get; init; } public DateTimeOffset? DecidedAtUtc { get; init; } public long? InspectorUserId { get; init; }
     public long? CreatedBy { get; init; } public DateTime? CreatedDate { get; init; } public long? UpdatedBy { get; init; } public DateTime? UpdatedDate { get; init; }
 }
 

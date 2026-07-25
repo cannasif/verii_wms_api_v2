@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
+using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Quality.Domain;
 using verii_wms_api_v2.Modules.Stock.Domain;
@@ -85,16 +86,28 @@ public sealed class QualityService(IUnitOfWork uow, IAuditLogWriter audit, IStoc
         var joined=from i in Inspections.Query()
                    join w in uow.Repository<WarehouseEntity>().Query() on i.WarehouseId equals w.Id into ws
                    from w in ws.DefaultIfEmpty()
-                   select new { Inspection=i, Warehouse=w };
+                   join g in uow.Repository<GoodsReceiptHeader>().Query() on new { Type=i.SourceDocumentType, Id=i.SourceDocumentId }
+                       equals new { Type="GoodsReceipt", Id=g.Id } into gs
+                   from g in gs.DefaultIfEmpty()
+                   join u in uow.Repository<User>().Query() on i.CreatedBy equals (long?)u.Id into users
+                   from u in users.DefaultIfEmpty()
+                   join d in uow.Repository<UserDetail>().Query() on u.Id equals d.UserId into details
+                   from d in details.DefaultIfEmpty()
+                   where i.QueuedAtUtc != null
+                   select new { Inspection=i, Warehouse=w, Receipt=g, User=u, Detail=d };
         var q=joined.Select(x=>new QualityInspectionGridRow { Id=x.Inspection.Id,BranchCode=x.Inspection.BranchCode,InspectionNo=x.Inspection.InspectionNo,
             SourceDocumentType=x.Inspection.SourceDocumentType,SourceDocumentId=x.Inspection.SourceDocumentId,SourceDocumentNo=x.Inspection.SourceDocumentNo,
             WarehouseId=x.Inspection.WarehouseId,WarehouseCode=x.Warehouse==null?null:x.Warehouse.WarehouseCode,
             WarehouseName=x.Warehouse==null?null:x.Warehouse.WarehouseName,SupplierId=x.Inspection.SupplierId,
+            SourceWaybillNo=x.Receipt==null?null:(x.Receipt.ElectronicWaybillNo??x.Receipt.WaybillNo),
+            CreatedByName=x.User==null?null:(x.Detail==null?x.User.Username:(x.Detail.FirstName+" "+x.Detail.LastName)),
             Status=x.Inspection.Status.ToString(),LineCount=x.Inspection.Lines.Count,TotalQuantity=x.Inspection.Lines.Sum(line=>line.Quantity),
-            CreatedAtUtc=x.Inspection.CreatedAtUtc,DecidedAtUtc=x.Inspection.DecidedAtUtc,InspectorUserId=x.Inspection.InspectorUserId,
+            CreatedAtUtc=x.Inspection.CreatedAtUtc,QueuedAtUtc=x.Inspection.QueuedAtUtc,DecidedAtUtc=x.Inspection.DecidedAtUtc,InspectorUserId=x.Inspection.InspectorUserId,
             CreatedBy=x.Inspection.CreatedBy,CreatedDate=x.Inspection.CreatedDate,UpdatedBy=x.Inspection.UpdatedBy,UpdatedDate=x.Inspection.UpdatedDate });
-        var search=request.Search?.Trim(); q=q.Where(x=>string.IsNullOrWhiteSpace(search)||x.InspectionNo.Contains(search)||x.SourceDocumentNo.Contains(search)||(x.WarehouseName!=null&&x.WarehouseName.Contains(search)));
-        return await q.ApplyAdvancedFilters(request).ApplySort(request,nameof(QualityInspectionGridRow.CreatedAtUtc)).ToPagedResponseAsync(request,ct);
+        var search=request.Search?.Trim(); q=q.Where(x=>string.IsNullOrWhiteSpace(search)||x.InspectionNo.Contains(search)||x.SourceDocumentNo.Contains(search)
+            ||(x.SourceWaybillNo!=null&&x.SourceWaybillNo.Contains(search))||(x.CreatedByName!=null&&x.CreatedByName.Contains(search))
+            ||(x.WarehouseName!=null&&x.WarehouseName.Contains(search)));
+        return await q.ApplyAdvancedFilters(request).ApplySort(request,nameof(QualityInspectionGridRow.QueuedAtUtc)).ToPagedResponseAsync(request,ct);
     }
 
     public async Task<QualityInspectionDetail> GetInspectionAsync(long id, CancellationToken ct = default)
@@ -103,13 +116,25 @@ public sealed class QualityService(IUnitOfWork uow, IAuditLogWriter audit, IStoc
             ?? throw AppException.NotFound("Kalite kontrolü bulunamadı.");
         var warehouse = await uow.Repository<WarehouseEntity>().Query().Where(x => x.Id == inspection.WarehouseId)
             .Select(x => new { x.WarehouseCode, x.WarehouseName }).FirstOrDefaultAsync(ct);
+        var receipt = inspection.SourceDocumentType == "GoodsReceipt"
+            ? await uow.Repository<GoodsReceiptHeader>().Query().Where(x => x.Id == inspection.SourceDocumentId)
+                .Select(x => new { x.WaybillNo, x.ElectronicWaybillNo }).FirstOrDefaultAsync(ct)
+            : null;
+        var creator = inspection.CreatedBy.HasValue
+            ? await (from user in uow.Repository<User>().Query()
+                     join detail in uow.Repository<UserDetail>().Query() on user.Id equals detail.UserId into details
+                     from detail in details.DefaultIfEmpty()
+                     where user.Id == inspection.CreatedBy.Value
+                     select detail == null ? user.Username : detail.FirstName + " " + detail.LastName).FirstOrDefaultAsync(ct)
+            : null;
         var header = new QualityInspectionGridRow { Id = inspection.Id, BranchCode = inspection.BranchCode,
             InspectionNo = inspection.InspectionNo, SourceDocumentType = inspection.SourceDocumentType,
             SourceDocumentId = inspection.SourceDocumentId, SourceDocumentNo = inspection.SourceDocumentNo,
             WarehouseId = inspection.WarehouseId, WarehouseCode = warehouse?.WarehouseCode, WarehouseName = warehouse?.WarehouseName,
-            SupplierId = inspection.SupplierId, Status = inspection.Status.ToString(), LineCount = inspection.Lines.Count,
+            SupplierId = inspection.SupplierId, SourceWaybillNo = receipt == null ? null : receipt.ElectronicWaybillNo ?? receipt.WaybillNo,
+            CreatedByName = creator, Status = inspection.Status.ToString(), LineCount = inspection.Lines.Count,
             TotalQuantity = inspection.Lines.Sum(x => x.Quantity), CreatedAtUtc = inspection.CreatedAtUtc,
-            DecidedAtUtc = inspection.DecidedAtUtc, InspectorUserId = inspection.InspectorUserId,
+            QueuedAtUtc = inspection.QueuedAtUtc, DecidedAtUtc = inspection.DecidedAtUtc, InspectorUserId = inspection.InspectorUserId,
             CreatedBy = inspection.CreatedBy, CreatedDate = inspection.CreatedDate, UpdatedBy = inspection.UpdatedBy, UpdatedDate = inspection.UpdatedDate };
         var lines = inspection.Lines.OrderBy(x => x.Id).Select(x => new QualityInspectionLineDto(x.Id, x.GoodsReceiptLineId,
             x.StockId, x.StockCodeSnapshot, x.StockNameSnapshot, x.YapCodeSnapshot, x.LotNo, x.SerialNo, x.ExpiryDate,

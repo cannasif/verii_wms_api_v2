@@ -82,6 +82,21 @@ public sealed class GoodsReceiptsController(
             "Ambar çıkış taslağı mal kabulden oluşturuldu."));
     }
 
+    [HttpPost("{id:long}/routes/split")]
+    public async Task<IActionResult> CreateSplitRouting(
+        long id,
+        CreateGoodsReceiptSplitRoutingRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.Transfer is not null)
+            await Require("WMS.WAREHOUSE_TRANSFER.CREATE", cancellationToken);
+        if (request.Outbound is not null)
+            await Require("WMS.WAREHOUSE_OUTBOUND.CREATE", cancellationToken);
+        return Ok(ApiResponse<GoodsReceiptSplitRoutingResult>.Ok(
+            await routing.CreateSplitAsync(id, request, CurrentUserId(), cancellationToken),
+            "Mal kabul kalemleri transfer ve ambar çıkış belgelerine atomik olarak dağıtıldı."));
+    }
+
     [HttpPost("tasks/paged")]
     public async Task<IActionResult> GetTasksPaged(PagedRequest request, CancellationToken cancellationToken)
     {
