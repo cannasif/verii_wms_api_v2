@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using verii_wms_api_v2.Modules.DocumentSeries.Domain;
 using verii_wms_api_v2.Shared;
 
@@ -52,9 +53,14 @@ public sealed class DocumentSeriesGridRow
     public DateTime? LastIssuedAt { get; init; }
     public string? Description { get; init; }
     public long? CreatedBy { get; init; }
+    public string? CreatedByName { get; init; }
     public DateTime? CreatedDate { get; init; }
     public long? UpdatedBy { get; init; }
+    public string? UpdatedByName { get; init; }
     public DateTime? UpdatedDate { get; init; }
+    [JsonIgnore] public string? WarehouseSearchText { get; init; }
+    [JsonIgnore] public string? CreatedBySearchText { get; init; }
+    [JsonIgnore] public string? UpdatedBySearchText { get; init; }
 }
 
 public sealed record DocumentSeriesLookupRow(long Id, string Code, string Name, string PreviewDocumentNumber, bool IsDefault);

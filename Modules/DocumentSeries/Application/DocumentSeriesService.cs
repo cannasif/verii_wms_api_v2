@@ -4,6 +4,7 @@ using Microsoft.Extensions.Localization;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.DocumentSeries.Domain;
 using verii_wms_api_v2.Modules.DocumentSeries.Localization;
+using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -20,23 +21,34 @@ public sealed partial class DocumentSeriesService(
     private static readonly IReadOnlyDictionary<string, string> SearchColumnMapping =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
+            ["id"] = nameof(DocumentSeriesGridRow.Id),
+            ["branchCode"] = nameof(DocumentSeriesGridRow.BranchCode),
             ["code"] = nameof(DocumentSeriesGridRow.Code),
             ["name"] = nameof(DocumentSeriesGridRow.Name),
             ["prefix"] = nameof(DocumentSeriesGridRow.Prefix),
             ["documentType"] = nameof(DocumentSeriesGridRow.DocumentType),
-            ["warehouseName"] = nameof(DocumentSeriesGridRow.WarehouseName)
+            ["warehouseName"] = nameof(DocumentSeriesGridRow.WarehouseSearchText),
+            ["nextNumber"] = nameof(DocumentSeriesGridRow.NextNumber),
+            ["createdBy"] = nameof(DocumentSeriesGridRow.CreatedBySearchText),
+            ["updatedBy"] = nameof(DocumentSeriesGridRow.UpdatedBySearchText)
         };
     private static readonly string[] DefaultSearchColumns = ["code", "name"];
 
     private IGenericRepository<SeriesEntity> Series => unitOfWork.Repository<SeriesEntity>();
     private IGenericRepository<WarehouseEntity> Warehouses => unitOfWork.Repository<WarehouseEntity>();
+    private IGenericRepository<User> Users => unitOfWork.Repository<User>();
+    private IGenericRepository<UserDetail> UserDetails => unitOfWork.Repository<UserDetail>();
 
     public async Task<PagedResponse<DocumentSeriesGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
-        var query = BuildGridQuery().ApplySearch(request, SearchColumnMapping, DefaultSearchColumns);
-        query = query.ApplyAdvancedFilters(request).ApplySort(request, nameof(DocumentSeriesGridRow.Code));
-        return await query.ToPagedResponseAsync(request, cancellationToken);
+        return await BuildPagedQuery(request).ToPagedResponseAsync(request, cancellationToken);
     }
+
+    internal IQueryable<DocumentSeriesGridRow> BuildPagedQuery(PagedRequest request) =>
+        BuildGridQuery()
+            .ApplySearch(request, SearchColumnMapping, DefaultSearchColumns)
+            .ApplyAdvancedFilters(request)
+            .ApplySort(request, nameof(DocumentSeriesGridRow.Code));
 
     public async Task<DocumentSeriesGridRow> GetByIdAsync(long id, CancellationToken cancellationToken = default) =>
         await BuildGridQuery().FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
@@ -97,9 +109,19 @@ public sealed partial class DocumentSeriesService(
     {
         var series = Series.Query();
         var warehouses = Warehouses.Query();
+        var users = Users.Query();
+        var userDetails = UserDetails.Query();
         return from item in series
                join warehouse in warehouses on item.WarehouseId equals warehouse.Id into warehouseRows
                from warehouse in warehouseRows.DefaultIfEmpty()
+               join createdUser in users on item.CreatedBy equals (long?)createdUser.Id into createdUsers
+               from createdUser in createdUsers.DefaultIfEmpty()
+               join createdDetail in userDetails on item.CreatedBy equals (long?)createdDetail.UserId into createdDetails
+               from createdDetail in createdDetails.DefaultIfEmpty()
+               join updatedUser in users on item.UpdatedBy equals (long?)updatedUser.Id into updatedUsers
+               from updatedUser in updatedUsers.DefaultIfEmpty()
+               join updatedDetail in userDetails on item.UpdatedBy equals (long?)updatedDetail.UserId into updatedDetails
+               from updatedDetail in updatedDetails.DefaultIfEmpty()
                select new DocumentSeriesGridRow
                {
                    Id = item.Id,
@@ -107,6 +129,7 @@ public sealed partial class DocumentSeriesService(
                    WarehouseId = item.WarehouseId,
                    WarehouseCode = warehouse == null ? null : warehouse.WarehouseCode,
                    WarehouseName = warehouse == null ? null : warehouse.WarehouseName,
+                   WarehouseSearchText = warehouse == null ? null : warehouse.WarehouseCode + " " + warehouse.WarehouseName,
                    Code = item.Code,
                    Name = item.Name,
                    DocumentType = item.DocumentType == WmsDocumentType.GoodsReceipt ? "GoodsReceipt"
@@ -131,8 +154,26 @@ public sealed partial class DocumentSeriesService(
                    LastIssuedAt = item.LastIssuedAt,
                    Description = item.Description,
                    CreatedBy = item.CreatedBy,
+                   CreatedByName = createdUser == null
+                       ? null
+                       : createdDetail != null && (createdDetail.FirstName != "" || createdDetail.LastName != "")
+                           ? (createdDetail.FirstName + " " + createdDetail.LastName).Trim()
+                           : createdUser.Username,
+                   CreatedBySearchText = createdUser == null
+                       ? null
+                       : createdUser.Username + " " + createdUser.Email + " "
+                           + (createdDetail == null ? "" : createdDetail.FirstName + " " + createdDetail.LastName),
                    CreatedDate = item.CreatedDate,
                    UpdatedBy = item.UpdatedBy,
+                   UpdatedByName = updatedUser == null
+                       ? null
+                       : updatedDetail != null && (updatedDetail.FirstName != "" || updatedDetail.LastName != "")
+                           ? (updatedDetail.FirstName + " " + updatedDetail.LastName).Trim()
+                           : updatedUser.Username,
+                   UpdatedBySearchText = updatedUser == null
+                       ? null
+                       : updatedUser.Username + " " + updatedUser.Email + " "
+                           + (updatedDetail == null ? "" : updatedDetail.FirstName + " " + updatedDetail.LastName),
                    UpdatedDate = item.UpdatedDate
                };
     }
