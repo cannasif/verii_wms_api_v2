@@ -17,15 +17,23 @@ public sealed partial class DocumentSeriesService(
     IAuditLogWriter audit,
     IStringLocalizer<DocumentSeriesResource> localizer) : IDocumentSeriesService
 {
+    private static readonly IReadOnlyDictionary<string, string> SearchColumnMapping =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["code"] = nameof(DocumentSeriesGridRow.Code),
+            ["name"] = nameof(DocumentSeriesGridRow.Name),
+            ["prefix"] = nameof(DocumentSeriesGridRow.Prefix),
+            ["documentType"] = nameof(DocumentSeriesGridRow.DocumentType),
+            ["warehouseName"] = nameof(DocumentSeriesGridRow.WarehouseName)
+        };
+    private static readonly string[] DefaultSearchColumns = ["code", "name"];
+
     private IGenericRepository<SeriesEntity> Series => unitOfWork.Repository<SeriesEntity>();
     private IGenericRepository<WarehouseEntity> Warehouses => unitOfWork.Repository<WarehouseEntity>();
 
     public async Task<PagedResponse<DocumentSeriesGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
-        var search = request.Search?.Trim();
-        var query = BuildGridQuery().Where(x => string.IsNullOrWhiteSpace(search)
-            || x.Code.Contains(search) || x.Name.Contains(search) || x.Prefix.Contains(search)
-            || x.DocumentType.Contains(search) || (x.WarehouseName != null && x.WarehouseName.Contains(search)));
+        var query = BuildGridQuery().ApplySearch(request, SearchColumnMapping, DefaultSearchColumns);
         query = query.ApplyAdvancedFilters(request).ApplySort(request, nameof(DocumentSeriesGridRow.Code));
         return await query.ToPagedResponseAsync(request, cancellationToken);
     }
