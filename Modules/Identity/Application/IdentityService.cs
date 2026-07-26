@@ -50,6 +50,30 @@ public sealed class IdentityService(
             var now = DateTime.UtcNow;
             if (current.RevokedAt.HasValue)
             {
+                var replayGraceSeconds = Math.Clamp(
+                    configuration.GetValue("Identity:RefreshTokenReplayGraceSeconds", 15),
+                    0,
+                    60);
+                if (RefreshTokenReplayPolicy.IsAllowed(
+                        current,
+                        client,
+                        now,
+                        TimeSpan.FromSeconds(replayGraceSeconds)))
+                {
+                    var concurrentReplacement = await CreateSessionAsync(
+                        current.User,
+                        current.FamilyId,
+                        client,
+                        ct,
+                        current.ExpiresAt);
+                    await unitOfWork.SaveChangesAsync(ct);
+                    logger.LogInformation(
+                        "Concurrent refresh replay accepted within grace window. UserId={UserId} FamilyId={FamilyId}",
+                        current.UserId,
+                        current.FamilyId);
+                    return RefreshOutcome.Valid(ToAuthSession(current.User, concurrentReplacement));
+                }
+
                 await RevokeFamilyAsync(current.User, current.FamilyId, "ReuseDetected", client, now, ct);
                 current.User.TokenVersion++;
                 await unitOfWork.SaveChangesAsync(ct);
@@ -63,7 +87,12 @@ public sealed class IdentityService(
                 return RefreshOutcome.Invalid();
             }
 
-            var replacement = await CreateSessionAsync(current.User, current.FamilyId, client, ct);
+            var replacement = await CreateSessionAsync(
+                current.User,
+                current.FamilyId,
+                client,
+                ct,
+                current.ExpiresAt);
             current.ReplacedByTokenHash = replacement.Entity.TokenHash;
             Revoke(current, "Rotated", client, now);
             await unitOfWork.SaveChangesAsync(ct);
@@ -77,11 +106,17 @@ public sealed class IdentityService(
     {
         if (string.IsNullOrWhiteSpace(refreshToken)) return;
         var tokenHash = IdentitySecurity.HashToken(refreshToken);
-        var session = await RefreshTokens.Query(tracking: true)
+        var session = await RefreshTokens.Query(tracking: true).Include(x => x.User)
             .FirstOrDefaultAsync(x => x.TokenHash == tokenHash, cancellationToken);
-        if (session is null || session.RevokedAt.HasValue) return;
+        if (session is null) return;
 
-        Revoke(session, "Logout", client, DateTime.UtcNow);
+        await RevokeFamilyAsync(
+            session.User,
+            session.FamilyId,
+            "Logout",
+            client,
+            DateTime.UtcNow,
+            cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
@@ -181,10 +216,16 @@ public sealed class IdentityService(
         }, cancellationToken, IsolationLevel.Serializable);
     }
 
-    private async Task<IssuedRefreshSession> CreateSessionAsync(User user, Guid familyId, ClientContext client, CancellationToken cancellationToken)
+    private async Task<IssuedRefreshSession> CreateSessionAsync(
+        User user,
+        Guid familyId,
+        ClientContext client,
+        CancellationToken cancellationToken,
+        DateTime? absoluteExpiresAt = null)
     {
         var rawToken = IdentitySecurity.CreateOpaqueToken();
-        var expiresAt = DateTime.UtcNow.AddDays(configuration.GetValue("Identity:RefreshTokenDays", 7));
+        var expiresAt = absoluteExpiresAt
+            ?? DateTime.UtcNow.AddDays(configuration.GetValue("Identity:RefreshTokenDays", 30));
         var entity = new RefreshTokenSession
         {
             UserId = user.Id,
