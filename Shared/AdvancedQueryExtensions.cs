@@ -55,8 +55,8 @@ public static class AdvancedQueryExtensions
                 message => AppException.BadRequest(message));
             var resolved = ResolvePath(parameter, typeof(T), path)
                 ?? throw AppException.BadRequest($"'{column}' aranabilir bir kolon değildir.");
-            if (resolved.member.Type != typeof(string))
-                throw AppException.BadRequest($"'{column}' metin aramasını desteklemiyor.");
+            if (!SupportsGeneralSearch(resolved.member.Type))
+                throw AppException.BadRequest($"'{column}' genel aramayı destekleyen bir kolon değildir.");
             return resolved.member;
         }).ToArray();
 
@@ -71,19 +71,15 @@ public static class AdvancedQueryExtensions
         foreach (var term in terms)
         {
             Expression? anyColumn = null;
-            var value = Expression.Constant(term);
             foreach (var member in members)
             {
-                var notNull = Expression.NotEqual(member, Expression.Constant(null, typeof(string)));
-                var contains = Expression.Call(
-                    member,
-                    typeof(string).GetMethod(nameof(string.Contains), [typeof(string)])!,
-                    value);
-                var current = Expression.AndAlso(notNull, contains);
+                var current = BuildGeneralSearchMatch(member, term);
+                if (current is null) continue;
                 anyColumn = anyColumn is null ? current : Expression.OrElse(anyColumn, current);
             }
 
-            allTerms = allTerms is null ? anyColumn : Expression.AndAlso(allTerms, anyColumn!);
+            anyColumn ??= Expression.Constant(false);
+            allTerms = allTerms is null ? anyColumn : Expression.AndAlso(allTerms, anyColumn);
         }
 
         return allTerms is null
@@ -91,6 +87,98 @@ public static class AdvancedQueryExtensions
             : PagedQueryExtensions.RewriteProjectionMemberAccess(
                 query.Where(Expression.Lambda<Func<T, bool>>(allTerms, parameter)));
     }
+
+    private static bool SupportsGeneralSearch(Type propertyType)
+    {
+        var type = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
+        return type == typeof(string)
+            || type == typeof(Guid)
+            || type == typeof(bool)
+            || type.IsEnum
+            || IsNumericType(type);
+    }
+
+    private static Expression? BuildGeneralSearchMatch(Expression member, string term)
+    {
+        var propertyType = member.Type;
+        var underlying = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
+        if (underlying == typeof(string))
+        {
+            var notNull = Expression.NotEqual(member, Expression.Constant(null, typeof(string)));
+            var contains = Expression.Call(
+                member,
+                typeof(string).GetMethod(nameof(string.Contains), [typeof(string)])!,
+                Expression.Constant(term));
+            return Expression.AndAlso(notNull, contains);
+        }
+
+        if (!TryParseGeneralSearchValue(term, underlying, out var parsed)) return null;
+
+        Expression valueMember = member;
+        Expression? hasValue = null;
+        if (Nullable.GetUnderlyingType(propertyType) is not null)
+        {
+            hasValue = Expression.Property(member, "HasValue");
+            valueMember = Expression.Property(member, "Value");
+        }
+
+        var equals = Expression.Equal(valueMember, Expression.Constant(parsed, underlying));
+        return hasValue is null ? equals : Expression.AndAlso(hasValue, equals);
+    }
+
+    private static bool TryParseGeneralSearchValue(string term, Type targetType, out object? parsed)
+    {
+        parsed = null;
+        var value = term.Trim();
+        if (targetType.IsEnum)
+        {
+            if (!Enum.TryParse(targetType, value, true, out var enumValue)
+                || enumValue is null
+                || !Enum.IsDefined(targetType, enumValue))
+                return false;
+            parsed = enumValue;
+            return true;
+        }
+
+        if (targetType == typeof(Guid))
+        {
+            if (!Guid.TryParse(value, out var guid)) return false;
+            parsed = guid;
+            return true;
+        }
+
+        if (targetType == typeof(bool))
+        {
+            if (bool.TryParse(value, out var boolean)) { parsed = boolean; return true; }
+            if (value == "1") { parsed = true; return true; }
+            if (value == "0") { parsed = false; return true; }
+            return false;
+        }
+
+        if (!IsNumericType(targetType)) return false;
+        try
+        {
+            parsed = Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
+            return parsed is not null;
+        }
+        catch (Exception exception) when (exception is FormatException or InvalidCastException or OverflowException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsNumericType(Type type) =>
+        type == typeof(byte)
+        || type == typeof(sbyte)
+        || type == typeof(short)
+        || type == typeof(ushort)
+        || type == typeof(int)
+        || type == typeof(uint)
+        || type == typeof(long)
+        || type == typeof(ulong)
+        || type == typeof(float)
+        || type == typeof(double)
+        || type == typeof(decimal);
 
     public static IQueryable<T> ApplyAdvancedFilters<T>(this IQueryable<T> query, PagedRequest request, IReadOnlyDictionary<string, string>? columnMapping = null)
     {

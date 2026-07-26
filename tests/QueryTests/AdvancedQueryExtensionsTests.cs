@@ -183,6 +183,39 @@ public sealed class AdvancedQueryExtensionsTests
     }
 
     [Fact]
+    public void Search_supports_exact_numeric_record_id()
+    {
+        var request = new PagedRequest
+        {
+            Search = "2",
+            SearchFields = ["id"]
+        };
+
+        var rows = SearchRows()
+            .ApplySearch(request, SearchColumns(), ["code", "name"])
+            .ToList();
+
+        Assert.Single(rows);
+        Assert.Equal(2, rows[0].Id);
+    }
+
+    [Fact]
+    public void Non_numeric_text_returns_no_result_when_only_numeric_field_is_selected()
+    {
+        var request = new PagedRequest
+        {
+            Search = "NOT-AN-ID",
+            SearchFields = ["id"]
+        };
+
+        var rows = SearchRows()
+            .ApplySearch(request, SearchColumns(), ["code", "name"])
+            .ToList();
+
+        Assert.Empty(rows);
+    }
+
+    [Fact]
     public void Nested_path_requires_an_explicit_mapping()
     {
         var exception = Assert.Throws<AppException>(() =>
@@ -319,6 +352,7 @@ public sealed class AdvancedQueryExtensionsTests
     private static IReadOnlyDictionary<string, string> SearchColumns() =>
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
+            ["id"] = nameof(SearchRow.Id),
             ["code"] = nameof(SearchRow.Code),
             ["name"] = nameof(SearchRow.Name),
             ["prefix"] = nameof(SearchRow.Prefix)
