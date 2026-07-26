@@ -233,7 +233,7 @@ public sealed class GoodsReceiptOperationsService(
             foreach (var stock in stocks.Values) trackingPolicies[stock.Id] = await trackingPolicyResolver.ResolveAsync(branch, stock.Id, token);
             var requiresQuality = policy.RequireQualityApproval || resolved.Values.Any(x => x.InspectionMode != QualityInspectionMode.NoCheck);
 
-            ValidateTrackedLines(request, stocks, resolved, trackingPolicies);
+            ValidateTrackedLines(request, stocks, resolved, trackingPolicies, requireCompleteCapture: direct);
             foreach (var input in request.Lines)
             {
                 var validation = await serialPolicyResolver.ValidateAsync(branch, input.StockId, input.YapCodeId, input.SerialNo, token);
@@ -460,7 +460,8 @@ public sealed class GoodsReceiptOperationsService(
         CreateManualGoodsReceiptRequest request,
         IReadOnlyDictionary<long, StockEntity> stocks,
         IReadOnlyDictionary<long, ResolvedQualityPolicy> qualityPolicies,
-        IReadOnlyDictionary<long, EffectiveStockTrackingPolicy> trackingPolicies)
+        IReadOnlyDictionary<long, EffectiveStockTrackingPolicy> trackingPolicies,
+        bool requireCompleteCapture)
     {
         foreach (var line in request.Lines)
         {
@@ -490,7 +491,8 @@ public sealed class GoodsReceiptOperationsService(
                     submittedType == StockTrackingType.None
                         ? []
                         : [new StockTrackingCapture(line.Quantity, line.LotNo, line.SerialNo, line.ManufacturingDate, line.ExpirationDate)],
-                    requireCompleteCapture: effectivePolicy.TrackingType != StockTrackingType.None);
+                    requireCompleteCapture: requireCompleteCapture
+                        && effectivePolicy.TrackingType != StockTrackingType.None);
             }
             catch (StockTrackingPolicyViolationException exception)
             {

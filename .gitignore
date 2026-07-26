@@ -53,6 +53,7 @@ efbundle.exe
 wwwroot/uploads/**
 !wwwroot/uploads/**/
 !wwwroot/uploads/**/.gitkeep
+App_Data/DataProtection-Keys/**
 
 # Operating system files
 .DS_Store

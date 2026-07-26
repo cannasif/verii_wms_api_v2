@@ -4,6 +4,7 @@ using Hangfire.SqlServer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Security.Claims;
@@ -19,6 +20,7 @@ using verii_wms_api_v2.Modules.ErpMirror.Application;
 using verii_wms_api_v2.Modules.ErpMirror.Infrastructure;
 using verii_wms_api_v2.Modules.Identity;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
+using verii_wms_api_v2.Modules.IncomingInvoice;
 using verii_wms_api_v2.Modules.Location;
 using verii_wms_api_v2.Modules.Packing;
 using verii_wms_api_v2.Modules.Packing.Application;
@@ -56,7 +58,21 @@ var databaseConnection = builder.Configuration.GetConnectionString("DefaultConne
     ?? throw new InvalidOperationException("ConnectionStrings:DefaultConnection is missing. Configure it through user-secrets or environment variables.");
 builder.Services.AddDbContext<WmsDbContext>(options => options.UseSqlServer(databaseConnection));
 builder.Services.AddNetsisReadModule();
-builder.Services.AddDataProtection();
+var dataProtectionPathSetting = builder.Configuration["DataProtection:KeyRingPath"];
+var dataProtectionPath = Path.IsPathRooted(dataProtectionPathSetting)
+    ? dataProtectionPathSetting
+    : Path.Combine(
+        builder.Environment.ContentRootPath,
+        string.IsNullOrWhiteSpace(dataProtectionPathSetting)
+            ? Path.Combine("App_Data", "DataProtection-Keys")
+            : dataProtectionPathSetting);
+Directory.CreateDirectory(dataProtectionPath);
+var dataProtection = builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionPath))
+    .SetApplicationName(
+        builder.Configuration["DataProtection:ApplicationName"] ?? "V3RII-WMS-V2");
+if (OperatingSystem.IsWindows())
+    dataProtection.ProtectKeysWithDpapi(protectToLocalMachine: true);
 builder.Services.AddScoped<IErpMirrorService, ErpMirrorService>();
 builder.Services.AddWmsPersistence();
 builder.Services.AddIdentityModule();
@@ -66,6 +82,7 @@ builder.Services.AddErpIntegrationModule(builder.Configuration);
 builder.Services.AddLocationModule();
 builder.Services.AddPackingModule();
 builder.Services.AddGoodsReceiptModule();
+builder.Services.AddIncomingInvoiceModule(builder.Configuration);
 builder.Services.AddSteelReceiptModule();
 builder.Services.AddVehicleCheckInModule();
 builder.Services.AddQualityModule();

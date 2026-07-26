@@ -6,7 +6,8 @@ namespace verii_wms_api_v2.Shared.Infrastructure.Files;
 public enum PrivateUploadArea
 {
     SacMalKabul,
-    SacPanel
+    SacPanel,
+    IncomingInvoice
 }
 
 public sealed record PrivateUploadPolicy(
@@ -127,6 +128,7 @@ public sealed class PrivateUploadStorage(IWebHostEnvironment environment):IPriva
     {
         PrivateUploadArea.SacMalKabul=>"SacMalKabul",
         PrivateUploadArea.SacPanel=>"SacPanel",
+        PrivateUploadArea.IncomingInvoice=>"IncomingInvoice",
         _=>throw AppException.BadRequest("Dosya alanı geçersiz.")
     };
 

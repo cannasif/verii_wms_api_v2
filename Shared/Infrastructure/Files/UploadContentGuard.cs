@@ -7,7 +7,7 @@ public sealed record ValidatedUploadDescriptor(string ContentType,string Extensi
 
 public static class UploadContentGuard
 {
-    private const int SignatureLength=12;
+    private const int SignatureLength=256;
     private const int BufferLength=81920;
 
     public static ValidatedUploadDescriptor ValidateDeclaration(
@@ -82,6 +82,15 @@ public static class UploadContentGuard
         "image/png"=>header.Length>=8&&header[..8].SequenceEqual(new byte[]{0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A}),
         "image/webp"=>header.Length>=12&&header[..4].SequenceEqual("RIFF"u8)&&header.Slice(8,4).SequenceEqual("WEBP"u8),
         "application/pdf"=>header.Length>=5&&header[..5].SequenceEqual("%PDF-"u8),
+        "application/xml"=>LooksLikeXml(header),
+        "text/xml"=>LooksLikeXml(header),
         _=>false
     };
+
+    private static bool LooksLikeXml(ReadOnlySpan<byte> header)
+    {
+        var offset=header.Length>=3&&header[0]==0xEF&&header[1]==0xBB&&header[2]==0xBF?3:0;
+        while(offset<header.Length&&char.IsWhiteSpace((char)header[offset]))offset++;
+        return offset<header.Length&&header[offset]==(byte)'<';
+    }
 }
