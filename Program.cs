@@ -167,10 +167,11 @@ if (app.Environment.IsDevelopment())
     });
 }
 app.MapControllers();
-RecurringJob.AddOrUpdate<ITrackedErpMirrorJobRunner>("erp-warehouse-mirror-sync", service => service.RunWarehousesAsync(CancellationToken.None), Cron.Hourly);
-RecurringJob.AddOrUpdate<ITrackedErpMirrorJobRunner>("erp-stock-mirror-sync", service => service.RunStocksAsync(CancellationToken.None), Cron.Hourly);
-RecurringJob.AddOrUpdate<ITrackedErpMirrorJobRunner>("erp-customer-mirror-sync", service => service.RunCustomersAsync(CancellationToken.None), Cron.Hourly);
-RecurringJob.AddOrUpdate<ITrackedErpMirrorJobRunner>("erp-yap-code-mirror-sync", service => service.RunYapCodesAsync(CancellationToken.None), Cron.Hourly);
-RecurringJob.AddOrUpdate<IStockBalanceJobRunner>("stock-balance-reconciliation", service => service.ReconcileAndRepairAsync(CancellationToken.None), Cron.Daily(2, 30));
-RecurringJob.AddOrUpdate<IPackingPrintQueueJobRunner>("packing-print-queue", service => service.DispatchPendingAsync(CancellationToken.None), Cron.Minutely);
+var recurringJobs = app.Services.GetRequiredService<IRecurringJobManager>();
+recurringJobs.AddOrUpdate<ITrackedErpMirrorJobRunner>("erp-warehouse-mirror-sync", service => service.RunWarehousesAsync(CancellationToken.None), Cron.Hourly);
+recurringJobs.AddOrUpdate<ITrackedErpMirrorJobRunner>("erp-stock-mirror-sync", service => service.RunStocksAsync(CancellationToken.None), Cron.Hourly);
+recurringJobs.AddOrUpdate<ITrackedErpMirrorJobRunner>("erp-customer-mirror-sync", service => service.RunCustomersAsync(CancellationToken.None), Cron.Hourly);
+recurringJobs.AddOrUpdate<ITrackedErpMirrorJobRunner>("erp-yap-code-mirror-sync", service => service.RunYapCodesAsync(CancellationToken.None), Cron.Hourly);
+recurringJobs.AddOrUpdate<IStockBalanceJobRunner>("stock-balance-reconciliation", service => service.ReconcileAndRepairAsync(CancellationToken.None), Cron.Daily(2, 30));
+recurringJobs.AddOrUpdate<IPackingPrintQueueJobRunner>("packing-print-queue", service => service.DispatchPendingAsync(CancellationToken.None), Cron.Minutely);
 app.Run();
