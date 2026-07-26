@@ -1,0 +1,119 @@
+using System.Net;
+using System.Text;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using verii_wms_api_v2.Modules.ErpIntegration.Application;
+using verii_wms_api_v2.Modules.ErpIntegration.Infrastructure;
+using Xunit;
+
+namespace verii_wms_api_v2.QueryTests;
+
+public sealed class NetsisRestClientTests
+{
+    [Fact]
+    public async Task Unauthorized_response_refreshes_token_once_and_rebuilds_post_request()
+    {
+        var handler = new QueueHandler(
+            _ => new HttpResponseMessage(HttpStatusCode.Unauthorized),
+            _ => Json(HttpStatusCode.OK, """{"isSuccessful":true,"data":{"fisNo":"GR-1"}}"""));
+        var tokens = new FakeTokenService();
+        var client = CreateClient(handler, tokens);
+
+        var result = await client.CreateItemSlipAsync(SampleRequest(), CancellationToken.None);
+
+        Assert.True(result.BusinessSucceeded);
+        Assert.Equal("GR-1", result.Data?.Data?.FisNo);
+        Assert.Equal([false, true], tokens.ForceRefreshCalls);
+        Assert.Equal(2, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task Timeout_after_post_is_marked_commit_uncertain()
+    {
+        var handler = new QueueHandler(_ => throw new TaskCanceledException("timeout"));
+        var client = CreateClient(handler, new FakeTokenService());
+
+        var result = await client.CreateItemSlipAsync(SampleRequest(), CancellationToken.None);
+
+        Assert.False(result.TransportSucceeded);
+        Assert.True(result.CommitUncertain);
+        Assert.Equal("ERP_TIMEOUT_COMMIT_UNCERTAIN", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Http_200_with_business_error_is_not_successful()
+    {
+        var handler = new QueueHandler(
+            _ => Json(HttpStatusCode.OK, """{"isSuccessful":false,"errorCode":"E42","errorDesc":"Belge reddedildi"}"""));
+        var client = CreateClient(handler, new FakeTokenService());
+
+        var result = await client.CreateItemSlipAsync(SampleRequest(), CancellationToken.None);
+
+        Assert.True(result.TransportSucceeded);
+        Assert.False(result.BusinessSucceeded);
+        Assert.False(result.CommitUncertain);
+        Assert.Equal("E42", result.ErrorCode);
+        Assert.Equal("Belge reddedildi", result.ErrorMessage);
+    }
+
+    private static NetsisRestClient CreateClient(HttpMessageHandler handler, INetsisTokenService tokenService)
+    {
+        var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://netsis.local") };
+        var options = Options.Create(new NetsisOptions
+        {
+            Enabled = true,
+            Rest = new NetsisRestOptions
+            {
+                BaseUrl = "http://netsis.local",
+                ItemSlipsPath = "/api/v2/ItemSlips"
+            }
+        });
+        return new NetsisRestClient(httpClient, tokenService, options, NullLogger<NetsisRestClient>.Instance);
+    }
+
+    private static NetsisItemSlipRequest SampleRequest() => new()
+    {
+        FaturaTip = 3,
+        FatUst = new NetsisItemSlipHeader
+        {
+            CariKod = "C-1",
+            FisNo = "GR-1",
+            BelgeNo = "IRS-1",
+            Tarih = DateTime.UtcNow,
+            FiiliTarih = DateTime.UtcNow,
+            Tip = 3
+        },
+        Kalems = [new NetsisItemSlipLine { StokKodu = "S-1", Miktar = 1, DepoKodu = 1 }]
+    };
+
+    private static HttpResponseMessage Json(HttpStatusCode status, string body) => new(status)
+    {
+        Content = new StringContent(body, Encoding.UTF8, "application/json")
+    };
+
+    private sealed class FakeTokenService : INetsisTokenService
+    {
+        public List<bool> ForceRefreshCalls { get; } = [];
+        public Task<string> GetAccessTokenAsync(bool forceRefresh, CancellationToken cancellationToken)
+        {
+            ForceRefreshCalls.Add(forceRefresh);
+            return Task.FromResult(forceRefresh ? "refreshed-token" : "cached-token");
+        }
+    }
+
+    private sealed class QueueHandler(params Func<HttpRequestMessage, HttpResponseMessage>[] responses)
+        : HttpMessageHandler
+    {
+        private readonly Queue<Func<HttpRequestMessage, HttpResponseMessage>> _responses = new(responses);
+        public int CallCount { get; private set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            if (_responses.Count == 0) throw new InvalidOperationException("Test yanıtı kalmadı.");
+            return Task.FromResult(_responses.Dequeue()(request));
+        }
+    }
+}
