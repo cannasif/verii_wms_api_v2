@@ -14,6 +14,17 @@ public enum WarehouseTransferInitiationMode
 public enum WarehouseTransferReservationPolicy { None = 1, OnCreate = 2, OnRelease = 3 }
 public enum WarehouseTransferDirectPostingPolicy { OneStep = 1, TwoStepTransit = 2 }
 
+public enum WarehouseTransferBusinessContext
+{
+    InterWarehouse = 1,
+    ProductionMaterialSupply = 2,
+    ProductionWipMove = 3,
+    ProductionOutputMove = 4,
+    SubcontractingIssue = 5,
+    SubcontractingReceipt = 6,
+    SubcontractorToSubcontractor = 7
+}
+
 public enum WarehouseTransferProcessType
 {
     ErpOrderBased = 1,
@@ -108,6 +119,7 @@ public sealed class WarehouseTransferHeader : BaseEntity
     public long DocumentSeriesId { get; set; }
     public string DocumentNo { get; set; } = string.Empty;
     public DateOnly DocumentDate { get; set; }
+    public WarehouseTransferBusinessContext BusinessContext { get; set; } = WarehouseTransferBusinessContext.InterWarehouse;
     public WarehouseTransferInitiationMode InitiationMode { get; set; }
     public WarehouseTransferProcessType ProcessType { get; set; }
     public WarehouseOperationSourceSystem SourceSystem { get; set; } = WarehouseOperationSourceSystem.Manual;

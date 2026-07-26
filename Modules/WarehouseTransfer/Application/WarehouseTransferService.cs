@@ -42,9 +42,9 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
             }
             if(orderBased&&request.Lines.Any(x=>x.Source is null))throw AppException.BadRequest("Siparişli transferde her kalemin Netsis kaynak satırı olmalıdır.");
             if(!orderBased&&request.Lines.Any(x=>x.Source is not null))throw AppException.BadRequest("Siparişsiz transferde Netsis kaynak satırı gönderilemez.");
-            var warehouseIds=new[]{request.SourceWarehouseId,request.TargetWarehouseId};
+            var warehouseIds=new[]{request.SourceWarehouseId,request.TargetWarehouseId}.Distinct().ToArray();
             var warehouses=await uow.Repository<WarehouseEntity>().Query().Where(x=>warehouseIds.Contains(x.Id)&&x.BranchCode==branch).ToDictionaryAsync(x=>x.Id,token);
-            if(warehouses.Count!=2)throw AppException.BadRequest("Kaynak veya hedef depo bulunamadı.");
+            if(warehouses.Count!=warehouseIds.Length)throw AppException.BadRequest("Kaynak veya hedef depo bulunamadı.");
 
             var locationIds=request.Lines.SelectMany(x=>new long?[]{x.DefaultSourceLocationId,x.DefaultTargetLocationId})
                 .Concat([request.SourceStagingLocationId,request.TargetReceivingLocationId,request.TargetPutawayLocationId])
@@ -66,11 +66,11 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
             if(yaps.Count!=yapIds.Length)throw AppException.BadRequest("Seçilen yapı kodlarından biri ERP mirror tablosunda bulunamadı.");
             ValidateTrackings(request,trackingPolicies);
 
-            var allocated=await numberAllocator.AllocateAsync(request.DocumentSeriesId,WmsDocumentType.InterWarehouseTransfer,DateTime.UtcNow,token);
+            var allocated=await numberAllocator.AllocateAsync(request.DocumentSeriesId,DocumentType(request.BusinessContext),DateTime.UtcNow,token);
             var now=DateTime.UtcNow;
             var header=new WarehouseTransferHeader{
                 BranchCode=branch,CreatedBy=actor,CreatedDate=now,DocumentSeriesId=allocated.DocumentSeriesId,DocumentNo=allocated.DocumentNumber,
-                DocumentDate=request.DocumentDate,InitiationMode=request.InitiationMode,ProcessType=request.ProcessType,SourceSystem=orderBased?WarehouseOperationSourceSystem.Netsis:WarehouseOperationSourceSystem.Manual,
+                DocumentDate=request.DocumentDate,BusinessContext=request.BusinessContext,InitiationMode=request.InitiationMode,ProcessType=request.ProcessType,SourceSystem=orderBased?WarehouseOperationSourceSystem.Netsis:WarehouseOperationSourceSystem.Manual,
                 CorrelationId=request.IdempotencyKey,ExternalReferenceNo=Clean(request.ExternalReferenceNo,100),
                 SourceWarehouseId=request.SourceWarehouseId,TargetWarehouseId=request.TargetWarehouseId,
                 SourceStagingLocationId=request.SourceStagingLocationId,TargetReceivingLocationId=request.TargetReceivingLocationId,TargetPutawayLocationId=request.TargetPutawayLocationId,
@@ -159,14 +159,22 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
         },ct);
     }
 
-    public async Task<PagedResponse<WarehouseTransferGridRow>> GetPagedAsync(PagedRequest request,CancellationToken ct=default)
+    public Task<PagedResponse<WarehouseTransferGridRow>> GetPagedAsync(PagedRequest request,CancellationToken ct=default) =>
+        GetPagedByContextAsync(request,[WarehouseTransferBusinessContext.InterWarehouse],ct);
+
+    public async Task<PagedResponse<WarehouseTransferGridRow>> GetPagedByContextAsync(
+        PagedRequest request,
+        IReadOnlyCollection<WarehouseTransferBusinessContext> contexts,
+        CancellationToken ct=default)
     {
+        if(contexts.Count==0)throw AppException.BadRequest("En az bir transfer bağlamı seçilmelidir.");
         var search=request.Search?.Trim();var warehouses=uow.Repository<WarehouseEntity>().Query(ignoreQueryFilters:true);var lines=uow.Repository<WarehouseTransferLine>().Query();
         var baseQuery=from h in Headers.Query()
             join sw in warehouses on h.SourceWarehouseId equals sw.Id
             join tw in warehouses on h.TargetWarehouseId equals tw.Id
-            where string.IsNullOrWhiteSpace(search)||h.DocumentNo.Contains(search)||(h.ExternalReferenceNo!=null&&h.ExternalReferenceNo.Contains(search))
-                ||sw.WarehouseName.Contains(search)||tw.WarehouseName.Contains(search)||h.BranchCode.Contains(search)
+            where contexts.Contains(h.BusinessContext)
+                && (string.IsNullOrWhiteSpace(search)||h.DocumentNo.Contains(search)||(h.ExternalReferenceNo!=null&&h.ExternalReferenceNo.Contains(search))
+                ||sw.WarehouseName.Contains(search)||tw.WarehouseName.Contains(search)||h.BranchCode.Contains(search))
             select new {Header=h,Source=sw,Target=tw};
         var desc=string.Equals(request.SortDirection,"desc",StringComparison.OrdinalIgnoreCase);
         var sortBy=request.SortBy?.Trim();
@@ -196,7 +204,7 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
             let h=item.Header
             let sw=item.Source
             let tw=item.Target
-            select new WarehouseTransferGridRow(h.Id,h.BranchCode,h.DocumentNo,h.DocumentDate,h.InitiationMode,h.ProcessType,h.Status,h.ApprovalStatus,h.ErpIntegrationStatus,
+            select new WarehouseTransferGridRow(h.Id,h.BranchCode,h.DocumentNo,h.DocumentDate,h.BusinessContext,h.InitiationMode,h.ProcessType,h.Status,h.ApprovalStatus,h.ErpIntegrationStatus,
                 h.SourceWarehouseId,sw.WarehouseCode,sw.WarehouseName,h.TargetWarehouseId,tw.WarehouseCode,tw.WarehouseName,
                 lines.Count(x=>x.WtHeaderId==h.Id),lines.Where(x=>x.WtHeaderId==h.Id).Sum(x=>(decimal?)x.RequestedQuantity)??0,
                 lines.Where(x=>x.WtHeaderId==h.Id).Sum(x=>(decimal?)x.PickedQuantity)??0,lines.Where(x=>x.WtHeaderId==h.Id).Sum(x=>(decimal?)x.ShippedQuantity)??0,
@@ -214,7 +222,7 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
             join sw in warehouses on h.SourceWarehouseId equals sw.Id
             join tw in warehouses on h.TargetWarehouseId equals tw.Id
             where h.Id==id
-            select new WarehouseTransferGridRow(h.Id,h.BranchCode,h.DocumentNo,h.DocumentDate,h.InitiationMode,h.ProcessType,h.Status,h.ApprovalStatus,h.ErpIntegrationStatus,
+            select new WarehouseTransferGridRow(h.Id,h.BranchCode,h.DocumentNo,h.DocumentDate,h.BusinessContext,h.InitiationMode,h.ProcessType,h.Status,h.ApprovalStatus,h.ErpIntegrationStatus,
                 h.SourceWarehouseId,sw.WarehouseCode,sw.WarehouseName,h.TargetWarehouseId,tw.WarehouseCode,tw.WarehouseName,
                 transferLines.Count(x=>x.WtHeaderId==h.Id),transferLines.Where(x=>x.WtHeaderId==h.Id).Sum(x=>(decimal?)x.RequestedQuantity)??0,
                 transferLines.Where(x=>x.WtHeaderId==h.Id).Sum(x=>(decimal?)x.PickedQuantity)??0,transferLines.Where(x=>x.WtHeaderId==h.Id).Sum(x=>(decimal?)x.ShippedQuantity)??0,
@@ -227,6 +235,27 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
                 x.TrackingType,x.Status,x.Trackings.Count)).ToListAsync(ct);
         var draft=await Headers.Query().Where(x=>x.Id==id).Select(x=>new{x.RowVersion,x.SourceStagingLocationId,x.TargetReceivingLocationId,x.TargetPutawayLocationId,x.ExternalReferenceNo,x.Description}).SingleAsync(ct);
         return new(header,lines,Convert.ToBase64String(draft.RowVersion),new(draft.SourceStagingLocationId,draft.TargetReceivingLocationId,draft.TargetPutawayLocationId,draft.ExternalReferenceNo,draft.Description));
+    }
+
+    public async Task<WarehouseTransferDetail> GetDetailForContextAsync(
+        long id,
+        IReadOnlyCollection<WarehouseTransferBusinessContext> contexts,
+        CancellationToken ct=default)
+    {
+        await EnsureContextAsync(id,contexts,ct);
+        return await GetDetailAsync(id,ct);
+    }
+
+    public async Task EnsureContextAsync(
+        long id,
+        IReadOnlyCollection<WarehouseTransferBusinessContext> contexts,
+        CancellationToken ct=default)
+    {
+        if(id<=0||contexts.Count==0)throw AppException.BadRequest("Transfer bağlamı geçersiz.");
+        var context=await Headers.Query().Where(x=>x.Id==id)
+            .Select(x=>(WarehouseTransferBusinessContext?)x.BusinessContext).SingleOrDefaultAsync(ct);
+        if(!context.HasValue)throw AppException.NotFound("Transfer kaydı bulunamadı.");
+        if(!contexts.Contains(context.Value))throw AppException.NotFound("Transfer kaydı bu operasyon modülüne ait değil.");
     }
 
     public Task<WarehouseTransferDetail> UpdateDraftAsync(long id,UpdateWarehouseTransferDraftRequest request,long actor,CancellationToken ct=default)=>
@@ -287,7 +316,11 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
     private static void ValidateEnvelope(CreateWarehouseTransferDraftRequest r){
         if(r.IdempotencyKey==Guid.Empty)throw AppException.BadRequest("Idempotency anahtarı zorunludur.");
         if(string.IsNullOrWhiteSpace(r.BranchCode))throw AppException.BadRequest("Şube kodu zorunludur.");
-        if(r.SourceWarehouseId<=0||r.TargetWarehouseId<=0||r.SourceWarehouseId==r.TargetWarehouseId)throw AppException.BadRequest("Kaynak ve hedef depo farklı olmalıdır.");
+        if(r.SourceWarehouseId<=0||r.TargetWarehouseId<=0)throw AppException.BadRequest("Kaynak ve hedef depo zorunludur.");
+        if(r.BusinessContext==WarehouseTransferBusinessContext.InterWarehouse&&r.SourceWarehouseId==r.TargetWarehouseId)
+            throw AppException.BadRequest("Depolar arası transferde kaynak ve hedef depo farklı olmalıdır.");
+        if(r.SourceWarehouseId==r.TargetWarehouseId&&r.Lines.Any(x=>!x.DefaultSourceLocationId.HasValue||!x.DefaultTargetLocationId.HasValue||x.DefaultSourceLocationId==x.DefaultTargetLocationId))
+            throw AppException.BadRequest("Aynı depo içindeki üretim/fason transferinde kaynak ve hedef raf farklı ve zorunlu olmalıdır.");
         if(r.DocumentSeriesId<=0)throw AppException.BadRequest("Transfer belge serisi zorunludur.");
         if(r.Priority is <1 or >9)throw AppException.BadRequest("Öncelik 1-9 arasında olmalıdır.");
         if(r.Lines.Count==0)throw AppException.BadRequest("En az bir transfer satırı zorunludur.");
@@ -330,6 +363,13 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
             }catch(StockTrackingPolicyViolationException ex){throw AppException.BadRequest(ex.Message);}
         }
     }
+    private static WmsDocumentType DocumentType(WarehouseTransferBusinessContext context)=>context switch{
+        WarehouseTransferBusinessContext.InterWarehouse=>WmsDocumentType.InterWarehouseTransfer,
+        WarehouseTransferBusinessContext.ProductionMaterialSupply or WarehouseTransferBusinessContext.ProductionWipMove or WarehouseTransferBusinessContext.ProductionOutputMove=>WmsDocumentType.ProductionTransfer,
+        WarehouseTransferBusinessContext.SubcontractingIssue or WarehouseTransferBusinessContext.SubcontractorToSubcontractor=>WmsDocumentType.SubcontractingIssue,
+        WarehouseTransferBusinessContext.SubcontractingReceipt=>WmsDocumentType.SubcontractingReceipt,
+        _=>throw AppException.BadRequest("Desteklenmeyen transfer bağlamı.")
+    };
     private static string? Clean(string? value,int max){var v=value?.Trim();if(string.IsNullOrEmpty(v))return null;return v.Length<=max?v:v[..max];}
     private static void EnsureRowVersion(byte[] current,string supplied){
         byte[] expected;try{expected=Convert.FromBase64String(supplied??string.Empty);}catch(FormatException){throw AppException.BadRequest("Geçersiz eşzamanlılık anahtarı.");}

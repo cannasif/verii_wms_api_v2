@@ -9,7 +9,7 @@ public sealed class WarehouseTransferHeaderConfiguration : BaseEntityConfigurati
 {
     protected override void ConfigureEntity(EntityTypeBuilder<WarehouseTransferHeader> b)
     {
-        b.ToTable("RII_WT_HEADER",t=>t.HasCheckConstraint("CK_RII_WT_HEADER_WAREHOUSE","[SourceWarehouseId] <> [TargetWarehouseId]"));
+        b.ToTable("RII_WT_HEADER");
         b.Property(x=>x.DocumentNo).HasMaxLength(50).IsRequired();
         b.Property(x=>x.ExternalReferenceNo).HasMaxLength(100);
         b.Property(x=>x.ShipmentNo).HasMaxLength(50); b.Property(x=>x.WaybillNo).HasMaxLength(50);
@@ -18,6 +18,7 @@ public sealed class WarehouseTransferHeaderConfiguration : BaseEntityConfigurati
         b.Property(x=>x.DriverName).HasMaxLength(200); b.Property(x=>x.SealNo).HasMaxLength(50);
         b.Property(x=>x.CancellationReason).HasMaxLength(1000); b.Property(x=>x.Description).HasMaxLength(2000);
         b.Property(x=>x.ReservationPolicy).HasConversion<string>().HasMaxLength(30).HasDefaultValue(WarehouseTransferReservationPolicy.OnRelease).HasSentinel((WarehouseTransferReservationPolicy)0);
+        b.Property(x=>x.BusinessContext).HasConversion<string>().HasMaxLength(40).HasDefaultValue(WarehouseTransferBusinessContext.InterWarehouse).HasSentinel((WarehouseTransferBusinessContext)0);
         b.Property(x=>x.DirectPostingPolicy).HasConversion<string>().HasMaxLength(30).HasDefaultValue(WarehouseTransferDirectPostingPolicy.TwoStepTransit).HasSentinel((WarehouseTransferDirectPostingPolicy)0);
         b.Property(x=>x.DiscrepancyPolicy).HasConversion<string>().HasMaxLength(30);
         b.Property(x=>x.MinimumFulfillmentPercent).HasPrecision(9,4).HasDefaultValue(100m);
@@ -48,10 +49,7 @@ public sealed class WarehouseTransferLineConfiguration : BaseEntityConfiguration
 {
     protected override void ConfigureEntity(EntityTypeBuilder<WarehouseTransferLine> b)
     {
-        b.ToTable("RII_WT_LINE",t=>{
-            t.HasCheckConstraint("CK_RII_WT_LINE_QTY","[RequestedQuantity] > 0 AND [ReservedQuantity] >= 0 AND [PickedQuantity] >= 0 AND [PackedQuantity] >= 0 AND [ShippedQuantity] >= 0 AND [ReceivedQuantity] >= 0 AND [PutawayQuantity] >= 0 AND [DamagedQuantity] >= 0 AND [LostQuantity] >= 0 AND [ShortClosedQuantity] >= 0");
-            t.HasCheckConstraint("CK_RII_WT_LINE_WAREHOUSE","[SourceWarehouseId] <> [TargetWarehouseId]");
-        });
+        b.ToTable("RII_WT_LINE",t=>t.HasCheckConstraint("CK_RII_WT_LINE_QTY","[RequestedQuantity] > 0 AND [ReservedQuantity] >= 0 AND [PickedQuantity] >= 0 AND [PackedQuantity] >= 0 AND [ShippedQuantity] >= 0 AND [ReceivedQuantity] >= 0 AND [PutawayQuantity] >= 0 AND [DamagedQuantity] >= 0 AND [LostQuantity] >= 0 AND [ShortClosedQuantity] >= 0"));
         b.Property(x=>x.StockCodeSnapshot).HasMaxLength(100).IsRequired(); b.Property(x=>x.StockNameSnapshot).HasMaxLength(300);
         b.Property(x=>x.YapCodeSnapshot).HasMaxLength(100); b.Property(x=>x.UnitCode).HasMaxLength(20).IsRequired();
         b.Property(x=>x.BaseUnitCode).HasMaxLength(20).IsRequired(); b.Property(x=>x.UnitConversionFactor).HasPrecision(20,8);

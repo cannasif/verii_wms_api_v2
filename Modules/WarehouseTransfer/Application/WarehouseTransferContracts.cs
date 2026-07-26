@@ -57,7 +57,8 @@ public sealed record CreateWarehouseTransferDraftRequest(
     string? ExternalReferenceNo,
     string? Description,
     IReadOnlyList<WarehouseTransferLineDraftRequest> Lines,
-    IReadOnlyList<long>? AssignedUserIds);
+    IReadOnlyList<long>? AssignedUserIds,
+    WarehouseTransferBusinessContext BusinessContext = WarehouseTransferBusinessContext.InterWarehouse);
 
 public sealed record CreateWarehouseTransferDraftResult(long Id,string DocumentNo,int LineCount,decimal RequestedQuantity,bool Replayed,long? TaskId,string? TaskNo);
 public sealed record UpdateWarehouseTransferDraftRequest(string RowVersion,DateOnly DocumentDate,long? SourceStagingLocationId,
@@ -66,6 +67,7 @@ public sealed record UpdateWarehouseTransferDraftRequest(string RowVersion,DateO
 
 public sealed record WarehouseTransferGridRow(
     long Id,string BranchCode,string DocumentNo,DateOnly DocumentDate,
+    WarehouseTransferBusinessContext BusinessContext,
     WarehouseTransferInitiationMode InitiationMode,WarehouseTransferProcessType ProcessType,WarehouseTransferStatus Status,
     OperationApprovalStatus ApprovalStatus,ErpIntegrationStatus ErpIntegrationStatus,
     long SourceWarehouseId,int SourceWarehouseCode,string SourceWarehouseName,
@@ -89,7 +91,10 @@ public interface IWarehouseTransferService
 {
     Task<CreateWarehouseTransferDraftResult> CreateDraftAsync(CreateWarehouseTransferDraftRequest request,long actorUserId,CancellationToken cancellationToken=default);
     Task<PagedResponse<WarehouseTransferGridRow>> GetPagedAsync(PagedRequest request,CancellationToken cancellationToken=default);
+    Task<PagedResponse<WarehouseTransferGridRow>> GetPagedByContextAsync(PagedRequest request,IReadOnlyCollection<WarehouseTransferBusinessContext> contexts,CancellationToken cancellationToken=default);
     Task<WarehouseTransferDetail> GetDetailAsync(long id,CancellationToken cancellationToken=default);
+    Task<WarehouseTransferDetail> GetDetailForContextAsync(long id,IReadOnlyCollection<WarehouseTransferBusinessContext> contexts,CancellationToken cancellationToken=default);
+    Task EnsureContextAsync(long id,IReadOnlyCollection<WarehouseTransferBusinessContext> contexts,CancellationToken cancellationToken=default);
     Task<WarehouseTransferDetail> UpdateDraftAsync(long id,UpdateWarehouseTransferDraftRequest request,long actorUserId,CancellationToken cancellationToken=default);
     Task DeleteDraftAsync(long id,long actorUserId,CancellationToken cancellationToken=default);
 }

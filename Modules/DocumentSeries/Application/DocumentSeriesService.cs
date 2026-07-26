@@ -104,7 +104,11 @@ public sealed partial class DocumentSeriesService(
                    DocumentType = item.DocumentType == WmsDocumentType.GoodsReceipt ? "GoodsReceipt"
                        : item.DocumentType == WmsDocumentType.InterWarehouseTransfer ? "InterWarehouseTransfer"
                        : item.DocumentType == WmsDocumentType.Shipment ? "Shipment"
-                       : item.DocumentType == WmsDocumentType.WarehouseReceipt ? "WarehouseReceipt" : "WarehouseIssue",
+                       : item.DocumentType == WmsDocumentType.WarehouseReceipt ? "WarehouseReceipt"
+                       : item.DocumentType == WmsDocumentType.WarehouseIssue ? "WarehouseIssue"
+                       : item.DocumentType == WmsDocumentType.ProductionTransfer ? "ProductionTransfer"
+                       : item.DocumentType == WmsDocumentType.SubcontractingIssue ? "SubcontractingIssue"
+                       : "SubcontractingReceipt",
                    Prefix = item.Prefix,
                    Separator = item.Separator,
                    YearFormat = item.YearFormat == DocumentYearFormat.None ? "None"

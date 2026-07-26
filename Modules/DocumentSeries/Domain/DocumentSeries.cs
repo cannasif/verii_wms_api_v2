@@ -8,7 +8,10 @@ public enum WmsDocumentType
     InterWarehouseTransfer = 2,
     Shipment = 3,
     WarehouseReceipt = 4,
-    WarehouseIssue = 5
+    WarehouseIssue = 5,
+    ProductionTransfer = 6,
+    SubcontractingIssue = 7,
+    SubcontractingReceipt = 8
 }
 
 public enum DocumentYearFormat
