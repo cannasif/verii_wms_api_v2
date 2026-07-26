@@ -39,4 +39,5 @@ public interface IWarehouseTransferOperationService
     Task<WarehouseTransferOperationResult> ReceiveAsync(long id, WarehouseTransferOperationRequest request, long actor, CancellationToken ct = default);
     Task<WarehouseTransferOperationResult> PutawayAsync(long id, WarehouseTransferOperationRequest request, long actor, CancellationToken ct = default);
     Task<WarehouseTransferOperationResult> CancelAsync(long id, WarehouseTransferTransitionRequest request, long actor, CancellationToken ct = default);
+    Task<WarehouseTransferOperationResult> CancelAfterErpDeletionAsync(long id, WarehouseTransferTransitionRequest request, long actor, CancellationToken ct = default);
 }

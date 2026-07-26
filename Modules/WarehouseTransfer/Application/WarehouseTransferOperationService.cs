@@ -62,7 +62,19 @@ public sealed class WarehouseTransferOperationService(
         ExecuteMovementAsync(id, request, actor, TransferPhase.Putaway, ct);
 
     public Task<WarehouseTransferOperationResult> CancelAsync(
-        long id, WarehouseTransferTransitionRequest request, long actor, CancellationToken ct = default)
+        long id, WarehouseTransferTransitionRequest request, long actor, CancellationToken ct = default) =>
+        CancelCoreAsync(id, request, actor, false, ct);
+
+    public Task<WarehouseTransferOperationResult> CancelAfterErpDeletionAsync(
+        long id, WarehouseTransferTransitionRequest request, long actor, CancellationToken ct = default) =>
+        CancelCoreAsync(id, request, actor, true, ct);
+
+    private Task<WarehouseTransferOperationResult> CancelCoreAsync(
+        long id,
+        WarehouseTransferTransitionRequest request,
+        long actor,
+        bool erpDeletionConfirmed,
+        CancellationToken ct)
     {
         if (id <= 0 || request.IdempotencyKey == Guid.Empty || string.IsNullOrWhiteSpace(request.Reason))
             throw AppException.BadRequest("Transfer, idempotency anahtarı ve iptal nedeni zorunludur.");
@@ -73,8 +85,14 @@ public sealed class WarehouseTransferOperationService(
                 .AnyAsync(x => x.WtHeaderId == id && x.CorrelationId == request.IdempotencyKey, token);
             if (replay) return Result(header, null, true);
             if (header.Status == WarehouseTransferStatus.Cancelled) throw AppException.Conflict("Transfer zaten iptal edilmiş.");
-            if (header.ErpIntegrationStatus is ErpIntegrationStatus.Processing or ErpIntegrationStatus.Succeeded or ErpIntegrationStatus.CommitUncertain)
+            if (!erpDeletionConfirmed
+                && header.ErpIntegrationStatus is ErpIntegrationStatus.Processing
+                    or ErpIntegrationStatus.Succeeded
+                    or ErpIntegrationStatus.CommitUncertain
+                    or ErpIntegrationStatus.Cancelled)
                 throw AppException.Conflict("ERP aktarımı başlamış veya tamamlanmış transfer WMS üzerinden iptal edilemez.");
+            if (erpDeletionConfirmed && header.ErpIntegrationStatus != ErpIntegrationStatus.Succeeded)
+                throw AppException.Conflict("Transfer ERP silme doğrulamasıyla uyumlu durumda değil.");
 
             var operationRepo = uow.Repository<StockMovementOperation>();
             var operations = await operationRepo.Query()
@@ -97,6 +115,7 @@ public sealed class WarehouseTransferOperationService(
             header.CancelledAtUtc = DateTimeOffset.UtcNow;
             header.CancelledBy = actor;
             header.CancellationReason = Clean(request.Reason, 1000);
+            if (erpDeletionConfirmed) header.ErpIntegrationStatus = ErpIntegrationStatus.Cancelled;
             header.UpdatedBy = actor;
             header.UpdatedDate = DateTime.UtcNow;
             AddHistory(header, "Cancel", request.IdempotencyKey, request.Reason, actor);

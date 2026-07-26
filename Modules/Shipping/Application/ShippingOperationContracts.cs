@@ -41,4 +41,5 @@ public interface IShippingOperationService
     Task<ShipmentOperationResult> LoadAsync(long id, ShipmentOperationRequest request, long actor, CancellationToken ct = default);
     Task<ShipmentOperationResult> ShipAsync(long id, ShipmentOperationRequest request, long actor, CancellationToken ct = default);
     Task<ShipmentOperationResult> CancelAsync(long id, ShipmentTransitionRequest request, long actor, CancellationToken ct = default);
+    Task<ShipmentOperationResult> CancelAfterErpDeletionAsync(long id, ShipmentTransitionRequest request, long actor, CancellationToken ct = default);
 }

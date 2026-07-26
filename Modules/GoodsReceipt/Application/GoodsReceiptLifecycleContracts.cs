@@ -69,4 +69,10 @@ public interface IGoodsReceiptLifecycleService
         GoodsReceiptTransitionRequest request,
         long actor,
         CancellationToken cancellationToken = default);
+
+    Task<GoodsReceiptLifecycleResult> CancelAfterErpDeletionAsync(
+        long id,
+        GoodsReceiptTransitionRequest request,
+        long actor,
+        CancellationToken cancellationToken = default);
 }

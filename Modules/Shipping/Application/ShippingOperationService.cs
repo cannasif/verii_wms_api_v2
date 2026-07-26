@@ -53,7 +53,19 @@ public sealed class ShippingOperationService(
         ExecuteMovementAsync(id, request, actor, ShipmentPhase.Ship, ct);
 
     public Task<ShipmentOperationResult> CancelAsync(
-        long id, ShipmentTransitionRequest request, long actor, CancellationToken ct = default)
+        long id, ShipmentTransitionRequest request, long actor, CancellationToken ct = default) =>
+        CancelCoreAsync(id, request, actor, false, ct);
+
+    public Task<ShipmentOperationResult> CancelAfterErpDeletionAsync(
+        long id, ShipmentTransitionRequest request, long actor, CancellationToken ct = default) =>
+        CancelCoreAsync(id, request, actor, true, ct);
+
+    private Task<ShipmentOperationResult> CancelCoreAsync(
+        long id,
+        ShipmentTransitionRequest request,
+        long actor,
+        bool erpDeletionConfirmed,
+        CancellationToken ct)
     {
         if (id <= 0 || request.IdempotencyKey == Guid.Empty || string.IsNullOrWhiteSpace(request.Reason))
             throw AppException.BadRequest("Sevk, idempotency anahtarı ve iptal nedeni zorunludur.");
@@ -62,8 +74,14 @@ public sealed class ShippingOperationService(
             var header = await LoadAsync(id, token);
             if (await HasReplayAsync(id, request.IdempotencyKey, token)) return Result(header, null, true);
             if (header.Status == ShipmentStatus.Cancelled) throw AppException.Conflict("Sevk zaten iptal edilmiş.");
-            if (header.ErpIntegrationStatus is ErpIntegrationStatus.Processing or ErpIntegrationStatus.Succeeded or ErpIntegrationStatus.CommitUncertain)
+            if (!erpDeletionConfirmed
+                && header.ErpIntegrationStatus is ErpIntegrationStatus.Processing
+                    or ErpIntegrationStatus.Succeeded
+                    or ErpIntegrationStatus.CommitUncertain
+                    or ErpIntegrationStatus.Cancelled)
                 throw AppException.Conflict("ERP aktarımı başlamış veya tamamlanmış sevk WMS üzerinden iptal edilemez.");
+            if (erpDeletionConfirmed && header.ErpIntegrationStatus != ErpIntegrationStatus.Succeeded)
+                throw AppException.Conflict("Sevk ERP silme doğrulamasıyla uyumlu durumda değil.");
 
             var operationRepo = uow.Repository<StockMovementOperation>();
             var operations = await operationRepo.Query()
@@ -82,6 +100,7 @@ public sealed class ShippingOperationService(
             foreach (var line in header.Lines) line.Status = ShipmentLineStatus.Cancelled;
             foreach (var task in header.Tasks) task.Status = ShipmentTaskStatus.Cancelled;
             header.Status = ShipmentStatus.Cancelled;
+            if (erpDeletionConfirmed) header.ErpIntegrationStatus = ErpIntegrationStatus.Cancelled;
             header.UpdatedBy = actor;
             header.UpdatedDate = DateTime.UtcNow;
             AddHistory(header, "Cancel", request.IdempotencyKey, request.Reason, actor);

@@ -232,7 +232,22 @@ public sealed class GoodsReceiptLifecycleService(
         long id,
         GoodsReceiptTransitionRequest request,
         long actor,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        CancelCoreAsync(id, request, actor, false, cancellationToken);
+
+    public Task<GoodsReceiptLifecycleResult> CancelAfterErpDeletionAsync(
+        long id,
+        GoodsReceiptTransitionRequest request,
+        long actor,
+        CancellationToken cancellationToken = default) =>
+        CancelCoreAsync(id, request, actor, true, cancellationToken);
+
+    private Task<GoodsReceiptLifecycleResult> CancelCoreAsync(
+        long id,
+        GoodsReceiptTransitionRequest request,
+        long actor,
+        bool erpDeletionConfirmed,
+        CancellationToken cancellationToken)
     {
         ValidateTransition(id, request, requireReason: true);
         var reason = Clean(request.Reason, 500)!;
@@ -251,8 +266,14 @@ public sealed class GoodsReceiptLifecycleService(
             ApplyVersion(header, request.RowVersion);
             if (header.Status == WarehouseOperationStatus.Cancelled)
                 throw AppException.Conflict("Mal kabul zaten iptal edilmiş.");
-            if (header.ErpIntegrationStatus is ErpIntegrationStatus.Processing or ErpIntegrationStatus.Succeeded or ErpIntegrationStatus.CommitUncertain)
+            if (!erpDeletionConfirmed
+                && header.ErpIntegrationStatus is ErpIntegrationStatus.Processing
+                    or ErpIntegrationStatus.Succeeded
+                    or ErpIntegrationStatus.CommitUncertain
+                    or ErpIntegrationStatus.Cancelled)
                 throw AppException.Conflict("ERP aktarımı başlamış veya tamamlanmış mal kabul WMS üzerinden iptal edilemez.");
+            if (erpDeletionConfirmed && header.ErpIntegrationStatus != ErpIntegrationStatus.Succeeded)
+                throw AppException.Conflict("Mal kabul ERP silme doğrulamasıyla uyumlu durumda değil.");
 
             var qualityIds = await uow.Repository<QualityInspection>().Query()
                 .Where(x => x.SourceDocumentType == "GoodsReceipt" && x.SourceDocumentId == id)
@@ -305,6 +326,7 @@ public sealed class GoodsReceiptLifecycleService(
             header.CancelledAtUtc = now;
             header.CancelledBy = actor;
             header.CancellationReason = reason;
+            if (erpDeletionConfirmed) header.ErpIntegrationStatus = ErpIntegrationStatus.Cancelled;
             Touch(header, actor);
             AddHistory(header, GoodsReceiptStatusArea.Operation, from, header.Status.ToString(),
                 request.IdempotencyKey, hash, reason, actor);

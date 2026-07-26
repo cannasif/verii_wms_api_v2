@@ -45,7 +45,8 @@ public enum ErpIntegrationStatus
     Processing = 3,
     Succeeded = 4,
     Failed = 5,
-    CommitUncertain = 6
+    CommitUncertain = 6,
+    Cancelled = 7
 }
 
 public enum WarehouseOperationSourceSystem
