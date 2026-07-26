@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using verii_wms_api_v2.Modules.AccessControl.Application;
 using verii_wms_api_v2.Modules.SubcontractingTransfer.Application;
+using verii_wms_api_v2.Modules.SubcontractingTransfer.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared;
@@ -27,6 +28,18 @@ public sealed class SubcontractingTransfersController(
     [HttpPost("paged")]
     public async Task<IActionResult>Paged(PagedRequest request,CancellationToken ct){
         await Require("WMS.SUBCONTRACTING_TRANSFER.VIEW",ct);return Ok(ApiResponse<PagedResponse<WarehouseTransferGridRow>>.Ok(await service.GetPagedAsync(request,ct)));}
+    [HttpPost("paged/{direction}")]
+    public async Task<IActionResult>PagedByDirection(
+        string direction,
+        PagedRequest request,
+        CancellationToken ct)
+    {
+        await Require("WMS.SUBCONTRACTING_TRANSFER.VIEW",ct);
+        if(!Enum.TryParse<SubcontractingTransferDirection>(direction,true,out var parsed))
+            throw AppException.BadRequest("Geçersiz fason işlem yönü.");
+        return Ok(ApiResponse<PagedResponse<WarehouseTransferGridRow>>.Ok(
+            await service.GetPagedAsync(request,parsed,ct)));
+    }
     [HttpGet("{id:long}")]
     public async Task<IActionResult>Detail(long id,CancellationToken ct){
         await Require("WMS.SUBCONTRACTING_TRANSFER.VIEW",ct);return Ok(ApiResponse<SubcontractingTransferDetail>.Ok(await service.GetDetailAsync(id,ct)));}

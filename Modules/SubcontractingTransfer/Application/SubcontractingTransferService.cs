@@ -84,6 +84,12 @@ public sealed class SubcontractingTransferService(
     public Task<PagedResponse<WarehouseTransferGridRow>>GetPagedAsync(PagedRequest request,CancellationToken ct=default)=>
         transfers.GetPagedByContextAsync(request,Contexts,ct);
 
+    public Task<PagedResponse<WarehouseTransferGridRow>>GetPagedAsync(
+        PagedRequest request,
+        SubcontractingTransferDirection direction,
+        CancellationToken ct=default)=>
+        transfers.GetPagedByContextAsync(request,[Context(direction)],ct);
+
     public async Task<SubcontractingTransferDetail>GetDetailAsync(long id,CancellationToken ct=default)
     {
         var transfer=await transfers.GetDetailForContextAsync(id,Contexts,ct);

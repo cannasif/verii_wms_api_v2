@@ -44,6 +44,7 @@ public interface ISubcontractingTransferService
 {
     Task<CreateWarehouseTransferDraftResult>CreateDraftAsync(CreateSubcontractingTransferDraftRequest request,long actor,CancellationToken ct=default);
     Task<PagedResponse<WarehouseTransferGridRow>>GetPagedAsync(PagedRequest request,CancellationToken ct=default);
+    Task<PagedResponse<WarehouseTransferGridRow>>GetPagedAsync(PagedRequest request,SubcontractingTransferDirection direction,CancellationToken ct=default);
     Task<SubcontractingTransferDetail>GetDetailAsync(long id,CancellationToken ct=default);
     Task<SubcontractingTransferDetail>UpdateDraftAsync(long id,UpdateWarehouseTransferDraftRequest request,long actor,CancellationToken ct=default);
     Task DeleteDraftAsync(long id,long actor,CancellationToken ct=default);
