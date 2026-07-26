@@ -1,5 +1,11 @@
 using System.Text.Json.Serialization;
 using verii_wms_api_v2.Modules.ErpIntegration.Domain;
+using verii_wms_api_v2.Modules.GoodsReceipt.Application;
+using verii_wms_api_v2.Modules.Shipping.Application;
+using verii_wms_api_v2.Modules.WarehouseInbound.Application;
+using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
+using verii_wms_api_v2.Modules.WarehouseOutbound.Application;
+using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 
 namespace verii_wms_api_v2.Modules.ErpIntegration.Application;
 
@@ -13,6 +19,27 @@ public sealed record ReconcileErpPostingRequest(
     string? ErpWaybillNo = null,
     string? ErpRecordNo = null,
     string? ErpReferenceNo = null);
+
+public enum OperationCancellationRoute
+{
+    LocalCompensation = 1,
+    ErpCompensation = 2,
+    ManualReconciliationRequired = 3,
+    AlreadyCancelled = 4
+}
+
+public sealed record OperationCancellationResult(
+    string SourceType,
+    long SourceEntityId,
+    string SourceDocumentNo,
+    OperationCancellationRoute Route,
+    string OperationStatus,
+    string ErpStatus,
+    bool ErpDeleted,
+    bool WmsReversed,
+    bool Replayed,
+    string? ErrorCode = null,
+    string? ErrorMessage = null);
 
 public sealed record ErpPostingResult(
     long PostingRecordId,
@@ -78,6 +105,64 @@ public interface IErpCancellationService
         ReconcileErpCancellationRequest request,
         long userId,
         CancellationToken cancellationToken);
+}
+
+public interface IOperationCancellationCoordinator
+{
+    Task<OperationCancellationResult> CancelGoodsReceiptAsync(
+        long id,
+        GoodsReceiptTransitionRequest request,
+        long userId,
+        CancellationToken cancellationToken);
+
+    Task<OperationCancellationResult> CancelWarehouseInboundAsync(
+        long id,
+        WarehouseInboundTransitionRequest request,
+        long userId,
+        CancellationToken cancellationToken);
+
+    Task<OperationCancellationResult> CancelWarehouseTransferAsync(
+        long id,
+        WarehouseTransferTransitionRequest request,
+        long userId,
+        CancellationToken cancellationToken);
+
+    Task<OperationCancellationResult> CancelWarehouseOutboundAsync(
+        long id,
+        WarehouseOutboundTransitionRequest request,
+        long userId,
+        CancellationToken cancellationToken);
+
+    Task<OperationCancellationResult> CancelShipmentAsync(
+        long id,
+        ShipmentTransitionRequest request,
+        long userId,
+        CancellationToken cancellationToken);
+}
+
+public static class OperationCancellationPolicy
+{
+    public static OperationCancellationRoute Decide(
+        ErpIntegrationStatus erpStatus,
+        bool operationAlreadyCancelled,
+        bool erpCancellationSupported)
+    {
+        if (operationAlreadyCancelled)
+            return OperationCancellationRoute.AlreadyCancelled;
+
+        return erpStatus switch
+        {
+            ErpIntegrationStatus.Processing
+                or ErpIntegrationStatus.CommitUncertain
+                => OperationCancellationRoute.ManualReconciliationRequired,
+            ErpIntegrationStatus.Succeeded
+                or ErpIntegrationStatus.Cancelled
+                => erpCancellationSupported
+                    ? OperationCancellationRoute.ErpCompensation
+                    : OperationCancellationRoute.ManualReconciliationRequired,
+            _ => OperationCancellationRoute.LocalCompensation
+        };
+    }
 }
 
 public interface INetsisTokenService

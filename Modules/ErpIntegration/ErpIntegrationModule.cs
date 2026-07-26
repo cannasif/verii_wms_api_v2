@@ -20,6 +20,7 @@ public static class ErpIntegrationModule
             .ConfigurePrimaryHttpMessageHandler(BuildHandler);
         services.AddScoped<IErpPostingService, ErpPostingService>();
         services.AddScoped<IErpCancellationService, ErpCancellationService>();
+        services.AddScoped<IOperationCancellationCoordinator, OperationCancellationCoordinator>();
         return services;
     }
 

@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using verii_wms_api_v2.Modules.AccessControl.Application;
+using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.WarehouseOutbound.Application;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -12,6 +13,7 @@ namespace verii_wms_api_v2.Modules.WarehouseOutbound.Api;
 public sealed class WarehouseOutboundsController(
     IWarehouseOutboundService service,
     IWarehouseOutboundOperationService operations,
+    IOperationCancellationCoordinator cancellationCoordinator,
     IPermissionAuthorizationService permissions) : ControllerBase
 {
     [HttpPost("drafts")]
@@ -96,8 +98,10 @@ public sealed class WarehouseOutboundsController(
     public async Task<IActionResult> Cancel(long id, WarehouseOutboundTransitionRequest request, CancellationToken ct)
     {
         await Require("WMS.WAREHOUSE_OUTBOUND.CANCEL", ct);
-        return Ok(ApiResponse<WarehouseOutboundOperationResult>.Ok(
-            await operations.CancelAsync(id, request, UserId(), ct), "Sevk iptal edildi ve stok hareketleri ters çevrildi."));
+        return Ok(ApiResponse<OperationCancellationResult>.Ok(
+            await cancellationCoordinator.CancelWarehouseOutboundAsync(
+                id, request, UserId(), ct),
+            "Ambar çıkış güvenli iptal sürecinde işlendi."));
     }
 
     private long UserId() =>

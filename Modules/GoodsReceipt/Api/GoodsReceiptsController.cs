@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Localization;
 using verii_wms_api_v2.Modules.AccessControl.Application;
+using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Localization;
 using verii_wms_api_v2.Shared;
@@ -18,6 +19,7 @@ public sealed class GoodsReceiptsController(
     IGoodsReceiptLabelService labels,
     IGoodsReceiptExecutionService executions,
     IGoodsReceiptLifecycleService lifecycle,
+    IOperationCancellationCoordinator cancellationCoordinator,
     IGoodsReceiptRoutingService routing,
     IPermissionAuthorizationService permissions,
     IStringLocalizer<GoodsReceiptResource> localizer) : ControllerBase
@@ -223,9 +225,10 @@ public sealed class GoodsReceiptsController(
     public async Task<IActionResult> Cancel(long id, GoodsReceiptTransitionRequest request, CancellationToken cancellationToken)
     {
         await Require("WMS.GOODS_RECEIPT.CANCEL", cancellationToken);
-        return Ok(ApiResponse<GoodsReceiptLifecycleResult>.Ok(
-            await lifecycle.CancelAsync(id, request, CurrentUserId(), cancellationToken),
-            "Mal kabul ters hareketlerle iptal edildi."));
+        return Ok(ApiResponse<OperationCancellationResult>.Ok(
+            await cancellationCoordinator.CancelGoodsReceiptAsync(
+                id, request, CurrentUserId(), cancellationToken),
+            "Mal kabul güvenli iptal sürecinde işlendi."));
     }
 
     private async Task Require(string code, CancellationToken cancellationToken)

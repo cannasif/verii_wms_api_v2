@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Localization;
 using verii_wms_api_v2.Modules.AccessControl.Application;
+using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.WarehouseInbound.Application;
 using verii_wms_api_v2.Modules.WarehouseInbound.Localization;
 using verii_wms_api_v2.Shared;
@@ -18,6 +19,7 @@ public sealed class WarehouseInboundsController(
     IWarehouseInboundLabelService labels,
     IWarehouseInboundExecutionService executions,
     IWarehouseInboundLifecycleService lifecycle,
+    IOperationCancellationCoordinator cancellationCoordinator,
     IPermissionAuthorizationService permissions,
     IStringLocalizer<WarehouseInboundResource> localizer) : ControllerBase
 {
@@ -183,9 +185,10 @@ public sealed class WarehouseInboundsController(
     public async Task<IActionResult> Cancel(long id, WarehouseInboundTransitionRequest request, CancellationToken cancellationToken)
     {
         await Require("WMS.WAREHOUSE_INBOUND.CANCEL", cancellationToken);
-        return Ok(ApiResponse<WarehouseInboundLifecycleResult>.Ok(
-            await lifecycle.CancelAsync(id, request, CurrentUserId(), cancellationToken),
-            "Mal kabul ters hareketlerle iptal edildi."));
+        return Ok(ApiResponse<OperationCancellationResult>.Ok(
+            await cancellationCoordinator.CancelWarehouseInboundAsync(
+                id, request, CurrentUserId(), cancellationToken),
+            "Ambar giriş güvenli iptal sürecinde işlendi."));
     }
 
     private async Task Require(string code, CancellationToken cancellationToken)

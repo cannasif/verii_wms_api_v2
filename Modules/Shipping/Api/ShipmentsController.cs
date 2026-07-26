@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using verii_wms_api_v2.Modules.AccessControl.Application;
+using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.Shipping.Application;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -12,6 +13,7 @@ namespace verii_wms_api_v2.Modules.Shipping.Api;
 public sealed class ShipmentsController(
     IShippingService service,
     IShippingOperationService operations,
+    IOperationCancellationCoordinator cancellationCoordinator,
     IPermissionAuthorizationService permissions) : ControllerBase
 {
     [HttpPost("drafts")]
@@ -96,8 +98,10 @@ public sealed class ShipmentsController(
     public async Task<IActionResult> Cancel(long id, ShipmentTransitionRequest request, CancellationToken ct)
     {
         await Require("WMS.SHIPPING.CANCEL", ct);
-        return Ok(ApiResponse<ShipmentOperationResult>.Ok(
-            await operations.CancelAsync(id, request, UserId(), ct), "Sevk iptal edildi ve stok hareketleri ters çevrildi."));
+        return Ok(ApiResponse<OperationCancellationResult>.Ok(
+            await cancellationCoordinator.CancelShipmentAsync(
+                id, request, UserId(), ct),
+            "Sevk güvenli iptal sürecinde işlendi."));
     }
 
     private long UserId() =>

@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using verii_wms_api_v2.Modules.AccessControl.Application;
+using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -12,6 +13,7 @@ namespace verii_wms_api_v2.Modules.WarehouseTransfer.Api;
 public sealed class WarehouseTransfersController(
     IWarehouseTransferService service,
     IWarehouseTransferOperationService operations,
+    IOperationCancellationCoordinator cancellationCoordinator,
     IPermissionAuthorizationService permissions) : ControllerBase
 {
     [HttpPost("drafts")]
@@ -104,8 +106,10 @@ public sealed class WarehouseTransfersController(
     public async Task<IActionResult> Cancel(long id, WarehouseTransferTransitionRequest request, CancellationToken ct)
     {
         await Require("WMS.WAREHOUSE_TRANSFER.CANCEL", ct);
-        return Ok(ApiResponse<WarehouseTransferOperationResult>.Ok(
-            await operations.CancelAsync(id, request, CurrentUserId(), ct), "Transfer iptal edildi ve stok hareketleri ters çevrildi."));
+        return Ok(ApiResponse<OperationCancellationResult>.Ok(
+            await cancellationCoordinator.CancelWarehouseTransferAsync(
+                id, request, CurrentUserId(), ct),
+            "Transfer güvenli iptal sürecinde işlendi."));
     }
 
     private long CurrentUserId() =>
