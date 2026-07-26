@@ -1,15 +1,20 @@
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using verii_wms_api_v2.Modules.AccessControl.Application;
 using verii_wms_api_v2.Modules.SteelReceipt.Application;
+using verii_wms_api_v2.Modules.VehicleCheckIn.Application;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 
 namespace verii_wms_api_v2.Modules.SteelReceipt.Api;
 
 [Authorize,ApiController,Route("api/steel-receipts")]
-public sealed class SteelReceiptsController(ISteelReceiptService service,IPermissionAuthorizationService permissions):ControllerBase
+public sealed class SteelReceiptsController(
+    ISteelReceiptService service,
+    ISteelVehicleAcceptanceService vehicleAcceptance,
+    IPermissionAuthorizationService permissions):ControllerBase
 {
     [HttpPost("import/preview")] public async Task<IActionResult> Preview(PreviewSteelReceiptImportRequest request,CancellationToken ct)
     {await Require("WMS.STEEL_RECEIPT.IMPORT",ct);return Ok(ApiResponse<SteelImportPreview>.Ok(await service.PreviewAsync(request,ct)));}
@@ -19,6 +24,65 @@ public sealed class SteelReceiptsController(ISteelReceiptService service,IPermis
     {await Require("WMS.STEEL_RECEIPT.VIEW",ct);return Ok(ApiResponse<PagedResponse<SteelReceiptPlanGridRow>>.Ok(await service.GetPlansPagedAsync(request,ct)));}
     [HttpPost("lines/paged")] public async Task<IActionResult> Lines(PagedRequest request,CancellationToken ct)
     {await Require("WMS.STEEL_RECEIPT.VIEW",ct);return Ok(ApiResponse<PagedResponse<SteelReceiptLineGridRow>>.Ok(await service.GetLinesPagedAsync(request,ct)));}
+    [HttpPost("vehicle-acceptance/candidates/paged")] public async Task<IActionResult> VehicleAcceptanceCandidates(
+        [FromQuery]string branchCode,
+        PagedRequest request,
+        CancellationToken ct)
+    {
+        await Require("WMS.STEEL_RECEIPT.VIEW",ct);
+        await Require("WMS.STEEL_RECEIPT.VEHICLE.VIEW",ct);
+        return Ok(ApiResponse<PagedResponse<SteelVehicleAcceptanceCandidateRow>>.Ok(
+            await vehicleAcceptance.GetCandidatesPagedAsync(branchCode,request,ct)));
+    }
+    [HttpGet("vehicle-acceptance/by-vehicle/{vehicleCheckInId:long}")] public async Task<IActionResult> VehicleAcceptanceByVehicle(
+        long vehicleCheckInId,
+        CancellationToken ct)
+    {
+        await Require("WMS.STEEL_RECEIPT.VIEW",ct);
+        await Require("WMS.STEEL_RECEIPT.VEHICLE.VIEW",ct);
+        return Ok(ApiResponse<CompleteSteelVehicleAcceptanceResult?>.Ok(
+            await vehicleAcceptance.GetLatestByVehicleAsync(vehicleCheckInId,ct)));
+    }
+    [HttpPost("vehicle-acceptance/complete"),RequestSizeLimit(130_000_000)] public async Task<IActionResult> CompleteVehicleAcceptance(
+        [FromForm]SteelVehicleAcceptanceForm form,
+        CancellationToken ct)
+    {
+        await Require("WMS.STEEL_RECEIPT.VEHICLE.MANAGE",ct);
+        await Require("WMS.STEEL_RECEIPT.INSPECT",ct);
+        if(string.IsNullOrWhiteSpace(form.RequestJson))throw AppException.BadRequest("Araç kabul isteği eksik.");
+        CompleteSteelVehicleAcceptanceRequest request;
+        try
+        {
+            request=JsonSerializer.Deserialize<CompleteSteelVehicleAcceptanceRequest>(
+                form.RequestJson,
+                new JsonSerializerOptions(JsonSerializerDefaults.Web))
+                ??throw new JsonException();
+        }
+        catch(JsonException)
+        {
+            throw AppException.BadRequest("Araç kabul isteği geçersiz.");
+        }
+        if(form.PlateImages.Count!=form.PlateImageLineIds.Count)
+            throw AppException.BadRequest("Levha görsel eşleştirmesi geçersiz.");
+
+        var vehicleUploads=form.VehicleImages.Select(file=>
+            new VehicleImageUpload(file.OpenReadStream(),file.FileName,file.ContentType,file.Length)).ToList();
+        var plateUploads=form.PlateImages.Select((file,index)=>
+            new SteelPlateImageUpload(
+                form.PlateImageLineIds[index],file.OpenReadStream(),file.FileName,file.ContentType,file.Length)).ToList();
+        try
+        {
+            var result=await vehicleAcceptance.CompleteAsync(request,vehicleUploads,plateUploads,UserId(),ct);
+            return Ok(ApiResponse<CompleteSteelVehicleAcceptanceResult>.Ok(
+                result,
+                result.Replayed?"Araç ve SAC kabulü daha önce tamamlandı.":"Araç giriş ve SAC kabulü tamamlandı."));
+        }
+        finally
+        {
+            foreach(var upload in vehicleUploads)await upload.Content.DisposeAsync();
+            foreach(var upload in plateUploads)await upload.Content.DisposeAsync();
+        }
+    }
     [HttpPost("receipt/candidates/paged")] public async Task<IActionResult> ReceiptCandidates(PagedRequest request,CancellationToken ct)
     {await Require("WMS.STEEL_RECEIPT.CONVERT",ct);return Ok(ApiResponse<PagedResponse<SteelReceiptLineGridRow>>.Ok(await service.GetReceiptCandidatesPagedAsync(request,ct)));}
     [HttpPost("placement/candidates/paged")] public async Task<IActionResult> PlacementCandidates(PagedRequest request,CancellationToken ct)
@@ -48,4 +112,12 @@ public sealed class SteelReceiptsController(ISteelReceiptService service,IPermis
     {await Require("WMS.STEEL_RECEIPT.VIEW",ct);var file=await service.DownloadAttachmentAsync(id,ct);return File(file.Content,file.ContentType,file.FileName);}
     private long UserId()=>long.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier),out var id)?id:throw AppException.Unauthorized("Geçersiz kullanıcı oturumu.");
     private async Task Require(string code,CancellationToken ct){if(!await permissions.HasPermissionAsync(User,code,ct))throw AppException.Forbidden();}
+}
+
+public sealed class SteelVehicleAcceptanceForm
+{
+    public string RequestJson { get; set; } = string.Empty;
+    public List<IFormFile> VehicleImages { get; set; } = [];
+    public List<IFormFile> PlateImages { get; set; } = [];
+    public List<long> PlateImageLineIds { get; set; } = [];
 }

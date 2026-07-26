@@ -9,5 +9,6 @@ public static class SteelReceiptModule
     public static IServiceCollection AddSteelReceiptModule(this IServiceCollection services)=>services
         .AddPrivateUploadStorage()
         .AddScoped<ISteelReceiptService,SteelReceiptService>()
+        .AddScoped<ISteelVehicleAcceptanceService,SteelVehicleAcceptanceService>()
         .AddSingleton<ISteelReceiptAttachmentStorage,SteelReceiptAttachmentStorage>();
 }
