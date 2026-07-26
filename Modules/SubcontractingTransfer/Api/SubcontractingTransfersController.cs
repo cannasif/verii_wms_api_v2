@@ -46,10 +46,10 @@ public sealed class SubcontractingTransfersController(
     public async Task<IActionResult>Release(long id,WarehouseTransferTransitionRequest request,CancellationToken ct){
         await Require("WMS.SUBCONTRACTING_TRANSFER.OPERATE",ct);await Ensure(id,ct);
         return Ok(ApiResponse<WarehouseTransferOperationResult>.Ok(await operations.ReleaseAsync(id,request,UserId(),ct)));}
-    [HttpPost("{id:long}/{action:regex(^(pick|dispatch|receive|putaway)$)}")]
-    public async Task<IActionResult>Operate(long id,string action,WarehouseTransferOperationRequest request,CancellationToken ct){
+    [HttpPost("{id:long}/{operation:regex(^(pick|dispatch|receive|putaway)$)}")]
+    public async Task<IActionResult>Operate(long id,string operation,WarehouseTransferOperationRequest request,CancellationToken ct){
         await Require("WMS.SUBCONTRACTING_TRANSFER.OPERATE",ct);await Ensure(id,ct);
-        var result=action switch{
+        var result=operation switch{
             "pick"=>await operations.PickAsync(id,request,UserId(),ct),
             "dispatch"=>await operations.DispatchAsync(id,request,UserId(),ct),
             "receive"=>await operations.ReceiveAsync(id,request,UserId(),ct),
