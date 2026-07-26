@@ -148,6 +148,72 @@ public sealed class ErpPostingService(
         return ToResult(entity);
     }
 
+    public async Task<ErpPostingResult> ReconcileAsync(
+        ErpPostingSourceType sourceType,
+        long sourceEntityId,
+        ReconcileErpPostingRequest request,
+        long userId,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Trim().Length < 5)
+            throw AppException.BadRequest("Mutabakat açıklaması en az 5 karakter olmalıdır.");
+        if (request.ErpDocumentExists
+            && string.IsNullOrWhiteSpace(request.ErpDocumentNo)
+            && string.IsNullOrWhiteSpace(request.ErpRecordNo)
+            && string.IsNullOrWhiteSpace(request.ErpReferenceNo))
+            throw AppException.BadRequest("ERP'de belge bulunduysa en az bir ERP belge referansı girilmelidir.");
+
+        var posting = await Postings.FirstOrDefaultAsync(
+            x => x.SourceType == sourceType && x.SourceEntityId == sourceEntityId,
+            tracking: true,
+            cancellationToken)
+            ?? throw AppException.NotFound("ERP gönderim kaydı bulunamadı.");
+        if (posting.Status != ErpPostingStatus.CommitUncertain)
+            throw AppException.Conflict("Yalnızca sonucu belirsiz ERP gönderimleri manuel mutabakata alınabilir.");
+
+        posting.Status = request.ErpDocumentExists
+            ? ErpPostingStatus.Succeeded
+            : ErpPostingStatus.Failed;
+        posting.ErpDocumentNo = Clean(request.ErpDocumentNo);
+        posting.ErpWaybillNo = Clean(request.ErpWaybillNo);
+        posting.ErpRecordNo = Clean(request.ErpRecordNo);
+        posting.ErpReferenceNo = Clean(request.ErpReferenceNo);
+        posting.LastErrorCode = request.ErpDocumentExists ? null : "MANUAL_RECONCILIATION_NOT_FOUND";
+        posting.LastErrorMessage = request.ErpDocumentExists
+            ? null
+            : $"ERP belgesi manuel kontrolde bulunamadı. {request.Reason.Trim()}";
+        posting.CompletedAtUtc = DateTimeOffset.UtcNow;
+        Postings.Update(posting);
+
+        await SetSourceHeaderStatusAsync(
+            sourceType,
+            sourceEntityId,
+            request.ErpDocumentExists ? ErpIntegrationStatus.Succeeded : ErpIntegrationStatus.Failed,
+            cancellationToken);
+        await Attempts.AddAsync(new ErpIntegrationAttempt
+        {
+            BranchCode = posting.BranchCode,
+            ErpPostingRecordId = posting.Id,
+            AttemptNo = posting.AttemptCount + 1,
+            Operation = $"{sourceType}.ManualReconciliation",
+            HttpMethod = "MANUAL",
+            Endpoint = "Netsis/ManualReconciliation",
+            RequestHash = posting.RequestHash,
+            IsSuccessful = request.ErpDocumentExists,
+            CommitUncertain = false,
+            DurationMs = 0,
+            ErrorCode = request.ErpDocumentExists ? null : "ERP_DOCUMENT_NOT_FOUND",
+            ErrorMessage = request.Reason.Trim(),
+            TraceId = TraceId(),
+            StartedAtUtc = DateTimeOffset.UtcNow,
+            CompletedAtUtc = DateTimeOffset.UtcNow,
+            CreatedBy = userId
+        }, cancellationToken);
+        posting.AttemptCount++;
+        await unitOfWork.SaveChangesAsync(cancellationToken);
+        return ToResult(posting);
+    }
+
     private async Task<ErpPostingResult> PostAsync<TEntity>(
         ErpPostingSourceType sourceType,
         long sourceEntityId,
@@ -485,6 +551,46 @@ public sealed class ErpPostingService(
         return setting?.SendSerialsToErp ?? optionsAccessor.Value.Rest.SendSerialsToErp;
     }
 
+    private async Task SetSourceHeaderStatusAsync(
+        ErpPostingSourceType sourceType,
+        long sourceEntityId,
+        ErpIntegrationStatus status,
+        CancellationToken cancellationToken)
+    {
+        switch (sourceType)
+        {
+            case ErpPostingSourceType.GoodsReceipt:
+            {
+                var entity = await unitOfWork.Repository<GoodsReceiptHeader>()
+                    .FindByIdAsync(sourceEntityId, true, cancellationToken)
+                    ?? throw AppException.NotFound("Mal kabul kaydı bulunamadı.");
+                entity.ErpIntegrationStatus = status;
+                unitOfWork.Repository<GoodsReceiptHeader>().Update(entity);
+                break;
+            }
+            case ErpPostingSourceType.WarehouseTransfer:
+            {
+                var entity = await unitOfWork.Repository<WarehouseTransferHeader>()
+                    .FindByIdAsync(sourceEntityId, true, cancellationToken)
+                    ?? throw AppException.NotFound("Transfer kaydı bulunamadı.");
+                entity.ErpIntegrationStatus = status;
+                unitOfWork.Repository<WarehouseTransferHeader>().Update(entity);
+                break;
+            }
+            case ErpPostingSourceType.Shipment:
+            {
+                var entity = await unitOfWork.Repository<ShipmentHeader>()
+                    .FindByIdAsync(sourceEntityId, true, cancellationToken)
+                    ?? throw AppException.NotFound("Sevk kaydı bulunamadı.");
+                entity.ErpIntegrationStatus = status;
+                unitOfWork.Repository<ShipmentHeader>().Update(entity);
+                break;
+            }
+            default:
+                throw AppException.BadRequest("Desteklenmeyen ERP kaynak tipi.");
+        }
+    }
+
     private static void ValidateGoodsReceiptGate(GoodsReceiptHeader header)
     {
         if (header.Status is not (WarehouseOperationStatus.Processed or WarehouseOperationStatus.Completed))
@@ -533,6 +639,9 @@ public sealed class ErpPostingService(
     {
         if (value == Guid.Empty) throw AppException.BadRequest("IdempotencyKey zorunludur.");
     }
+
+    private static string? Clean(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private string TraceId() =>
         Activity.Current?.TraceId.ToString()

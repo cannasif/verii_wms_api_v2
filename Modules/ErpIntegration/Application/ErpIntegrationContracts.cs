@@ -4,6 +4,13 @@ using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 namespace verii_wms_api_v2.Modules.ErpIntegration.Application;
 
 public sealed record ErpPostRequest(Guid IdempotencyKey);
+public sealed record ReconcileErpPostingRequest(
+    bool ErpDocumentExists,
+    string Reason,
+    string? ErpDocumentNo = null,
+    string? ErpWaybillNo = null,
+    string? ErpRecordNo = null,
+    string? ErpReferenceNo = null);
 
 public sealed record ErpPostingResult(
     long PostingRecordId,
@@ -26,6 +33,12 @@ public interface IErpPostingService
     Task<ErpPostingResult> PostWarehouseTransferAsync(long id, Guid idempotencyKey, long userId, CancellationToken cancellationToken);
     Task<ErpPostingResult> PostShipmentAsync(long id, Guid idempotencyKey, long userId, CancellationToken cancellationToken);
     Task<ErpPostingResult> GetAsync(ErpPostingSourceType sourceType, long sourceEntityId, CancellationToken cancellationToken);
+    Task<ErpPostingResult> ReconcileAsync(
+        ErpPostingSourceType sourceType,
+        long sourceEntityId,
+        ReconcileErpPostingRequest request,
+        long userId,
+        CancellationToken cancellationToken);
 }
 
 public interface INetsisTokenService

@@ -62,6 +62,23 @@ public sealed class ErpIntegrationController(
             await postingService.GetAsync(sourceType, sourceEntityId, cancellationToken)));
     }
 
+    [HttpPost("api/erp-postings/{sourceType}/{sourceEntityId:long}/reconcile")]
+    public async Task<IActionResult> Reconcile(
+        ErpPostingSourceType sourceType,
+        long sourceEntityId,
+        ReconcileErpPostingRequest request,
+        CancellationToken cancellationToken)
+    {
+        await RequireManagePermission(sourceType, cancellationToken);
+        var result = await postingService.ReconcileAsync(
+            sourceType, sourceEntityId, request, CurrentUserId(), cancellationToken);
+        return Ok(ApiResponse<ErpPostingResult>.Ok(
+            result,
+            request.ErpDocumentExists
+                ? "ERP belgesi doğrulandı ve gönderim başarılı olarak kapatıldı."
+                : "ERP belgesinin oluşmadığı doğrulandı; kayıt güvenli yeniden gönderime açıldı."));
+    }
+
     [HttpPost("api/erp-integration/test-login")]
     public async Task<IActionResult> TestLogin(CancellationToken cancellationToken)
     {
@@ -79,6 +96,20 @@ public sealed class ErpIntegrationController(
             ErpPostingSourceType.GoodsReceipt => "WMS.GOODS_RECEIPT.VIEW",
             ErpPostingSourceType.WarehouseTransfer => "WMS.WAREHOUSE_TRANSFER.VIEW",
             ErpPostingSourceType.Shipment => "WMS.SHIPPING.VIEW",
+            _ => throw AppException.BadRequest("Desteklenmeyen ERP kaynak tipi.")
+        };
+        await Require(code, cancellationToken);
+    }
+
+    private async Task RequireManagePermission(
+        ErpPostingSourceType sourceType,
+        CancellationToken cancellationToken)
+    {
+        var code = sourceType switch
+        {
+            ErpPostingSourceType.GoodsReceipt => "WMS.GOODS_RECEIPT.ERP_RETRY",
+            ErpPostingSourceType.WarehouseTransfer => "WMS.WAREHOUSE_TRANSFER.APPROVE",
+            ErpPostingSourceType.Shipment => "WMS.SHIPPING.APPROVE",
             _ => throw AppException.BadRequest("Desteklenmeyen ERP kaynak tipi.")
         };
         await Require(code, cancellationToken);
