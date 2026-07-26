@@ -51,6 +51,10 @@ public interface INetsisRestClient
     Task<NetsisCallResult<NetsisItemSlipResponse>> CreateItemSlipAsync(
         NetsisItemSlipRequest request,
         CancellationToken cancellationToken);
+
+    Task<NetsisCallResult<NetsisDeleteItemSlipResponse>> DeleteItemSlipAsync(
+        long erpRecordId,
+        CancellationToken cancellationToken);
 }
 
 public sealed record NetsisCallResult<T>(
@@ -167,4 +171,13 @@ public sealed class NetsisItemSlipResponseData
     public string? BelgeNo { get; set; }
     public string? KayitNo { get; set; }
     public string? ReferenceNumber { get; set; }
+}
+
+public sealed class NetsisDeleteItemSlipResponse
+{
+    public bool? IsSuccessful { get; set; }
+    public bool? IsSuccessStatusCode { get; set; }
+    public string? ErrorCode { get; set; }
+    public string? ErrorDesc { get; set; }
+    public string? ErrorDescription { get; set; }
 }

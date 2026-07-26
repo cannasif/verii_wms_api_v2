@@ -52,6 +52,41 @@ public sealed class NetsisRestClient(
         }
     }
 
+    public async Task<NetsisCallResult<NetsisDeleteItemSlipResponse>> DeleteItemSlipAsync(
+        long erpRecordId,
+        CancellationToken cancellationToken)
+    {
+        if (erpRecordId <= 0)
+            throw new ArgumentOutOfRangeException(nameof(erpRecordId), "ERP kayıt kimliği pozitif olmalıdır.");
+
+        var watch = Stopwatch.StartNew();
+        try
+        {
+            var result = await SendDeleteAsync(erpRecordId, false, cancellationToken);
+            if (result.HttpStatusCode == (int)HttpStatusCode.Unauthorized)
+                result = await SendDeleteAsync(erpRecordId, true, cancellationToken);
+            return result with { DurationMs = watch.ElapsedMilliseconds };
+        }
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
+        {
+            logger.LogError("Netsis ItemSlips silme isteği zaman aşımına uğradı; ERP silme sonucu belirsiz.");
+            return new(false, false, true, null, watch.ElapsedMilliseconds, null, null,
+                "ERP_DELETE_TIMEOUT_COMMIT_UNCERTAIN",
+                "Netsis yanıt vermedi. Belge ERP'den silinmiş olabilir; yerel ters hareket durduruldu.");
+        }
+        catch (HttpRequestException ex)
+        {
+            logger.LogError(ex, "Netsis ItemSlips silme taşıma hatası; ERP silme sonucu belirsiz.");
+            return new(false, false, true, null, watch.ElapsedMilliseconds, null, null,
+                "ERP_DELETE_TRANSPORT_COMMIT_UNCERTAIN",
+                "Netsis bağlantısı yanıt alınmadan kesildi. Belge ERP'den silinmiş olabilir; yerel ters hareket durduruldu.");
+        }
+        finally
+        {
+            watch.Stop();
+        }
+    }
+
     private async Task<NetsisCallResult<NetsisItemSlipResponse>> SendAsync(
         string payload,
         bool forceRefresh,
@@ -86,6 +121,42 @@ public sealed class NetsisRestClient(
             error = $"Netsis ItemSlips isteği {(int)response.StatusCode} ile sonuçlandı.";
         if (response.IsSuccessStatusCode && data is null)
             error = "Netsis başarılı HTTP kodu döndürdü ancak iş sonucu çözümlenemedi.";
+
+        return new(response.IsSuccessStatusCode, businessSucceeded, false, (int)response.StatusCode, 0,
+            data, Truncate(raw, 8000), data?.ErrorCode, error);
+    }
+
+    private async Task<NetsisCallResult<NetsisDeleteItemSlipResponse>> SendDeleteAsync(
+        long erpRecordId,
+        bool forceRefresh,
+        CancellationToken cancellationToken)
+    {
+        var token = await tokenService.GetAccessTokenAsync(forceRefresh, cancellationToken);
+        var basePath = optionsAccessor.Value.Rest.ItemSlipsPath.TrimEnd('/');
+        using var message = new HttpRequestMessage(HttpMethod.Delete, $"{basePath}/{erpRecordId}");
+        message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        message.Headers.Accept.ParseAdd("application/json");
+
+        using var response = await httpClient.SendAsync(message, cancellationToken);
+        var raw = await response.Content.ReadAsStringAsync(cancellationToken);
+        NetsisDeleteItemSlipResponse? data = null;
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(raw))
+                data = JsonSerializer.Deserialize<NetsisDeleteItemSlipResponse>(raw, JsonOptions);
+        }
+        catch (JsonException ex)
+        {
+            logger.LogWarning(ex, "Netsis ItemSlips silme yanıtı JSON olarak çözümlenemedi.");
+        }
+
+        var providerRejected = data?.IsSuccessful == false || data?.IsSuccessStatusCode == false;
+        var businessSucceeded = response.IsSuccessStatusCode && !providerRejected;
+        var error = data?.ErrorDescription ?? data?.ErrorDesc;
+        if (string.IsNullOrWhiteSpace(error) && !response.IsSuccessStatusCode)
+            error = $"Netsis ItemSlips silme isteği {(int)response.StatusCode} ile sonuçlandı.";
+        if (response.IsSuccessStatusCode && providerRejected && string.IsNullOrWhiteSpace(error))
+            error = "Netsis belge silme işlemini iş kuralı nedeniyle reddetti.";
 
         return new(response.IsSuccessStatusCode, businessSucceeded, false, (int)response.StatusCode, 0,
             data, Truncate(raw, 8000), data?.ErrorCode, error);

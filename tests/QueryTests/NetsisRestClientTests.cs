@@ -56,6 +56,71 @@ public sealed class NetsisRestClientTests
         Assert.Equal("Belge reddedildi", result.ErrorMessage);
     }
 
+    [Fact]
+    public async Task Delete_uses_exact_item_slip_record_endpoint_and_accepts_empty_no_content()
+    {
+        HttpMethod? method = null;
+        string? path = null;
+        var handler = new QueueHandler(request =>
+        {
+            method = request.Method;
+            path = request.RequestUri?.PathAndQuery;
+            return new HttpResponseMessage(HttpStatusCode.NoContent);
+        });
+        var client = CreateClient(handler, new FakeTokenService());
+
+        var result = await client.DeleteItemSlipAsync(4815, CancellationToken.None);
+
+        Assert.True(result.TransportSucceeded);
+        Assert.True(result.BusinessSucceeded);
+        Assert.False(result.CommitUncertain);
+        Assert.Equal(HttpMethod.Delete, method);
+        Assert.Equal("/api/v2/ItemSlips/4815", path);
+    }
+
+    [Fact]
+    public async Task Delete_unauthorized_response_refreshes_token_once()
+    {
+        var handler = new QueueHandler(
+            _ => new HttpResponseMessage(HttpStatusCode.Unauthorized),
+            _ => Json(HttpStatusCode.OK, """{"isSuccessful":true}"""));
+        var tokens = new FakeTokenService();
+        var client = CreateClient(handler, tokens);
+
+        var result = await client.DeleteItemSlipAsync(92, CancellationToken.None);
+
+        Assert.True(result.BusinessSucceeded);
+        Assert.Equal([false, true], tokens.ForceRefreshCalls);
+        Assert.Equal(2, handler.CallCount);
+    }
+
+    [Fact]
+    public async Task Delete_timeout_is_commit_uncertain_and_does_not_report_success()
+    {
+        var handler = new QueueHandler(_ => throw new TaskCanceledException("timeout"));
+        var client = CreateClient(handler, new FakeTokenService());
+
+        var result = await client.DeleteItemSlipAsync(92, CancellationToken.None);
+
+        Assert.False(result.BusinessSucceeded);
+        Assert.True(result.CommitUncertain);
+        Assert.Equal("ERP_DELETE_TIMEOUT_COMMIT_UNCERTAIN", result.ErrorCode);
+    }
+
+    [Fact]
+    public async Task Delete_not_found_requires_reconciliation()
+    {
+        var handler = new QueueHandler(
+            _ => Json(HttpStatusCode.NotFound, """{"isSuccessful":false,"errorCode":"NOT_FOUND"}"""));
+        var client = CreateClient(handler, new FakeTokenService());
+
+        var result = await client.DeleteItemSlipAsync(92, CancellationToken.None);
+
+        Assert.False(result.BusinessSucceeded);
+        Assert.False(result.CommitUncertain);
+        Assert.Equal(HttpStatusCode.NotFound, (HttpStatusCode?)result.HttpStatusCode);
+    }
+
     private static NetsisRestClient CreateClient(HttpMessageHandler handler, INetsisTokenService tokenService)
     {
         var httpClient = new HttpClient(handler) { BaseAddress = new Uri("http://netsis.local") };
