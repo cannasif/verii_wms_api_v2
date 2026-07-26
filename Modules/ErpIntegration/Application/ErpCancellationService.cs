@@ -117,14 +117,23 @@ public sealed class ErpCancellationService(
         }
 
         var succeeded = call.TransportSucceeded && call.BusinessSucceeded;
+        var requiresReconciliation = call.CommitUncertain || call.HttpStatusCode == StatusCodes.Status404NotFound;
         cancellation.Status = succeeded
             ? ErpCancellationStatus.ErpDeletionConfirmed
-            : call.CommitUncertain ? ErpCancellationStatus.CommitUncertain : ErpCancellationStatus.Failed;
+            : requiresReconciliation ? ErpCancellationStatus.CommitUncertain : ErpCancellationStatus.Failed;
         cancellation.ErpDeletedAtUtc = succeeded ? DateTimeOffset.UtcNow : null;
         cancellation.CompletedAtUtc = succeeded ? null : DateTimeOffset.UtcNow;
         cancellation.LastHttpStatusCode = call.HttpStatusCode;
-        cancellation.LastErrorCode = succeeded ? null : call.ErrorCode;
-        cancellation.LastErrorMessage = succeeded ? null : call.ErrorMessage;
+        cancellation.LastErrorCode = succeeded
+            ? null
+            : call.HttpStatusCode == StatusCodes.Status404NotFound
+                ? "ERP_DELETE_NOT_FOUND_RECONCILIATION_REQUIRED"
+                : call.ErrorCode;
+        cancellation.LastErrorMessage = succeeded
+            ? null
+            : call.HttpStatusCode == StatusCodes.Status404NotFound
+                ? "ERP kaydı silme sırasında bulunamadı. Yanlış ortam veya önceden silinmiş belge riski nedeniyle WMS ters hareketi manuel mutabakata kadar durduruldu."
+                : call.ErrorMessage;
         Cancellations.Update(cancellation);
         await Attempts.AddAsync(new ErpCancellationAttempt
         {
@@ -135,10 +144,10 @@ public sealed class ErpCancellationService(
             Endpoint = $"{optionsAccessor.Value.Rest.ItemSlipsPath.TrimEnd('/')}/{erpRecordId}",
             HttpStatusCode = call.HttpStatusCode,
             IsSuccessful = succeeded,
-            CommitUncertain = call.CommitUncertain,
+            CommitUncertain = requiresReconciliation,
             DurationMs = call.DurationMs,
-            ErrorCode = call.ErrorCode,
-            ErrorMessage = call.ErrorMessage,
+            ErrorCode = cancellation.LastErrorCode,
+            ErrorMessage = cancellation.LastErrorMessage,
             ProviderResponse = call.RawResponse,
             TraceId = cancellation.TraceId,
             StartedAtUtc = startedAt,
