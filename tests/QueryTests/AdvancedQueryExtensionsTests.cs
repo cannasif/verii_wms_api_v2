@@ -105,6 +105,84 @@ public sealed class AdvancedQueryExtensionsTests
     }
 
     [Fact]
+    public void Search_uses_default_columns_and_does_not_search_unselected_fields()
+    {
+        var request = new PagedRequest { Search = "ONLY-PREFIX" };
+
+        var rows = SearchRows()
+            .ApplySearch(request, SearchColumns(), ["code", "name"])
+            .ToList();
+
+        Assert.Empty(rows);
+    }
+
+    [Fact]
+    public void User_can_expand_search_to_an_optional_allowed_column()
+    {
+        var request = new PagedRequest
+        {
+            Search = "ONLY-PREFIX",
+            SearchFields = ["code", "name", "prefix"]
+        };
+
+        var rows = SearchRows()
+            .ApplySearch(request, SearchColumns(), ["code", "name"])
+            .ToList();
+
+        Assert.Single(rows);
+        Assert.Equal(1, rows[0].Id);
+    }
+
+    [Fact]
+    public void User_can_reduce_search_to_one_allowed_column()
+    {
+        var request = new PagedRequest
+        {
+            Search = "PRODUCTION",
+            SearchFields = ["code"]
+        };
+
+        var rows = SearchRows()
+            .ApplySearch(request, SearchColumns(), ["code", "name"])
+            .ToList();
+
+        Assert.Empty(rows);
+    }
+
+    [Fact]
+    public void Search_terms_can_match_different_selected_columns()
+    {
+        var request = new PagedRequest
+        {
+            Search = "UR PRODUCTION",
+            SearchFields = ["code", "name"]
+        };
+
+        var rows = SearchRows()
+            .ApplySearch(request, SearchColumns(), ["code", "name"])
+            .ToList();
+
+        Assert.Single(rows);
+        Assert.Equal(1, rows[0].Id);
+    }
+
+    [Fact]
+    public void Search_rejects_a_field_outside_the_allow_list()
+    {
+        var request = new PagedRequest
+        {
+            Search = "UR",
+            SearchFields = ["description"]
+        };
+
+        var exception = Assert.Throws<AppException>(() =>
+            SearchRows().ApplySearch(request, SearchColumns(), ["code", "name"]).ToList());
+
+        Assert.Equal(400, exception.StatusCode);
+        Assert.Contains("izin verilen", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Nested_path_requires_an_explicit_mapping()
     {
         var exception = Assert.Throws<AppException>(() =>
@@ -232,6 +310,20 @@ public sealed class AdvancedQueryExtensionsTests
         new QueryRow(2, 1, QueryStatus.Released, 20, 5)
     }.AsQueryable();
 
+    private static IQueryable<SearchRow> SearchRows() => new[]
+    {
+        new SearchRow(1, "UR-001", "PRODUCTION ORDER", "ONLY-PREFIX"),
+        new SearchRow(2, "GR-001", "GOODS RECEIPT", "MK")
+    }.AsQueryable();
+
+    private static IReadOnlyDictionary<string, string> SearchColumns() =>
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["code"] = nameof(SearchRow.Code),
+            ["name"] = nameof(SearchRow.Name),
+            ["prefix"] = nameof(SearchRow.Prefix)
+        };
+
     private static WmsDbContext SqlServerContext()
     {
         var options = new DbContextOptionsBuilder<WmsDbContext>()
@@ -241,6 +333,7 @@ public sealed class AdvancedQueryExtensionsTests
     }
 
     private sealed record QueryRow(long Id, int SortKey, QueryStatus Status, decimal Quantity, int? OptionalCode);
+    private sealed record SearchRow(long Id, string Code, string Name, string Prefix);
     private sealed record GoodsReceiptStatusRow(long Id, verii_wms_api_v2.Modules.WarehouseOperations.Domain.WarehouseOperationStatus Status);
     private sealed record StringStatusRow(long Id, string Status);
     private sealed class LocationGridProjection

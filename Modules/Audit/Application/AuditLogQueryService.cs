@@ -26,5 +26,5 @@ public sealed class AuditLogQueryService(IUnitOfWork unitOfWork) : IAuditLogQuer
     }
 
     private static JsonElement? Parse(string? json) { if (string.IsNullOrWhiteSpace(json)) return null; try { return JsonSerializer.Deserialize<JsonElement>(json); } catch { return null; } }
-    private static PagedRequest Clone(PagedRequest request, string sortBy, string direction) => new() { PageNumber = request.PageNumber, Page = request.Page, PageSize = request.PageSize, Search = request.Search, SortBy = sortBy, SortDirection = direction, FilterLogic = request.FilterLogic, Filters = request.Filters };
+    private static PagedRequest Clone(PagedRequest request, string sortBy, string direction) => new() { PageNumber = request.PageNumber, Page = request.Page, PageSize = request.PageSize, Search = request.Search, SearchFields = request.SearchFields, SortBy = sortBy, SortDirection = direction, FilterLogic = request.FilterLogic, Filters = request.Filters };
 }

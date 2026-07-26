@@ -9,6 +9,7 @@ public sealed class PagedRequest
     public int Page { get; init; }
     public int PageSize { get; init; } = 10;
     public string? Search { get; init; }
+    public IReadOnlyList<string> SearchFields { get; init; } = Array.Empty<string>();
     public string? SortBy { get; init; }
     public string SortDirection { get; init; } = "asc";
     public string FilterLogic { get; init; } = "and";

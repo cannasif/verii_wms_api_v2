@@ -8,9 +8,89 @@ namespace verii_wms_api_v2.Shared;
 public static class AdvancedQueryExtensions
 {
     private const int MaximumFilterCount = 20;
+    private const int MaximumSearchFieldCount = 12;
+    private const int MaximumSearchTermCount = 10;
     private const int MaximumColumnLength = 100;
     private const int MaximumOperatorLength = 30;
     private const int MaximumFilterValueLength = 500;
+
+    public static IQueryable<T> ApplySearch<T>(
+        this IQueryable<T> query,
+        PagedRequest request,
+        IReadOnlyDictionary<string, string> columnMapping,
+        IReadOnlyCollection<string>? defaultColumns = null)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(columnMapping);
+
+        var search = request.Search?.Trim();
+        if (string.IsNullOrWhiteSpace(search)) return query;
+        if (columnMapping.Count == 0)
+            throw new InvalidOperationException("En az bir aranabilir kolon tanımlanmalıdır.");
+
+        var requestedColumns = request.SearchFields
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (requestedColumns.Length == 0)
+            requestedColumns = (defaultColumns is { Count: > 0 } ? defaultColumns : columnMapping.Keys)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        if (requestedColumns.Length > MaximumSearchFieldCount)
+            throw AppException.BadRequest($"En fazla {MaximumSearchFieldCount} arama alanı seçilebilir.");
+
+        var parameter = Expression.Parameter(typeof(T), "x");
+        var members = requestedColumns.Select(column =>
+        {
+            if (column.Length > MaximumColumnLength)
+                throw AppException.BadRequest($"Arama alanı en fazla {MaximumColumnLength} karakter olabilir.");
+
+            var path = ResolveColumn(
+                column,
+                columnMapping,
+                message => AppException.BadRequest(message));
+            var resolved = ResolvePath(parameter, typeof(T), path)
+                ?? throw AppException.BadRequest($"'{column}' aranabilir bir kolon değildir.");
+            if (resolved.member.Type != typeof(string))
+                throw AppException.BadRequest($"'{column}' metin aramasını desteklemiyor.");
+            return resolved.member;
+        }).ToArray();
+
+        var terms = search
+            .Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (terms.Length > MaximumSearchTermCount)
+            throw AppException.BadRequest($"Arama metni en fazla {MaximumSearchTermCount} kelime içerebilir.");
+
+        Expression? allTerms = null;
+        foreach (var term in terms)
+        {
+            Expression? anyColumn = null;
+            var value = Expression.Constant(term);
+            foreach (var member in members)
+            {
+                var notNull = Expression.NotEqual(member, Expression.Constant(null, typeof(string)));
+                var contains = Expression.Call(
+                    member,
+                    typeof(string).GetMethod(nameof(string.Contains), [typeof(string)])!,
+                    value);
+                var current = Expression.AndAlso(notNull, contains);
+                anyColumn = anyColumn is null ? current : Expression.OrElse(anyColumn, current);
+            }
+
+            allTerms = allTerms is null ? anyColumn : Expression.AndAlso(allTerms, anyColumn!);
+        }
+
+        return allTerms is null
+            ? query
+            : PagedQueryExtensions.RewriteProjectionMemberAccess(
+                query.Where(Expression.Lambda<Func<T, bool>>(allTerms, parameter)));
+    }
 
     public static IQueryable<T> ApplyAdvancedFilters<T>(this IQueryable<T> query, PagedRequest request, IReadOnlyDictionary<string, string>? columnMapping = null)
     {
