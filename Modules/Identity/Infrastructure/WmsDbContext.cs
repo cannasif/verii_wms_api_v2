@@ -21,6 +21,8 @@ using verii_wms_api_v2.Modules.Packing.Domain;
 using verii_wms_api_v2.Modules.Packing.Infrastructure;
 using verii_wms_api_v2.Modules.ProjectSettings.Domain;
 using verii_wms_api_v2.Modules.ProjectSettings.Infrastructure;
+using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
+using verii_wms_api_v2.Modules.ProductionTransfer.Infrastructure;
 using verii_wms_api_v2.Modules.Quality.Domain;
 using verii_wms_api_v2.Modules.Quality.Infrastructure;
 using verii_wms_api_v2.Modules.SerialNumberPolicy.Domain;
@@ -36,6 +38,8 @@ using verii_wms_api_v2.Modules.StockMovement.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Infrastructure;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.StockBalance.Infrastructure;
+using verii_wms_api_v2.Modules.SubcontractingTransfer.Domain;
+using verii_wms_api_v2.Modules.SubcontractingTransfer.Infrastructure;
 using verii_wms_api_v2.Modules.SteelReceipt.Domain;
 using verii_wms_api_v2.Modules.SteelReceipt.Infrastructure;
 using verii_wms_api_v2.Modules.VehicleCheckIn.Domain;
@@ -150,6 +154,12 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<WarehouseTransferTaskAssignment> WarehouseTransferTaskAssignments => Set<WarehouseTransferTaskAssignment>();
     public DbSet<WarehouseTransferStatusHistory> WarehouseTransferStatusHistory => Set<WarehouseTransferStatusHistory>();
     public DbSet<WarehouseTransferPolicy> WarehouseTransferPolicies => Set<WarehouseTransferPolicy>();
+    public DbSet<ProductionTransferHeaderLink> ProductionTransferHeaderLinks => Set<ProductionTransferHeaderLink>();
+    public DbSet<ProductionTransferLineLink> ProductionTransferLineLinks => Set<ProductionTransferLineLink>();
+    public DbSet<ProductionTransferPolicy> ProductionTransferPolicies => Set<ProductionTransferPolicy>();
+    public DbSet<SubcontractingTransferHeaderLink> SubcontractingTransferHeaderLinks => Set<SubcontractingTransferHeaderLink>();
+    public DbSet<SubcontractingTransferLineLink> SubcontractingTransferLineLinks => Set<SubcontractingTransferLineLink>();
+    public DbSet<SubcontractingTransferPolicy> SubcontractingTransferPolicies => Set<SubcontractingTransferPolicy>();
     public DbSet<WarehouseInboundHeader> WarehouseInboundHeaders => Set<WarehouseInboundHeader>();
     public DbSet<WarehouseInboundSourceDocument> WarehouseInboundSourceDocuments => Set<WarehouseInboundSourceDocument>();
     public DbSet<WarehouseInboundLine> WarehouseInboundLines => Set<WarehouseInboundLine>();
@@ -290,6 +300,12 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new WarehouseTransferTaskAssignmentConfiguration());
         modelBuilder.ApplyConfiguration(new WarehouseTransferStatusHistoryConfiguration());
         modelBuilder.ApplyConfiguration(new WarehouseTransferPolicyConfiguration());
+        modelBuilder.ApplyConfiguration(new ProductionTransferHeaderLinkConfiguration());
+        modelBuilder.ApplyConfiguration(new ProductionTransferLineLinkConfiguration());
+        modelBuilder.ApplyConfiguration(new ProductionTransferPolicyConfiguration());
+        modelBuilder.ApplyConfiguration(new SubcontractingTransferHeaderLinkConfiguration());
+        modelBuilder.ApplyConfiguration(new SubcontractingTransferLineLinkConfiguration());
+        modelBuilder.ApplyConfiguration(new SubcontractingTransferPolicyConfiguration());
         modelBuilder.ApplyConfiguration(new WarehouseInboundHeaderConfiguration());
         modelBuilder.ApplyConfiguration(new WarehouseInboundSourceDocumentConfiguration());
         modelBuilder.ApplyConfiguration(new WarehouseInboundLineConfiguration());
@@ -459,6 +475,26 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             new PermissionDefinition { Id=2301, BranchCode="0", Code="WMS.INCOMING_INVOICE.IMPORT", Name="Gelen e-Fatura/e-Arşiv belgesi arşivle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2302, BranchCode="0", Code="WMS.INCOMING_INVOICE.CONNECTIONS.MANAGE", Name="eLogo bağlantılarını yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2303, BranchCode="0", Code="WMS.INCOMING_INVOICE.CREATE_GOODS_RECEIPT", Name="Faturadan mal kabul taslağı oluştur", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
+        modelBuilder.Entity<PermissionDefinition>().HasData(
+            new PermissionDefinition { Id=2400, BranchCode="0", Code="WMS.PRODUCTION_TRANSFER.VIEW", Name="Üretim transferlerini görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2401, BranchCode="0", Code="WMS.PRODUCTION_TRANSFER.CREATE", Name="Üretim transferi oluştur", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2402, BranchCode="0", Code="WMS.PRODUCTION_TRANSFER.OPERATE", Name="Üretim transfer operasyonunu yürüt", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2403, BranchCode="0", Code="WMS.PRODUCTION_TRANSFER.APPROVE", Name="Üretim transferini onayla", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2404, BranchCode="0", Code="WMS.PRODUCTION_TRANSFER.CANCEL", Name="Üretim transferini iptal et", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2405, BranchCode="0", Code="WMS.PRODUCTION_TRANSFER.SETTINGS.VIEW", Name="Üretim transfer ayarlarını görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2406, BranchCode="0", Code="WMS.PRODUCTION_TRANSFER.SETTINGS.MANAGE", Name="Üretim transfer ayarlarını yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2407, BranchCode="0", Code="WMS.PRODUCTION_TRANSFER.UPDATE", Name="Üretim transfer taslağını güncelle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2408, BranchCode="0", Code="WMS.PRODUCTION_TRANSFER.DELETE", Name="Üretim transfer taslağını sil", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
+        modelBuilder.Entity<PermissionDefinition>().HasData(
+            new PermissionDefinition { Id=2410, BranchCode="0", Code="WMS.SUBCONTRACTING_TRANSFER.VIEW", Name="Fason transferlerini görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2411, BranchCode="0", Code="WMS.SUBCONTRACTING_TRANSFER.CREATE", Name="Fason transferi oluştur", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2412, BranchCode="0", Code="WMS.SUBCONTRACTING_TRANSFER.OPERATE", Name="Fason transfer operasyonunu yürüt", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2413, BranchCode="0", Code="WMS.SUBCONTRACTING_TRANSFER.APPROVE", Name="Fason transferini onayla", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2414, BranchCode="0", Code="WMS.SUBCONTRACTING_TRANSFER.CANCEL", Name="Fason transferini iptal et", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2415, BranchCode="0", Code="WMS.SUBCONTRACTING_TRANSFER.SETTINGS.VIEW", Name="Fason transfer ayarlarını görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2416, BranchCode="0", Code="WMS.SUBCONTRACTING_TRANSFER.SETTINGS.MANAGE", Name="Fason transfer ayarlarını yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2417, BranchCode="0", Code="WMS.SUBCONTRACTING_TRANSFER.UPDATE", Name="Fason transfer taslağını güncelle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2418, BranchCode="0", Code="WMS.SUBCONTRACTING_TRANSFER.DELETE", Name="Fason transfer taslağını sil", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionGroup>().HasData(new PermissionGroup { Id=1001, BranchCode="0", Name="System Administrators", Description="Tam sistem yönetimi", IsSystemAdmin=true, IsActive=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(1,8).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(9,7).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
@@ -478,6 +514,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2110,9).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2200,8).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2300,4).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
+        modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2400,9).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
+        modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2410,9).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<UserPermissionGroup>().HasData(new UserPermissionGroup { Id=1001, BranchCode="0", UserId=1, PermissionGroupId=1001, CreatedDate=seedDate });
     }
 
