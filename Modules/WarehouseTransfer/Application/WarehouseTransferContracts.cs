@@ -30,7 +30,7 @@ public sealed record WarehouseTransferLineDraftRequest(
     long StockId,
     long? YapCodeId,
     decimal Quantity,
-    string UnitCode,
+    string? UnitCode,
     StockTrackingType TrackingType,
     bool RequireHandlingUnit,
     long? DefaultSourceLocationId,

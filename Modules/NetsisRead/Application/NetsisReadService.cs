@@ -17,7 +17,7 @@ public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INet
 
     public async Task<IReadOnlyList<StockDto>> GetStocksAsync(string? stockCode, int? branchCode, CancellationToken ct)
     {
-        var rows = await queryExecutor.QueryAsync<StockDto>("RII_FN_STOK", "SELECT * FROM dbo.RII_FN_STOK(@stokKodu, @branchCode)", r => new StockDto(Get<short>(r,"SUBE_KODU"), Get<short>(r,"ISLETME_KODU"), String(r,"STOK_KODU"), String(r,"URETICI_KODU"), String(r,"STOK_ADI"), String(r,"GRUP_KODU"), String(r,"KOD_1"), String(r,"KOD_2"), String(r,"KOD_3"), String(r,"KOD_4"), String(r,"KOD_5")), ct, Parameter("@stokKodu", stockCode), Parameter("@branchCode", branchCode));
+        var rows = await queryExecutor.QueryAsync<StockDto>("RII_FN_STOK", "SELECT * FROM dbo.RII_FN_STOK(@stokKodu, @branchCode)", r => new StockDto(Get<short>(r,"SUBE_KODU"), Get<short>(r,"ISLETME_KODU"), String(r,"STOK_KODU"), String(r,"URETICI_KODU"), String(r,"STOK_ADI"), String(r,"GRUP_KODU"), String(r,"KOD_1"), String(r,"KOD_2"), String(r,"KOD_3"), String(r,"KOD_4"), String(r,"KOD_5"), NullableString(r,"OLCU_BR1")), ct, Parameter("@stokKodu", stockCode), Parameter("@branchCode", branchCode));
         return rows;
     }
 

@@ -61,6 +61,7 @@ public sealed class ErpMirrorService(IUnitOfWork unitOfWork, INetsisReadService 
             }
             else updated++;
             entity.BusinessUnitCode = row.IsletmeKodu; entity.StockName = Clean(row.StokAdi, code);
+            entity.BaseUnitCode = CleanUnit(row.OlcuBr1, entity.BaseUnitCode);
             entity.ManufacturerCode = Trim(row.UreticiKodu); entity.GroupCode = Trim(row.GrupKodu);
             entity.Code1 = Trim(row.Kod1); entity.Code2 = Trim(row.Kod2); entity.Code3 = Trim(row.Kod3); entity.Code4 = Trim(row.Kod4); entity.Code5 = Trim(row.Kod5);
             Activate(entity, now); entity.LastSyncDate = now;
@@ -144,8 +145,8 @@ public sealed class ErpMirrorService(IUnitOfWork unitOfWork, INetsisReadService 
     {
         var search = request.Search?.Trim();
         var query = Stocks.Query()
-            .Where(x => string.IsNullOrWhiteSpace(search) || x.BranchCode.Contains(search) || x.ErpStockCode.Contains(search) || x.StockName.Contains(search) || (x.ManufacturerCode != null && x.ManufacturerCode.Contains(search)) || (x.GroupCode != null && x.GroupCode.Contains(search)))
-            .Select(x => new StockMirrorDto(x.Id, x.BranchCode, x.BusinessUnitCode, x.ErpStockCode, x.StockName, x.ManufacturerCode, x.GroupCode, x.Code1, x.Code2, x.Code3, x.Code4, x.Code5, x.LastSyncDate, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate))
+            .Where(x => string.IsNullOrWhiteSpace(search) || x.BranchCode.Contains(search) || x.ErpStockCode.Contains(search) || x.StockName.Contains(search) || x.BaseUnitCode.Contains(search) || (x.ManufacturerCode != null && x.ManufacturerCode.Contains(search)) || (x.GroupCode != null && x.GroupCode.Contains(search)))
+            .Select(x => new StockMirrorDto(x.Id, x.BranchCode, x.BusinessUnitCode, x.ErpStockCode, x.StockName, x.BaseUnitCode, x.ManufacturerCode, x.GroupCode, x.Code1, x.Code2, x.Code3, x.Code4, x.Code5, x.LastSyncDate, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate))
             .ApplyAdvancedFilters(request).ApplySort(request, nameof(StockMirrorDto.ErpStockCode));
         return PageAsync(query, request, ct);
     }
@@ -174,6 +175,11 @@ public sealed class ErpMirrorService(IUnitOfWork unitOfWork, INetsisReadService 
     }
     private static string Key(object branch, string code) => $"{branch}|{Normalize(code)}";
     private static string Normalize(string value) => value.Trim().ToUpperInvariant();
+    private static string CleanUnit(string? sourceUnit, string? currentUnit)
+    {
+        var unit = Trim(sourceUnit) ?? Trim(currentUnit) ?? "ADET";
+        return unit.ToUpperInvariant();
+    }
     private static string? Trim(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static string Clean(string? value, string fallback) => string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
     private static void Activate(verii_wms_api_v2.Shared.Domain.BaseEntity entity, DateTime now) { entity.IsDeleted = false; entity.DeletedDate = null; entity.DeletedBy = null; entity.UpdatedDate = now; }

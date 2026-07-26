@@ -13,6 +13,7 @@ using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Quality.Application;
 using verii_wms_api_v2.Modules.Quality.Domain;
+using verii_wms_api_v2.Modules.Stock.Application;
 using verii_wms_api_v2.Modules.SerialNumberPolicy.Application;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.StockTracking.Application;
@@ -298,7 +299,7 @@ public sealed class GoodsReceiptOperationsService(
                 var lineLocationId = input.ReceivingLocationId ?? request.ReceivingLocationId;
                 yaps.TryGetValue(input.YapCodeId ?? 0, out var yap); var qp = resolved[stock.Id];
                 var trackingPolicy = trackingPolicies[stock.Id];
-                var unit = string.IsNullOrWhiteSpace(input.UnitCode) ? "ADET" : input.UnitCode.Trim().ToUpperInvariant();
+                var unit = StockUnitPolicy.Resolve(stock, input.UnitCode);
                 var qualityRequired = policy.RequireQualityApproval || qp.InspectionMode != QualityInspectionMode.NoCheck;
                 var line = Stamp(new GoodsReceiptLine
                 {

@@ -7,6 +7,7 @@ public sealed class Stock : BaseEntity
     public short BusinessUnitCode { get; set; }
     public string ErpStockCode { get; set; } = string.Empty;
     public string StockName { get; set; } = string.Empty;
+    public string BaseUnitCode { get; set; } = "ADET";
     public string? ManufacturerCode { get; set; }
     public string? GroupCode { get; set; }
     public string? Code1 { get; set; }

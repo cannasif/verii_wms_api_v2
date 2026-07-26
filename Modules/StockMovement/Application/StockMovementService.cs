@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.SerialNumberPolicy.Domain;
+using verii_wms_api_v2.Modules.Stock.Application;
 using verii_wms_api_v2.Modules.StockBalance.Application;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
@@ -176,7 +177,7 @@ public sealed class StockMovementService(IUnitOfWork unitOfWork, IAuditLogWriter
             var stock = stocks[line.StockId];
             if (line.YapCodeId.HasValue && yapCodes[line.YapCodeId.Value].StockId.HasValue && yapCodes[line.YapCodeId.Value].StockId != stock.Id)
                 throw AppException.BadRequest("YAP kodu seçilen stokla uyuşmuyor.");
-            var unit = NormalizeText(line.UnitCode, 20)?.ToUpperInvariant() ?? "ADET";
+            var unit = StockUnitPolicy.Resolve(stock, line.UnitCode);
             var lot = NormalizeText(line.LotNo, 100); var serial = NormalizeText(line.SerialNo, 100)?.ToUpperInvariant();
             var status = NormalizeText(line.StockStatus, 30) ?? "Available";
             var sourceStatus = NormalizeText(line.SourceStockStatus, 30) ?? status;

@@ -7,6 +7,7 @@ using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.NetsisRead.Application;
 using verii_wms_api_v2.Modules.NetsisRead.Application.Dtos;
+using verii_wms_api_v2.Modules.Stock.Application;
 using verii_wms_api_v2.Modules.StockTracking.Application;
 using verii_wms_api_v2.Modules.WarehouseOutbound.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
@@ -137,6 +138,7 @@ public sealed class WarehouseOutboundService(
         foreach (var item in request.Lines)
         {
             var stock = stocks[item.StockId];
+            var unit = StockUnitPolicy.Resolve(stock, item.UnitCode);
             var yap = item.YapCodeId.HasValue ? yaps[item.YapCodeId.Value] : null;
             var trackingPolicy = trackingPolicies[item.StockId];
             var line = new WarehouseOutboundLine
@@ -150,7 +152,7 @@ public sealed class WarehouseOutboundService(
                 StockNameSnapshot = stock.StockName,
                 YapCodeId = yap?.Id,
                 YapCodeSnapshot = yap?.ConfigurationCode,
-                UnitCode = item.UnitCode.Trim().ToUpperInvariant(),
+                UnitCode = unit,
                 RequestedQuantity = item.Quantity,
                 TrackingType = trackingPolicy.TrackingType,
                 RequireHandlingUnit = item.RequireHandlingUnit,
@@ -193,7 +195,7 @@ public sealed class WarehouseOutboundService(
                     OrderedQuantity = source.OrderedQuantity,
                     PreviouslyShippedQuantity = source.PreviouslyShippedQuantity,
                     AllocatedQuantity = item.Quantity,
-                    UnitCode = item.UnitCode.Trim().ToUpperInvariant()
+                    UnitCode = unit
                 });
             }
 
@@ -579,8 +581,8 @@ public sealed class WarehouseOutboundService(
             throw AppException.BadRequest("Öncelik 1-9 arasında olmalıdır.");
         if (request.Lines.Count == 0)
             throw AppException.BadRequest("En az bir sevk kalemi zorunludur.");
-        if (request.Lines.Any(x => x.StockId <= 0 || x.Quantity <= 0 || string.IsNullOrWhiteSpace(x.UnitCode)))
-            throw AppException.BadRequest("Sevk kalemlerinde stok, pozitif miktar ve birim zorunludur.");
+        if (request.Lines.Any(x => x.StockId <= 0 || x.Quantity <= 0))
+            throw AppException.BadRequest("Sevk kalemlerinde stok ve pozitif miktar zorunludur.");
     }
 
     private static void EnsureMode(

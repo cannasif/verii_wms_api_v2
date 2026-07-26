@@ -12,6 +12,7 @@ public sealed class StockConfiguration : BaseEntityConfiguration<Domain.Stock>
         builder.ToTable("RII_STOCK");
         builder.Property(x => x.ErpStockCode).HasMaxLength(50).IsRequired();
         builder.Property(x => x.StockName).HasMaxLength(250).IsRequired();
+        builder.Property(x => x.BaseUnitCode).HasMaxLength(20).IsRequired();
         builder.Property(x => x.ManufacturerCode).HasMaxLength(50);
         builder.Property(x => x.GroupCode).HasMaxLength(50);
         builder.Property(x => x.Code1).HasMaxLength(50);

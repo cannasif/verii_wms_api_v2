@@ -2,7 +2,19 @@ namespace verii_wms_api_v2.Modules.NetsisRead.Application.Dtos;
 
 public sealed record BranchDto(short SubeKodu, string? Unvan);
 public sealed record WarehouseDto(short DepoKodu, string DepoIsmi, short SubeKodu);
-public sealed record StockDto(short SubeKodu, short IsletmeKodu, string StokKodu, string UreticiKodu, string StokAdi, string GrupKodu, string Kod1, string Kod2, string Kod3, string Kod4, string Kod5);
+public sealed record StockDto(
+    short SubeKodu,
+    short IsletmeKodu,
+    string StokKodu,
+    string UreticiKodu,
+    string StokAdi,
+    string GrupKodu,
+    string Kod1,
+    string Kod2,
+    string Kod3,
+    string Kod4,
+    string Kod5,
+    string? OlcuBr1);
 public sealed record CustomerDto(short SubeKodu, short IsletmeKodu, string CariKod, string? CariIsim);
 public sealed record ConfigurationCodeDto(
     string ConfigurationCode,

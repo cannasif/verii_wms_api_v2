@@ -13,6 +13,7 @@ using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Quality.Application;
 using verii_wms_api_v2.Modules.Quality.Domain;
 using verii_wms_api_v2.Modules.SerialNumberPolicy.Application;
+using verii_wms_api_v2.Modules.Stock.Application;
 using verii_wms_api_v2.Modules.StockTracking.Application;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
@@ -170,7 +171,7 @@ public sealed class WarehouseInboundService(
                 var source = item.Source; var stock = stockByCode[source.StockCode!]; YapCodeEntity? yap = null;
                 var trackingPolicy = trackingPolicies[stock.Id];
                 if (!string.IsNullOrWhiteSpace(source.YapCode)) yap = yapByCode[source.YapCode];
-                var unit = string.IsNullOrWhiteSpace(source.UnitCode) ? "ADET" : source.UnitCode.Trim().ToUpperInvariant();
+                var unit = StockUnitPolicy.Resolve(stock, source.UnitCode);
                 var line = Stamp(new WarehouseInboundLine { BranchCode = branch, Header = header, LineNo = ++lineNo, StockId = stock.Id,
                     StockCodeSnapshot = stock.ErpStockCode, StockNameSnapshot = stock.StockName, YapCodeId = yap?.Id, YapCodeSnapshot = yap?.ConfigurationCode,
                     UnitCode = unit, BaseUnitCode = unit, ExpectedQuantity = item.Request.Quantity, TrackingType = trackingPolicy.TrackingType,

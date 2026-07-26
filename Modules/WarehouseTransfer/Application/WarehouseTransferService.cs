@@ -4,6 +4,7 @@ using verii_wms_api_v2.Modules.DocumentSeries.Application;
 using verii_wms_api_v2.Modules.DocumentSeries.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Identity.Domain;
+using verii_wms_api_v2.Modules.Stock.Application;
 using verii_wms_api_v2.Modules.StockTracking.Application;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
@@ -107,12 +108,13 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
             var lineNo=0;
             foreach(var item in request.Lines){
                 var stock=stocks[item.StockId];var yap=item.YapCodeId.HasValue?yaps[item.YapCodeId.Value]:null;
+                var unit=StockUnitPolicy.Resolve(stock,item.UnitCode);
                 var trackingPolicy=trackingPolicies[item.StockId];
                 var effectiveTrackingType=trackingPolicy.TrackingType;
                 var line=new WarehouseTransferLine{
                     BranchCode=branch,CreatedBy=actor,CreatedDate=now,LineNo=++lineNo,StockId=stock.Id,StockCodeSnapshot=stock.ErpStockCode,
-                    StockNameSnapshot=stock.StockName,YapCodeId=yap?.Id,YapCodeSnapshot=yap?.ConfigurationCode,UnitCode=item.UnitCode.Trim().ToUpperInvariant(),
-                    BaseUnitCode=item.UnitCode.Trim().ToUpperInvariant(),RequestedQuantity=item.Quantity,TrackingType=effectiveTrackingType,
+                    StockNameSnapshot=stock.StockName,YapCodeId=yap?.Id,YapCodeSnapshot=yap?.ConfigurationCode,UnitCode=unit,
+                    BaseUnitCode=unit,RequestedQuantity=item.Quantity,TrackingType=effectiveTrackingType,
                     RequireLot=trackingPolicy.RequireLot,
                     RequireSerial=trackingPolicy.RequireSerial,RequireHandlingUnit=item.RequireHandlingUnit,
                     SourceWarehouseId=request.SourceWarehouseId,TargetWarehouseId=request.TargetWarehouseId,
@@ -134,7 +136,7 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
                         ExternalLineId=source.ExternalLineId.Trim(),ExternalLineNo=source.ExternalLineNo,ExternalStockCode=source.ExternalStockCode.Trim(),
                         ExternalYapCode=Clean(source.ExternalYapCode,100),OrderedQuantity=source.OrderedQuantity,
                         PreviouslyTransferredQuantity=source.PreviouslyTransferredQuantity,AllocatedQuantity=item.Quantity,
-                        UnitCode=item.UnitCode.Trim().ToUpperInvariant(),ExternalStatus=Clean(source.ExternalStatus,50)});
+                        UnitCode=unit,ExternalStatus=Clean(source.ExternalStatus,50)});
                 }
                 if(pickTask is not null)pickTask.Lines.Add(new WarehouseTransferTaskLine{BranchCode=branch,CreatedBy=actor,CreatedDate=now,
                     Task=pickTask,Line=line,PlannedQuantity=item.Quantity,SourceLocationId=item.DefaultSourceLocationId,
@@ -289,7 +291,7 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
         if(r.DocumentSeriesId<=0)throw AppException.BadRequest("Transfer belge serisi zorunludur.");
         if(r.Priority is <1 or >9)throw AppException.BadRequest("Öncelik 1-9 arasında olmalıdır.");
         if(r.Lines.Count==0)throw AppException.BadRequest("En az bir transfer satırı zorunludur.");
-        if(r.Lines.Any(x=>x.StockId<=0||x.Quantity<=0||string.IsNullOrWhiteSpace(x.UnitCode)))throw AppException.BadRequest("Stok, miktar ve birim zorunludur.");
+        if(r.Lines.Any(x=>x.StockId<=0||x.Quantity<=0))throw AppException.BadRequest("Stok ve pozitif miktar zorunludur.");
         if(r.PlannedDispatchAtUtc.HasValue&&r.PlannedArrivalAtUtc.HasValue&&r.PlannedArrivalAtUtc<r.PlannedDispatchAtUtc)throw AppException.BadRequest("Planlanan varış sevk zamanından önce olamaz.");
     }
     private static void ValidateMode(CreateWarehouseTransferDraftRequest r,WarehouseTransferPolicyDto p){
