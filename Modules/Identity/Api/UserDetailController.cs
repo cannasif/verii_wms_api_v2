@@ -21,6 +21,12 @@ public sealed class UserDetailController(IUserProfileService profileService) : C
     public async Task<IActionResult> Update(ProfileRequest request, CancellationToken cancellationToken) =>
         Ok(ApiResponse<UserProfileResponse>.Ok(await profileService.UpsertAsync(CurrentUserId(), FirstName(), LastName(), request, cancellationToken)));
 
+    [HttpPut("current/appearance"), HttpPost("current/appearance/update")]
+    public async Task<IActionResult> UpdateAppearance(UserAppearanceRequest request, CancellationToken cancellationToken) =>
+        Ok(ApiResponse<UserProfileResponse>.Ok(
+            await profileService.UpdateAppearanceAsync(CurrentUserId(), FirstName(), LastName(), request, cancellationToken),
+            "Görünüm tercihleri kaydedildi."));
+
     [HttpPost("upload-profile-picture"), RequestSizeLimit(5_500_000)]
     public async Task<IActionResult> Upload(IFormFile file, CancellationToken cancellationToken)
     {

@@ -20,7 +20,19 @@ public sealed record AuthTokenResponse(string AccessToken, DateTime AccessTokenE
 public sealed record AuthSessionResult(AuthTokenResponse Response, string RefreshToken, DateTime RefreshTokenExpiresAt);
 
 public sealed record ProfileRequest(decimal? Height, decimal? Weight, string? Description, int? Gender);
-public sealed record UserProfileResponse(long Id, long UserId, string? ProfilePictureUrl, decimal? Height, decimal? Weight, string? Description, int? Gender, DateTime? CreatedDate, DateTime? UpdatedDate);
+public sealed record UserAppearanceRequest(bool BackgroundMotionEnabled, string BackgroundMotionVariant);
+public sealed record UserProfileResponse(
+    long Id,
+    long UserId,
+    string? ProfilePictureUrl,
+    decimal? Height,
+    decimal? Weight,
+    string? Description,
+    int? Gender,
+    bool BackgroundMotionEnabled,
+    string BackgroundMotionVariant,
+    DateTime? CreatedDate,
+    DateTime? UpdatedDate);
 public sealed record ProfileImageUpload(Stream Content, string FileName, string? ContentType, long Length);
 
 public interface IIdentityService
@@ -44,6 +56,7 @@ public interface IUserProfileService
 {
     Task<UserProfileResponse> GetCurrentAsync(long userId, CancellationToken cancellationToken = default);
     Task<UserProfileResponse> UpsertAsync(long userId, string firstName, string lastName, ProfileRequest request, CancellationToken cancellationToken = default);
+    Task<UserProfileResponse> UpdateAppearanceAsync(long userId, string firstName, string lastName, UserAppearanceRequest request, CancellationToken cancellationToken = default);
     Task<string> UploadPictureAsync(long userId, string firstName, string lastName, ProfileImageUpload upload, CancellationToken cancellationToken = default);
     Task DeletePictureAsync(long userId, CancellationToken cancellationToken = default);
 }

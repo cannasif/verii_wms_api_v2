@@ -11,6 +11,8 @@ public sealed class UserDetail
     public decimal? Weight { get; set; }
     public string? Description { get; set; }
     public int? Gender { get; set; }
+    public bool BackgroundMotionEnabled { get; set; }
+    public string BackgroundMotionVariant { get; set; } = "rack-scanner";
     public DateTime? CreatedDate { get; set; }
     public DateTime? UpdatedDate { get; set; }
 }

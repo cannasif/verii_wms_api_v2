@@ -6,12 +6,38 @@ namespace verii_wms_api_v2.Modules.Identity.Application;
 
 public sealed class UserProfileService(IUnitOfWork unitOfWork, IProfileImageStorage imageStorage) : IUserProfileService
 {
+    private static readonly HashSet<string> SupportedBackgroundVariants = new(StringComparer.Ordinal)
+    {
+        "rack-scanner",
+        "conveyor-flow",
+        "forklift-route"
+    };
+
     private IGenericRepository<UserDetail> Details => unitOfWork.Repository<UserDetail>();
 
     public async Task<UserProfileResponse> GetCurrentAsync(long userId, CancellationToken cancellationToken = default)
     {
         var detail = await Details.FindByIdAsync(userId, cancellationToken: cancellationToken)
             ?? throw AppException.NotFound("Kullanıcı detayı bulunamadı.");
+        return ToResponse(detail);
+    }
+
+    public async Task<UserProfileResponse> UpdateAppearanceAsync(
+        long userId,
+        string firstName,
+        string lastName,
+        UserAppearanceRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var variant = request.BackgroundMotionVariant?.Trim().ToLowerInvariant() ?? string.Empty;
+        if (!SupportedBackgroundVariants.Contains(variant))
+            throw AppException.BadRequest("Seçilen arka plan animasyonu desteklenmiyor.");
+
+        var detail = await GetOrCreateAsync(userId, firstName, lastName, cancellationToken);
+        detail.BackgroundMotionEnabled = request.BackgroundMotionEnabled;
+        detail.BackgroundMotionVariant = variant;
+        detail.UpdatedDate = DateTime.UtcNow;
+        await unitOfWork.SaveChangesAsync(cancellationToken);
         return ToResponse(detail);
     }
 
@@ -74,5 +100,16 @@ public sealed class UserProfileService(IUnitOfWork unitOfWork, IProfileImageStor
         if (request.Height is < 0 or > 9999 || request.Weight is < 0 or > 9999) throw AppException.BadRequest("Boy veya kilo değeri geçersiz.");
     }
 
-    private static UserProfileResponse ToResponse(UserDetail detail) => new(detail.UserId, detail.UserId, detail.ProfilePictureUrl, detail.Height, detail.Weight, detail.Description, detail.Gender, detail.CreatedDate, detail.UpdatedDate);
+    private static UserProfileResponse ToResponse(UserDetail detail) => new(
+        detail.UserId,
+        detail.UserId,
+        detail.ProfilePictureUrl,
+        detail.Height,
+        detail.Weight,
+        detail.Description,
+        detail.Gender,
+        detail.BackgroundMotionEnabled,
+        detail.BackgroundMotionVariant,
+        detail.CreatedDate,
+        detail.UpdatedDate);
 }
