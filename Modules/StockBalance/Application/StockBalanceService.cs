@@ -322,9 +322,8 @@ public sealed class StockBalanceService(IUnitOfWork unitOfWork) : IStockBalanceS
     public async Task<PagedResponse<ReconciliationIssue>> GetReconciliationIssuesAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
         var (ledger, projection) = await LoadReconciliationMapsAsync(cancellationToken);
-        IEnumerable<ReconciliationIssue> query = BuildIssues(ledger, projection);
-        if (!string.IsNullOrWhiteSpace(request.Search)) query = query.Where(x => x.IssueType.Contains(request.Search, StringComparison.OrdinalIgnoreCase)
-            || x.LotNo?.Contains(request.Search, StringComparison.OrdinalIgnoreCase) == true || x.SerialNo?.Contains(request.Search, StringComparison.OrdinalIgnoreCase) == true);
+        IQueryable<ReconciliationIssue> query = BuildIssues(ledger, projection).AsQueryable();
+        query = query.ApplySearch(request);
         query = string.Equals(request.SortDirection, "asc", StringComparison.OrdinalIgnoreCase)
             ? query.OrderBy(x => x.Difference) : query.OrderByDescending(x => Math.Abs(x.Difference));
         var pageNumber = PagedQueryExtensions.NormalizePageNumber(request.EffectivePageNumber);

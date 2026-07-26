@@ -19,52 +19,24 @@ public sealed class StockTrackingPolicyService(IUnitOfWork uow, IAuditLogWriter 
 
     public async Task<PagedResponse<StockTrackingPolicyRow>> GetPagedAsync(PagedRequest request, CancellationToken ct = default)
     {
-        var filteredPolicies = Policies.Query().ApplyAdvancedFilters(request);
         var query =
-            from policy in filteredPolicies
+            from policy in Policies.Query()
             join stock in uow.Repository<StockEntity>().Query() on policy.StockId equals stock.Id into stockJoin
             from stock in stockJoin.DefaultIfEmpty()
-            select new { Policy = policy, Stock = stock };
-        var search = request.Search?.Trim();
-        query = query.Where(x => string.IsNullOrWhiteSpace(search)
-            || x.Policy.PolicyCode.Contains(search) || x.Policy.DisplayName.Contains(search)
-            || (x.Stock != null && x.Stock.ErpStockCode.Contains(search))
-            || (x.Stock != null && x.Stock.StockName.Contains(search))
-            || (x.Policy.StockGroupCode != null && x.Policy.StockGroupCode.Contains(search)));
+            select new StockTrackingPolicyRow(
+                policy.Id, policy.BranchCode, policy.PolicyCode, policy.DisplayName, policy.Scope,
+                policy.StockId, stock == null ? null : stock.ErpStockCode, stock == null ? null : stock.StockName,
+                policy.StockGroupCode, policy.Version, policy.Priority, policy.TrackingType, policy.RequireSerial,
+                policy.SerialQuantityRule, policy.AutoGenerateSerials, policy.RequireLot, policy.RequireManufacturingDate,
+                policy.RequireExpirationDate, policy.MinimumRemainingShelfLifeDays, policy.IsActive,
+                policy.EffectiveFromUtc, policy.EffectiveToUtc, policy.Description,
+                policy.RowVersion, policy.CreatedBy, policy.CreatedDate);
 
-        var descending = string.Equals(request.SortDirection, "desc", StringComparison.OrdinalIgnoreCase);
-        var sorted = request.SortBy?.Trim().ToLowerInvariant() switch
-        {
-            "policycode" => descending ? query.OrderByDescending(x => x.Policy.PolicyCode) : query.OrderBy(x => x.Policy.PolicyCode),
-            "displayname" => descending ? query.OrderByDescending(x => x.Policy.DisplayName) : query.OrderBy(x => x.Policy.DisplayName),
-            "scope" => descending ? query.OrderByDescending(x => x.Policy.Scope) : query.OrderBy(x => x.Policy.Scope),
-            "stockcode" => descending ? query.OrderByDescending(x => x.Stock == null ? null : x.Stock.ErpStockCode) : query.OrderBy(x => x.Stock == null ? null : x.Stock.ErpStockCode),
-            "trackingtype" => descending ? query.OrderByDescending(x => x.Policy.TrackingType) : query.OrderBy(x => x.Policy.TrackingType),
-            "serialquantityrule" => descending ? query.OrderByDescending(x => x.Policy.SerialQuantityRule) : query.OrderBy(x => x.Policy.SerialQuantityRule),
-            "isactive" => descending ? query.OrderByDescending(x => x.Policy.IsActive) : query.OrderBy(x => x.Policy.IsActive),
-            "createddate" => descending ? query.OrderByDescending(x => x.Policy.CreatedDate) : query.OrderBy(x => x.Policy.CreatedDate),
-            _ => descending ? query.OrderByDescending(x => x.Policy.Id) : query.OrderBy(x => x.Policy.Id)
-        };
-        var pageNumber = PagedQueryExtensions.NormalizePageNumber(request.EffectivePageNumber);
-        var pageSize = PagedQueryExtensions.NormalizePageSize(request.PageSize);
-        var totalCount = await query.CountAsync(ct);
-        var items = await sorted.Skip((pageNumber - 1) * pageSize).Take(pageSize)
-            .Select(x => new StockTrackingPolicyRow(
-                x.Policy.Id, x.Policy.BranchCode, x.Policy.PolicyCode, x.Policy.DisplayName, x.Policy.Scope,
-                x.Policy.StockId, x.Stock == null ? null : x.Stock.ErpStockCode, x.Stock == null ? null : x.Stock.StockName,
-                x.Policy.StockGroupCode, x.Policy.Version, x.Policy.Priority, x.Policy.TrackingType, x.Policy.RequireSerial,
-                x.Policy.SerialQuantityRule, x.Policy.AutoGenerateSerials, x.Policy.RequireLot, x.Policy.RequireManufacturingDate,
-                x.Policy.RequireExpirationDate, x.Policy.MinimumRemainingShelfLifeDays, x.Policy.IsActive,
-                x.Policy.EffectiveFromUtc, x.Policy.EffectiveToUtc, x.Policy.Description,
-                x.Policy.RowVersion, x.Policy.CreatedBy, x.Policy.CreatedDate))
-            .ToListAsync(ct);
-        return new PagedResponse<StockTrackingPolicyRow>
-        {
-            Items = items,
-            TotalCount = totalCount,
-            PageNumber = pageNumber,
-            PageSize = pageSize
-        };
+        return await query
+            .ApplySearch(request)
+            .ApplyAdvancedFilters(request)
+            .ApplySort(request, nameof(StockTrackingPolicyRow.Id))
+            .ToPagedResponseAsync(request, ct);
     }
 
     public async Task<long> CreateAsync(StockTrackingPolicyUpsertRequest request, long actor, CancellationToken ct = default)
