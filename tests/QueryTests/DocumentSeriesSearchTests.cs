@@ -36,6 +36,29 @@ public sealed class DocumentSeriesSearchTests
         Assert.Contains("LIKE", sql, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("warehouseCode", "1", "WarehouseCode")]
+    [InlineData("warehouseName", "Merkez", "WarehouseName")]
+    public async Task Warehouse_fields_translate_to_separate_server_side_searches(string field, string search, string expectedColumn)
+    {
+        using var db = SqlServerContext();
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor());
+        var service = new DocumentSeriesService(
+            unitOfWork,
+            new NoopAuditLogWriter(),
+            new PassThroughLocalizer<DocumentSeriesResource>());
+
+        var sql = service.BuildPagedQuery(new PagedRequest
+        {
+            Search = search,
+            SearchFields = [field]
+        }).ToQueryString();
+
+        Assert.Contains("RII_WAREHOUSE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(expectedColumn, sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("WarehouseSearchText", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static WmsDbContext SqlServerContext()
     {
         var options = new DbContextOptionsBuilder<WmsDbContext>()

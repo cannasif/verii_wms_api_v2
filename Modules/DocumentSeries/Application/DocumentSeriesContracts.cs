@@ -58,7 +58,6 @@ public sealed class DocumentSeriesGridRow
     public long? UpdatedBy { get; init; }
     public string? UpdatedByName { get; init; }
     public DateTime? UpdatedDate { get; init; }
-    [JsonIgnore] public string? WarehouseSearchText { get; init; }
     [JsonIgnore] public string? CreatedBySearchText { get; init; }
     [JsonIgnore] public string? UpdatedBySearchText { get; init; }
 }

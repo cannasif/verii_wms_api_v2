@@ -27,7 +27,8 @@ public sealed partial class DocumentSeriesService(
             ["name"] = nameof(DocumentSeriesGridRow.Name),
             ["prefix"] = nameof(DocumentSeriesGridRow.Prefix),
             ["documentType"] = nameof(DocumentSeriesGridRow.DocumentType),
-            ["warehouseName"] = nameof(DocumentSeriesGridRow.WarehouseSearchText),
+            ["warehouseCode"] = nameof(DocumentSeriesGridRow.WarehouseCode),
+            ["warehouseName"] = nameof(DocumentSeriesGridRow.WarehouseName),
             ["nextNumber"] = nameof(DocumentSeriesGridRow.NextNumber),
             ["createdBy"] = nameof(DocumentSeriesGridRow.CreatedBySearchText),
             ["updatedBy"] = nameof(DocumentSeriesGridRow.UpdatedBySearchText)
@@ -129,7 +130,6 @@ public sealed partial class DocumentSeriesService(
                    WarehouseId = item.WarehouseId,
                    WarehouseCode = warehouse == null ? null : warehouse.WarehouseCode,
                    WarehouseName = warehouse == null ? null : warehouse.WarehouseName,
-                   WarehouseSearchText = warehouse == null ? null : warehouse.WarehouseCode + " " + warehouse.WarehouseName,
                    Code = item.Code,
                    Name = item.Name,
                    DocumentType = item.DocumentType == WmsDocumentType.GoodsReceipt ? "GoodsReceipt"
