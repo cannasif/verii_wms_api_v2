@@ -4,6 +4,8 @@ using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 namespace verii_wms_api_v2.Modules.ErpIntegration.Application;
 
 public sealed record ErpPostRequest(Guid IdempotencyKey);
+public sealed record CancelErpDocumentRequest(Guid IdempotencyKey, string Reason);
+public sealed record ReconcileErpCancellationRequest(bool ErpDocumentExists, string Reason);
 public sealed record ReconcileErpPostingRequest(
     bool ErpDocumentExists,
     string Reason,
@@ -27,6 +29,21 @@ public sealed record ErpPostingResult(
     string? ErrorMessage,
     DateTimeOffset? CompletedAtUtc);
 
+public sealed record ErpCancellationResult(
+    long CancellationRecordId,
+    long PostingRecordId,
+    ErpPostingSourceType SourceType,
+    long SourceEntityId,
+    string SourceDocumentNo,
+    long ErpRecordId,
+    ErpCancellationStatus Status,
+    int AttemptCount,
+    string? ErrorCode,
+    string? ErrorMessage,
+    DateTimeOffset? ErpDeletedAtUtc,
+    DateTimeOffset? WmsReversedAtUtc,
+    DateTimeOffset? CompletedAtUtc);
+
 public interface IErpPostingService
 {
     Task<ErpPostingResult> PostGoodsReceiptAsync(long id, Guid idempotencyKey, long userId, CancellationToken cancellationToken);
@@ -37,6 +54,28 @@ public interface IErpPostingService
         ErpPostingSourceType sourceType,
         long sourceEntityId,
         ReconcileErpPostingRequest request,
+        long userId,
+        CancellationToken cancellationToken);
+}
+
+public interface IErpCancellationService
+{
+    Task<ErpCancellationResult> CancelAsync(
+        ErpPostingSourceType sourceType,
+        long sourceEntityId,
+        CancelErpDocumentRequest request,
+        long userId,
+        CancellationToken cancellationToken);
+
+    Task<ErpCancellationResult> GetAsync(
+        ErpPostingSourceType sourceType,
+        long sourceEntityId,
+        CancellationToken cancellationToken);
+
+    Task<ErpCancellationResult> ReconcileAsync(
+        ErpPostingSourceType sourceType,
+        long sourceEntityId,
+        ReconcileErpCancellationRequest request,
         long userId,
         CancellationToken cancellationToken);
 }

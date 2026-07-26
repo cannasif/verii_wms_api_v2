@@ -12,6 +12,7 @@ namespace verii_wms_api_v2.Modules.ErpIntegration.Api;
 [Authorize, ApiController]
 public sealed class ErpIntegrationController(
     IErpPostingService postingService,
+    IErpCancellationService cancellationService,
     INetsisTokenService tokenService,
     IPermissionAuthorizationService permissions) : ControllerBase
 {
@@ -25,6 +26,73 @@ public sealed class ErpIntegrationController(
         var result = await postingService.PostGoodsReceiptAsync(
             id, request.IdempotencyKey, CurrentUserId(), cancellationToken);
         return Ok(ApiResponse<ErpPostingResult>.Ok(result, ResolveMessage(result)));
+    }
+
+    [HttpPost("api/goods-receipts/{id:long}/erp/cancel")]
+    public async Task<IActionResult> CancelGoodsReceipt(
+        long id,
+        CancelErpDocumentRequest request,
+        CancellationToken cancellationToken)
+    {
+        await Require("WMS.GOODS_RECEIPT.CANCEL", cancellationToken);
+        return Ok(ApiResponse<ErpCancellationResult>.Ok(
+            await cancellationService.CancelAsync(
+                ErpPostingSourceType.GoodsReceipt, id, request, CurrentUserId(), cancellationToken),
+            "Mal kabul ERP iptal süreci işlendi."));
+    }
+
+    [HttpPost("api/warehouse-transfers/{id:long}/erp/cancel")]
+    public async Task<IActionResult> CancelWarehouseTransfer(
+        long id,
+        CancelErpDocumentRequest request,
+        CancellationToken cancellationToken)
+    {
+        await Require("WMS.WAREHOUSE_TRANSFER.CANCEL", cancellationToken);
+        return Ok(ApiResponse<ErpCancellationResult>.Ok(
+            await cancellationService.CancelAsync(
+                ErpPostingSourceType.WarehouseTransfer, id, request, CurrentUserId(), cancellationToken),
+            "Transfer ERP iptal süreci işlendi."));
+    }
+
+    [HttpPost("api/shipments/{id:long}/erp/cancel")]
+    public async Task<IActionResult> CancelShipment(
+        long id,
+        CancelErpDocumentRequest request,
+        CancellationToken cancellationToken)
+    {
+        await Require("WMS.SHIPPING.CANCEL", cancellationToken);
+        return Ok(ApiResponse<ErpCancellationResult>.Ok(
+            await cancellationService.CancelAsync(
+                ErpPostingSourceType.Shipment, id, request, CurrentUserId(), cancellationToken),
+            "Sevk ERP iptal süreci işlendi."));
+    }
+
+    [HttpGet("api/erp-cancellations/{sourceType}/{sourceEntityId:long}")]
+    public async Task<IActionResult> GetCancellation(
+        ErpPostingSourceType sourceType,
+        long sourceEntityId,
+        CancellationToken cancellationToken)
+    {
+        await RequireViewPermission(sourceType, cancellationToken);
+        return Ok(ApiResponse<ErpCancellationResult>.Ok(
+            await cancellationService.GetAsync(sourceType, sourceEntityId, cancellationToken)));
+    }
+
+    [HttpPost("api/erp-cancellations/{sourceType}/{sourceEntityId:long}/reconcile")]
+    public async Task<IActionResult> ReconcileCancellation(
+        ErpPostingSourceType sourceType,
+        long sourceEntityId,
+        ReconcileErpCancellationRequest request,
+        CancellationToken cancellationToken)
+    {
+        await RequireManagePermission(sourceType, cancellationToken);
+        var result = await cancellationService.ReconcileAsync(
+            sourceType, sourceEntityId, request, CurrentUserId(), cancellationToken);
+        return Ok(ApiResponse<ErpCancellationResult>.Ok(
+            result,
+            request.ErpDocumentExists
+                ? "ERP belgesinin hâlâ mevcut olduğu doğrulandı; güvenli yeniden silme açıldı."
+                : "ERP belgesinin silindiği doğrulandı; WMS ters hareketi işlendi."));
     }
 
     [HttpPost("api/warehouse-transfers/{id:long}/erp/post")]

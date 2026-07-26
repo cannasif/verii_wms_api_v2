@@ -91,7 +91,8 @@ public sealed class WarehouseTransferOperationService(
                     or ErpIntegrationStatus.CommitUncertain
                     or ErpIntegrationStatus.Cancelled)
                 throw AppException.Conflict("ERP aktarımı başlamış veya tamamlanmış transfer WMS üzerinden iptal edilemez.");
-            if (erpDeletionConfirmed && header.ErpIntegrationStatus != ErpIntegrationStatus.Succeeded)
+            if (erpDeletionConfirmed
+                && header.ErpIntegrationStatus is not (ErpIntegrationStatus.Succeeded or ErpIntegrationStatus.Cancelled))
                 throw AppException.Conflict("Transfer ERP silme doğrulamasıyla uyumlu durumda değil.");
 
             var operationRepo = uow.Repository<StockMovementOperation>();

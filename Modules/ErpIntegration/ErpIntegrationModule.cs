@@ -19,6 +19,7 @@ public static class ErpIntegrationModule
         services.AddHttpClient<INetsisRestClient, NetsisRestClient>(ConfigureClient)
             .ConfigurePrimaryHttpMessageHandler(BuildHandler);
         services.AddScoped<IErpPostingService, ErpPostingService>();
+        services.AddScoped<IErpCancellationService, ErpCancellationService>();
         return services;
     }
 

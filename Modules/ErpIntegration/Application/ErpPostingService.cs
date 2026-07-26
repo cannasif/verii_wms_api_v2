@@ -177,6 +177,9 @@ public sealed class ErpPostingService(
         posting.ErpDocumentNo = Clean(request.ErpDocumentNo);
         posting.ErpWaybillNo = Clean(request.ErpWaybillNo);
         posting.ErpRecordNo = Clean(request.ErpRecordNo);
+        posting.ErpRecordId = long.TryParse(posting.ErpRecordNo, out var reconciledRecordId)
+            ? reconciledRecordId
+            : null;
         posting.ErpReferenceNo = Clean(request.ErpReferenceNo);
         posting.LastErrorCode = request.ErpDocumentExists ? null : "MANUAL_RECONCILIATION_NOT_FOUND";
         posting.LastErrorMessage = request.ErpDocumentExists
