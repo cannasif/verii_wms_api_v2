@@ -11,7 +11,10 @@ using verii_wms_api_v2.Shared.Application.Exceptions;
 
 namespace verii_wms_api_v2.Modules.SystemManagement.Application.Users;
 
-public sealed partial class UserManagementService(IUnitOfWork unitOfWork, IAuditLogWriter audit) : IUserManagementService
+public sealed partial class UserManagementService(
+    IUnitOfWork unitOfWork,
+    IAuditLogWriter audit,
+    IIdentitySessionValidator sessionValidator) : IUserManagementService
 {
     private static readonly IReadOnlyDictionary<string, string> AllowedRoles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     { ["User"] = "User", ["Manager"] = "Manager", ["Admin"] = "Admin" };
@@ -66,13 +69,22 @@ public sealed partial class UserManagementService(IUnitOfWork unitOfWork, IAudit
         var oldGroups = await UserGroups.Query().Where(x => x.UserId == id).Select(x => x.PermissionGroupId).OrderBy(x => x).ToListAsync(cancellationToken);
         var oldValues = Snapshot(user, user.Detail?.FirstName, user.Detail?.LastName, user.Detail?.Phone, oldGroups);
         var nextGroups = request.PermissionGroupIds.Distinct().OrderBy(x => x).ToList();
+        var previousIsActive = user.IsActive;
+        var invalidateSession = false;
         await unitOfWork.ExecuteInTransactionAsync(async ct =>
         {
             user.Username = username.Trim(); user.Email = request.Email.Trim().ToLowerInvariant(); user.Role = primary ? user.Role : AllowedRoles[role.Trim()]; user.IsActive = primary || request.IsActive;
+            if (user.IsActive != previousIsActive)
+            {
+                user.TokenVersion++;
+                invalidateSession = true;
+                await RevokeSessionsAsync(user.Id, user.IsActive ? "UserReactivated" : "UserDeactivated", ct);
+            }
             if (!string.IsNullOrWhiteSpace(request.Password))
             {
                 user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
                 user.TokenVersion++;
+                invalidateSession = true;
                 await RevokeSessionsAsync(user.Id, "PasswordChangedByAdministrator", ct);
             }
             if (user.Detail is null) { user.Detail = new UserDetail { UserId = user.Id, CreatedDate = DateTime.UtcNow }; await Details.AddAsync(user.Detail, ct); }
@@ -82,6 +94,7 @@ public sealed partial class UserManagementService(IUnitOfWork unitOfWork, IAudit
             await audit.WriteAsync(new AuditLogWriteEntry("user.update", "User", user.Id.ToString(), "Succeeded", "identity", OldValues: oldValues, NewValues: nextValues, ChangedFields: ChangedFields(oldValues, nextValues, request.Password)), ct);
             return true;
         }, cancellationToken);
+        if (invalidateSession) sessionValidator.Invalidate(id);
         return true;
     }
 
@@ -94,6 +107,7 @@ public sealed partial class UserManagementService(IUnitOfWork unitOfWork, IAudit
         user.TokenVersion++;
         await RevokeSessionsAsync(user.Id, "UserDeactivated", cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
+        sessionValidator.Invalidate(user.Id);
         await audit.WriteAsync(new AuditLogWriteEntry("user.deactivate", "User", id.ToString(), "Succeeded", "identity", OldValues: new { IsActive = true }, NewValues: new { IsActive = false }, ChangedFields: ["IsActive"]), cancellationToken);
         return true;
     }

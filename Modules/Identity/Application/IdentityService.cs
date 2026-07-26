@@ -9,6 +9,7 @@ namespace verii_wms_api_v2.Modules.Identity.Application;
 public sealed class IdentityService(
     IUnitOfWork unitOfWork,
     ITokenIssuer tokenIssuer,
+    IIdentitySessionValidator sessionValidator,
     IIdentityEmailSender emailSender,
     IConfiguration configuration,
     ILogger<IdentityService> logger) : IIdentityService
@@ -77,6 +78,7 @@ public sealed class IdentityService(
                 await RevokeFamilyAsync(current.User, current.FamilyId, "ReuseDetected", client, now, ct);
                 current.User.TokenVersion++;
                 await unitOfWork.SaveChangesAsync(ct);
+                sessionValidator.Invalidate(current.UserId);
                 return RefreshOutcome.Invalid();
             }
 
@@ -172,13 +174,13 @@ public sealed class IdentityService(
         if (string.IsNullOrWhiteSpace(request.Token)) throw InvalidResetToken();
         var tokenHash = IdentitySecurity.HashToken(request.Token);
 
-        var succeeded = await unitOfWork.ExecuteInTransactionAsync(async ct =>
+        var resetUserId = await unitOfWork.ExecuteInTransactionAsync<long?>(async ct =>
         {
             var now = DateTime.UtcNow;
             var token = await ResetTokens.Query(tracking: true).Include(x => x.User)
                 .FirstOrDefaultAsync(x => x.TokenHash == tokenHash, ct);
             if (token is null || token.ConsumedAt.HasValue || token.ExpiresAt <= now || !token.User.IsActive)
-                return false;
+                return null;
 
             token.User.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
             token.User.TokenVersion++;
@@ -189,16 +191,17 @@ public sealed class IdentityService(
             foreach (var item in userTokens) item.ConsumedAt = now;
             await RevokeAllSessionsAsync(token.UserId, "PasswordReset", null, now, ct);
             await unitOfWork.SaveChangesAsync(ct);
-            return true;
+            return token.UserId;
         }, cancellationToken, IsolationLevel.Serializable);
 
-        if (!succeeded) throw InvalidResetToken();
+        if (!resetUserId.HasValue) throw InvalidResetToken();
+        sessionValidator.Invalidate(resetUserId.Value);
     }
 
     public async Task<AuthSessionResult> ChangePasswordAsync(long userId, ChangePasswordRequest request, ClientContext client, CancellationToken cancellationToken = default)
     {
         IdentitySecurity.ValidatePassword(request.NewPassword);
-        return await unitOfWork.ExecuteInTransactionAsync(async ct =>
+        var result = await unitOfWork.ExecuteInTransactionAsync(async ct =>
         {
             var user = await Users.Query(tracking: true).Include(x => x.Detail)
                 .FirstOrDefaultAsync(x => x.Id == userId && x.IsActive, ct)
@@ -214,6 +217,8 @@ public sealed class IdentityService(
             await unitOfWork.SaveChangesAsync(ct);
             return ToAuthSession(user, session);
         }, cancellationToken, IsolationLevel.Serializable);
+        sessionValidator.Invalidate(userId);
+        return result;
     }
 
     private async Task<IssuedRefreshSession> CreateSessionAsync(
