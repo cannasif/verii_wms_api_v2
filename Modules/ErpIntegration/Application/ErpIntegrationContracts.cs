@@ -267,7 +267,7 @@ public sealed class NetsisItemSlipLine
     public int? CikisDepoKodu { get; set; }
 
     [JsonPropertyName("YapKod")]
-    public string? YapKod { get; set; }
+    public string? ConfigurationCode { get; set; }
 
     [JsonPropertyName("SeriNo")]
     public string? SeriNo { get; set; }

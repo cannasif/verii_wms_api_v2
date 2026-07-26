@@ -539,7 +539,7 @@ public sealed class ErpPostingService(
             DepoKodu = warehouseCode,
             CikisDepoKodu = sourceWarehouseCode,
             GirisDepoKodu = targetWarehouseCode,
-            YapKod = yapCode,
+            ConfigurationCode = yapCode,
             SeriNo = serialNo,
             SiparisNo = orderNo,
             Aciklama = description

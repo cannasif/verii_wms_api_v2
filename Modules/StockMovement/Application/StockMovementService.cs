@@ -165,7 +165,7 @@ public sealed class StockMovementService(IUnitOfWork unitOfWork, IAuditLogWriter
         var warehouses = await Warehouses.Query().Where(x => warehouseIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, ct);
         var locations = await Locations.Query().Where(x => locationIds.Contains(x.Id) && x.IsActive).ToDictionaryAsync(x => x.Id, ct);
         if (stocks.Count != stockIds.Count) throw AppException.BadRequest("Geçersiz veya pasif stok seçildi.");
-        if (yapCodes.Count != yapCodeIds.Count) throw AppException.BadRequest("Geçersiz veya pasif YAP kodu seçildi.");
+        if (yapCodes.Count != yapCodeIds.Count) throw AppException.BadRequest("Geçersiz veya pasif yapılandırma kodu seçildi.");
         if (warehouses.Count != warehouseIds.Count) throw AppException.BadRequest("Geçersiz veya pasif depo seçildi.");
         if (locations.Count != locationIds.Count) throw AppException.BadRequest("Geçersiz veya pasif raf seçildi.");
 

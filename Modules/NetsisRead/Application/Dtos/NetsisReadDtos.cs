@@ -4,7 +4,20 @@ public sealed record BranchDto(short SubeKodu, string? Unvan);
 public sealed record WarehouseDto(short DepoKodu, string DepoIsmi, short SubeKodu);
 public sealed record StockDto(short SubeKodu, short IsletmeKodu, string StokKodu, string UreticiKodu, string StokAdi, string GrupKodu, string Kod1, string Kod2, string Kod3, string Kod4, string Kod5);
 public sealed record CustomerDto(short SubeKodu, short IsletmeKodu, string CariKod, string? CariIsim);
-public sealed record YapCodeDto(string YapKod, string YapAcik, short? SubeKodu, string? YapilandirilabilirStokKodu, long? StockId);
+public sealed record ConfigurationCodeDto(
+    string ConfigurationCode,
+    string Description,
+    short? BranchCode,
+    string? ConfigurableStockCode,
+    long? StockId);
+
+// Backward-compatible contract for clients still using Netsis field terminology.
+public sealed record LegacyYapCodeDto(
+    string YapKod,
+    string YapAcik,
+    short? SubeKodu,
+    string? YapilandirilabilirStokKodu,
+    long? StockId);
 
 public sealed record GoodsReceiptOpenOrderHeaderDto(
     string Mode, string SiparisNo, int? OrderId, string? CustomerCode, string? CustomerName,

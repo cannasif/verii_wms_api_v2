@@ -96,10 +96,13 @@ public sealed class ErpMirrorService(IUnitOfWork unitOfWork, INetsisReadService 
 
     [DisableConcurrentExecution(600)]
     [AutomaticRetry(Attempts = 3, DelaysInSeconds = new[] { 60, 120, 300 })]
-    public async Task<MirrorSyncResult> SyncYapCodesAsync(CancellationToken cancellationToken = default)
+    public async Task<MirrorSyncResult> SyncConfigurationCodesAsync(CancellationToken cancellationToken = default)
     {
-        var source = (await netsis.GetYapCodesAsync(null, null, cancellationToken))
-            .Where(x => !string.IsNullOrWhiteSpace(x.YapKod)).GroupBy(x => Key(x.SubeKodu ?? 0, x.YapKod)).Select(x => x.First()).ToList();
+        var source = (await netsis.GetConfigurationCodesAsync(null, null, cancellationToken))
+            .Where(x => !string.IsNullOrWhiteSpace(x.ConfigurationCode))
+            .GroupBy(x => Key(x.BranchCode ?? 0, x.ConfigurationCode))
+            .Select(x => x.First())
+            .ToList();
         var existing = await YapCodes.Query(tracking: true, ignoreQueryFilters: true).ToListAsync(cancellationToken);
         var stocks = await Stocks.Query().ToListAsync(cancellationToken);
         var stockMap = stocks.ToDictionary(x => Key(x.BranchCode, x.ErpStockCode), StringComparer.OrdinalIgnoreCase);
@@ -107,25 +110,25 @@ public sealed class ErpMirrorService(IUnitOfWork unitOfWork, INetsisReadService 
         var now = DateTime.UtcNow; var inserted = 0; var updated = 0;
         foreach (var row in source)
         {
-            var branch = (row.SubeKodu ?? 0).ToString(); var code = Normalize(row.YapKod); var key = Key(branch, code);
+            var branch = (row.BranchCode ?? 0).ToString(); var code = Normalize(row.ConfigurationCode); var key = Key(branch, code);
             if (!map.TryGetValue(key, out var entity))
             {
                 entity = new YapCodeEntity { BranchCode = branch, ConfigurationCode = code, CreatedDate = now };
                 await YapCodes.AddAsync(entity, cancellationToken); map[key] = entity; inserted++;
             }
             else updated++;
-            entity.Description = Clean(row.YapAcik, code); entity.ConfigurableStockCode = Trim(row.YapilandirilabilirStokKodu);
+            entity.Description = Clean(row.Description, code); entity.ConfigurableStockCode = Trim(row.ConfigurableStockCode);
             entity.StockId = entity.ConfigurableStockCode is not null && stockMap.TryGetValue(Key(branch, entity.ConfigurableStockCode), out var stock) ? stock.Id : null;
             Activate(entity, now); entity.LastSyncDate = now;
         }
-        var deactivated = SoftDeleteMissing(existing, source.Select(x => Key(x.SubeKodu ?? 0, x.YapKod)).ToHashSet(StringComparer.OrdinalIgnoreCase), x => Key(x.BranchCode, x.ConfigurationCode), now);
-        await unitOfWork.SaveChangesAsync(cancellationToken); return Log(new("YapCode", source.Count, inserted, updated, deactivated));
+        var deactivated = SoftDeleteMissing(existing, source.Select(x => Key(x.BranchCode ?? 0, x.ConfigurationCode)).ToHashSet(StringComparer.OrdinalIgnoreCase), x => Key(x.BranchCode, x.ConfigurationCode), now);
+        await unitOfWork.SaveChangesAsync(cancellationToken); return Log(new("ConfigurationCode", source.Count, inserted, updated, deactivated));
     }
 
     public async Task<IReadOnlyList<MirrorSyncResult>> SyncAllAsync(CancellationToken cancellationToken = default) => new[]
     {
         await SyncWarehousesAsync(cancellationToken), await SyncStocksAsync(cancellationToken),
-        await SyncCustomersAsync(cancellationToken), await SyncYapCodesAsync(cancellationToken)
+        await SyncCustomersAsync(cancellationToken), await SyncConfigurationCodesAsync(cancellationToken)
     };
 
     public Task<PagedResponse<WarehouseMirrorDto>> GetWarehousesPagedAsync(PagedRequest request, CancellationToken ct = default)
@@ -155,13 +158,13 @@ public sealed class ErpMirrorService(IUnitOfWork unitOfWork, INetsisReadService 
             .ApplyAdvancedFilters(request).ApplySort(request, nameof(CustomerMirrorDto.CustomerCode));
         return PageAsync(query, request, ct);
     }
-    public Task<PagedResponse<YapCodeMirrorDto>> GetYapCodesPagedAsync(PagedRequest request, CancellationToken ct = default)
+    public Task<PagedResponse<ConfigurationCodeMirrorDto>> GetConfigurationCodesPagedAsync(PagedRequest request, CancellationToken ct = default)
     {
         var search = request.Search?.Trim();
         var query = YapCodes.Query()
             .Where(x => string.IsNullOrWhiteSpace(search) || x.BranchCode.Contains(search) || x.ConfigurationCode.Contains(search) || x.Description.Contains(search) || (x.ConfigurableStockCode != null && x.ConfigurableStockCode.Contains(search)))
-            .Select(x => new YapCodeMirrorDto(x.Id, x.BranchCode, x.ConfigurationCode, x.Description, x.ConfigurableStockCode, x.StockId, x.LastSyncDate, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate))
-            .ApplyAdvancedFilters(request).ApplySort(request, nameof(YapCodeMirrorDto.ConfigurationCode));
+            .Select(x => new ConfigurationCodeMirrorDto(x.Id, x.BranchCode, x.ConfigurationCode, x.Description, x.ConfigurableStockCode, x.StockId, x.LastSyncDate, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate))
+            .ApplyAdvancedFilters(request).ApplySort(request, nameof(ConfigurationCodeMirrorDto.ConfigurationCode));
         return PageAsync(query, request, ct);
     }
 

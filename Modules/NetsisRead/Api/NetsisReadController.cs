@@ -23,8 +23,26 @@ public sealed class NetsisReadController(INetsisReadService service, ILogger<Net
     [HttpGet("customers"), HttpGet("getCustomers")]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<CustomerDto>>>> Customers([FromQuery] string? customerCode, [FromQuery] int? branchCode, CancellationToken ct) { await Require(ct); return await Execute(() => service.GetCustomersAsync(customerCode, branchCode, ct)); }
 
+    [HttpGet("configuration-codes")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<ConfigurationCodeDto>>>> ConfigurationCodes([FromQuery] string? search, [FromQuery] int? branchCode, CancellationToken ct)
+    {
+        await Require(ct);
+        return await Execute(() => service.GetConfigurationCodesAsync(search, branchCode, ct));
+    }
+
+    [Obsolete("Use GET /api/netsis-read/configuration-codes.")]
     [HttpGet("yap-codes")]
-    public async Task<ActionResult<ApiResponse<IReadOnlyList<YapCodeDto>>>> YapCodes([FromQuery] string? search, [FromQuery] int? branchCode, CancellationToken ct) { await Require(ct); return await Execute(() => service.GetYapCodesAsync(search, branchCode, ct)); }
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<LegacyYapCodeDto>>>> LegacyYapCodes([FromQuery] string? search, [FromQuery] int? branchCode, CancellationToken ct)
+    {
+        await Require(ct);
+        return await Execute(async () =>
+        {
+            var rows = await service.GetConfigurationCodesAsync(search, branchCode, ct);
+            return (IReadOnlyList<LegacyYapCodeDto>)rows
+                .Select(x => new LegacyYapCodeDto(x.ConfigurationCode, x.Description, x.BranchCode, x.ConfigurableStockCode, x.StockId))
+                .ToList();
+        });
+    }
 
     [HttpGet("goods-receipt/open-orders/headers")]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<GoodsReceiptOpenOrderHeaderDto>>>> GoodsReceiptOpenOrderHeaders([FromQuery] string customerCode, [FromQuery] string? branchCode, CancellationToken ct) { await Require(ct); return await Execute(() => service.GetGoodsReceiptOpenOrderHeadersAsync(customerCode, branchCode, ct)); }

@@ -27,10 +27,24 @@ public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INet
         return rows;
     }
 
-    public async Task<IReadOnlyList<YapCodeDto>> GetYapCodesAsync(string? search, int? branchCode, CancellationToken ct)
+    public async Task<IReadOnlyList<ConfigurationCodeDto>> GetConfigurationCodesAsync(string? search, int? branchCode, CancellationToken ct)
     {
-        var rows = await queryExecutor.QueryAsync<YapCodeDto>("RII_FN_ESNYAPMAS", "SELECT * FROM dbo.RII_FN_ESNYAPMAS()", r => new YapCodeDto(String(r,"YAPKOD"), String(r,"YAPACIK"), Nullable<short>(r,"SUBE_KODU"), NullableString(r,"YPLNDRSTOKKOD"), Nullable<long>(r,"StockId")), ct);
-        return rows.Where(x => (!branchCode.HasValue || !x.SubeKodu.HasValue || x.SubeKodu == branchCode) && (string.IsNullOrWhiteSpace(search) || $"{x.YapKod} {x.YapAcik}".Contains(search, StringComparison.OrdinalIgnoreCase))).ToList();
+        var rows = await queryExecutor.QueryAsync<ConfigurationCodeDto>(
+            "RII_FN_ESNYAPMAS",
+            "SELECT * FROM dbo.RII_FN_ESNYAPMAS()",
+            r => new ConfigurationCodeDto(
+                String(r, "YAPKOD"),
+                String(r, "YAPACIK"),
+                Nullable<short>(r, "SUBE_KODU"),
+                NullableString(r, "YPLNDRSTOKKOD"),
+                Nullable<long>(r, "StockId")),
+            ct);
+
+        return rows.Where(x =>
+            (!branchCode.HasValue || !x.BranchCode.HasValue || x.BranchCode == branchCode)
+            && (string.IsNullOrWhiteSpace(search)
+                || $"{x.ConfigurationCode} {x.Description}".Contains(search, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
     }
 
     public async Task<IReadOnlyList<GoodsReceiptOpenOrderHeaderDto>> GetGoodsReceiptOpenOrderHeadersAsync(string customerCode, string? branchCode, CancellationToken ct)

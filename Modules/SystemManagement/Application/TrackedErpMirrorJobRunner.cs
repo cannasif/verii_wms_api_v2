@@ -7,7 +7,7 @@ public interface ITrackedErpMirrorJobRunner
     Task RunWarehousesAsync(CancellationToken cancellationToken = default);
     Task RunStocksAsync(CancellationToken cancellationToken = default);
     Task RunCustomersAsync(CancellationToken cancellationToken = default);
-    Task RunYapCodesAsync(CancellationToken cancellationToken = default);
+    Task RunConfigurationCodesAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed class TrackedErpMirrorJobRunner(
@@ -24,8 +24,8 @@ public sealed class TrackedErpMirrorJobRunner(
     public Task RunCustomersAsync(CancellationToken cancellationToken = default) =>
         ExecuteAsync("erp-customer-mirror-sync", () => mirrorService.SyncCustomersAsync(cancellationToken), cancellationToken);
 
-    public Task RunYapCodesAsync(CancellationToken cancellationToken = default) =>
-        ExecuteAsync("erp-yap-code-mirror-sync", () => mirrorService.SyncYapCodesAsync(cancellationToken), cancellationToken);
+    public Task RunConfigurationCodesAsync(CancellationToken cancellationToken = default) =>
+        ExecuteAsync("erp-configuration-code-mirror-sync", () => mirrorService.SyncConfigurationCodesAsync(cancellationToken), cancellationToken);
 
     private async Task ExecuteAsync(string jobKey, Func<Task<MirrorSyncResult>> action, CancellationToken cancellationToken)
     {
