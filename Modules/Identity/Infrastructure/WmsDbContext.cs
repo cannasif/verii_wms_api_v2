@@ -130,6 +130,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<ProjectSetting> ProjectSettings => Set<ProjectSetting>();
     public DbSet<ErpPostingRecord> ErpPostingRecords => Set<ErpPostingRecord>();
     public DbSet<ErpIntegrationAttempt> ErpIntegrationAttempts => Set<ErpIntegrationAttempt>();
+    public DbSet<ErpCancellationRecord> ErpCancellationRecords => Set<ErpCancellationRecord>();
+    public DbSet<ErpCancellationAttempt> ErpCancellationAttempts => Set<ErpCancellationAttempt>();
     public DbSet<WarehouseTransferHeader> WarehouseTransferHeaders => Set<WarehouseTransferHeader>();
     public DbSet<WarehouseTransferSourceDocument> WarehouseTransferSourceDocuments => Set<WarehouseTransferSourceDocument>();
     public DbSet<WarehouseTransferLine> WarehouseTransferLines => Set<WarehouseTransferLine>();
@@ -262,6 +264,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new ProjectSettingConfiguration());
         modelBuilder.ApplyConfiguration(new ErpPostingRecordConfiguration());
         modelBuilder.ApplyConfiguration(new ErpIntegrationAttemptConfiguration());
+        modelBuilder.ApplyConfiguration(new ErpCancellationRecordConfiguration());
+        modelBuilder.ApplyConfiguration(new ErpCancellationAttemptConfiguration());
         modelBuilder.ApplyConfiguration(new WarehouseTransferHeaderConfiguration());
         modelBuilder.ApplyConfiguration(new WarehouseTransferSourceDocumentConfiguration());
         modelBuilder.ApplyConfiguration(new WarehouseTransferLineConfiguration());

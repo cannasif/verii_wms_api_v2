@@ -53,3 +53,49 @@ public sealed class ErpIntegrationAttemptConfiguration : BaseEntityConfiguration
             .HasDatabaseName("IX_RII_ERP_ATTEMPT_STARTED_STATUS");
     }
 }
+
+public sealed class ErpCancellationRecordConfiguration : BaseEntityConfiguration<ErpCancellationRecord>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<ErpCancellationRecord> builder)
+    {
+        builder.ToTable("RII_ERP_CANCELLATION_RECORDS");
+        builder.Property(x => x.RequestHash).HasMaxLength(64).IsRequired();
+        builder.Property(x => x.Reason).HasMaxLength(1000).IsRequired();
+        builder.Property(x => x.LastErrorCode).HasMaxLength(100);
+        builder.Property(x => x.LastErrorMessage).HasMaxLength(4000);
+        builder.Property(x => x.TraceId).HasMaxLength(100);
+        builder.Property(x => x.RowVersion).IsRowVersion();
+        builder.HasOne(x => x.PostingRecord)
+            .WithMany()
+            .HasForeignKey(x => x.ErpPostingRecordId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasIndex(x => x.ErpPostingRecordId)
+            .IsUnique()
+            .HasFilter("[IsDeleted] = 0")
+            .HasDatabaseName("UX_RII_ERP_CANCELLATION_POSTING");
+        builder.HasIndex(x => new { x.Status, x.UpdatedDate })
+            .HasDatabaseName("IX_RII_ERP_CANCELLATION_STATUS_UPDATED");
+    }
+}
+
+public sealed class ErpCancellationAttemptConfiguration : BaseEntityConfiguration<ErpCancellationAttempt>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<ErpCancellationAttempt> builder)
+    {
+        builder.ToTable("RII_ERP_CANCELLATION_ATTEMPTS");
+        builder.Property(x => x.Operation).HasMaxLength(100).IsRequired();
+        builder.Property(x => x.HttpMethod).HasMaxLength(10).IsRequired();
+        builder.Property(x => x.Endpoint).HasMaxLength(500).IsRequired();
+        builder.Property(x => x.ErrorCode).HasMaxLength(100);
+        builder.Property(x => x.ErrorMessage).HasMaxLength(4000);
+        builder.Property(x => x.ProviderResponse).HasMaxLength(8000);
+        builder.Property(x => x.TraceId).HasMaxLength(100);
+        builder.HasOne(x => x.CancellationRecord)
+            .WithMany()
+            .HasForeignKey(x => x.ErpCancellationRecordId)
+            .OnDelete(DeleteBehavior.Restrict);
+        builder.HasIndex(x => new { x.ErpCancellationRecordId, x.AttemptNo })
+            .IsUnique()
+            .HasDatabaseName("UX_RII_ERP_CANCELLATION_ATTEMPT_NO");
+    }
+}

@@ -324,6 +324,9 @@ public sealed class ErpPostingService(
         posting.ErpDocumentNo = call.Data?.Data?.FisNo;
         posting.ErpWaybillNo = call.Data?.Data?.BelgeNo;
         posting.ErpRecordNo = call.Data?.Data?.KayitNo;
+        posting.ErpRecordId = long.TryParse(posting.ErpRecordNo, out var erpRecordId)
+            ? erpRecordId
+            : null;
         posting.ErpReferenceNo = call.Data?.Data?.ReferenceNumber;
         setHeaderStatus(succeeded
             ? ErpIntegrationStatus.Succeeded
