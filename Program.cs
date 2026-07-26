@@ -3,6 +3,7 @@ using Hangfire.Dashboard;
 using Hangfire.SqlServer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
@@ -19,6 +20,7 @@ using verii_wms_api_v2.Modules.ErpIntegration;
 using verii_wms_api_v2.Modules.ErpMirror.Application;
 using verii_wms_api_v2.Modules.ErpMirror.Infrastructure;
 using verii_wms_api_v2.Modules.Identity;
+using verii_wms_api_v2.Modules.Identity.Application;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Modules.IncomingInvoice;
 using verii_wms_api_v2.Modules.Location;
@@ -46,9 +48,11 @@ using verii_wms_api_v2.Modules.WarehouseTransfer;
 using verii_wms_api_v2.Modules.WarehouseInbound;
 using verii_wms_api_v2.Modules.WarehouseOutbound;
 using verii_wms_api_v2.Shared.Infrastructure.Persistence;
+using verii_wms_api_v2.Shared.Host.BackgroundJobs;
 using verii_wms_api_v2.Shared.Host.Middleware;
 using verii_wms_api_v2.Shared.Host.Localization;
 using verii_wms_api_v2.Shared.Host.Routing;
+using verii_wms_api_v2.Shared.Host.Startup;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
@@ -59,7 +63,9 @@ builder.Services.AddControllers(options => options.Conventions.Add(new IisSafeHt
 builder.Services.AddWmsLocalization();
 var databaseConnection = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("ConnectionStrings:DefaultConnection is missing. Configure it through user-secrets or environment variables.");
-builder.Services.AddDbContext<WmsDbContext>(options => options.UseSqlServer(databaseConnection));
+builder.Services.AddDbContextPool<WmsDbContext>(
+    options => options.UseSqlServer(databaseConnection),
+    poolSize: Math.Clamp(builder.Configuration.GetValue("Performance:DbContextPoolSize", 128), 16, 1024));
 builder.Services.AddNetsisReadModule();
 var dataProtectionPathSetting = builder.Configuration["DataProtection:KeyRingPath"];
 var dataProtectionPath = Path.IsPathRooted(dataProtectionPathSetting)
@@ -105,8 +111,30 @@ builder.Services.AddSmtpModule();
 builder.Services.AddAuditModule();
 builder.Services.AddAccessControlModule();
 builder.Services.AddSystemManagementModule();
-builder.Services.AddHangfire(configuration => configuration.UseSqlServerStorage(databaseConnection, new SqlServerStorageOptions { PrepareSchemaIfNecessary = true, QueuePollInterval = TimeSpan.Zero }));
-builder.Services.AddHangfireServer();
+builder.Services.AddHangfire(configuration => configuration.UseSqlServerStorage(
+    databaseConnection,
+    new SqlServerStorageOptions
+    {
+        PrepareSchemaIfNecessary = builder.Configuration.GetValue("Hangfire:PrepareSchemaIfNecessary", false),
+        TryAutoDetectSchemaDependentOptions = false,
+        CommandBatchMaxTimeout = TimeSpan.FromMinutes(5),
+        SlidingInvisibilityTimeout = TimeSpan.FromMinutes(5),
+        QueuePollInterval = TimeSpan.Zero,
+        UseRecommendedIsolationLevel = true
+    }));
+if (builder.Configuration.GetValue("Hangfire:EnableServer", true))
+{
+    builder.Services.AddHangfireServer();
+}
+builder.Services.AddHostedService<RecurringJobRegistrationHostedService>();
+builder.Services.AddSingleton<StartupReadinessState>();
+builder.Services.AddHostedService<StartupWarmupHostedService>();
+builder.Services.AddHealthChecks()
+    .AddCheck(
+        "self",
+        () => Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckResult.Healthy(),
+        tags: ["live"])
+    .AddCheck<StartupReadinessHealthCheck>("startup", tags: ["ready"]);
 var jwtKey = builder.Configuration["JwtSettings:SecretKey"] ?? throw new InvalidOperationException("JwtSettings:SecretKey is missing.");
 if (Encoding.UTF8.GetByteCount(jwtKey) < 32) throw new InvalidOperationException("JwtSettings:SecretKey must be at least 32 bytes.");
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
@@ -134,13 +162,8 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
                 return;
             }
 
-            var dbContext = context.HttpContext.RequestServices.GetRequiredService<WmsDbContext>();
-            // Authentication must not fail merely because the browser navigated away
-            // while this short session-version lookup was in flight. A request-aborted
-            // token here surfaced as a JwtBearer authentication failure and caused the
-            // web client to discard an otherwise valid month-long session.
-            var valid = await dbContext.Users.AsNoTracking()
-                .AnyAsync(x => x.Id == userId && x.IsActive && x.TokenVersion == tokenVersion, CancellationToken.None);
+            var sessionValidator = context.HttpContext.RequestServices.GetRequiredService<IIdentitySessionValidator>();
+            var valid = await sessionValidator.IsValidAsync(userId, tokenVersion);
             if (!valid) context.Fail("Token session is no longer valid.");
         }
     };
@@ -220,12 +243,12 @@ if (app.Environment.IsDevelopment())
     });
 }
 app.MapControllers();
-var recurringJobs = app.Services.GetRequiredService<IRecurringJobManager>();
-recurringJobs.AddOrUpdate<ITrackedErpMirrorJobRunner>("erp-warehouse-mirror-sync", service => service.RunWarehousesAsync(CancellationToken.None), Cron.Hourly);
-recurringJobs.AddOrUpdate<ITrackedErpMirrorJobRunner>("erp-stock-mirror-sync", service => service.RunStocksAsync(CancellationToken.None), Cron.Hourly);
-recurringJobs.AddOrUpdate<ITrackedErpMirrorJobRunner>("erp-customer-mirror-sync", service => service.RunCustomersAsync(CancellationToken.None), Cron.Hourly);
-recurringJobs.RemoveIfExists("erp-yap-code-mirror-sync");
-recurringJobs.AddOrUpdate<ITrackedErpMirrorJobRunner>("erp-configuration-code-mirror-sync", service => service.RunConfigurationCodesAsync(CancellationToken.None), Cron.Hourly);
-recurringJobs.AddOrUpdate<IStockBalanceJobRunner>("stock-balance-reconciliation", service => service.ReconcileAndRepairAsync(CancellationToken.None), Cron.Daily(2, 30));
-recurringJobs.AddOrUpdate<IPackingPrintQueueJobRunner>("packing-print-queue", service => service.DispatchPendingAsync(CancellationToken.None), Cron.Minutely);
+app.MapHealthChecks("/health/live", new HealthCheckOptions
+{
+    Predicate = registration => registration.Tags.Contains("live")
+}).AllowAnonymous();
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = registration => registration.Tags.Contains("ready")
+}).AllowAnonymous();
 app.Run();
