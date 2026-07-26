@@ -7,12 +7,12 @@ using verii_wms_api_v2.Shared;
 
 namespace verii_wms_api_v2.Modules.Identity.Api;
 
-[ApiController, Route("api/auth")]
+[ApiController, Route("api/auth"), ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
 public sealed class AuthController(IIdentityService identityService, IWebHostEnvironment environment) : ControllerBase
 {
     private string RefreshCookieName => environment.IsDevelopment() ? "wms.refresh.dev" : "__Host-wms-refresh";
 
-    [AllowAnonymous, EnableRateLimiting("identity"), HttpPost("login")]
+    [AllowAnonymous, EnableRateLimiting("identity-sensitive"), HttpPost("login")]
     public async Task<IActionResult> Login(LoginRequest request, CancellationToken cancellationToken)
     {
         var session = await identityService.LoginAsync(request, CurrentClient(), cancellationToken);
@@ -20,7 +20,7 @@ public sealed class AuthController(IIdentityService identityService, IWebHostEnv
         return Ok(ApiResponse<AuthTokenResponse>.Ok(session.Response, "Giriş başarılı."));
     }
 
-    [AllowAnonymous, EnableRateLimiting("identity"), HttpPost("refresh")]
+    [AllowAnonymous, EnableRateLimiting("identity-refresh"), HttpPost("refresh")]
     public async Task<IActionResult> Refresh(CancellationToken cancellationToken)
     {
         var refreshToken = Request.Cookies[RefreshCookieName] ?? string.Empty;
@@ -38,14 +38,14 @@ public sealed class AuthController(IIdentityService identityService, IWebHostEnv
         return Ok(ApiResponse<string>.Ok(string.Empty, "Oturum kapatıldı."));
     }
 
-    [AllowAnonymous, EnableRateLimiting("identity"), HttpPost("forgot-password")]
+    [AllowAnonymous, EnableRateLimiting("identity-sensitive"), HttpPost("forgot-password")]
     public async Task<IActionResult> ForgotPassword(ForgotPasswordRequest request, CancellationToken cancellationToken)
     {
         await identityService.ForgotPasswordAsync(request, CurrentClient(), cancellationToken);
         return Ok(ApiResponse<string>.Ok(string.Empty, "E-posta adresi kayıtlıysa şifre yenileme bağlantısı gönderilecektir."));
     }
 
-    [AllowAnonymous, EnableRateLimiting("identity"), HttpPost("reset-password")]
+    [AllowAnonymous, EnableRateLimiting("identity-sensitive"), HttpPost("reset-password")]
     public async Task<IActionResult> ResetPassword(ResetPasswordRequest request, CancellationToken cancellationToken)
     {
         await identityService.ResetPasswordAsync(request, cancellationToken);
