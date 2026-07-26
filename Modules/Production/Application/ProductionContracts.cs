@@ -1,0 +1,199 @@
+using verii_wms_api_v2.Modules.Production.Domain;
+using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
+using verii_wms_api_v2.Shared;
+
+namespace verii_wms_api_v2.Modules.Production.Application;
+
+public sealed record ProductionMaterialDraftRequest(
+    long StockId,
+    long? YapCodeId,
+    decimal RequiredQuantity,
+    long SourceWarehouseId,
+    long? PreferredSourceLocationId,
+    ProductionMaterialIssueMode IssueMode,
+    bool IsMandatory);
+
+public sealed record ProductionOutputDraftRequest(
+    long StockId,
+    long? YapCodeId,
+    decimal PlannedQuantity,
+    long TargetWarehouseId,
+    long? PreferredTargetLocationId,
+    bool IsPrimary);
+
+public sealed record ProductionOrderDraftRequest(
+    string LocalKey,
+    string? ExternalOrderNo,
+    int SequenceNo,
+    int? ParallelGroupNo,
+    string? BomReference,
+    string? RoutingReference,
+    string? WorkCenterCode,
+    long ProducedStockId,
+    long? ProducedYapCodeId,
+    decimal PlannedQuantity,
+    long SourceWarehouseId,
+    long TargetWarehouseId,
+    bool RequireMaterialTransferBeforeStart,
+    DateTimeOffset? PlannedStartAtUtc,
+    DateTimeOffset? PlannedEndAtUtc,
+    string? Description,
+    IReadOnlyList<long>? AssignedUserIds,
+    IReadOnlyList<ProductionMaterialDraftRequest>? Materials,
+    IReadOnlyList<ProductionOutputDraftRequest>? Outputs);
+
+public sealed record ProductionDependencyDraftRequest(
+    string PredecessorOrderLocalKey,
+    string SuccessorOrderLocalKey,
+    ProductionDependencyType DependencyType,
+    int LagMinutes,
+    bool RequireOutputAvailable,
+    bool RequireTransferCompleted);
+
+public sealed record CreateProductionPlanRequest(
+    Guid IdempotencyKey,
+    string BranchCode,
+    long DocumentSeriesId,
+    DateOnly DocumentDate,
+    ProductionPlanType PlanType,
+    ProductionExecutionMode ExecutionMode,
+    byte Priority,
+    long? CustomerId,
+    DateTimeOffset? PlannedStartAtUtc,
+    DateTimeOffset? PlannedEndAtUtc,
+    string? Description,
+    IReadOnlyList<ProductionOrderDraftRequest> Orders,
+    IReadOnlyList<ProductionDependencyDraftRequest>? Dependencies);
+
+public sealed record CreateProductionPlanResult(
+    long Id,
+    string DocumentNo,
+    int OrderCount,
+    int MaterialCount,
+    int OutputCount,
+    bool Replayed);
+
+public sealed record ProductionPlanGridRow(
+    long Id,
+    string BranchCode,
+    string DocumentNo,
+    DateOnly DocumentDate,
+    ProductionPlanType PlanType,
+    ProductionExecutionMode ExecutionMode,
+    ProductionPlanStatus Status,
+    byte Priority,
+    string? CustomerCode,
+    string? CustomerName,
+    int OrderCount,
+    int MaterialCount,
+    int OutputCount,
+    decimal PlannedQuantity,
+    decimal CompletedQuantity,
+    DateTimeOffset? PlannedStartAtUtc,
+    DateTimeOffset? PlannedEndAtUtc,
+    long? CreatedBy,
+    DateTime? CreatedDate,
+    long? UpdatedBy,
+    DateTime? UpdatedDate);
+
+public sealed record ProductionMaterialDto(
+    long Id,
+    int LineNo,
+    long StockId,
+    string StockCode,
+    string? StockName,
+    long? YapCodeId,
+    string? YapCode,
+    string UnitCode,
+    decimal RequiredQuantity,
+    decimal IssuedQuantity,
+    decimal ConsumedQuantity,
+    ProductionMaterialIssueMode IssueMode,
+    bool IsMandatory,
+    long SourceWarehouseId,
+    long? PreferredSourceLocationId,
+    StockTrackingType TrackingType);
+
+public sealed record ProductionOutputDto(
+    long Id,
+    int LineNo,
+    long StockId,
+    string StockCode,
+    string? StockName,
+    long? YapCodeId,
+    string? YapCode,
+    string UnitCode,
+    decimal PlannedQuantity,
+    decimal ProducedQuantity,
+    decimal ScrapQuantity,
+    long TargetWarehouseId,
+    long? PreferredTargetLocationId,
+    StockTrackingType TrackingType,
+    bool IsPrimary);
+
+public sealed record ProductionAssignmentDto(
+    long Id,
+    long UserId,
+    string Username,
+    string DisplayName,
+    bool IsPrimary,
+    DateTimeOffset AssignedAtUtc,
+    DateTimeOffset? AcceptedAtUtc,
+    DateTimeOffset? CompletedAtUtc,
+    string? Note);
+
+public sealed record ProductionOrderDto(
+    long Id,
+    int LineNo,
+    string OrderNo,
+    string? ExternalOrderNo,
+    ProductionOrderStatus Status,
+    int SequenceNo,
+    int? ParallelGroupNo,
+    string? BomReference,
+    string? RoutingReference,
+    string? WorkCenterCode,
+    long ProducedStockId,
+    string ProducedStockCode,
+    string? ProducedStockName,
+    long? ProducedYapCodeId,
+    string? ProducedYapCode,
+    string UnitCode,
+    decimal PlannedQuantity,
+    decimal CompletedQuantity,
+    decimal ScrapQuantity,
+    long SourceWarehouseId,
+    long TargetWarehouseId,
+    bool RequireMaterialTransferBeforeStart,
+    DateTimeOffset? PlannedStartAtUtc,
+    DateTimeOffset? PlannedEndAtUtc,
+    IReadOnlyList<ProductionMaterialDto> Materials,
+    IReadOnlyList<ProductionOutputDto> Outputs,
+    IReadOnlyList<ProductionAssignmentDto> Assignments);
+
+public sealed record ProductionDependencyDto(
+    long Id,
+    long PredecessorOrderId,
+    long SuccessorOrderId,
+    ProductionDependencyType DependencyType,
+    int LagMinutes,
+    bool RequireOutputAvailable,
+    bool RequireTransferCompleted);
+
+public sealed record ProductionPlanDetail(
+    ProductionPlanGridRow Header,
+    string RowVersion,
+    string? Description,
+    IReadOnlyList<ProductionOrderDto> Orders,
+    IReadOnlyList<ProductionDependencyDto> Dependencies);
+
+public sealed record ProductionTransitionRequest(string RowVersion,string? Reason);
+
+public interface IProductionService
+{
+    Task<CreateProductionPlanResult> CreateAsync(CreateProductionPlanRequest request,long actor,CancellationToken ct=default);
+    Task<PagedResponse<ProductionPlanGridRow>> GetPagedAsync(PagedRequest request,CancellationToken ct=default);
+    Task<ProductionPlanDetail> GetDetailAsync(long id,CancellationToken ct=default);
+    Task<ProductionPlanDetail> ReleaseAsync(long id,ProductionTransitionRequest request,long actor,CancellationToken ct=default);
+    Task DeleteDraftAsync(long id,long actor,CancellationToken ct=default);
+}

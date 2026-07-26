@@ -20,6 +20,10 @@ public sealed class ProductionTransferHeaderLinkConfiguration : BaseEntityConfig
         b.Property(x=>x.RowVersion).IsRowVersion();
         b.HasOne(x=>x.WarehouseTransferHeader).WithOne()
             .HasForeignKey<ProductionTransferHeaderLink>(x=>x.WarehouseTransferHeaderId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x=>x.ProductionHeader).WithMany()
+            .HasForeignKey(x=>x.ProductionHeaderId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x=>x.ProductionOrder).WithMany()
+            .HasForeignKey(x=>x.ProductionOrderId).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(x=>x.WarehouseTransferHeaderId).IsUnique().HasFilter("[IsDeleted] = 0");
         b.HasIndex(x=>new{x.BranchCode,x.ProductionOrderNo,x.Purpose});
     }
@@ -35,6 +39,10 @@ public sealed class ProductionTransferLineLinkConfiguration : BaseEntityConfigur
         b.Property(x=>x.RequiredQuantity).HasPrecision(20,6);
         b.HasOne(x=>x.HeaderLink).WithMany(x=>x.Lines).HasForeignKey(x=>x.ProductionTransferHeaderLinkId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne(x=>x.WarehouseTransferLine).WithOne().HasForeignKey<ProductionTransferLineLink>(x=>x.WarehouseTransferLineId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x=>x.ProductionConsumption).WithMany()
+            .HasForeignKey(x=>x.ProductionConsumptionId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x=>x.ProductionOutput).WithMany()
+            .HasForeignKey(x=>x.ProductionOutputId).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(x=>x.WarehouseTransferLineId).IsUnique().HasFilter("[IsDeleted] = 0");
     }
 }

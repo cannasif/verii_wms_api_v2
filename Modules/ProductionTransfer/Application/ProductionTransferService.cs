@@ -1,6 +1,7 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
+using verii_wms_api_v2.Modules.Production.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
@@ -47,6 +48,7 @@ public sealed class ProductionTransferService(
 
             var policy=await GetPolicyEntityAsync(request.Transfer.BranchCode,token);
             ValidatePolicy(request,policy);
+            await ValidateProductionReferencesAsync(request,token);
             var context=Context(request.Purpose);
             var availability=policy.CheckMaterialAvailability
                 ? await AvailabilityAsync(request.Transfer,token)
@@ -184,6 +186,48 @@ public sealed class ProductionTransferService(
     {
         var branch=Branch(branchCode);
         return await Policies.FirstOrDefaultAsync(x=>x.BranchCode==branch&&x.PolicyKey=="DEFAULT",false,ct)??Default(branch);
+    }
+
+    private async Task ValidateProductionReferencesAsync(
+        CreateProductionTransferDraftRequest request,
+        CancellationToken ct)
+    {
+        var branch=Branch(request.Transfer.BranchCode);
+        if(request.ProductionHeaderId.HasValue)
+        {
+            var exists=await uow.Repository<ProductionHeader>().Query()
+                .AnyAsync(x=>x.Id==request.ProductionHeaderId&&x.BranchCode==branch,ct);
+            if(!exists)throw AppException.BadRequest("Bağlı üretim planı bulunamadı.");
+        }
+        if(request.ProductionOrderId.HasValue)
+        {
+            var order=await uow.Repository<ProductionOrder>().Query()
+                .Where(x=>x.Id==request.ProductionOrderId&&x.BranchCode==branch)
+                .Select(x=>new{x.Id,x.ProductionHeaderId}).SingleOrDefaultAsync(ct)
+                ??throw AppException.BadRequest("Bağlı üretim emri bulunamadı.");
+            if(request.ProductionHeaderId.HasValue&&order.ProductionHeaderId!=request.ProductionHeaderId)
+                throw AppException.BadRequest("Üretim emri seçilen üretim planına ait değil.");
+        }
+        var consumptionIds=(request.LineContexts??[]).Where(x=>x.ProductionConsumptionId.HasValue)
+            .Select(x=>x.ProductionConsumptionId!.Value).Distinct().ToArray();
+        if(consumptionIds.Length>0)
+        {
+            var count=await uow.Repository<ProductionMaterialRequirement>().Query()
+                .CountAsync(x=>consumptionIds.Contains(x.Id)&&
+                    (!request.ProductionOrderId.HasValue||x.ProductionOrderId==request.ProductionOrderId),ct);
+            if(count!=consumptionIds.Length)
+                throw AppException.BadRequest("Üretim transferindeki malzeme ihtiyaç bağlantılarından biri geçersiz.");
+        }
+        var outputIds=(request.LineContexts??[]).Where(x=>x.ProductionOutputId.HasValue)
+            .Select(x=>x.ProductionOutputId!.Value).Distinct().ToArray();
+        if(outputIds.Length>0)
+        {
+            var count=await uow.Repository<ProductionOutputExpectation>().Query()
+                .CountAsync(x=>outputIds.Contains(x.Id)&&
+                    (!request.ProductionOrderId.HasValue||x.ProductionOrderId==request.ProductionOrderId),ct);
+            if(count!=outputIds.Length)
+                throw AppException.BadRequest("Üretim transferindeki çıktı bağlantılarından biri geçersiz.");
+        }
     }
 
     private static void Validate(CreateProductionTransferDraftRequest request)

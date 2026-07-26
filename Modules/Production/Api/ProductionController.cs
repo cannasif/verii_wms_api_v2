@@ -1,0 +1,67 @@
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
+using verii_wms_api_v2.Modules.AccessControl.Application;
+using verii_wms_api_v2.Modules.Production.Application;
+using verii_wms_api_v2.Shared;
+using verii_wms_api_v2.Shared.Application.Exceptions;
+
+namespace verii_wms_api_v2.Modules.Production.Api;
+
+[Authorize,ApiController,Route("api/production")]
+public sealed class ProductionController(
+    IProductionService service,
+    IPermissionAuthorizationService permissions) : ControllerBase
+{
+    [HttpPost("plans")]
+    public async Task<IActionResult> Create(CreateProductionPlanRequest request,CancellationToken ct)
+    {
+        await Require("WMS.PRODUCTION.CREATE",ct);
+        return Ok(ApiResponse<CreateProductionPlanResult>.Ok(
+            await service.CreateAsync(request,UserId(),ct),"Üretim planı oluşturuldu."));
+    }
+
+    [HttpPost("plans/paged")]
+    public async Task<IActionResult> Paged(PagedRequest request,CancellationToken ct)
+    {
+        await Require("WMS.PRODUCTION.VIEW",ct);
+        return Ok(ApiResponse<PagedResponse<ProductionPlanGridRow>>.Ok(
+            await service.GetPagedAsync(request,ct)));
+    }
+
+    [HttpGet("plans/{id:long}")]
+    public async Task<IActionResult> Detail(long id,CancellationToken ct)
+    {
+        await Require("WMS.PRODUCTION.VIEW",ct);
+        return Ok(ApiResponse<ProductionPlanDetail>.Ok(await service.GetDetailAsync(id,ct)));
+    }
+
+    [HttpPost("plans/{id:long}/release")]
+    public async Task<IActionResult> Release(
+        long id,
+        ProductionTransitionRequest request,
+        CancellationToken ct)
+    {
+        await Require("WMS.PRODUCTION.RELEASE",ct);
+        return Ok(ApiResponse<ProductionPlanDetail>.Ok(
+            await service.ReleaseAsync(id,request,UserId(),ct),"Üretim planı serbest bırakıldı."));
+    }
+
+    [HttpDelete("plans/{id:long}"),HttpPost("plans/{id:long}/delete")]
+    public async Task<IActionResult> Delete(long id,CancellationToken ct)
+    {
+        await Require("WMS.PRODUCTION.DELETE",ct);
+        await service.DeleteDraftAsync(id,UserId(),ct);
+        return Ok(ApiResponse<bool>.Ok(true,"Üretim planı silindi."));
+    }
+
+    private long UserId()=>long.TryParse(
+        User.FindFirstValue(ClaimTypes.NameIdentifier),out var id)
+        ?id:throw AppException.Unauthorized("Kullanıcı kimliği bulunamadı.");
+
+    private async Task Require(string code,CancellationToken ct)
+    {
+        if(!await permissions.HasPermissionAsync(User,code,ct))
+            throw AppException.Forbidden("Bu işlem için yetkiniz bulunmuyor.");
+    }
+}

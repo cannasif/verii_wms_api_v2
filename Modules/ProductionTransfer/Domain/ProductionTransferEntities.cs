@@ -1,3 +1,4 @@
+using verii_wms_api_v2.Modules.Production.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared.Domain;
 
@@ -32,7 +33,9 @@ public sealed class ProductionTransferHeaderLink : BaseEntity
     public WarehouseTransferHeader WarehouseTransferHeader { get; set; } = null!;
     public ProductionTransferPurpose Purpose { get; set; }
     public long? ProductionHeaderId { get; set; }
+    public ProductionHeader? ProductionHeader { get; set; }
     public long? ProductionOrderId { get; set; }
+    public ProductionOrder? ProductionOrder { get; set; }
     public long? ProductionOperationId { get; set; }
     public string? ProductionPlanNo { get; set; }
     public string? ProductionOrderNo { get; set; }
@@ -57,7 +60,9 @@ public sealed class ProductionTransferLineLink : BaseEntity
     public WarehouseTransferLine WarehouseTransferLine { get; set; } = null!;
     public ProductionTransferLineRole LineRole { get; set; }
     public long? ProductionConsumptionId { get; set; }
+    public ProductionMaterialRequirement? ProductionConsumption { get; set; }
     public long? ProductionOutputId { get; set; }
+    public ProductionOutputExpectation? ProductionOutput { get; set; }
     public string? RequirementReference { get; set; }
     public decimal RequiredQuantity { get; set; }
 }

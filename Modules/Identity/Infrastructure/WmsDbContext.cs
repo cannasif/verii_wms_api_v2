@@ -21,6 +21,8 @@ using verii_wms_api_v2.Modules.Packing.Domain;
 using verii_wms_api_v2.Modules.Packing.Infrastructure;
 using verii_wms_api_v2.Modules.ProjectSettings.Domain;
 using verii_wms_api_v2.Modules.ProjectSettings.Infrastructure;
+using verii_wms_api_v2.Modules.Production.Domain;
+using verii_wms_api_v2.Modules.Production.Infrastructure;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Infrastructure;
 using verii_wms_api_v2.Modules.Quality.Domain;
@@ -154,6 +156,12 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<WarehouseTransferTaskAssignment> WarehouseTransferTaskAssignments => Set<WarehouseTransferTaskAssignment>();
     public DbSet<WarehouseTransferStatusHistory> WarehouseTransferStatusHistory => Set<WarehouseTransferStatusHistory>();
     public DbSet<WarehouseTransferPolicy> WarehouseTransferPolicies => Set<WarehouseTransferPolicy>();
+    public DbSet<ProductionHeader> ProductionHeaders => Set<ProductionHeader>();
+    public DbSet<ProductionOrder> ProductionOrders => Set<ProductionOrder>();
+    public DbSet<ProductionMaterialRequirement> ProductionMaterialRequirements => Set<ProductionMaterialRequirement>();
+    public DbSet<ProductionOutputExpectation> ProductionOutputExpectations => Set<ProductionOutputExpectation>();
+    public DbSet<ProductionOrderAssignment> ProductionOrderAssignments => Set<ProductionOrderAssignment>();
+    public DbSet<ProductionOrderDependency> ProductionOrderDependencies => Set<ProductionOrderDependency>();
     public DbSet<ProductionTransferHeaderLink> ProductionTransferHeaderLinks => Set<ProductionTransferHeaderLink>();
     public DbSet<ProductionTransferLineLink> ProductionTransferLineLinks => Set<ProductionTransferLineLink>();
     public DbSet<ProductionTransferPolicy> ProductionTransferPolicies => Set<ProductionTransferPolicy>();
@@ -300,6 +308,12 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new WarehouseTransferTaskAssignmentConfiguration());
         modelBuilder.ApplyConfiguration(new WarehouseTransferStatusHistoryConfiguration());
         modelBuilder.ApplyConfiguration(new WarehouseTransferPolicyConfiguration());
+        modelBuilder.ApplyConfiguration(new ProductionHeaderConfiguration());
+        modelBuilder.ApplyConfiguration(new ProductionOrderConfiguration());
+        modelBuilder.ApplyConfiguration(new ProductionMaterialRequirementConfiguration());
+        modelBuilder.ApplyConfiguration(new ProductionOutputExpectationConfiguration());
+        modelBuilder.ApplyConfiguration(new ProductionOrderAssignmentConfiguration());
+        modelBuilder.ApplyConfiguration(new ProductionOrderDependencyConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionTransferHeaderLinkConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionTransferLineLinkConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionTransferPolicyConfiguration());
@@ -495,6 +509,12 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             new PermissionDefinition { Id=2416, BranchCode="0", Code="WMS.SUBCONTRACTING_TRANSFER.SETTINGS.MANAGE", Name="Fason transfer ayarlarını yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2417, BranchCode="0", Code="WMS.SUBCONTRACTING_TRANSFER.UPDATE", Name="Fason transfer taslağını güncelle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2418, BranchCode="0", Code="WMS.SUBCONTRACTING_TRANSFER.DELETE", Name="Fason transfer taslağını sil", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
+        modelBuilder.Entity<PermissionDefinition>().HasData(
+            new PermissionDefinition { Id=2420, BranchCode="0", Code="WMS.PRODUCTION.VIEW", Name="Üretim plan ve emirlerini görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2421, BranchCode="0", Code="WMS.PRODUCTION.CREATE", Name="Üretim planı ve emri oluştur", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2422, BranchCode="0", Code="WMS.PRODUCTION.RELEASE", Name="Üretim planını serbest bırak", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2423, BranchCode="0", Code="WMS.PRODUCTION.DELETE", Name="Taslak üretim planını sil", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2424, BranchCode="0", Code="WMS.PRODUCTION.OPERATE", Name="Üretim operasyonunu yürüt", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionGroup>().HasData(new PermissionGroup { Id=1001, BranchCode="0", Name="System Administrators", Description="Tam sistem yönetimi", IsSystemAdmin=true, IsActive=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(1,8).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(9,7).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
@@ -516,6 +536,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2300,4).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2400,9).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2410,9).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
+        modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2420,5).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<UserPermissionGroup>().HasData(new UserPermissionGroup { Id=1001, BranchCode="0", UserId=1, PermissionGroupId=1001, CreatedDate=seedDate });
     }
 
