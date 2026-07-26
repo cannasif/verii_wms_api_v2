@@ -42,13 +42,14 @@ public sealed class ProjectSettingsService(IUnitOfWork unitOfWork, IMemoryCache 
         entity.TimeFormat = normalized.TimeFormat;
         entity.YearFormat = normalized.YearFormat;
         entity.TimeZoneId = normalized.TimeZoneId;
+        entity.SendSerialsToErp = normalized.SendSerialsToErp;
         Settings.Update(entity);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         var response = ToResponse(entity);
         cache.Remove(CacheKey);
         cache.Set(CacheKey, response, TimeSpan.FromMinutes(5));
         await audit.WriteAsync(new AuditLogWriteEntry("project-settings.update", "ProjectSetting", entity.Id.ToString(), "Succeeded", "project-settings",
-            OldValues: old, NewValues: response, ChangedFields: ["NumberLocale", "DecimalPlaces", "DateFormat", "TimeFormat", "YearFormat", "TimeZoneId"]), cancellationToken);
+            OldValues: old, NewValues: response, ChangedFields: ["NumberLocale", "DecimalPlaces", "DateFormat", "TimeFormat", "YearFormat", "TimeZoneId", "SendSerialsToErp"]), cancellationToken);
         return response;
     }
 
@@ -65,10 +66,11 @@ public sealed class ProjectSettingsService(IUnitOfWork unitOfWork, IMemoryCache 
         if (!TimeFormats.Contains(time)) throw AppException.BadRequest("Desteklenmeyen saat formatı.");
         if (!YearFormats.Contains(year)) throw AppException.BadRequest("Desteklenmeyen yıl formatı.");
         if (!TimeZones.Contains(zone)) throw AppException.BadRequest("Desteklenmeyen zaman dilimi.");
-        return new(locale, request.DecimalPlaces, date, time, year, zone);
+        return new(locale, request.DecimalPlaces, date, time, year, zone, request.SendSerialsToErp);
     }
 
     private static ProjectSetting DefaultEntity() => new() { SettingKey = "GLOBAL", BranchCode = "0" };
     private static ProjectSettingsResponse ToResponse(ProjectSetting x) => new(x.Id, x.NumberLocale, x.DecimalPlaces,
-        x.DateFormat, x.TimeFormat, x.YearFormat, x.TimeZoneId, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate);
+        x.DateFormat, x.TimeFormat, x.YearFormat, x.TimeZoneId, x.SendSerialsToErp,
+        x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate);
 }

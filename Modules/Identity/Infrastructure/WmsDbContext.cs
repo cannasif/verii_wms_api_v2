@@ -8,6 +8,8 @@ using verii_wms_api_v2.Modules.BarcodeDesigner.Infrastructure;
 using verii_wms_api_v2.Modules.Customer.Infrastructure;
 using verii_wms_api_v2.Modules.DocumentSeries.Domain;
 using verii_wms_api_v2.Modules.DocumentSeries.Infrastructure;
+using verii_wms_api_v2.Modules.ErpIntegration.Domain;
+using verii_wms_api_v2.Modules.ErpIntegration.Infrastructure;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.GoodsReceipt.Infrastructure;
 using verii_wms_api_v2.Modules.Identity.Domain;
@@ -126,6 +128,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<HangfireExecutionLog> HangfireExecutionLogs => Set<HangfireExecutionLog>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<ProjectSetting> ProjectSettings => Set<ProjectSetting>();
+    public DbSet<ErpPostingRecord> ErpPostingRecords => Set<ErpPostingRecord>();
+    public DbSet<ErpIntegrationAttempt> ErpIntegrationAttempts => Set<ErpIntegrationAttempt>();
     public DbSet<WarehouseTransferHeader> WarehouseTransferHeaders => Set<WarehouseTransferHeader>();
     public DbSet<WarehouseTransferSourceDocument> WarehouseTransferSourceDocuments => Set<WarehouseTransferSourceDocument>();
     public DbSet<WarehouseTransferLine> WarehouseTransferLines => Set<WarehouseTransferLine>();
@@ -256,6 +260,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new HangfireExecutionLogConfiguration());
         modelBuilder.ApplyConfiguration(new AuditLogConfiguration());
         modelBuilder.ApplyConfiguration(new ProjectSettingConfiguration());
+        modelBuilder.ApplyConfiguration(new ErpPostingRecordConfiguration());
+        modelBuilder.ApplyConfiguration(new ErpIntegrationAttemptConfiguration());
         modelBuilder.ApplyConfiguration(new WarehouseTransferHeaderConfiguration());
         modelBuilder.ApplyConfiguration(new WarehouseTransferSourceDocumentConfiguration());
         modelBuilder.ApplyConfiguration(new WarehouseTransferLineConfiguration());

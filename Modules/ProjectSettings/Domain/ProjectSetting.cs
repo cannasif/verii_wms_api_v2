@@ -11,4 +11,5 @@ public sealed class ProjectSetting : BaseEntity
     public string TimeFormat { get; set; } = "HH:mm";
     public string YearFormat { get; set; } = "yyyy";
     public string TimeZoneId { get; set; } = "Europe/Istanbul";
+    public bool SendSerialsToErp { get; set; } = true;
 }

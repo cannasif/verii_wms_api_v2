@@ -17,6 +17,7 @@ public sealed class ProjectSettingConfiguration : BaseEntityConfiguration<Projec
         builder.Property(x => x.TimeFormat).HasMaxLength(30).IsRequired();
         builder.Property(x => x.YearFormat).HasMaxLength(10).IsRequired();
         builder.Property(x => x.TimeZoneId).HasMaxLength(100).IsRequired();
+        builder.Property(x => x.SendSerialsToErp).HasDefaultValue(true).IsRequired();
         builder.HasIndex(x => x.SettingKey).IsUnique().HasFilter("[IsDeleted] = 0").HasDatabaseName("UX_RII_PROJECT_SETTINGS_KEY");
     }
 }
