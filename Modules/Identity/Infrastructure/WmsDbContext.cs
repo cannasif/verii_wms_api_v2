@@ -225,6 +225,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new SteelReceiptPlanLineConfiguration());
         modelBuilder.ApplyConfiguration(new SteelReceiptInspectionAttachmentConfiguration());
         modelBuilder.ApplyConfiguration(new SteelReceiptPlacementConfiguration());
+        modelBuilder.ApplyConfiguration(new SteelVehicleAcceptanceConfiguration());
         modelBuilder.ApplyConfiguration(new VehicleCheckInHeaderConfiguration());
         modelBuilder.ApplyConfiguration(new VehicleCheckInImageConfiguration());
         modelBuilder.ApplyConfiguration(new QualityParameterConfiguration());

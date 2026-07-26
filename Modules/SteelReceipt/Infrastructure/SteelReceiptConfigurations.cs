@@ -61,14 +61,34 @@ public sealed class SteelReceiptPlanLineConfiguration : BaseEntityConfiguration<
         b.HasIndex(x=>x.DCode).IsUnique().HasFilter("[IsDeleted] = 0");
         b.HasIndex(x=>new{x.PlanId,x.ExternalLineKey}).IsUnique().HasFilter("[IsDeleted] = 0");
         b.HasIndex(x=>new{x.StockId,x.SupplierSerialNo}); b.HasIndex(x=>new{x.InspectionStatus,x.ConversionStatus});
+        b.HasIndex(x=>x.VehicleAcceptanceId).HasFilter("[VehicleAcceptanceId] IS NOT NULL");
         b.HasOne<verii_wms_api_v2.Modules.Stock.Domain.Stock>().WithMany().HasForeignKey(x=>x.StockId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne<verii_wms_api_v2.Modules.YapCode.Domain.YapCode>().WithMany().HasForeignKey(x=>x.YapCodeId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne<verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse>().WithMany().HasForeignKey(x=>x.TargetWarehouseId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne<verii_wms_api_v2.Modules.Location.Domain.WarehouseLocation>().WithMany().HasForeignKey(x=>x.ReceivingLocationId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne<verii_wms_api_v2.Modules.GoodsReceipt.Domain.GoodsReceiptHeader>().WithMany().HasForeignKey(x=>x.GoodsReceiptId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne<verii_wms_api_v2.Modules.GoodsReceipt.Domain.GoodsReceiptLine>().WithMany().HasForeignKey(x=>x.GoodsReceiptLineId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x=>x.VehicleAcceptance).WithMany(x=>x.Lines).HasForeignKey(x=>x.VehicleAcceptanceId).OnDelete(DeleteBehavior.Restrict);
         b.HasMany(x=>x.Attachments).WithOne(x=>x.PlanLine).HasForeignKey(x=>x.PlanLineId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne(x=>x.Placement).WithOne(x=>x.PlanLine).HasForeignKey<SteelReceiptPlacement>(x=>x.PlanLineId).OnDelete(DeleteBehavior.Restrict);
+    }
+}
+
+public sealed class SteelVehicleAcceptanceConfiguration : BaseEntityConfiguration<SteelVehicleAcceptance>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<SteelVehicleAcceptance> b)
+    {
+        b.ToTable("RII_STEEL_VEHICLE_ACCEPTANCE", t => {
+            t.HasCheckConstraint("CK_RII_STEEL_VEHICLE_ACCEPTANCE_COUNT", "[PlateCount] > 0");
+            t.HasCheckConstraint("CK_RII_STEEL_VEHICLE_ACCEPTANCE_QTY", "[TotalAcceptedQuantity] > 0");
+        });
+        b.Property(x=>x.TotalAcceptedQuantity).HasPrecision(18,6);
+        b.Property(x=>x.Status).HasConversion<string>().HasMaxLength(30);
+        b.Property(x=>x.Note).HasMaxLength(1000);
+        b.HasIndex(x=>x.IdempotencyKey).IsUnique();
+        b.HasIndex(x=>new{x.VehicleCheckInId,x.AcceptedAtUtc});
+        b.HasOne<verii_wms_api_v2.Modules.VehicleCheckIn.Domain.VehicleCheckInHeader>()
+            .WithMany().HasForeignKey(x=>x.VehicleCheckInId).OnDelete(DeleteBehavior.Restrict);
     }
 }
 

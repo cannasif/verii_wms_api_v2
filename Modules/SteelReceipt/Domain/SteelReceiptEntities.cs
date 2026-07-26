@@ -8,6 +8,7 @@ public enum SteelInspectionStatus { Pending=1, Inspected=2, Approved=3, Partiall
 public enum SteelReceiptConversionStatus { NotCreated=1, Created=2 }
 public enum SteelPutawayStatus { Pending=1, Placed=2 }
 public enum SteelPlacementType { SideBySide=1, Stacked=2 }
+public enum SteelVehicleAcceptanceStatus { Completed=1, Cancelled=2 }
 
 public sealed class SteelReceiptPlan : BaseEntity
 {
@@ -72,9 +73,24 @@ public sealed class SteelReceiptPlanLine : BaseEntity
     public DateTimeOffset? InspectedAtUtc { get; set; }
     public long? GoodsReceiptId { get; set; }
     public long? GoodsReceiptLineId { get; set; }
+    public long? VehicleAcceptanceId { get; set; }
+    public SteelVehicleAcceptance? VehicleAcceptance { get; set; }
     public byte[] RowVersion { get; set; } = [];
     public ICollection<SteelReceiptInspectionAttachment> Attachments { get; set; } = [];
     public SteelReceiptPlacement? Placement { get; set; }
+}
+
+public sealed class SteelVehicleAcceptance : BaseEntity
+{
+    public Guid IdempotencyKey { get; set; }
+    public long VehicleCheckInId { get; set; }
+    public int PlateCount { get; set; }
+    public decimal TotalAcceptedQuantity { get; set; }
+    public SteelVehicleAcceptanceStatus Status { get; set; } = SteelVehicleAcceptanceStatus.Completed;
+    public DateTimeOffset AcceptedAtUtc { get; set; }
+    public long AcceptedBy { get; set; }
+    public string? Note { get; set; }
+    public ICollection<SteelReceiptPlanLine> Lines { get; set; } = [];
 }
 
 public sealed class SteelReceiptInspectionAttachment : BaseEntity
