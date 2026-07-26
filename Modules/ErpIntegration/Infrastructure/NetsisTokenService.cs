@@ -65,6 +65,10 @@ public sealed class NetsisTokenService(
                 {
                     failures.Add(Sanitize(ex.Message));
                 }
+                catch (JsonException ex)
+                {
+                    failures.Add($"Token yanıtı çözümlenemedi: {Sanitize(ex.Message)}");
+                }
             }
 
             logger.LogError("Netsis token alınamadı. DenemeSayısı={AttemptCount}", failures.Count);
