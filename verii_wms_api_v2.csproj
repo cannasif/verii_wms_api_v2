@@ -23,8 +23,12 @@
 
   <ItemGroup>
     <Compile Remove="tests\**\*.cs" />
+    <Compile Remove="artifacts\**\*.cs" />
     <Content Remove="tests\**\*" />
+    <Content Remove="artifacts\**\*" />
     <EmbeddedResource Remove="tests\**\*" />
+    <EmbeddedResource Remove="artifacts\**\*" />
     <None Remove="tests\**\*" />
+    <None Remove="artifacts\**\*" />
   </ItemGroup>
 </Project>
