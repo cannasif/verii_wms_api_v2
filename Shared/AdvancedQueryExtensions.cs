@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
+using System.Text.Json.Serialization;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 
 namespace verii_wms_api_v2.Shared;
@@ -17,6 +18,12 @@ public static class AdvancedQueryExtensions
     public static IQueryable<T> ApplySearch<T>(
         this IQueryable<T> query,
         PagedRequest request,
+        IReadOnlyCollection<string>? defaultColumns = null) =>
+        query.ApplySearch(request, CreatePublicSearchColumnMapping<T>(), defaultColumns);
+
+    public static IQueryable<T> ApplySearch<T>(
+        this IQueryable<T> query,
+        PagedRequest request,
         IReadOnlyDictionary<string, string> columnMapping,
         IReadOnlyCollection<string>? defaultColumns = null)
     {
@@ -24,7 +31,8 @@ public static class AdvancedQueryExtensions
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(columnMapping);
 
-        var search = request.Search?.Trim();
+        request.MarkSearchApplied();
+        var search = request.EffectiveSearch?.Trim();
         if (string.IsNullOrWhiteSpace(search)) return query;
         if (columnMapping.Count == 0)
             throw new InvalidOperationException("En az bir aranabilir kolon tanımlanmalıdır.");
@@ -87,6 +95,19 @@ public static class AdvancedQueryExtensions
             : PagedQueryExtensions.RewriteProjectionMemberAccess(
                 query.Where(Expression.Lambda<Func<T, bool>>(allTerms, parameter)));
     }
+
+    private static IReadOnlyDictionary<string, string> CreatePublicSearchColumnMapping<T>() =>
+        typeof(T)
+            .GetProperties(BindingFlags.Public | BindingFlags.Instance)
+            .Where(property =>
+                property.CanRead
+                && property.GetIndexParameters().Length == 0
+                && property.GetCustomAttribute<JsonIgnoreAttribute>() is null
+                && SupportsGeneralSearch(property.PropertyType))
+            .ToDictionary(
+                property => property.Name,
+                property => property.Name,
+                StringComparer.OrdinalIgnoreCase);
 
     private static bool SupportsGeneralSearch(Type propertyType)
     {

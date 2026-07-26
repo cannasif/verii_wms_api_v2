@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json.Serialization;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Modules.StockBalance.Application;
 using verii_wms_api_v2.Shared;
@@ -180,6 +181,54 @@ public sealed class AdvancedQueryExtensionsTests
 
         Assert.Equal(400, exception.StatusCode);
         Assert.Contains("izin verilen", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Automatic_search_allow_list_uses_only_public_serialized_scalar_fields()
+    {
+        var request = new PagedRequest
+        {
+            Search = "UR-001",
+            SearchFields = ["code"]
+        };
+
+        var rows = SearchRows().ApplySearch(request).ToList();
+
+        Assert.Single(rows);
+        Assert.Equal(1, rows[0].Id);
+    }
+
+    [Fact]
+    public void Automatic_search_allow_list_rejects_json_ignored_fields()
+    {
+        var request = new PagedRequest
+        {
+            Search = "internal",
+            SearchFields = ["internalSearchText"]
+        };
+        var rows = new[]
+        {
+            new AutoSearchRow { Id = 1, Code = "PUBLIC", InternalSearchText = "internal" }
+        }.AsQueryable();
+
+        var exception = Assert.Throws<AppException>(() => rows.ApplySearch(request).ToList());
+
+        Assert.Equal(400, exception.StatusCode);
+        Assert.Contains("izin verilen", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Explicit_search_scope_preserves_raw_term_and_suppresses_legacy_module_search()
+    {
+        var request = new PagedRequest
+        {
+            Search = "warehouse",
+            SearchFields = ["code"]
+        };
+
+        Assert.Null(request.Search);
+        Assert.Equal("warehouse", request.EffectiveSearch);
+        Assert.True(request.HasExplicitSearchFields);
     }
 
     [Fact]
@@ -368,6 +417,12 @@ public sealed class AdvancedQueryExtensionsTests
 
     private sealed record QueryRow(long Id, int SortKey, QueryStatus Status, decimal Quantity, int? OptionalCode);
     private sealed record SearchRow(long Id, string Code, string Name, string Prefix);
+    private sealed class AutoSearchRow
+    {
+        public long Id { get; init; }
+        public string Code { get; init; } = string.Empty;
+        [JsonIgnore] public string InternalSearchText { get; init; } = string.Empty;
+    }
     private sealed record GoodsReceiptStatusRow(long Id, verii_wms_api_v2.Modules.WarehouseOperations.Domain.WarehouseOperationStatus Status);
     private sealed record StringStatusRow(long Id, string Status);
     private sealed class LocationGridProjection

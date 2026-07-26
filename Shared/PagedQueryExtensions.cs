@@ -23,6 +23,12 @@ public static class PagedQueryExtensions
         var skipLong = (long)(pageNumber - 1) * pageSize;
         var skip = skipLong > int.MaxValue ? int.MaxValue : (int)skipLong;
 
+        // Yeni grid/dropdown sözleşmesi arama alanlarını açıkça gönderir.
+        // Modül özel bir eşleme ile aramayı daha önce uygulamadıysa yalnızca
+        // dışarı açılan DTO alanlarından üretilen güvenli allowlist kullanılır.
+        if (request.HasExplicitSearchFields && !request.SearchApplied)
+            query = query.ApplySearch(request);
+
         // Positional record DTO projeksiyonlarında EF, `new Dto(...).Property`
         // ifadesini özellikle OrderBy içinde SQL'e çeviremeyebilir. Üye erişimini
         // constructor'ın gerçek argümanına indirger; COUNT ve sayfalama sunucuda kalır.
@@ -54,7 +60,7 @@ public static class PagedQueryExtensions
 
     private static void ValidateRequest(PagedRequest request, int maxPageSize)
     {
-        if (request.Search?.Length > DefaultMaxSearchLength)
+        if (request.EffectiveSearch?.Length > DefaultMaxSearchLength)
             throw AppException.BadRequest($"Arama metni en fazla {DefaultMaxSearchLength} karakter olabilir.");
         if (maxPageSize > 0 && request.PageSize > maxPageSize)
             throw AppException.BadRequest($"Sayfa boyutu en fazla {maxPageSize} olabilir.");
