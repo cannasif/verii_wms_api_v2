@@ -112,8 +112,12 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
             }
 
             var dbContext = context.HttpContext.RequestServices.GetRequiredService<WmsDbContext>();
+            // Authentication must not fail merely because the browser navigated away
+            // while this short session-version lookup was in flight. A request-aborted
+            // token here surfaced as a JwtBearer authentication failure and caused the
+            // web client to discard an otherwise valid month-long session.
             var valid = await dbContext.Users.AsNoTracking()
-                .AnyAsync(x => x.Id == userId && x.IsActive && x.TokenVersion == tokenVersion, context.HttpContext.RequestAborted);
+                .AnyAsync(x => x.Id == userId && x.IsActive && x.TokenVersion == tokenVersion, CancellationToken.None);
             if (!valid) context.Fail("Token session is no longer valid.");
         }
     };
