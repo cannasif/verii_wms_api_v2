@@ -10,6 +10,8 @@ using verii_wms_api_v2.Modules.Stock.Application;
 using verii_wms_api_v2.Modules.StockBalance.Application;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
+using verii_wms_api_v2.Modules.StockTracking.Application;
+using verii_wms_api_v2.Modules.StockTracking.Domain;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -18,7 +20,11 @@ using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 
 namespace verii_wms_api_v2.Modules.StockMovement.Application;
 
-public sealed class StockMovementService(IUnitOfWork unitOfWork, IAuditLogWriter audit, IStockBalanceService balanceProjection) : IStockMovementService
+public sealed class StockMovementService(
+    IUnitOfWork unitOfWork,
+    IAuditLogWriter audit,
+    IStockBalanceService balanceProjection,
+    IStockTrackingPolicyResolver trackingPolicyResolver) : IStockMovementService
 {
     private IGenericRepository<StockMovementOperation> Operations => unitOfWork.Repository<StockMovementOperation>();
     private IGenericRepository<StockMovementEntry> Entries => unitOfWork.Repository<StockMovementEntry>();
@@ -169,6 +175,9 @@ public sealed class StockMovementService(IUnitOfWork unitOfWork, IAuditLogWriter
         if (yapCodes.Count != yapCodeIds.Count) throw AppException.BadRequest("Geçersiz veya pasif yapılandırma kodu seçildi.");
         if (warehouses.Count != warehouseIds.Count) throw AppException.BadRequest("Geçersiz veya pasif depo seçildi.");
         if (locations.Count != locationIds.Count) throw AppException.BadRequest("Geçersiz veya pasif raf seçildi.");
+        var trackingPolicies = new Dictionary<long, EffectiveStockTrackingPolicy>();
+        foreach (var stock in stocks.Values)
+            trackingPolicies[stock.Id] = await trackingPolicyResolver.ResolveAsync(stock.BranchCode, stock.Id, ct);
 
         var result = new List<StockMovementEntry>(request.Lines.Count * 2);
         foreach (var line in request.Lines)
@@ -182,7 +191,15 @@ public sealed class StockMovementService(IUnitOfWork unitOfWork, IAuditLogWriter
             var status = NormalizeText(line.StockStatus, 30) ?? "Available";
             var sourceStatus = NormalizeText(line.SourceStockStatus, 30) ?? status;
             var targetStatus = NormalizeText(line.TargetStockStatus, 30) ?? status;
-            if (serial is not null && line.Quantity != 1) throw AppException.BadRequest("Seri numaralı hareketlerde miktar 1 olmalıdır.");
+            try
+            {
+                StockTrackingPolicyGuard.ValidateSerialQuantity(
+                    trackingPolicies[stock.Id], line.Quantity, serial);
+            }
+            catch (StockTrackingPolicyViolationException exception)
+            {
+                throw AppException.BadRequest(exception.Message);
+            }
 
             void Add(long? warehouseId, long? locationId, decimal delta, string entryStatus)
             {
@@ -239,6 +256,10 @@ public sealed class StockMovementService(IUnitOfWork unitOfWork, IAuditLogWriter
         var serialDrafts = drafts.Where(x => !string.IsNullOrWhiteSpace(x.SerialNo)).ToList();
         if (serialDrafts.Count == 0) return;
         var stockIds = serialDrafts.Select(x => x.StockId).Distinct().ToList();
+        var policies = new Dictionary<long, EffectiveStockTrackingPolicy>();
+        foreach (var group in serialDrafts.GroupBy(x => new { x.BranchCode, x.StockId }))
+            policies[group.Key.StockId] = await trackingPolicyResolver.ResolveAsync(
+                group.Key.BranchCode, group.Key.StockId, ct);
         var serials = serialDrafts.Select(x => x.SerialNo!).Distinct().ToList();
         var currentRows = await Entries.Query().Where(x => stockIds.Contains(x.StockId) && x.SerialNo != null && serials.Contains(x.SerialNo))
             .Select(x => new { x.StockId, x.YapCodeId, x.UnitCode, x.LotNo, x.SerialNo, x.StockStatus, x.QuantityDelta }).ToListAsync(ct);
@@ -247,9 +268,46 @@ public sealed class StockMovementService(IUnitOfWork unitOfWork, IAuditLogWriter
         foreach (var group in serialDrafts.GroupBy(x => SerialKey(x.StockId, x.YapCodeId, x.UnitCode, x.LotNo, x.SerialNo!, x.StockStatus)))
         {
             var resultingQuantity = current.GetValueOrDefault(group.Key) + group.Sum(x => x.QuantityDelta);
-            if (resultingQuantity is < 0 or > 1)
-                throw AppException.Conflict($"Seri numarası tekil bir stok örneğidir; toplam bakiye 0 veya 1 olabilir. Seri: {group.First().SerialNo}.");
+            var rule = policies[group.First().StockId].SerialQuantityRule;
+            if (resultingQuantity < 0
+                || (rule != SerialQuantityRule.OneSerialPerLine && resultingQuantity > 1))
+                throw AppException.Conflict(rule == SerialQuantityRule.OneSerialPerLine
+                    ? $"Seri bakiyesi negatife düşemez. Seri: {group.First().SerialNo}."
+                    : $"Seri numarası tekil bir stok örneğidir; toplam bakiye 0 veya 1 olabilir. Seri: {group.First().SerialNo}.");
         }
+
+        var weightedStockIds = policies
+            .Where(x => x.Value.SerialQuantityRule == SerialQuantityRule.OneSerialPerLine)
+            .Select(x => x.Key).ToHashSet();
+        var weightedDrafts = serialDrafts.Where(x => weightedStockIds.Contains(x.StockId)).ToList();
+        if (weightedDrafts.Count == 0) return;
+        var weightedSerials = weightedDrafts.Select(x => x.SerialNo!).Distinct().ToList();
+        var locationRows = await LocationBalances.Query()
+            .Where(x => weightedStockIds.Contains(x.StockId)
+                && x.SerialNo != null
+                && weightedSerials.Contains(x.SerialNo))
+            .Select(x => new
+            {
+                x.StockId, x.YapCodeId, x.WarehouseId, x.LocationId, x.UnitCode,
+                x.LotNo, x.SerialNo, x.StockStatus, x.AvailableQuantity
+            }).ToListAsync(ct);
+        var resultingLocations = locationRows.ToDictionary(
+            x => WeightedLocationKey(x.StockId, x.YapCodeId, x.WarehouseId, x.LocationId,
+                x.UnitCode, x.LotNo, x.SerialNo!, x.StockStatus),
+            x => x.AvailableQuantity);
+        foreach (var draft in weightedDrafts)
+        {
+            var key = WeightedLocationKey(draft.StockId, draft.YapCodeId, draft.WarehouseId,
+                draft.LocationId, draft.UnitCode, draft.LotNo, draft.SerialNo!, draft.StockStatus);
+            resultingLocations[key] = resultingLocations.GetValueOrDefault(key) + draft.QuantityDelta;
+        }
+        var splitSerial = resultingLocations
+            .Where(x => x.Value > 0)
+            .GroupBy(x => (x.Key.StockId, x.Key.SerialNo))
+            .FirstOrDefault(x => x.Count() > 1);
+        if (splitSerial is not null)
+            throw AppException.Conflict(
+                $"Aynı levha/palet serisi birden fazla aktif raf veya stok statüsüne bölünemez. Seri: {splitSerial.Key.SerialNo}.");
     }
 
     private async Task SynchronizeSerialRegistryAsync(
@@ -260,6 +318,17 @@ public sealed class StockMovementService(IUnitOfWork unitOfWork, IAuditLogWriter
         var groups = drafts.Where(x => !string.IsNullOrWhiteSpace(x.SerialNo))
             .GroupBy(x => new { x.StockId, Serial = x.SerialNo!.Trim().ToUpperInvariant() })
             .ToList();
+        var stockIds = groups.Select(x => x.Key.StockId).Distinct().ToList();
+        var serials = groups.Select(x => x.Key.Serial).Distinct().ToList();
+        var currentRows = await Entries.Query()
+            .Where(x => stockIds.Contains(x.StockId)
+                && x.SerialNo != null
+                && serials.Contains(x.SerialNo))
+            .Select(x => new { x.StockId, Serial = x.SerialNo!, x.QuantityDelta })
+            .ToListAsync(ct);
+        var currentQuantities = currentRows
+            .GroupBy(x => new { x.StockId, Serial = x.Serial.Trim().ToUpperInvariant() })
+            .ToDictionary(x => (x.Key.StockId, x.Key.Serial), x => x.Sum(v => v.QuantityDelta));
         var ordinal = 0;
         foreach (var group in groups)
         {
@@ -268,9 +337,11 @@ public sealed class StockMovementService(IUnitOfWork unitOfWork, IAuditLogWriter
                 x => x.StockId == group.Key.StockId && x.NormalizedSerialNo == group.Key.Serial,
                 true, ct);
             var netQuantity = group.Sum(x => x.QuantityDelta);
+            var resultingQuantity = currentQuantities.GetValueOrDefault(
+                (group.Key.StockId, group.Key.Serial)) + netQuantity;
             if (row is null)
             {
-                if (netQuantity <= 0)
+                if (resultingQuantity <= 0)
                     throw AppException.Conflict(
                         $"Çıkış veya transfer işleminde yalnız mevcut stok serisi kullanılabilir. Seri: {group.First().SerialNo}");
                 row = new StockSerialRegistry
@@ -301,7 +372,7 @@ public sealed class StockMovementService(IUnitOfWork unitOfWork, IAuditLogWriter
             if (netQuantity > 0)
             {
                 var isReturnOrReversal = operation.OperationType is StockMovementTypes.CustomerReturn or StockMovementTypes.Reversal;
-                if (row.Status == StockSerialStatus.Available
+                if ((row.Status == StockSerialStatus.Available && !isReturnOrReversal)
                     || (row.Status == StockSerialStatus.Consumed && !isReturnOrReversal))
                     throw AppException.Conflict($"Seri bu stok için daha önce kullanılmış. Seri: {row.SerialNo}");
                 row.Status = StockSerialStatus.Available;
@@ -312,8 +383,10 @@ public sealed class StockMovementService(IUnitOfWork unitOfWork, IAuditLogWriter
             {
                 if (row.Status != StockSerialStatus.Available)
                     throw AppException.Conflict($"Yalnız kullanılabilir durumdaki seri çıkışa konu olabilir. Seri: {row.SerialNo}");
-                row.Status = StockSerialStatus.Consumed;
-                row.ConsumedAtUtc = DateTimeOffset.UtcNow;
+                row.Status = resultingQuantity > 0
+                    ? StockSerialStatus.Available
+                    : StockSerialStatus.Consumed;
+                row.ConsumedAtUtc = resultingQuantity > 0 ? null : DateTimeOffset.UtcNow;
             }
             else if (row.Status != StockSerialStatus.Available)
             {
@@ -359,4 +432,24 @@ public sealed class StockMovementService(IUnitOfWork unitOfWork, IAuditLogWriter
     private static string Hash(object value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value))));
     private static string Key(long stockId, long? yapCodeId, long warehouseId, long locationId, string unit, string? lot, string? serial, string status) => $"{stockId}|{yapCodeId?.ToString() ?? "0"}|{warehouseId}|{locationId}|{unit}|{lot ?? ""}|{serial ?? ""}|{status}";
     private static string SerialKey(long stockId, long? yapCodeId, string unit, string? lot, string serial, string status) => $"{stockId}|{yapCodeId?.ToString() ?? "0"}|{unit}|{lot ?? ""}|{serial}|{status}";
+    private static WeightedSerialLocationKey WeightedLocationKey(
+        long stockId,
+        long? yapCodeId,
+        long warehouseId,
+        long locationId,
+        string unitCode,
+        string? lotNo,
+        string serialNo,
+        string stockStatus) =>
+        new(stockId, yapCodeId, warehouseId, locationId, unitCode, lotNo ?? string.Empty,
+            serialNo.Trim().ToUpperInvariant(), stockStatus);
+    private readonly record struct WeightedSerialLocationKey(
+        long StockId,
+        long? YapCodeId,
+        long WarehouseId,
+        long LocationId,
+        string UnitCode,
+        string LotNo,
+        string SerialNo,
+        string StockStatus);
 }

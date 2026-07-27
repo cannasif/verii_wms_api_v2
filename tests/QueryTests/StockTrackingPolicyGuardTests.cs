@@ -32,6 +32,29 @@ public sealed class StockTrackingPolicyGuardTests
     }
 
     [Fact]
+    public void One_serial_per_line_accepts_single_weighted_serial()
+    {
+        StockTrackingPolicyGuard.Validate(
+            Policy(StockTrackingType.Serial, serial: true, serialRule: SerialQuantityRule.OneSerialPerLine),
+            1_234.50m,
+            StockTrackingType.Serial,
+            [new StockTrackingCapture(1_234.50m, null, "LVH-001", null, null)],
+            requireCompleteCapture: true);
+    }
+
+    [Fact]
+    public void One_serial_per_base_unit_rejects_weighted_serial()
+    {
+        var exception = Assert.Throws<StockTrackingPolicyViolationException>(() =>
+            StockTrackingPolicyGuard.ValidateSerialQuantity(
+                Policy(StockTrackingType.Serial, serial: true, serialRule: SerialQuantityRule.OneSerialPerBaseUnit),
+                1_234.50m,
+                "LVH-001"));
+
+        Assert.Contains("1 miktarla", exception.Message);
+    }
+
+    [Fact]
     public void Mandatory_lot_and_expiration_are_enforced()
     {
         var policy = Policy(StockTrackingType.Lot, lot: true);

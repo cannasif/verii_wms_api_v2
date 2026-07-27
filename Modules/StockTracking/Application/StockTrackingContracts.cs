@@ -60,6 +60,18 @@ public interface IStockTrackingPolicyResolver
 
 public static class StockTrackingPolicyGuard
 {
+    public static void ValidateSerialQuantity(
+        EffectiveStockTrackingPolicy policy,
+        decimal quantity,
+        string? serialNo)
+    {
+        if (string.IsNullOrWhiteSpace(serialNo)) return;
+        if (quantity <= 0) throw new ArgumentOutOfRangeException(nameof(quantity));
+        if (policy.SerialQuantityRule == SerialQuantityRule.OneSerialPerBaseUnit && quantity != 1)
+            throw new StockTrackingPolicyViolationException(
+                $"{policy.StockCode} için her stok birimi ayrı seriyle ve 1 miktarla işlenmelidir.");
+    }
+
     public static void Validate(
         EffectiveStockTrackingPolicy policy,
         decimal requestedQuantity,
@@ -100,6 +112,9 @@ public static class StockTrackingPolicyGuard
             .Select(x => x.SerialNo!.Trim()).ToArray();
         if (serials.Length != serials.Distinct(StringComparer.OrdinalIgnoreCase).Count())
             throw new StockTrackingPolicyViolationException("Aynı seri numarası bir işlem satırında tekrar edemez.");
+
+        foreach (var capture in captures)
+            ValidateSerialQuantity(policy, capture.Quantity, capture.SerialNo);
 
         if (policy.SerialQuantityRule == SerialQuantityRule.OneSerialPerBaseUnit)
         {

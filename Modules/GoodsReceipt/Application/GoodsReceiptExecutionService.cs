@@ -13,6 +13,7 @@ using verii_wms_api_v2.Modules.Quality.Domain;
 using verii_wms_api_v2.Modules.SerialNumberPolicy.Application;
 using verii_wms_api_v2.Modules.StockMovement.Application;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
+using verii_wms_api_v2.Modules.StockTracking.Application;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -27,6 +28,7 @@ public sealed class GoodsReceiptExecutionService(
     IUnitOfWork uow,
     IStockMovementService stockMovement,
     IQualityPolicyResolver qualityPolicy,
+    IStockTrackingPolicyResolver trackingPolicy,
     ISerialNumberPolicyResolver serialPolicy,
     IWarehouseBarcodeResolver barcodeResolver,
     IAuditLogWriter audit,
@@ -96,7 +98,9 @@ public sealed class GoodsReceiptExecutionService(
             var serial = Clean(label?.SerialNo ?? resolved?.SerialNo ?? request.SerialNo, 100);
             var manufacturingDate = label?.ManufacturingDate ?? resolved?.ManufacturingDate ?? request.ManufacturingDate;
             var expirationDate = label?.ExpirationDate ?? resolved?.ExpirationDate ?? request.ExpirationDate;
-            ValidateTracking(taskLine, quantity, lot, serial, manufacturingDate, expirationDate);
+            var effectiveTrackingPolicy = await trackingPolicy.ResolveAsync(
+                task.BranchCode, taskLine.Line.StockId, token);
+            ValidateTracking(taskLine, effectiveTrackingPolicy, quantity, lot, serial, manufacturingDate, expirationDate);
             var serialValidation = await serialPolicy.ValidateAsync(task.BranchCode, taskLine.Line.StockId,
                 taskLine.Line.YapCodeId, serial, token);
             if (!serialValidation.IsValid) throw AppException.BadRequest(serialValidation.Error ?? "Seri numarası geçersiz.");
@@ -325,14 +329,26 @@ public sealed class GoodsReceiptExecutionService(
             throw AppException.Conflict("İptal edilmiş etiket kullanılamaz.");
     }
 
-    private static void ValidateTracking(GoodsReceiptTaskLine line, decimal quantity, string? lot, string? serial,
+    private static void ValidateTracking(
+        GoodsReceiptTaskLine line,
+        EffectiveStockTrackingPolicy policy,
+        decimal quantity,
+        string? lot,
+        string? serial,
         DateOnly? manufacturingDate, DateOnly? expirationDate)
     {
         if (line.Line.RequireSerial && string.IsNullOrWhiteSpace(serial)) throw AppException.BadRequest("Seri numarası zorunludur.");
         if (line.Line.RequireLot && string.IsNullOrWhiteSpace(lot)) throw AppException.BadRequest("Lot numarası zorunludur.");
         if (line.Line.RequireManufacturingDate && !manufacturingDate.HasValue) throw AppException.BadRequest("Üretim tarihi zorunludur.");
         if (line.Line.RequireExpirationDate && !expirationDate.HasValue) throw AppException.BadRequest("Son kullanma tarihi zorunludur.");
-        if (!string.IsNullOrWhiteSpace(serial) && quantity != 1) throw AppException.BadRequest("Serili üründe her okutma miktarı 1 olmalıdır.");
+        try
+        {
+            StockTrackingPolicyGuard.ValidateSerialQuantity(policy, quantity, serial);
+        }
+        catch (StockTrackingPolicyViolationException exception)
+        {
+            throw AppException.BadRequest(exception.Message);
+        }
         if (manufacturingDate.HasValue && expirationDate.HasValue && expirationDate < manufacturingDate)
             throw AppException.BadRequest("Son kullanma tarihi üretim tarihinden önce olamaz.");
         if (line.Line.MinimumShelfLifeDays.HasValue && expirationDate.HasValue

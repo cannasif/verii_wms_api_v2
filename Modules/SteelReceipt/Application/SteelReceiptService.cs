@@ -29,9 +29,17 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
     public async Task<SteelImportPreview> PreviewAsync(PreviewSteelReceiptImportRequest request,CancellationToken ct=default)
     {
         var normalized=await ValidateImportAsync(request,ct);var keys=normalized.Select(x=>x.Key).ToArray();
-        var existing=await Lines.Query().Where(x=>keys.Contains(x.ExternalLineKey)).Select(x=>new{x.ExternalLineKey,x.DCode})
-            .ToDictionaryAsync(x=>x.ExternalLineKey,ct);
-        var rows=normalized.Select(x=>{existing.TryGetValue(x.Key,out var found);var errors=x.Errors.ToList();
+        var stockIds=normalized.Where(x=>x.Stock is not null).Select(x=>x.Stock!.Id).Distinct().ToArray();
+        var serials=normalized.Select(x=>x.Serial).Distinct().ToArray();
+        var existingRows=await Lines.Query().Where(x=>keys.Contains(x.ExternalLineKey)
+                ||stockIds.Contains(x.StockId)&&serials.Contains(x.SupplierSerialNo))
+            .Select(x=>new{x.ExternalLineKey,x.StockId,x.SupplierSerialNo,x.DCode}).ToListAsync(ct);
+        var existingByKey=existingRows.GroupBy(x=>x.ExternalLineKey).ToDictionary(x=>x.Key,x=>x.First());
+        var existingBySerial=existingRows.GroupBy(x=>SerialKey(x.StockId,x.SupplierSerialNo))
+            .ToDictionary(x=>x.Key,x=>x.First());
+        var rows=normalized.Select(x=>{existingByKey.TryGetValue(x.Key,out var found);
+            if(found is null&&x.Stock is not null)existingBySerial.TryGetValue(SerialKey(x.Stock.Id,x.Serial),out found);
+            var errors=x.Errors.ToList();
             if(found is not null)errors.Add($"Bu levha daha önce {found.DCode} olarak içe aktarılmış.");
             return new SteelImportPreviewLine(x.Input.RowNumber,x.Serial,x.Stock?.ErpStockCode,found is null?"New":"Existing",found?.DCode,errors);}).ToList();
         return new(rows.Count,rows.Count(x=>x.Action=="New"),rows.Count(x=>x.Action=="Existing"),rows.Count(x=>x.Errors.Count>0),
@@ -46,8 +54,15 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             var errors=normalized.SelectMany(x=>x.Errors.Select(e=>$"Satır {x.Input.RowNumber}: {e}")).ToList();
             if(errors.Count>0)throw AppException.BadRequest(string.Join(" ",errors.Take(10)));
             var keys=normalized.Select(x=>x.Key).ToArray();
-            var duplicate=await Lines.Query().Where(x=>keys.Contains(x.ExternalLineKey)).Select(x=>x.DCode).FirstOrDefaultAsync(token);
-            if(duplicate is not null)throw AppException.Conflict($"Levha daha önce {duplicate} olarak içe aktarılmış.");
+            var stockIds=normalized.Select(x=>x.Stock!.Id).Distinct().ToArray();
+            var serials=normalized.Select(x=>x.Serial).Distinct().ToArray();
+            var existingRows=await Lines.Query().Where(x=>keys.Contains(x.ExternalLineKey)
+                    ||stockIds.Contains(x.StockId)&&serials.Contains(x.SupplierSerialNo))
+                .Select(x=>new{x.ExternalLineKey,x.StockId,x.SupplierSerialNo,x.DCode}).ToListAsync(token);
+            var duplicate=existingRows.FirstOrDefault(x=>keys.Contains(x.ExternalLineKey)
+                ||normalized.Any(row=>row.Stock!.Id==x.StockId
+                    &&string.Equals(row.Serial,x.SupplierSerialNo,StringComparison.OrdinalIgnoreCase)));
+            if(duplicate is not null)throw AppException.Conflict($"Levha daha önce {duplicate.DCode} olarak içe aktarılmış.");
             var branch=import.BranchCode.Trim();
             var replay=await Plans.Query().FirstOrDefaultAsync(x=>x.CorrelationId==request.IdempotencyKey,token);
             if(replay is not null)return replay.Id;
@@ -182,7 +197,7 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
                 null,null,null,null,null,null,plan.PlannedArrivalAtUtc,null,GoodsReceiptLabelStrategy.PreGenerate,GoodsReceiptExecutionMode.Import,
                 request.Priority,null,Clean(request.Description,1000),assignedUserIds,
                 selected.Select(x=>new ManualGoodsReceiptLineRequest(x.StockId,x.YapCodeId,x.ApprovedQuantity,x.UnitCode,x.HeatNumber,
-                    x.ApprovedQuantity==1?x.SupplierSerialNo:null,null,null,null,null,$"SAC {x.DCode} · Seri {x.SupplierSerialNo}",
+                    x.SupplierSerialNo,null,null,null,null,$"SAC {x.DCode} · Seri {x.SupplierSerialNo}",
                     x.TargetWarehouseId,x.ReceivingLocationId)).ToList());
             var result=await grOperations.CreateOrderlessTaskAsync(manual,actor,token);
             var header=await uow.Repository<GoodsReceiptHeader>().Query(true).FirstAsync(x=>x.Id==result.Id,token);
@@ -226,7 +241,7 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             var movement=await stockMovement.PostAsync(new PostStockMovementRequest($"STEEL-PUTAWAY:{line.Id}:{request.IdempotencyKey:N}",
                 StockMovementTypes.Transfer,"SteelReceipt",line.DCode,line.Id,DateTime.UtcNow,"SteelPutaway",null,
                 [new StockMovementLineRequest(line.StockId,line.YapCodeId,line.ApprovedQuantity,line.TargetWarehouseId,line.ReceivingLocationId,
-                    line.TargetWarehouseId,dest.Id,line.UnitCode,line.HeatNumber,line.ApprovedQuantity==1?line.SupplierSerialNo:null,
+                    line.TargetWarehouseId,dest.Id,line.UnitCode,line.HeatNumber,line.SupplierSerialNo,
                     "Available","Available","Available")]),token);
             var placement=Stamp(new SteelReceiptPlacement{BranchCode=line.BranchCode,PlanLine=line,WarehouseId=line.TargetWarehouseId,
                 LocationId=dest.Id,PlacementType=SteelPlacementType.Stacked,RowNo=rowNo,PositionNo=positionNo,StackOrderNo=stackOrder,
@@ -346,7 +361,12 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             if(input.ExpectedQuantity<=0)errors.Add("Beklenen miktar sıfırdan büyük olmalıdır.");var key=Key(request.SupplierId,input);
             if(duplicates.Contains(key))errors.Add("Dosyada aynı levha birden fazla kez bulunuyor.");
             result.Add(new(input,key,serial,stock,yap?.ConfigurationCode,errors,yap?.Id));}
-        return result;
+        var repeatedSerials=result.Where(x=>x.Stock is not null)
+            .GroupBy(x=>SerialKey(x.Stock!.Id,x.Serial))
+            .Where(x=>x.Count()>1).Select(x=>x.Key).ToHashSet();
+        return result.Select(x=>repeatedSerials.Contains(SerialKey(x.Stock?.Id??0,x.Serial))
+            ?x with{Errors=x.Errors.Append("Dosyada aynı stok ve levha seri numarası birden fazla kez bulunuyor.").ToList()}
+            :x).ToList();
     }
 
     private async Task RefreshPlanAsync(SteelReceiptPlan plan,CancellationToken ct)
@@ -360,6 +380,7 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
     }
     private static string Key(long supplierId,SteelImportLineRequest x)=>Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
         $"{supplierId}|{x.NetsisOrderNo?.Trim().ToUpperInvariant()}|{x.NetsisOrderLineNo?.Trim().ToUpperInvariant()}|{x.StockId?.ToString()??x.StockCode.Trim().ToUpperInvariant()}|{x.SupplierSerialNo?.Trim().ToUpperInvariant()}|{x.SecondarySerialNo?.Trim().ToUpperInvariant()}")));
+    private static string SerialKey(long stockId,string serial)=>$"{stockId}|{serial.Trim().ToUpperInvariant()}";
     private static T Stamp<T>(T v,long actor)where T:verii_wms_api_v2.Shared.Domain.BaseEntity{v.CreatedBy=actor;v.CreatedDate=DateTime.UtcNow;return v;}
     private static string? Clean(string? value,int max,bool required=false){var v=string.IsNullOrWhiteSpace(value)?null:value.Trim();
         if(required&&v is null)throw AppException.BadRequest("Zorunlu alan boş bırakılamaz.");if(v?.Length>max)throw AppException.BadRequest($"En fazla {max} karakter.");return v;}

@@ -339,12 +339,34 @@ public sealed class GoodsReceiptOperationsService(
                     TaskType = GoodsReceiptTaskType.Receive, Status = GoodsReceiptTaskStatus.Assigned, Priority = request.Priority,
                     WarehouseId = warehouse.Id, PlannedStartAtUtc = request.PlannedArrivalAtUtc?.ToUniversalTime() }, actor);
                 header.Tasks.Add(task);
-                for (var index = 0; index < grLines.Count; index++) task.Lines.Add(Stamp(new GoodsReceiptTaskLine
+                for (var index = 0; index < grLines.Count; index++)
                 {
-                    BranchCode = branch, Task = task, Line = grLines[index], SequenceNo = index + 1,
-                    ToLocationId = grLines[index].DefaultReceivingLocationId, PlannedQuantity = grLines[index].ExpectedQuantity,
-                    UnitCode = grLines[index].UnitCode, Status = GoodsReceiptTaskStatus.Assigned
-                }, actor));
+                    var input = request.Lines[index];
+                    var taskLine = Stamp(new GoodsReceiptTaskLine
+                    {
+                        BranchCode = branch, Task = task, Line = grLines[index], SequenceNo = index + 1,
+                        ToLocationId = grLines[index].DefaultReceivingLocationId, PlannedQuantity = grLines[index].ExpectedQuantity,
+                        UnitCode = grLines[index].UnitCode, Status = GoodsReceiptTaskStatus.Assigned
+                    }, actor);
+                    if (!string.IsNullOrWhiteSpace(input.LotNo) || !string.IsNullOrWhiteSpace(input.SerialNo)
+                        || input.ManufacturingDate.HasValue || input.ExpirationDate.HasValue)
+                        taskLine.Trackings.Add(Stamp(new GoodsReceiptTaskLineTracking
+                        {
+                            BranchCode = branch,
+                            TaskLine = taskLine,
+                            SequenceNo = 1,
+                            StockId = grLines[index].StockId,
+                            PlannedQuantity = grLines[index].ExpectedQuantity,
+                            LotNo = Clean(input.LotNo, 100),
+                            SerialNo = Clean(input.SerialNo, 100),
+                            ManufacturingDate = input.ManufacturingDate,
+                            ExpirationDate = input.ExpirationDate,
+                            TargetWarehouseId = grLines[index].TargetWarehouseId,
+                            ToLocationId = grLines[index].DefaultReceivingLocationId ?? request.ReceivingLocationId,
+                            Description = Clean(input.Description, 500)
+                        }, actor));
+                    task.Lines.Add(taskLine);
+                }
                 var users = (request.AssignedUserIds is { Count: > 0 } ? request.AssignedUserIds : [actor]).Distinct().ToList();
                 if (await unitOfWork.Repository<User>().Query().CountAsync(x => users.Contains(x.Id) && x.IsActive, token) != users.Count)
                     throw AppException.BadRequest("Atanan kullanıcılardan biri geçersiz veya pasiftir.");
@@ -450,7 +472,6 @@ public sealed class GoodsReceiptOperationsService(
             || request.SupplierId <= 0 || request.TargetWarehouseId <= 0 || request.ReceivingLocationId <= 0
             || request.Priority is < 1 or > 5 || request.Lines is not { Count: > 0 and <= 200 }
             || request.Lines.Any(x => x.StockId <= 0 || x.Quantity <= 0 || x.Quantity > 999_999_999_999m)
-            || request.Lines.Any(x => !string.IsNullOrWhiteSpace(x.SerialNo) && x.Quantity != 1)
             || request.Lines.Where(x => !string.IsNullOrWhiteSpace(x.SerialNo)).GroupBy(x => new { x.StockId, Serial = x.SerialNo!.Trim() }).Any(x => x.Count() > 1))
             throw AppException.BadRequest("Mal kabul isteği veya satırları geçersizdir.");
         if (direct && request.ExecutionMode == 0) throw AppException.BadRequest("Direkt kabul giriş yöntemi zorunludur.");
