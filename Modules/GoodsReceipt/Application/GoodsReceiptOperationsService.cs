@@ -447,14 +447,27 @@ public sealed class GoodsReceiptOperationsService(
         if (direct && request.ExecutionMode == 0) throw AppException.BadRequest("Direkt kabul giriş yöntemi zorunludur.");
         var waybillNo = NormalizeDocumentNumber(request.WaybillNo);
         var electronicWaybillNo = NormalizeDocumentNumber(request.ElectronicWaybillNo);
-        if ((waybillNo is null) == (electronicWaybillNo is null))
-            throw AppException.BadRequest("Tek bir mal kabul numarası girilmeli ve normal/e-irsaliye türü seçilmelidir.");
+        ValidateDocumentReference(waybillNo, electronicWaybillNo, request.WaybillDate, request.ExecutionMode);
         if (waybillNo is not null && !Regex.IsMatch(waybillNo, "^[0-9]{15}$", RegexOptions.CultureInvariant))
             throw AppException.BadRequest("Normal irsaliye mal kabul numarası tam 15 rakam olmalıdır.");
         if (electronicWaybillNo is not null && !Regex.IsMatch(electronicWaybillNo, "^[A-Z0-9]{3}[0-9]{13}$", RegexOptions.CultureInvariant))
             throw AppException.BadRequest("E-irsaliye numarası 3 karakter birim kodu, 4 karakter yıl ve 9 karakter sıra numarasından oluşmalıdır.");
-        if (!request.WaybillDate.HasValue)
-            throw AppException.BadRequest("İrsaliye tarihi zorunludur.");
+    }
+
+    internal static void ValidateDocumentReference(
+        string? waybillNo,
+        string? electronicWaybillNo,
+        DateOnly? waybillDate,
+        GoodsReceiptExecutionMode executionMode)
+    {
+        var hasWaybill = !string.IsNullOrWhiteSpace(waybillNo);
+        var hasElectronicWaybill = !string.IsNullOrWhiteSpace(electronicWaybillNo);
+        if (hasWaybill && hasElectronicWaybill)
+            throw AppException.BadRequest("Normal irsaliye ve e-irsaliye numarası birlikte girilemez; yalnızca birini giriniz.");
+        if (!hasWaybill && !hasElectronicWaybill && executionMode != GoodsReceiptExecutionMode.Import)
+            throw AppException.BadRequest("Normal irsaliye numarası veya e-irsaliye numarasından biri zorunludur.");
+        if ((hasWaybill || hasElectronicWaybill) && !waybillDate.HasValue)
+            throw AppException.BadRequest("İrsaliye numarası girildiğinde irsaliye tarihi zorunludur.");
     }
 
     private static void ValidateTrackedLines(
