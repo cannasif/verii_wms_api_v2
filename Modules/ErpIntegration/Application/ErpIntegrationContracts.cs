@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 using verii_wms_api_v2.Modules.GoodsReceipt.Application;
+using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Shipping.Application;
 using verii_wms_api_v2.Modules.WarehouseInbound.Application;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
@@ -83,6 +84,49 @@ public interface IErpPostingService
         ReconcileErpPostingRequest request,
         long userId,
         CancellationToken cancellationToken);
+}
+
+public interface IGoodsReceiptErpAutomation
+{
+    void Enqueue(long goodsReceiptId, long actorUserId);
+}
+
+public interface IGoodsReceiptErpPostingJob
+{
+    Task PostIfEligibleAsync(
+        long goodsReceiptId,
+        long actorUserId,
+        CancellationToken cancellationToken);
+
+    Task DispatchPendingAsync(CancellationToken cancellationToken);
+}
+
+public static class GoodsReceiptErpPostingPolicyEvaluator
+{
+    public static bool IsEligible(
+        WarehouseOperationStatus operationStatus,
+        OperationApprovalStatus approvalStatus,
+        OperationQualityStatus qualityStatus,
+        GoodsReceiptErpPostingPolicy postingPolicy)
+    {
+        if (operationStatus is not (WarehouseOperationStatus.Processed or WarehouseOperationStatus.Completed))
+            return false;
+
+        var receiptApprovalCompleted = approvalStatus is
+            OperationApprovalStatus.NotRequired or OperationApprovalStatus.Approved;
+        var qualityApprovalCompleted = qualityStatus is
+            OperationQualityStatus.NotRequired or OperationQualityStatus.Passed;
+
+        return postingPolicy switch
+        {
+            GoodsReceiptErpPostingPolicy.AfterReceipt => true,
+            GoodsReceiptErpPostingPolicy.AfterReceiptApproval => receiptApprovalCompleted,
+            GoodsReceiptErpPostingPolicy.AfterQualityApproval => qualityApprovalCompleted,
+            GoodsReceiptErpPostingPolicy.AfterAllApprovals =>
+                receiptApprovalCompleted && qualityApprovalCompleted,
+            _ => false
+        };
+    }
 }
 
 public interface IErpCancellationService
