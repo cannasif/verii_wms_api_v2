@@ -53,18 +53,17 @@ public sealed class NetsisRestClient(
     }
 
     public async Task<NetsisCallResult<NetsisDeleteItemSlipResponse>> DeleteItemSlipAsync(
-        long erpRecordId,
+        NetsisItemSlipDeleteRequest request,
         CancellationToken cancellationToken)
     {
-        if (erpRecordId <= 0)
-            throw new ArgumentOutOfRangeException(nameof(erpRecordId), "ERP kayıt kimliği pozitif olmalıdır.");
+        var providerId = request.ToProviderId();
 
         var watch = Stopwatch.StartNew();
         try
         {
-            var result = await SendDeleteAsync(erpRecordId, false, cancellationToken);
+            var result = await SendDeleteAsync(providerId, false, cancellationToken);
             if (result.HttpStatusCode == (int)HttpStatusCode.Unauthorized)
-                result = await SendDeleteAsync(erpRecordId, true, cancellationToken);
+                result = await SendDeleteAsync(providerId, true, cancellationToken);
             return result with { DurationMs = watch.ElapsedMilliseconds };
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -107,7 +106,10 @@ public sealed class NetsisRestClient(
         try
         {
             if (!string.IsNullOrWhiteSpace(raw))
+            {
                 data = JsonSerializer.Deserialize<NetsisItemSlipResponse>(raw, JsonOptions);
+                HydrateReferenceFields(data, raw);
+            }
         }
         catch (JsonException ex)
         {
@@ -127,13 +129,13 @@ public sealed class NetsisRestClient(
     }
 
     private async Task<NetsisCallResult<NetsisDeleteItemSlipResponse>> SendDeleteAsync(
-        long erpRecordId,
+        string providerId,
         bool forceRefresh,
         CancellationToken cancellationToken)
     {
         var token = await tokenService.GetAccessTokenAsync(forceRefresh, cancellationToken);
         var basePath = optionsAccessor.Value.Rest.ItemSlipsPath.TrimEnd('/');
-        using var message = new HttpRequestMessage(HttpMethod.Delete, $"{basePath}/{erpRecordId}");
+        using var message = new HttpRequestMessage(HttpMethod.Delete, $"{basePath}/{providerId}");
         message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         message.Headers.Accept.ParseAdd("application/json");
 
@@ -164,4 +166,61 @@ public sealed class NetsisRestClient(
 
     private static string? Truncate(string? value, int maxLength) =>
         string.IsNullOrWhiteSpace(value) || value.Length <= maxLength ? value : value[..maxLength];
+
+    private static void HydrateReferenceFields(NetsisItemSlipResponse? response, string raw)
+    {
+        if (response is null || string.IsNullOrWhiteSpace(raw)) return;
+
+        try
+        {
+            using var document = JsonDocument.Parse(raw);
+            var values = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase);
+            CollectReferenceCandidates(document.RootElement, values);
+
+            response.Data ??= new NetsisItemSlipResponseData();
+            response.Data.FisNo ??= FirstValue(
+                values, "FisNo", "FISNO", "Fis_No", "FIS_NO", "FATIRS_NO", "FatirsNo");
+            response.Data.BelgeNo ??= FirstValue(
+                values, "BelgeNo", "BELGE_NO", "Belge_No", "BelgeNumarasi", "BelgeNumarası");
+            response.Data.KayitNo ??= FirstValue(
+                values, "KayitNo", "KAYIT_NO", "Kayit_No", "KayıtNo", "KayitNumarasi");
+            response.Data.ReferenceNumber ??= FirstValue(
+                values, "ReferenceNumber", "REFERENCE_NUMBER", "ReferansNo", "ReferansKodu", "RefNo");
+        }
+        catch (JsonException)
+        {
+            // Ham yanıt denetim kaydında korunur; referans alanları bulunamazsa normal akış devam eder.
+        }
+    }
+
+    private static void CollectReferenceCandidates(
+        JsonElement element,
+        IDictionary<string, string?> values)
+    {
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.Object:
+                foreach (var property in element.EnumerateObject())
+                {
+                    if (property.Value.ValueKind is JsonValueKind.String or JsonValueKind.Number)
+                        values.TryAdd(property.Name, property.Value.ToString());
+                    CollectReferenceCandidates(property.Value, values);
+                }
+                break;
+            case JsonValueKind.Array:
+                foreach (var item in element.EnumerateArray())
+                    CollectReferenceCandidates(item, values);
+                break;
+        }
+    }
+
+    private static string? FirstValue(
+        IReadOnlyDictionary<string, string?> values,
+        params string[] names)
+    {
+        foreach (var name in names)
+            if (values.TryGetValue(name, out var value) && !string.IsNullOrWhiteSpace(value))
+                return value.Trim();
+        return null;
+    }
 }

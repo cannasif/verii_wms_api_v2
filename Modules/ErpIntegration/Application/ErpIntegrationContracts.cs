@@ -177,7 +177,7 @@ public interface INetsisRestClient
         CancellationToken cancellationToken);
 
     Task<NetsisCallResult<NetsisDeleteItemSlipResponse>> DeleteItemSlipAsync(
-        long erpRecordId,
+        NetsisItemSlipDeleteRequest request,
         CancellationToken cancellationToken);
 }
 
@@ -208,6 +208,51 @@ public sealed class NetsisItemSlipRequest
 
     [JsonPropertyName("Kalems")]
     public List<NetsisItemSlipLine> Kalems { get; set; } = [];
+}
+
+public sealed record NetsisItemSlipDeleteRequest(
+    int DocumentType,
+    string DocumentNo,
+    string? CustomerCode)
+{
+    public string ToProviderId()
+    {
+        var documentNo = DocumentNo?.Trim();
+        if (string.IsNullOrWhiteSpace(documentNo))
+            throw new ArgumentException("Netsis belge numarası zorunludur.", nameof(DocumentNo));
+
+        var customerCode = CustomerCode?.Trim() ?? string.Empty;
+        if (DocumentType is not (8 or 9) && string.IsNullOrWhiteSpace(customerCode))
+            throw new ArgumentException("Netsis cari kodu zorunludur.", nameof(CustomerCode));
+
+        var faturaTip = DocumentType switch
+        {
+            0 => "ftSFat",
+            1 => "ftAFat",
+            2 => "ftSIrs",
+            3 => "ftAIrs",
+            6 => "ftASip",
+            7 => "ftSSip",
+            8 => "ftAmbarG",
+            9 => "ftAmbarC",
+            12 => "ftAlTalep",
+            13 => "ftAlTeklif",
+            14 => "ftSatTalep",
+            15 => "ftSatTeklif",
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(DocumentType),
+                DocumentType,
+                "Netsis silme işlemi için desteklenmeyen belge tipi.")
+        };
+
+        // NetOpenX ItemSlips DELETE kimliği:
+        // FaturaTip;FATIRS_NO;CARI_KOD. Ayraçları koruyup değerleri ayrı ayrı kaçır.
+        return string.Join(
+            ';',
+            Uri.EscapeDataString(faturaTip),
+            Uri.EscapeDataString(documentNo),
+            Uri.EscapeDataString(customerCode));
+    }
 }
 
 public sealed class NetsisItemSlipHeader

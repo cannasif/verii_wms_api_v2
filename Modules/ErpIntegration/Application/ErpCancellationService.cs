@@ -44,7 +44,9 @@ public sealed class ErpCancellationService(
         var reason = request.Reason.Trim();
         var requestHash = Hash(new { sourceType, sourceEntityId, request.IdempotencyKey, Reason = reason });
         var posting = await LoadPostingAsync(sourceType, sourceEntityId, true, cancellationToken);
-        var erpRecordId = ResolveErpRecordId(posting);
+        var deleteRequest = await ResolveDeleteRequestAsync(posting, cancellationToken);
+        var erpDeleteId = deleteRequest.ToProviderId();
+        var erpRecordId = ResolveErpRecordIdOrZero(posting);
         var cancellation = await Cancellations.Query(true)
             .SingleOrDefaultAsync(x => x.ErpPostingRecordId == posting.Id, cancellationToken);
 
@@ -86,7 +88,8 @@ public sealed class ErpCancellationService(
                 throw AppException.Conflict("ERP silme sonucu belirsiz. Netsis kontrol edilmeden yerel ters hareket veya yeniden silme yapılamaz.");
             if (cancellation.Status is ErpCancellationStatus.ErpDeletionConfirmed
                 or ErpCancellationStatus.CompensationRequired)
-                return await CompleteLocalReversalAsync(cancellation, posting, erpRecordId, userId, cancellationToken);
+                return await CompleteLocalReversalAsync(
+                    cancellation, posting, erpRecordId, erpDeleteId, userId, cancellationToken);
             await ValidateSourceAsync(sourceType, sourceEntityId, cancellationToken);
         }
 
@@ -104,11 +107,11 @@ public sealed class ErpCancellationService(
         NetsisCallResult<NetsisDeleteItemSlipResponse> call;
         try
         {
-            call = await netsisClient.DeleteItemSlipAsync(erpRecordId, cancellationToken);
+            call = await netsisClient.DeleteItemSlipAsync(deleteRequest, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            await MarkClientCancellationUncertainAsync(cancellation, userId);
+            await MarkClientCancellationUncertainAsync(cancellation, erpDeleteId, userId);
             throw;
         }
         catch (Exception ex)
@@ -141,7 +144,7 @@ public sealed class ErpCancellationService(
             ErpCancellationRecordId = cancellation.Id,
             AttemptNo = cancellation.AttemptCount,
             Operation = $"{sourceType}.DeleteItemSlip",
-            Endpoint = $"{optionsAccessor.Value.Rest.ItemSlipsPath.TrimEnd('/')}/{erpRecordId}",
+            Endpoint = $"{optionsAccessor.Value.Rest.ItemSlipsPath.TrimEnd('/')}/{erpDeleteId}",
             HttpStatusCode = call.HttpStatusCode,
             IsSuccessful = succeeded,
             CommitUncertain = requiresReconciliation,
@@ -160,7 +163,7 @@ public sealed class ErpCancellationService(
             return ToResult(cancellation, posting, erpRecordId);
 
         return await CompleteLocalReversalAsync(
-            cancellation, posting, erpRecordId, userId, cancellationToken);
+            cancellation, posting, erpRecordId, erpDeleteId, userId, cancellationToken);
     }
 
     public async Task<ErpCancellationResult> GetAsync(
@@ -173,7 +176,7 @@ public sealed class ErpCancellationService(
             x => x.ErpPostingRecordId == posting.Id,
             cancellationToken: cancellationToken)
             ?? throw AppException.NotFound("ERP iptal kaydı bulunamadı.");
-        return ToResult(cancellation, posting, ResolveErpRecordId(posting));
+        return ToResult(cancellation, posting, ResolveErpRecordIdOrZero(posting));
     }
 
     public async Task<ErpCancellationResult> ReconcileAsync(
@@ -187,7 +190,8 @@ public sealed class ErpCancellationService(
             throw AppException.BadRequest("Mutabakat açıklaması en az 5 karakter olmalıdır.");
 
         var posting = await LoadPostingAsync(sourceType, sourceEntityId, true, cancellationToken);
-        var erpRecordId = ResolveErpRecordId(posting);
+        var erpRecordId = ResolveErpRecordIdOrZero(posting);
+        var erpDeleteId = (await ResolveDeleteRequestAsync(posting, cancellationToken)).ToProviderId();
         var cancellation = await Cancellations.Query(true)
             .SingleOrDefaultAsync(x => x.ErpPostingRecordId == posting.Id, cancellationToken)
             ?? throw AppException.NotFound("ERP iptal kaydı bulunamadı.");
@@ -226,13 +230,14 @@ public sealed class ErpCancellationService(
             return ToResult(cancellation, posting, erpRecordId);
 
         return await CompleteLocalReversalAsync(
-            cancellation, posting, erpRecordId, userId, cancellationToken);
+            cancellation, posting, erpRecordId, erpDeleteId, userId, cancellationToken);
     }
 
     private async Task<ErpCancellationResult> CompleteLocalReversalAsync(
         ErpCancellationRecord cancellation,
         ErpPostingRecord posting,
         long erpRecordId,
+        string erpDeleteId,
         long userId,
         CancellationToken cancellationToken)
     {
@@ -298,6 +303,7 @@ public sealed class ErpCancellationService(
                     posting.SourceEntityId,
                     posting.SourceDocumentNo,
                     ErpRecordId = erpRecordId,
+                    ErpDeleteId = erpDeleteId,
                     cancellation.IdempotencyKey
                 },
                 ChangedFields: ["ERP document", "Stock movements", "Balances", "Reservations"]), CancellationToken.None);
@@ -322,7 +328,13 @@ public sealed class ErpCancellationService(
                 "erp-integration",
                 cancellation.Reason,
                 FailureReason: cancellation.LastErrorMessage,
-                NewValues: new { posting.SourceType, posting.SourceEntityId, ErpRecordId = erpRecordId },
+                NewValues: new
+                {
+                    posting.SourceType,
+                    posting.SourceEntityId,
+                    ErpRecordId = erpRecordId,
+                    ErpDeleteId = erpDeleteId
+                },
                 ChangedFields: ["ERP document"]), CancellationToken.None);
         }
 
@@ -416,6 +428,7 @@ public sealed class ErpCancellationService(
 
     private async Task MarkClientCancellationUncertainAsync(
         ErpCancellationRecord cancellation,
+        string erpDeleteId,
         long userId)
     {
         cancellation.Status = ErpCancellationStatus.CommitUncertain;
@@ -429,7 +442,7 @@ public sealed class ErpCancellationService(
             ErpCancellationRecordId = cancellation.Id,
             AttemptNo = cancellation.AttemptCount,
             Operation = "DeleteItemSlip",
-            Endpoint = optionsAccessor.Value.Rest.ItemSlipsPath,
+            Endpoint = $"{optionsAccessor.Value.Rest.ItemSlipsPath.TrimEnd('/')}/{erpDeleteId}",
             IsSuccessful = false,
             CommitUncertain = true,
             ErrorCode = cancellation.LastErrorCode,
@@ -442,12 +455,45 @@ public sealed class ErpCancellationService(
         await unitOfWork.SaveChangesAsync(CancellationToken.None);
     }
 
-    private static long ResolveErpRecordId(ErpPostingRecord posting)
+    private async Task<NetsisItemSlipDeleteRequest> ResolveDeleteRequestAsync(
+        ErpPostingRecord posting,
+        CancellationToken cancellationToken)
+    {
+        var documentNo = Clean(posting.ErpDocumentNo) ?? Clean(posting.SourceDocumentNo)
+            ?? throw AppException.Conflict(
+                "ERP belge numarası bulunamadı. İptalden önce ERP gönderim mutabakatında FATIRS_NO doğrulanmalıdır.");
+        var options = optionsAccessor.Value.Rest;
+
+        return posting.SourceType switch
+        {
+            ErpPostingSourceType.GoodsReceipt => new(
+                options.GoodsReceiptDocumentType,
+                documentNo,
+                (await unitOfWork.Repository<GoodsReceiptHeader>().FindByIdAsync(
+                    posting.SourceEntityId,
+                    cancellationToken: cancellationToken)
+                    ?? throw AppException.NotFound("Mal kabul kaydı bulunamadı."))
+                .SupplierCodeSnapshot),
+            ErpPostingSourceType.WarehouseTransfer => new(
+                options.WarehouseTransferDocumentType,
+                documentNo,
+                null),
+            ErpPostingSourceType.Shipment => new(
+                options.ShipmentDocumentType,
+                documentNo,
+                (await unitOfWork.Repository<ShipmentHeader>().FindByIdAsync(
+                    posting.SourceEntityId,
+                    cancellationToken: cancellationToken)
+                    ?? throw AppException.NotFound("Sevk kaydı bulunamadı."))
+                .CustomerCodeSnapshot),
+            _ => throw AppException.BadRequest("Desteklenmeyen ERP kaynak tipi.")
+        };
+    }
+
+    private static long ResolveErpRecordIdOrZero(ErpPostingRecord posting)
     {
         if (posting.ErpRecordId is > 0) return posting.ErpRecordId.Value;
-        if (long.TryParse(posting.ErpRecordNo, out var parsed) && parsed > 0) return parsed;
-        throw AppException.Conflict(
-            "ERP kayıt kimliği bulunamadı. Belge numarası tahmin edilerek silme yapılamaz; önce ERP gönderim mutabakatında KayitNo doğrulanmalıdır.");
+        return long.TryParse(posting.ErpRecordNo, out var parsed) && parsed > 0 ? parsed : 0;
     }
 
     private static void ValidateRequest(long sourceEntityId, Guid idempotencyKey, string reason)
@@ -481,6 +527,9 @@ public sealed class ErpCancellationService(
 
     private static string Truncate(string value, int maxLength) =>
         value.Length <= maxLength ? value : value[..maxLength];
+
+    private static string? Clean(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
     private static ErpCancellationResult ToResult(
         ErpCancellationRecord cancellation,

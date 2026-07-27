@@ -57,7 +57,24 @@ public sealed class NetsisRestClientTests
     }
 
     [Fact]
-    public async Task Delete_uses_exact_item_slip_record_endpoint_and_accepts_empty_no_content()
+    public async Task Create_hydrates_document_references_from_nested_provider_payload()
+    {
+        var handler = new QueueHandler(
+            _ => Json(HttpStatusCode.OK,
+                """{"isSuccessful":true,"data":{"result":{"FATIRS_NO":"VIR00042","BELGE_NO":"IRS-42","KAYIT_NO":4815,"ReferansNo":"REF-42"}}}"""));
+        var client = CreateClient(handler, new FakeTokenService());
+
+        var result = await client.CreateItemSlipAsync(SampleRequest(), CancellationToken.None);
+
+        Assert.True(result.BusinessSucceeded);
+        Assert.Equal("VIR00042", result.Data?.Data?.FisNo);
+        Assert.Equal("IRS-42", result.Data?.Data?.BelgeNo);
+        Assert.Equal("4815", result.Data?.Data?.KayitNo);
+        Assert.Equal("REF-42", result.Data?.Data?.ReferenceNumber);
+    }
+
+    [Fact]
+    public async Task Delete_uses_composite_item_slip_endpoint_and_accepts_empty_no_content()
     {
         HttpMethod? method = null;
         string? path = null;
@@ -69,13 +86,15 @@ public sealed class NetsisRestClientTests
         });
         var client = CreateClient(handler, new FakeTokenService());
 
-        var result = await client.DeleteItemSlipAsync(4815, CancellationToken.None);
+        var result = await client.DeleteItemSlipAsync(
+            new NetsisItemSlipDeleteRequest(3, "VIR 00042", "TED/001"),
+            CancellationToken.None);
 
         Assert.True(result.TransportSucceeded);
         Assert.True(result.BusinessSucceeded);
         Assert.False(result.CommitUncertain);
         Assert.Equal(HttpMethod.Delete, method);
-        Assert.Equal("/api/v2/ItemSlips/4815", path);
+        Assert.Equal("/api/v2/ItemSlips/ftAIrs;VIR%2000042;TED%2F001", path);
     }
 
     [Fact]
@@ -87,7 +106,9 @@ public sealed class NetsisRestClientTests
         var tokens = new FakeTokenService();
         var client = CreateClient(handler, tokens);
 
-        var result = await client.DeleteItemSlipAsync(92, CancellationToken.None);
+        var result = await client.DeleteItemSlipAsync(
+            new NetsisItemSlipDeleteRequest(2, "SIR00092", "MUS001"),
+            CancellationToken.None);
 
         Assert.True(result.BusinessSucceeded);
         Assert.Equal([false, true], tokens.ForceRefreshCalls);
@@ -100,7 +121,9 @@ public sealed class NetsisRestClientTests
         var handler = new QueueHandler(_ => throw new TaskCanceledException("timeout"));
         var client = CreateClient(handler, new FakeTokenService());
 
-        var result = await client.DeleteItemSlipAsync(92, CancellationToken.None);
+        var result = await client.DeleteItemSlipAsync(
+            new NetsisItemSlipDeleteRequest(3, "AIR00092", "TED001"),
+            CancellationToken.None);
 
         Assert.False(result.BusinessSucceeded);
         Assert.True(result.CommitUncertain);
@@ -114,11 +137,21 @@ public sealed class NetsisRestClientTests
             _ => Json(HttpStatusCode.NotFound, """{"isSuccessful":false,"errorCode":"NOT_FOUND"}"""));
         var client = CreateClient(handler, new FakeTokenService());
 
-        var result = await client.DeleteItemSlipAsync(92, CancellationToken.None);
+        var result = await client.DeleteItemSlipAsync(
+            new NetsisItemSlipDeleteRequest(3, "AIR00092", "TED001"),
+            CancellationToken.None);
 
         Assert.False(result.BusinessSucceeded);
         Assert.False(result.CommitUncertain);
         Assert.Equal(HttpStatusCode.NotFound, (HttpStatusCode?)result.HttpStatusCode);
+    }
+
+    [Fact]
+    public void Warehouse_transfer_delete_allows_empty_customer_segment()
+    {
+        var providerId = new NetsisItemSlipDeleteRequest(9, "DAT0001", null).ToProviderId();
+
+        Assert.Equal("ftAmbarC;DAT0001;", providerId);
     }
 
     private static NetsisRestClient CreateClient(HttpMessageHandler handler, INetsisTokenService tokenService)

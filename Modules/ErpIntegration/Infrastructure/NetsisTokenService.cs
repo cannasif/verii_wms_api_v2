@@ -202,7 +202,7 @@ public sealed class NetsisTokenService(
             || string.IsNullOrWhiteSpace(options.Rest.DbName)
             || string.IsNullOrWhiteSpace(options.Rest.DbUser))
             throw AppException.BadRequest(
-                "Netsis REST bağlantı bilgileri eksik. BaseUrl, kullanıcı, parola, şirket ve veritabanı kullanıcısını secret store üzerinden tanımlayın.");
+                "Netsis REST bağlantı bilgileri eksik. BaseUrl, kullanıcı, parola, şirket ve veritabanı kullanıcısını API yapılandırmasında tanımlayın.");
     }
 
     private sealed record ParsedToken(string AccessToken, int ExpiresInSeconds);
