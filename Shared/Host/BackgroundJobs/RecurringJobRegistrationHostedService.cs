@@ -1,4 +1,5 @@
 using Hangfire;
+using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.ErpMirror.Application;
 using verii_wms_api_v2.Modules.Packing.Application;
 using verii_wms_api_v2.Modules.StockBalance.Application;
@@ -70,6 +71,10 @@ public sealed class RecurringJobRegistrationHostedService(
             Cron.Daily(2, 30));
         recurringJobs.AddOrUpdate<IPackingPrintQueueJobRunner>(
             "packing-print-queue",
+            service => service.DispatchPendingAsync(CancellationToken.None),
+            Cron.Minutely);
+        recurringJobs.AddOrUpdate<IGoodsReceiptErpPostingJob>(
+            "goods-receipt-automatic-erp-posting",
             service => service.DispatchPendingAsync(CancellationToken.None),
             Cron.Minutely);
     }
