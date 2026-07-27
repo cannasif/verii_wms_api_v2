@@ -163,8 +163,18 @@ public sealed class SteelVehicleAcceptanceService(
                     throw AppException.Conflict("Bu araç girişinin SAC kabul işlemi daha önce tamamlanmış veya iptal edilmiş.");
 
                 var plans = lines.Select(x => x.Plan).DistinctBy(x => x.Id).ToList();
-                if (plans.Any(x => x.VehicleCheckInId.HasValue && x.VehicleCheckInId != vehicle.Id))
-                    throw AppException.Conflict("Seçilen SAC planlarından biri farklı bir araç girişiyle ilişkilidir.");
+                var planIds = plans.Select(x => x.Id).ToArray();
+                var acceptedVehicleIds = await (
+                    from siblingLine in Lines.Query()
+                    join siblingAcceptance in Acceptances.Query()
+                        on siblingLine.VehicleAcceptanceId equals (long?)siblingAcceptance.Id
+                    where planIds.Contains(siblingLine.PlanId)
+                          && siblingAcceptance.Status == SteelVehicleAcceptanceStatus.Completed
+                    select siblingAcceptance.VehicleCheckInId)
+                    .Distinct()
+                    .ToListAsync(token);
+                if (HasConflictingAcceptedVehicle(acceptedVehicleIds, vehicle.Id))
+                    throw AppException.Conflict("Seçilen SAC planındaki levhalardan biri başka bir araç tarafından daha önce kabul edilmiştir.");
 
                 var locationIds = plateRequests.Values.Select(x => x.ReceivingLocationId).Distinct().ToArray();
                 var locations = await uow.Repository<WarehouseLocation>().Query()
@@ -415,6 +425,11 @@ public sealed class SteelVehicleAcceptanceService(
         if (string.IsNullOrWhiteSpace(normalized)) return null;
         return normalized.Length <= max ? normalized : normalized[..max];
     }
+
+    internal static bool HasConflictingAcceptedVehicle(
+        IEnumerable<long> acceptedVehicleIds,
+        long currentVehicleId) =>
+        acceptedVehicleIds.Any(vehicleId => vehicleId != currentVehicleId);
 
     private sealed record StoredFile(Action<string> Delete, string Path);
 }
