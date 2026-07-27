@@ -8,6 +8,7 @@ using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.Customer.Domain;
 using verii_wms_api_v2.Modules.DocumentSeries.Application;
 using verii_wms_api_v2.Modules.DocumentSeries.Domain;
+using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
@@ -39,7 +40,8 @@ public sealed class GoodsReceiptOperationsService(
     IDocumentNumberAllocator numberAllocator,
     IStockMovementService stockMovementService,
     IGoodsReceiptRoutingService routing,
-    IAuditLogWriter audit) : IGoodsReceiptOperationsService
+    IAuditLogWriter audit,
+    IGoodsReceiptErpAutomation erpAutomation) : IGoodsReceiptOperationsService
 {
     private IGenericRepository<GoodsReceiptHeader> Headers => unitOfWork.Repository<GoodsReceiptHeader>();
     private IGenericRepository<GoodsReceiptExecution> Executions => unitOfWork.Repository<GoodsReceiptExecution>();
@@ -47,8 +49,15 @@ public sealed class GoodsReceiptOperationsService(
     public Task<ManualGoodsReceiptResult> CreateOrderlessTaskAsync(CreateManualGoodsReceiptRequest request, long actorUserId, CancellationToken cancellationToken = default) =>
         CreateAsync(request, actorUserId, direct: false, cancellationToken);
 
-    public Task<ManualGoodsReceiptResult> CreateDirectReceiptAsync(CreateManualGoodsReceiptRequest request, long actorUserId, CancellationToken cancellationToken = default) =>
-        CreateAsync(request, actorUserId, direct: true, cancellationToken);
+    public async Task<ManualGoodsReceiptResult> CreateDirectReceiptAsync(
+        CreateManualGoodsReceiptRequest request,
+        long actorUserId,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await CreateAsync(request, actorUserId, direct: true, cancellationToken);
+        erpAutomation.Enqueue(result.Id, actorUserId);
+        return result;
+    }
 
     public async Task<PagedResponse<GoodsReceiptGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {

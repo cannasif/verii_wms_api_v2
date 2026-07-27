@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
+using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
@@ -18,7 +19,11 @@ namespace verii_wms_api_v2.Modules.Quality.Application;
 using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
 using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 
-public sealed class QualityService(IUnitOfWork uow, IAuditLogWriter audit, IStockMovementService stockMovement) : IQualityService, IQualityPolicyResolver
+public sealed class QualityService(
+    IUnitOfWork uow,
+    IAuditLogWriter audit,
+    IStockMovementService stockMovement,
+    IGoodsReceiptErpAutomation erpAutomation) : IQualityService, IQualityPolicyResolver
 {
     private IGenericRepository<QualityParameter> Parameters => uow.Repository<QualityParameter>();
     private IGenericRepository<QualityRule> Rules => uow.Repository<QualityRule>();
@@ -146,12 +151,12 @@ public sealed class QualityService(IUnitOfWork uow, IAuditLogWriter audit, IStoc
             parameter.AllowPartialDecision, parameter.RequireManagerApprovalForRelease);
     }
 
-    public Task DecideInspectionAsync(long id, DecideQualityInspectionRequest request, long actor,
+    public async Task DecideInspectionAsync(long id, DecideQualityInspectionRequest request, long actor,
         bool canReleaseQuarantine, CancellationToken ct = default)
     {
         if (request.IdempotencyKey == Guid.Empty || request.Decision is QualityDecision.Pending or QualityDecision.Hold)
             throw AppException.BadRequest("Nihai karar kabul, ret, karantina veya tedarikçiye iade olmalıdır.");
-        return uow.ExecuteInTransactionAsync(async token =>
+        var goodsReceiptId = await uow.ExecuteInTransactionAsync(async token =>
         {
             var inspection = await Inspections.Query(true).Include(x => x.Lines).FirstOrDefaultAsync(x => x.Id == id, token)
                 ?? throw AppException.NotFound("Kalite kontrolü bulunamadı.");
@@ -243,8 +248,9 @@ public sealed class QualityService(IUnitOfWork uow, IAuditLogWriter audit, IStoc
             await audit.WriteAsync(new("quality.inspection.decide", nameof(QualityInspection), id.ToString(), "Succeeded", "quality",
                 NewValues: new { request.IdempotencyKey, request.Decision, request.LineIds, request.ReasonCode, MovementId = movement?.OperationId },
                 ChangedFields: ["Status", "Lines", "InventoryStatus"]), token);
-            return true;
+            return gr.Id;
         }, ct);
+        erpAutomation.Enqueue(goodsReceiptId, actor);
     }
 
     private Task DecideInspectionLegacyAsync(long id, DecideQualityInspectionRequest request,long actor,CancellationToken ct=default)

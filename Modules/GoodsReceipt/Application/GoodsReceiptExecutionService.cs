@@ -5,6 +5,7 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.BarcodeDesigner.Application;
+using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Quality.Application;
@@ -28,14 +29,15 @@ public sealed class GoodsReceiptExecutionService(
     IQualityPolicyResolver qualityPolicy,
     ISerialNumberPolicyResolver serialPolicy,
     IWarehouseBarcodeResolver barcodeResolver,
-    IAuditLogWriter audit) : IGoodsReceiptExecutionService
+    IAuditLogWriter audit,
+    IGoodsReceiptErpAutomation erpAutomation) : IGoodsReceiptExecutionService
 {
-    public Task<ReceiveGoodsReceiptTaskResult> ReceiveAsync(long taskId, ReceiveGoodsReceiptTaskRequest request,
+    public async Task<ReceiveGoodsReceiptTaskResult> ReceiveAsync(long taskId, ReceiveGoodsReceiptTaskRequest request,
         long actor, CancellationToken ct = default)
     {
         ValidateRequest(taskId, request);
         var requestHash = Hash(request);
-        return uow.ExecuteInTransactionAsync(async token =>
+        var result = await uow.ExecuteInTransactionAsync(async token =>
         {
             var replay = await uow.Repository<GoodsReceiptExecution>().Query()
                 .Include(x => x.Lines).FirstOrDefaultAsync(x => x.IdempotencyKey == request.IdempotencyKey, token);
@@ -269,6 +271,8 @@ public sealed class GoodsReceiptExecutionService(
 
             return Result(execution, task, taskLine, movement.OperationId, inspection?.Id, label?.Id, false);
         }, ct, IsolationLevel.Serializable);
+        erpAutomation.Enqueue(result.GoodsReceiptId, actor);
+        return result;
     }
 
     private async Task<ReceiveGoodsReceiptTaskResult> ReplayResult(GoodsReceiptExecution execution, CancellationToken ct)

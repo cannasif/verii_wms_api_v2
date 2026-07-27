@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
+using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Quality.Domain;
@@ -18,13 +19,14 @@ namespace verii_wms_api_v2.Modules.GoodsReceipt.Application;
 public sealed class GoodsReceiptLifecycleService(
     IUnitOfWork uow,
     IStockMovementService movements,
-    IAuditLogWriter audit) : IGoodsReceiptLifecycleService
+    IAuditLogWriter audit,
+    IGoodsReceiptErpAutomation erpAutomation) : IGoodsReceiptLifecycleService
 {
     private IGenericRepository<GoodsReceiptHeader> Headers => uow.Repository<GoodsReceiptHeader>();
     private IGenericRepository<GoodsReceiptStatusHistory> Histories => uow.Repository<GoodsReceiptStatusHistory>();
     private IGenericRepository<StockMovementOperation> MovementOperations => uow.Repository<StockMovementOperation>();
 
-    public Task<GoodsReceiptLifecycleResult> ApproveAsync(
+    public async Task<GoodsReceiptLifecycleResult> ApproveAsync(
         long id,
         GoodsReceiptTransitionRequest request,
         long actor,
@@ -33,7 +35,7 @@ public sealed class GoodsReceiptLifecycleService(
         ValidateTransition(id, request, requireReason: false);
         var normalizedReason = Clean(request.Reason, 500);
         var hash = Hash(new { Operation = "Approve", Id = id, request.IdempotencyKey, Reason = normalizedReason });
-        return uow.ExecuteInTransactionAsync(async ct =>
+        var result = await uow.ExecuteInTransactionAsync(async ct =>
         {
             var header = await LoadAsync(id, ct);
             if (await IsReplayAsync(header, request.IdempotencyKey, hash, ct))
@@ -56,9 +58,11 @@ public sealed class GoodsReceiptLifecycleService(
             await WriteAudit("approve", header, null, 0, actor, ct);
             return Result(header, null, 0, false);
         }, cancellationToken, IsolationLevel.Serializable);
+        erpAutomation.Enqueue(result.Id, actor);
+        return result;
     }
 
-    public Task<GoodsReceiptLifecycleResult> ShortCloseAsync(
+    public async Task<GoodsReceiptLifecycleResult> ShortCloseAsync(
         long id,
         ShortCloseGoodsReceiptRequest request,
         long actor,
@@ -73,7 +77,7 @@ public sealed class GoodsReceiptLifecycleService(
         var normalizedLines = request.Lines.OrderBy(x => x.LineId).ToArray();
         var reason = Clean(request.Reason, 500)!;
         var hash = Hash(new { Operation = "ShortClose", Id = id, request.IdempotencyKey, Reason = reason, Lines = normalizedLines });
-        return uow.ExecuteInTransactionAsync(async ct =>
+        var result = await uow.ExecuteInTransactionAsync(async ct =>
         {
             var header = await LoadAsync(id, ct);
             if (await IsReplayAsync(header, request.IdempotencyKey, hash, ct))
@@ -114,6 +118,8 @@ public sealed class GoodsReceiptLifecycleService(
             await WriteAudit("short-close", header, null, affected, actor, ct);
             return Result(header, null, affected, false);
         }, cancellationToken, IsolationLevel.Serializable);
+        erpAutomation.Enqueue(result.Id, actor);
+        return result;
     }
 
     public Task<GoodsReceiptLifecycleResult> PutawayAsync(
