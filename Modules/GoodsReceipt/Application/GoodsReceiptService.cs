@@ -1,6 +1,7 @@
 using System.Data;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using verii_wms_api_v2.Modules.Audit.Application;
@@ -49,8 +50,15 @@ public sealed class GoodsReceiptService(
             if (existing is not null) return Replay(existing, request);
 
             var branch = request.BranchCode.Trim();
+            var (waybillNo, electronicWaybillNo) = NormalizeDocumentReference(
+                request.WaybillNo, request.ElectronicWaybillNo, request.WaybillDate);
             var supplier = await unitOfWork.Repository<CustomerEntity>().FirstOrDefaultAsync(x => x.Id == request.SupplierId && x.BranchCode == branch, false, ct)
                 ?? throw AppException.BadRequest(Message(GoodsReceiptMessageKeys.SupplierNotFound));
+            if (await Headers.AnyAsync(x => x.BranchCode == branch
+                    && x.SupplierId == request.SupplierId
+                    && ((waybillNo != null && x.WaybillNo == waybillNo)
+                        || (electronicWaybillNo != null && x.ElectronicWaybillNo == electronicWaybillNo)), ct))
+                throw AppException.Conflict("Bu tedarikçi ve irsaliye numarasıyla daha önce mal kabul oluşturulmuş.");
             var warehouse = await unitOfWork.Repository<WarehouseEntity>().FirstOrDefaultAsync(x => x.Id == request.TargetWarehouseId && x.BranchCode == branch, false, ct)
                 ?? throw AppException.BadRequest(Message(GoodsReceiptMessageKeys.WarehouseNotFound));
             var location = await unitOfWork.Repository<WarehouseLocation>().FindByIdAsync(request.ReceivingLocationId, false, ct)
@@ -132,6 +140,7 @@ public sealed class GoodsReceiptService(
                 ProcessType = GoodsReceiptProcessType.OrderBasedTask,
                 CorrelationId = request.IdempotencyKey, SupplierId = supplier.Id, SupplierCodeSnapshot = supplier.CustomerCode,
                 SupplierNameSnapshot = supplier.CustomerName, TargetWarehouseId = warehouse.Id, ReceivingLocationId = location.Id,
+                WaybillNo = waybillNo, WaybillDate = request.WaybillDate, ElectronicWaybillNo = electronicWaybillNo,
                 Status = WarehouseOperationStatus.Draft, AllowOverReceipt = receiptPolicy.OverReceiptPolicy != OverReceiptPolicy.NotAllowed,
                 OverReceiptPolicy = receiptPolicy.OverReceiptPolicy, OverReceiptTolerancePercent = receiptPolicy.OverReceiptTolerancePercent,
                 AllowUnderReceipt = receiptPolicy.AllowUnderReceipt, RequireShortCloseApproval = receiptPolicy.RequireShortCloseApproval,
@@ -154,6 +163,22 @@ public sealed class GoodsReceiptService(
                     SupplierCodeSnapshot = supplier.CustomerCode, SupplierNameSnapshot = supplier.CustomerName }, actorUserId, now);
                 header.SourceDocuments.Add(document); return document;
             }, StringComparer.OrdinalIgnoreCase);
+            header.SourceDocuments.Add(Stamp(new GoodsReceiptSourceDocument
+            {
+                BranchCode = branch,
+                Header = header,
+                SourceDocumentType = waybillNo is not null
+                    ? GoodsReceiptSourceDocumentType.SupplierWaybill
+                    : GoodsReceiptSourceDocumentType.ElectronicWaybill,
+                SourceSystem = waybillNo is not null
+                    ? WarehouseOperationSourceSystem.Manual
+                    : WarehouseOperationSourceSystem.Netsis,
+                ExternalDocumentId = waybillNo ?? electronicWaybillNo!,
+                ExternalDocumentNo = waybillNo ?? electronicWaybillNo!,
+                ExternalDocumentDate = request.WaybillDate,
+                SupplierCodeSnapshot = supplier.CustomerCode,
+                SupplierNameSnapshot = supplier.CustomerName
+            }, actorUserId, now));
 
             var tasksByWarehouse = sourceSelected.Select(x => x.Request.TargetWarehouseId).Distinct().OrderBy(x => x).Select((warehouseId, index) =>
             {
@@ -217,8 +242,11 @@ public sealed class GoodsReceiptService(
 
     private CreateGoodsReceiptResult Replay(GoodsReceiptHeader header, CreateOrderBasedGoodsReceiptRequest request)
     {
+        var (waybillNo, electronicWaybillNo) = NormalizeDocumentReference(
+            request.WaybillNo, request.ElectronicWaybillNo, request.WaybillDate);
         var current = header.Lines.SelectMany(x => x.Sources).ToDictionary(x => (x.SourceDocument.ExternalDocumentNo, int.Parse(x.ExternalLineId)), x => x.AllocatedQuantity);
         if (header.SupplierId != request.SupplierId || header.TargetWarehouseId != request.TargetWarehouseId || request.Lines.Count != current.Count
+            || header.WaybillNo != waybillNo || header.ElectronicWaybillNo != electronicWaybillNo || header.WaybillDate != request.WaybillDate
             || request.Lines.Any(x => !current.TryGetValue((x.OrderNumber.Trim(), x.OrderId), out var quantity) || quantity != x.Quantity))
             throw AppException.Conflict(Message(GoodsReceiptMessageKeys.IdempotencyConflict));
         return Result(header, true);
@@ -238,6 +266,29 @@ public sealed class GoodsReceiptService(
             || request.Lines.Any(x => string.IsNullOrWhiteSpace(x.OrderNumber) || x.OrderId <= 0 || x.Quantity <= 0 || x.TargetWarehouseId <= 0 || x.ReceivingLocationId <= 0)
             || request.Lines.GroupBy(x => (x.OrderNumber.Trim(), x.OrderId)).Any(x => x.Count() > 1))
             throw AppException.BadRequest(Message(GoodsReceiptMessageKeys.InvalidRequest));
+    }
+
+    internal static (string? WaybillNo, string? ElectronicWaybillNo) NormalizeDocumentReference(
+        string? waybillNo,
+        string? electronicWaybillNo,
+        DateOnly? waybillDate)
+    {
+        var normal = string.IsNullOrWhiteSpace(waybillNo) ? null : waybillNo.Trim();
+        var electronic = string.IsNullOrWhiteSpace(electronicWaybillNo)
+            ? null
+            : electronicWaybillNo.Trim().ToUpperInvariant();
+        if ((normal is null) == (electronic is null))
+            throw AppException.BadRequest(
+                "Normal irsaliye veya e-irsaliye türlerinden yalnızca biri seçilmeli ve numarası girilmelidir.");
+        if (!waybillDate.HasValue)
+            throw AppException.BadRequest("İrsaliye tarihi zorunludur.");
+        if (normal is not null && !Regex.IsMatch(normal, "^[0-9]{15}$", RegexOptions.CultureInvariant))
+            throw AppException.BadRequest("Normal irsaliye numarası tam 15 rakam olmalıdır.");
+        if (electronic is not null
+            && !Regex.IsMatch(electronic, "^[A-Z0-9]{3}[0-9]{13}$", RegexOptions.CultureInvariant))
+            throw AppException.BadRequest(
+                "E-irsaliye numarası 3 karakter birim kodu, 4 karakter yıl ve 9 karakter sıra numarasından oluşmalıdır.");
+        return (normal, electronic);
     }
 
     private async Task<List<(ReserveGoodsReceiptOrderLineRequest Request, GoodsReceiptOrderSourceLine Source)>> ApplyAutomaticSerialsAsync(

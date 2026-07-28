@@ -8,6 +8,47 @@ namespace verii_wms_api_v2.QueryTests;
 public sealed class GoodsReceiptDocumentValidationTests
 {
     [Fact]
+    public void Order_based_receipt_requires_exactly_one_waybill_type()
+    {
+        var missing = Assert.Throws<AppException>(() =>
+            GoodsReceiptService.NormalizeDocumentReference(null, null, new DateOnly(2026, 7, 28)));
+        var both = Assert.Throws<AppException>(() =>
+            GoodsReceiptService.NormalizeDocumentReference(
+                "000000000000001", "GIB2026000000001", new DateOnly(2026, 7, 28)));
+
+        Assert.Contains("yalnızca biri", missing.Message);
+        Assert.Contains("yalnızca biri", both.Message);
+    }
+
+    [Theory]
+    [InlineData("000000000000001", null)]
+    [InlineData(null, "gib2026000000001")]
+    public void Order_based_receipt_accepts_and_normalizes_valid_waybill(
+        string? waybillNo,
+        string? electronicWaybillNo)
+    {
+        var result = GoodsReceiptService.NormalizeDocumentReference(
+            waybillNo, electronicWaybillNo, new DateOnly(2026, 7, 28));
+
+        Assert.Equal(waybillNo, result.WaybillNo);
+        Assert.Equal(electronicWaybillNo?.ToUpperInvariant(), result.ElectronicWaybillNo);
+    }
+
+    [Fact]
+    public void Order_based_receipt_rejects_invalid_number_or_missing_date()
+    {
+        var invalid = Assert.Throws<AppException>(() =>
+            GoodsReceiptService.NormalizeDocumentReference(
+                "123", null, new DateOnly(2026, 7, 28)));
+        var missingDate = Assert.Throws<AppException>(() =>
+            GoodsReceiptService.NormalizeDocumentReference(
+                "000000000000001", null, null));
+
+        Assert.Contains("15 rakam", invalid.Message);
+        Assert.Contains("tarihi zorunludur", missingDate.Message);
+    }
+
+    [Fact]
     public void Direct_receipt_rejects_internal_pre_generated_label_mode()
     {
         Assert.Throws<AppException>(() =>
