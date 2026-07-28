@@ -68,6 +68,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
 {
     public DbSet<User> Users => Set<User>();
     public DbSet<UserDetail> UserDetails => Set<UserDetail>();
+    public DbSet<UserWarehouseAssignment> UserWarehouseAssignments => Set<UserWarehouseAssignment>();
     public DbSet<RefreshTokenSession> RefreshTokenSessions => Set<RefreshTokenSession>();
     public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
     public DbSet<StockEntity> Stocks => Set<StockEntity>();
@@ -218,6 +219,18 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             entity.ToTable("RII_USER_DETAILS"); entity.HasKey(x => x.UserId); entity.Property(x => x.FirstName).HasMaxLength(100).IsRequired(); entity.Property(x => x.LastName).HasMaxLength(100).IsRequired(); entity.Property(x => x.Phone).HasMaxLength(40); entity.Property(x => x.ProfilePictureUrl).HasMaxLength(500); entity.Property(x => x.Description).HasMaxLength(2000); entity.Property(x => x.Height).HasColumnType("decimal(6,2)"); entity.Property(x => x.Weight).HasColumnType("decimal(6,2)"); entity.Property(x => x.BackgroundMotionVariant).HasMaxLength(40).HasDefaultValue("rack-scanner").IsRequired();
             entity.HasOne(x => x.User).WithOne(x => x.Detail).HasForeignKey<UserDetail>(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
             entity.HasData(new UserDetail { UserId = 1, FirstName = "System", LastName = "Administrator" });
+        });
+        modelBuilder.Entity<UserWarehouseAssignment>(entity =>
+        {
+            entity.ToTable("RII_USER_WAREHOUSE");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Id).ValueGeneratedOnAdd();
+            entity.Property(x => x.BranchCode).HasMaxLength(20).IsRequired();
+            entity.HasQueryFilter(x => !x.IsDeleted);
+            entity.HasOne<User>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<WarehouseEntity>().WithMany().HasForeignKey(x => x.WarehouseId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(x => new { x.UserId, x.WarehouseId }).IsUnique()
+                .HasFilter("[IsDeleted] = 0");
         });
 
         modelBuilder.ApplyConfiguration(new StockConfiguration());

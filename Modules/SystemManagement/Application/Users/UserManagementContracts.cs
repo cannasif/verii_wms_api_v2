@@ -3,9 +3,9 @@ using verii_wms_api_v2.Shared;
 namespace verii_wms_api_v2.Modules.SystemManagement.Application.Users;
 
 public sealed record UserGridRow(long Id, string Username, string Email, string Role, bool IsActive, DateTime? LastLoginAt, string FirstName, string LastName, long? CreatedBy, DateTime? CreatedDate, long? UpdatedBy, DateTime? UpdatedDate);
-public sealed record UserDetailResponse(long Id, string Username, string Email, string Role, bool IsActive, DateTime? LastLoginAt, string FirstName, string LastName, string? PhoneNumber, IReadOnlyList<long> PermissionGroupIds);
-public sealed record CreateUserRequest(string Username, string Email, string Password, string? FirstName, string? LastName, string? PhoneNumber, string Role, bool IsActive, IReadOnlyList<long> PermissionGroupIds);
-public sealed record UpdateUserRequest(string Username, string Email, string? Password, string? FirstName, string? LastName, string? PhoneNumber, string Role, bool IsActive, IReadOnlyList<long> PermissionGroupIds);
+public sealed record UserDetailResponse(long Id, string Username, string Email, string Role, bool IsActive, DateTime? LastLoginAt, string FirstName, string LastName, string? PhoneNumber, IReadOnlyList<long> PermissionGroupIds, IReadOnlyList<long> WarehouseIds);
+public sealed record CreateUserRequest(string Username, string Email, string Password, string? FirstName, string? LastName, string? PhoneNumber, string Role, bool IsActive, IReadOnlyList<long> PermissionGroupIds, IReadOnlyList<long>? WarehouseIds = null);
+public sealed record UpdateUserRequest(string Username, string Email, string? Password, string? FirstName, string? LastName, string? PhoneNumber, string Role, bool IsActive, IReadOnlyList<long> PermissionGroupIds, IReadOnlyList<long>? WarehouseIds = null);
 public sealed record UserImportRowResult(int RowNumber, string Status, string? Username, string? Email, string Message);
 public sealed record UserImportResult(
     int TotalRows,

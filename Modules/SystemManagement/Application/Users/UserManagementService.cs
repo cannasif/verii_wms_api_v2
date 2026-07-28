@@ -5,6 +5,7 @@ using verii_wms_api_v2.Modules.AccessControl.Domain;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Identity.Application;
+using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -25,6 +26,7 @@ public sealed partial class UserManagementService(
     private IGenericRepository<PermissionGroup> Groups => unitOfWork.Repository<PermissionGroup>();
     private IGenericRepository<UserPermissionGroup> UserGroups => unitOfWork.Repository<UserPermissionGroup>();
     private IGenericRepository<RefreshTokenSession> RefreshTokens => unitOfWork.Repository<RefreshTokenSession>();
+    private IGenericRepository<UserWarehouseAssignment> UserWarehouses => unitOfWork.Repository<UserWarehouseAssignment>();
 
     public async Task<PagedResponse<UserGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken)
     {
@@ -39,23 +41,28 @@ public sealed partial class UserManagementService(
     public async Task<UserDetailResponse> GetByIdAsync(long id, CancellationToken cancellationToken)
     {
         var userGroups = UserGroups.Query();
+        var userWarehouses = UserWarehouses.Query();
         return await Users.Query().Where(x => x.Id == id).Select(x => new UserDetailResponse(x.Id, x.Username, x.Email, x.Role, x.IsActive, x.LastLoginAt,
             x.Detail != null ? x.Detail.FirstName : "", x.Detail != null ? x.Detail.LastName : "", x.Detail != null ? x.Detail.Phone : null,
-            userGroups.Where(link => link.UserId == x.Id).Select(link => link.PermissionGroupId).OrderBy(groupId => groupId).ToList()))
+            userGroups.Where(link => link.UserId == x.Id).Select(link => link.PermissionGroupId).OrderBy(groupId => groupId).ToList(),
+            userWarehouses.Where(link => link.UserId == x.Id).Select(link => link.WarehouseId).OrderBy(warehouseId => warehouseId).ToList()))
             .FirstOrDefaultAsync(cancellationToken) ?? throw AppException.NotFound("Kullanıcı bulunamadı.");
     }
 
     public async Task<object> CreateAsync(CreateUserRequest request, CancellationToken cancellationToken)
     {
-        await ValidateAsync(request.Username, request.Email, request.Password, request.FirstName, request.LastName, request.PhoneNumber, request.Role, request.PermissionGroupIds, null, true, false, cancellationToken);
+        await ValidateAsync(request.Username, request.Email, request.Password, request.FirstName, request.LastName, request.PhoneNumber, request.Role, request.PermissionGroupIds, request.WarehouseIds, null, true, false, cancellationToken);
         return await unitOfWork.ExecuteInTransactionAsync<object>(async ct =>
         {
             var groupIds = request.PermissionGroupIds.Distinct().OrderBy(x => x).ToList();
             var user = new User { Username = request.Username.Trim(), Email = request.Email.Trim().ToLowerInvariant(), Role = AllowedRoles[request.Role.Trim()], IsActive = request.IsActive, PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password), PasswordLength = request.Password.Length };
             await Users.AddAsync(user, ct); await unitOfWork.SaveChangesAsync(ct);
             await Details.AddAsync(new UserDetail { UserId = user.Id, FirstName = request.FirstName?.Trim() ?? "", LastName = request.LastName?.Trim() ?? "", Phone = Normalize(request.PhoneNumber), CreatedDate = DateTime.UtcNow }, ct);
-            await SetGroupsAsync(user.Id, groupIds, ct); await unitOfWork.SaveChangesAsync(ct);
-            await audit.WriteAsync(new AuditLogWriteEntry("user.create", "User", user.Id.ToString(), "Succeeded", "identity", NewValues: Snapshot(user, request.FirstName, request.LastName, request.PhoneNumber, groupIds), ChangedFields: ["Username", "Email", "FirstName", "LastName", "PhoneNumber", "Role", "IsActive", "PermissionGroupIds"]), ct);
+            await SetGroupsAsync(user.Id, groupIds, ct);
+            await SetWarehousesAsync(user.Id, request.WarehouseIds ?? [], ct);
+            await unitOfWork.SaveChangesAsync(ct);
+            var warehouseIds = (request.WarehouseIds ?? []).Distinct().OrderBy(x => x).ToArray();
+            await audit.WriteAsync(new AuditLogWriteEntry("user.create", "User", user.Id.ToString(), "Succeeded", "identity", NewValues: Snapshot(user, request.FirstName, request.LastName, request.PhoneNumber, groupIds, warehouseIds), ChangedFields: ["Username", "Email", "FirstName", "LastName", "PhoneNumber", "Role", "IsActive", "PermissionGroupIds", "WarehouseIds"]), ct);
             return new { user.Id, user.Username, user.Email };
         }, cancellationToken);
     }
@@ -66,10 +73,12 @@ public sealed partial class UserManagementService(
         var primary = user.Id == 1 || user.Role.Equals("superadmin", StringComparison.OrdinalIgnoreCase);
         var username = primary ? user.Username : request.Username;
         var role = primary ? user.Role : request.Role;
-        await ValidateAsync(username, request.Email, request.Password, request.FirstName, request.LastName, request.PhoneNumber, role, request.PermissionGroupIds, id, false, primary, cancellationToken);
+        await ValidateAsync(username, request.Email, request.Password, request.FirstName, request.LastName, request.PhoneNumber, role, request.PermissionGroupIds, request.WarehouseIds, id, false, primary, cancellationToken);
         var oldGroups = await UserGroups.Query().Where(x => x.UserId == id).Select(x => x.PermissionGroupId).OrderBy(x => x).ToListAsync(cancellationToken);
-        var oldValues = Snapshot(user, user.Detail?.FirstName, user.Detail?.LastName, user.Detail?.Phone, oldGroups);
+        var oldWarehouses = await UserWarehouses.Query().Where(x => x.UserId == id).Select(x => x.WarehouseId).OrderBy(x => x).ToListAsync(cancellationToken);
+        var oldValues = Snapshot(user, user.Detail?.FirstName, user.Detail?.LastName, user.Detail?.Phone, oldGroups, oldWarehouses);
         var nextGroups = request.PermissionGroupIds.Distinct().OrderBy(x => x).ToList();
+        var nextWarehouses = request.WarehouseIds?.Distinct().OrderBy(x => x).ToList() ?? oldWarehouses;
         var previousIsActive = user.IsActive;
         var invalidateSession = false;
         await unitOfWork.ExecuteInTransactionAsync(async ct =>
@@ -91,8 +100,11 @@ public sealed partial class UserManagementService(
             }
             if (user.Detail is null) { user.Detail = new UserDetail { UserId = user.Id, CreatedDate = DateTime.UtcNow }; await Details.AddAsync(user.Detail, ct); }
             user.Detail.FirstName = request.FirstName?.Trim() ?? ""; user.Detail.LastName = request.LastName?.Trim() ?? ""; user.Detail.Phone = Normalize(request.PhoneNumber); user.Detail.UpdatedDate = DateTime.UtcNow;
-            await SetGroupsAsync(user.Id, nextGroups, ct); await unitOfWork.SaveChangesAsync(ct);
-            var nextValues = Snapshot(user, user.Detail.FirstName, user.Detail.LastName, user.Detail.Phone, nextGroups);
+            await SetGroupsAsync(user.Id, nextGroups, ct);
+            if (request.WarehouseIds is not null)
+                await SetWarehousesAsync(user.Id, nextWarehouses, ct);
+            await unitOfWork.SaveChangesAsync(ct);
+            var nextValues = Snapshot(user, user.Detail.FirstName, user.Detail.LastName, user.Detail.Phone, nextGroups, nextWarehouses);
             await audit.WriteAsync(new AuditLogWriteEntry("user.update", "User", user.Id.ToString(), "Succeeded", "identity", OldValues: oldValues, NewValues: nextValues, ChangedFields: ChangedFields(oldValues, nextValues, request.Password)), ct);
             return true;
         }, cancellationToken);
@@ -114,7 +126,7 @@ public sealed partial class UserManagementService(
         return true;
     }
 
-    private async Task ValidateAsync(string? usernameValue, string? emailValue, string? password, string? firstName, string? lastName, string? phone, string? roleValue, IReadOnlyList<long> groupIds, long? currentId, bool passwordRequired, bool allowSuperAdmin, CancellationToken ct)
+    private async Task ValidateAsync(string? usernameValue, string? emailValue, string? password, string? firstName, string? lastName, string? phone, string? roleValue, IReadOnlyList<long> groupIds, IReadOnlyList<long>? warehouseIds, long? currentId, bool passwordRequired, bool allowSuperAdmin, CancellationToken ct)
     {
         var username = usernameValue?.Trim() ?? ""; var email = emailValue?.Trim().ToLowerInvariant() ?? ""; var role = roleValue?.Trim() ?? "";
         if (username.Length is < 3 or > 100 || !UsernamePattern().IsMatch(username)) throw AppException.BadRequest("Kullanıcı adı 3-100 karakter olmalı ve yalnızca harf, rakam, nokta, tire veya alt çizgi içermelidir.");
@@ -127,6 +139,9 @@ public sealed partial class UserManagementService(
         if (await Users.AnyAsync(x => x.Id != currentId && x.Email == email, ct)) throw AppException.Conflict("Bu e-posta adresi zaten kullanılıyor.");
         var ids = groupIds.Distinct().ToList();
         if (await Groups.CountAsync(x => ids.Contains(x.Id) && x.IsActive, ct) != ids.Count) throw AppException.BadRequest("Geçersiz veya pasif yetki grubu seçildi.");
+        var selectedWarehouses = (warehouseIds ?? []).Distinct().ToList();
+        if (await unitOfWork.Repository<WarehouseEntity>().CountAsync(x => selectedWarehouses.Contains(x.Id), ct) != selectedWarehouses.Count)
+            throw AppException.BadRequest("Geçersiz depo seçildi.");
     }
 
     private async Task SetGroupsAsync(long userId, IReadOnlyCollection<long> groupIds, CancellationToken ct)
@@ -135,6 +150,32 @@ public sealed partial class UserManagementService(
         var links = await UserGroups.Query(tracking: true, ignoreQueryFilters: true).Where(x => x.UserId == userId).ToListAsync(ct);
         foreach (var link in links) { var keep = selected.Remove(link.PermissionGroupId); link.IsDeleted = !keep; link.DeletedDate = keep ? null : DateTime.UtcNow; link.UpdatedDate = DateTime.UtcNow; }
         await UserGroups.AddRangeAsync(selected.Select(groupId => new UserPermissionGroup { UserId = userId, PermissionGroupId = groupId }), ct);
+    }
+
+    private async Task SetWarehousesAsync(long userId, IReadOnlyCollection<long> warehouseIds, CancellationToken ct)
+    {
+        var selected = warehouseIds.ToHashSet();
+        var warehouseBranches = await unitOfWork.Repository<WarehouseEntity>().Query()
+            .Where(x => selected.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, x => x.BranchCode, ct);
+        var links = await UserWarehouses.Query(tracking: true, ignoreQueryFilters: true)
+            .Where(x => x.UserId == userId).ToListAsync(ct);
+        foreach (var link in links)
+        {
+            var keep = selected.Remove(link.WarehouseId);
+            link.IsDeleted = !keep;
+            link.DeletedDate = keep ? null : DateTime.UtcNow;
+            link.UpdatedDate = DateTime.UtcNow;
+            if (keep && warehouseBranches.TryGetValue(link.WarehouseId, out var branchCode))
+                link.BranchCode = branchCode;
+        }
+        await UserWarehouses.AddRangeAsync(selected.Select(warehouseId =>
+            new UserWarehouseAssignment
+            {
+                UserId = userId,
+                WarehouseId = warehouseId,
+                BranchCode = warehouseBranches[warehouseId]
+            }));
     }
 
     private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
@@ -151,7 +192,7 @@ public sealed partial class UserManagementService(
         }
     }
 
-    private static UserAuditState Snapshot(User user, string? firstName, string? lastName, string? phone, IReadOnlyCollection<long> groups) => new(user.Username, user.Email, firstName?.Trim() ?? "", lastName?.Trim() ?? "", Normalize(phone), user.Role, user.IsActive, groups.OrderBy(x => x).ToArray());
+    private static UserAuditState Snapshot(User user, string? firstName, string? lastName, string? phone, IReadOnlyCollection<long> groups, IReadOnlyCollection<long> warehouses) => new(user.Username, user.Email, firstName?.Trim() ?? "", lastName?.Trim() ?? "", Normalize(phone), user.Role, user.IsActive, groups.OrderBy(x => x).ToArray(), warehouses.OrderBy(x => x).ToArray());
     private static IReadOnlyCollection<string> ChangedFields(UserAuditState oldValues, UserAuditState nextValues, string? password)
     {
         var fields = new List<string>();
@@ -163,11 +204,12 @@ public sealed partial class UserManagementService(
         if (oldValues.Role != nextValues.Role) fields.Add("Role");
         if (oldValues.IsActive != nextValues.IsActive) fields.Add("IsActive");
         if (!oldValues.PermissionGroupIds.SequenceEqual(nextValues.PermissionGroupIds)) fields.Add("PermissionGroupIds");
+        if (!oldValues.WarehouseIds.SequenceEqual(nextValues.WarehouseIds)) fields.Add("WarehouseIds");
         if (!string.IsNullOrWhiteSpace(password)) fields.Add("Password");
         return fields;
     }
 
-    private sealed record UserAuditState(string Username, string Email, string FirstName, string LastName, string? PhoneNumber, string Role, bool IsActive, IReadOnlyList<long> PermissionGroupIds);
+    private sealed record UserAuditState(string Username, string Email, string FirstName, string LastName, string? PhoneNumber, string Role, bool IsActive, IReadOnlyList<long> PermissionGroupIds, IReadOnlyList<long> WarehouseIds);
 
     [GeneratedRegex("^[a-zA-Z0-9._-]+$", RegexOptions.CultureInvariant)] private static partial Regex UsernamePattern();
 }
