@@ -27,6 +27,14 @@ public sealed class UserManagementController(IUserManagementService service, IPe
     public async Task<IActionResult> Create(CreateUserRequest request, CancellationToken ct)
     { await Require("SYSTEM.USERS.MANAGE", ct); return Ok(ApiResponse<object>.Ok(await service.CreateAsync(request, ct), "Kullanıcı oluşturuldu.")); }
 
+    [HttpGet("import-template")]
+    public async Task<IActionResult> DownloadImportTemplate(CancellationToken ct)
+    {
+        await Require("SYSTEM.USERS.MANAGE", ct);
+        var file = await service.CreateImportTemplateAsync(ct);
+        return File(file, XlsxContentType, "wms-kullanici-aktarim-sablonu.xlsx");
+    }
+
     [HttpPost("import")]
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(MaxImportRequestSize)]

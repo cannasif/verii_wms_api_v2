@@ -1,5 +1,6 @@
 using ClosedXML.Excel;
 using Microsoft.EntityFrameworkCore;
+using System.Text.RegularExpressions;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 
 namespace verii_wms_api_v2.Modules.SystemManagement.Application.Users;
@@ -9,7 +10,11 @@ public sealed partial class UserManagementService
     public const int MaxImportRows = 500;
     public const int MaxImportFileSize = 5 * 1024 * 1024;
 
-    private static readonly string[] ImportHeaders =
+    private const string LegacyPermissionGroupHeader = "PermissionGroupIds";
+    private static readonly Regex PermissionGroupHeaderPattern =
+        new(@"^PermissionGroup\[(?<id>[1-9]\d*)\]\s+.+$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly string[] BaseImportHeaders =
     [
         "Username",
         "Email",
@@ -18,8 +23,7 @@ public sealed partial class UserManagementService
         "LastName",
         "PhoneNumber",
         "Role",
-        "IsActive",
-        "PermissionGroupIds"
+        "IsActive"
     ];
 
     public async Task<UserImportResult> ImportAsync(Stream workbookStream, CancellationToken cancellationToken)
@@ -31,9 +35,9 @@ public sealed partial class UserManagementService
         var worksheet = workbook.Worksheets.FirstOrDefault()
             ?? throw AppException.BadRequest("Excel dosyasında çalışma sayfası bulunamadı.");
 
-        ValidateHeaders(worksheet);
+        var layout = ValidateHeaders(worksheet);
         var sourceRows = worksheet.RowsUsed()
-            .Where(row => row.RowNumber() > 1 && HasImportData(row))
+            .Where(row => row.RowNumber() > 1 && HasImportData(row, layout.ColumnCount))
             .Take(MaxImportRows + 1)
             .ToList();
 
@@ -71,7 +75,7 @@ public sealed partial class UserManagementService
 
             try
             {
-                var request = ParseRequest(row, username, email);
+                var request = ParseRequest(row, username, email, layout);
                 await CreateAsync(request, cancellationToken);
                 knownUsernames.Add(username);
                 knownEmails.Add(email);
@@ -113,7 +117,11 @@ public sealed partial class UserManagementService
             results);
     }
 
-    private static CreateUserRequest ParseRequest(IXLRow row, string username, string email)
+    private static CreateUserRequest ParseRequest(
+        IXLRow row,
+        string username,
+        string email,
+        UserImportLayout layout)
     {
         var password = CellText(row, 3, trim: false);
         var firstName = CellText(row, 4);
@@ -121,7 +129,19 @@ public sealed partial class UserManagementService
         var phoneNumber = CellText(row, 6);
         var role = CellText(row, 7);
         var isActive = ParseBoolean(CellText(row, 8));
-        var permissionGroupIds = ParsePermissionGroupIds(CellText(row, 9));
+        var permissionGroupIds = new HashSet<long>();
+
+        if (layout.LegacyPermissionGroupColumn is { } legacyColumn)
+        {
+            foreach (var groupId in ParsePermissionGroupIds(CellText(row, legacyColumn)))
+                permissionGroupIds.Add(groupId);
+        }
+
+        foreach (var groupColumn in layout.PermissionGroupColumns)
+        {
+            if (ParseOptionalBoolean(CellText(row, groupColumn.Column), groupColumn.Header))
+                permissionGroupIds.Add(groupColumn.GroupId);
+        }
 
         return new CreateUserRequest(
             username,
@@ -132,7 +152,7 @@ public sealed partial class UserManagementService
             phoneNumber,
             role,
             isActive,
-            permissionGroupIds);
+            permissionGroupIds.OrderBy(id => id).ToArray());
     }
 
     private static bool ParseBoolean(string value) => value.Trim().ToLowerInvariant() switch
@@ -141,6 +161,19 @@ public sealed partial class UserManagementService
         "false" or "0" or "hayır" or "hayir" or "no" => false,
         _ => throw AppException.BadRequest("IsActive alanı true/false, 1/0 veya evet/hayır olmalıdır.")
     };
+
+    private static bool ParseOptionalBoolean(string value, string header)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+
+        return value.Trim().ToLowerInvariant() switch
+        {
+            "true" or "1" or "evet" or "yes" => true,
+            "false" or "0" or "hayır" or "hayir" or "no" => false,
+            _ => throw AppException.BadRequest(
+                $"{header} alanı true/false, 1/0 veya evet/hayır olmalıdır.")
+        };
+    }
 
     private static IReadOnlyList<long> ParsePermissionGroupIds(string value)
     {
@@ -153,23 +186,57 @@ public sealed partial class UserManagementService
         return parts.Select(long.Parse).Distinct().ToArray();
     }
 
-    private static void ValidateHeaders(IXLWorksheet worksheet)
+    private static UserImportLayout ValidateHeaders(IXLWorksheet worksheet)
     {
-        var actualHeaders = Enumerable.Range(1, ImportHeaders.Length)
+        var actualBaseHeaders = Enumerable.Range(1, BaseImportHeaders.Length)
             .Select(column => worksheet.Cell(1, column).GetString().Trim())
             .ToArray();
-        var unexpectedHeader = worksheet.Row(1).CellsUsed()
-            .Any(cell => cell.Address.ColumnNumber > ImportHeaders.Length && !string.IsNullOrWhiteSpace(cell.GetString()));
 
-        if (unexpectedHeader || !actualHeaders.SequenceEqual(ImportHeaders, StringComparer.Ordinal))
+        if (!actualBaseHeaders.SequenceEqual(BaseImportHeaders, StringComparer.Ordinal))
         {
             throw AppException.BadRequest(
-                $"Excel başlıkları geçersiz. Beklenen sıra: {string.Join(", ", ImportHeaders)}.");
+                $"Excel başlıkları geçersiz. İlk kolonların beklenen sırası: {string.Join(", ", BaseImportHeaders)}.");
         }
+
+        var lastColumn = worksheet.Row(1)
+            .LastCellUsed(XLCellsUsedOptions.Contents)?
+            .Address.ColumnNumber ?? BaseImportHeaders.Length;
+        int? legacyPermissionGroupColumn = null;
+        var permissionGroupColumns = new List<PermissionGroupImportColumn>();
+        var groupIds = new HashSet<long>();
+
+        for (var column = BaseImportHeaders.Length + 1; column <= lastColumn; column++)
+        {
+            var header = worksheet.Cell(1, column).GetString().Trim();
+            if (header.Equals(LegacyPermissionGroupHeader, StringComparison.Ordinal))
+            {
+                if (legacyPermissionGroupColumn is not null)
+                    throw AppException.BadRequest($"{LegacyPermissionGroupHeader} kolonu birden fazla kez kullanılamaz.");
+                legacyPermissionGroupColumn = column;
+                continue;
+            }
+
+            var match = PermissionGroupHeaderPattern.Match(header);
+            if (!match.Success || !long.TryParse(match.Groups["id"].Value, out var groupId))
+            {
+                throw AppException.BadRequest(
+                    $"Geçersiz Excel kolonu: {header}. Yetki grubu kolonları PermissionGroup[ID] Grup Adı biçiminde olmalıdır.");
+            }
+
+            if (!groupIds.Add(groupId))
+                throw AppException.BadRequest($"Aynı yetki grubu kolonu birden fazla kez kullanılamaz: {groupId}.");
+
+            permissionGroupColumns.Add(new PermissionGroupImportColumn(column, groupId, header));
+        }
+
+        return new UserImportLayout(
+            Math.Max(lastColumn, BaseImportHeaders.Length),
+            legacyPermissionGroupColumn,
+            permissionGroupColumns);
     }
 
-    private static bool HasImportData(IXLRow row) =>
-        Enumerable.Range(1, ImportHeaders.Length)
+    private static bool HasImportData(IXLRow row, int columnCount) =>
+        Enumerable.Range(1, columnCount)
             .Any(column => !string.IsNullOrWhiteSpace(row.Cell(column).GetString()));
 
     private static string CellText(IXLRow row, int column, bool trim = true)
@@ -226,4 +293,11 @@ public sealed partial class UserManagementService
         target.Position = 0;
         return target;
     }
+
+    private sealed record PermissionGroupImportColumn(int Column, long GroupId, string Header);
+
+    private sealed record UserImportLayout(
+        int ColumnCount,
+        int? LegacyPermissionGroupColumn,
+        IReadOnlyList<PermissionGroupImportColumn> PermissionGroupColumns);
 }

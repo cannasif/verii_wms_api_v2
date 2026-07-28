@@ -19,6 +19,7 @@ public interface IUserManagementService
     Task<PagedResponse<UserGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken);
     Task<UserDetailResponse> GetByIdAsync(long id, CancellationToken cancellationToken);
     Task<object> CreateAsync(CreateUserRequest request, CancellationToken cancellationToken);
+    Task<byte[]> CreateImportTemplateAsync(CancellationToken cancellationToken);
     Task<UserImportResult> ImportAsync(Stream workbookStream, CancellationToken cancellationToken);
     Task<bool> UpdateAsync(long id, UpdateUserRequest request, CancellationToken cancellationToken);
     Task<bool> DeactivateAsync(long id, CancellationToken cancellationToken);

@@ -104,6 +104,24 @@ public sealed class UserImportValidationTests
         Assert.False(service.ImportCalled);
     }
 
+    [Fact]
+    public async Task Controller_downloads_the_dynamic_import_template_as_xlsx()
+    {
+        var service = new RecordingUserManagementService
+        {
+            TemplateBytes = [80, 75, 3, 4]
+        };
+        var controller = Controller(service);
+
+        var response = await controller.DownloadImportTemplate(CancellationToken.None);
+
+        var file = Assert.IsType<FileContentResult>(response);
+        Assert.Equal("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", file.ContentType);
+        Assert.Equal("wms-kullanici-aktarim-sablonu.xlsx", file.FileDownloadName);
+        Assert.Equal(service.TemplateBytes, file.FileContents);
+        Assert.True(service.TemplateCalled);
+    }
+
     private static MemoryStream CreateWorkbook(int rowCount)
     {
         using var workbook = new XLWorkbook();
@@ -151,6 +169,14 @@ public sealed class UserImportValidationTests
     private sealed class RecordingUserManagementService : IUserManagementService
     {
         public bool ImportCalled { get; private set; }
+        public bool TemplateCalled { get; private set; }
+        public byte[] TemplateBytes { get; init; } = [];
+
+        public Task<byte[]> CreateImportTemplateAsync(CancellationToken cancellationToken)
+        {
+            TemplateCalled = true;
+            return Task.FromResult(TemplateBytes);
+        }
 
         public Task<UserImportResult> ImportAsync(Stream workbookStream, CancellationToken cancellationToken)
         {

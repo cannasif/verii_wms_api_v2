@@ -2,6 +2,7 @@ using ClosedXML.Excel;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using verii_wms_api_v2.Modules.AccessControl.Domain;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.Identity.Application;
 using verii_wms_api_v2.Modules.Identity.Domain;
@@ -87,6 +88,73 @@ public sealed class UserImportServiceTests
 
         Assert.Equal(StatusCodes.Status400BadRequest, exception.StatusCode);
         Assert.Empty(db.Users);
+    }
+
+    [Fact]
+    public async Task Import_assigns_multiple_groups_selected_from_dynamic_boolean_columns()
+    {
+        await using var db = CreateDbContext();
+        db.PermissionGroups.AddRange(
+            new PermissionGroup { Id = 101, Name = "Depo Operasyon", IsActive = true },
+            new PermissionGroup { Id = 202, Name = "Mal Kabul Onay", IsActive = true });
+        await db.SaveChangesAsync();
+        var service = CreateService(db, new RecordingAuditWriter());
+        string[] dynamicHeaders =
+        [
+            .. Headers.Take(8),
+            "PermissionGroup[101] Depo Operasyon",
+            "PermissionGroup[202] Mal Kabul Onay"
+        ];
+        await using var workbook = Workbook(
+            [
+                ["multi.group", "multi.group@firma.com", "TempPass!2026", "", "", "", "User", "true", "true", "evet"]
+            ],
+            dynamicHeaders);
+
+        var result = await service.ImportAsync(workbook, CancellationToken.None);
+
+        Assert.Equal(1, result.CreatedCount);
+        var userId = await db.Users
+            .Where(user => user.Username == "multi.group")
+            .Select(user => user.Id)
+            .SingleAsync();
+        var assignedGroupIds = await db.UserPermissionGroups
+            .Where(link => link.UserId == userId)
+            .OrderBy(link => link.PermissionGroupId)
+            .Select(link => link.PermissionGroupId)
+            .ToListAsync();
+        Assert.Equal([101L, 202L], assignedGroupIds);
+    }
+
+    [Fact]
+    public async Task Template_contains_only_current_active_groups_and_dropdown_validations()
+    {
+        await using var db = CreateDbContext();
+        db.PermissionGroups.AddRange(
+            new PermissionGroup { Id = 101, Name = "Depo Operasyon", Description = "Depo işlemleri", IsActive = true },
+            new PermissionGroup { Id = 202, Name = "Eski Grup", IsActive = false },
+            new PermissionGroup { Id = 303, Name = "Mal Kabul Onay", IsActive = true });
+        await db.SaveChangesAsync();
+        var service = CreateService(db, new RecordingAuditWriter());
+
+        var bytes = await service.CreateImportTemplateAsync(CancellationToken.None);
+
+        using var workbook = new XLWorkbook(new MemoryStream(bytes));
+        var users = workbook.Worksheet("Kullanıcılar");
+        Assert.Equal("PermissionGroup[101] Depo Operasyon", users.Cell(1, 9).GetString());
+        Assert.Equal("PermissionGroup[303] Mal Kabul Onay", users.Cell(1, 10).GetString());
+        Assert.DoesNotContain(
+            users.Row(1).CellsUsed().Select(cell => cell.GetString()),
+            header => header.Contains("Eski Grup", StringComparison.Ordinal));
+        Assert.Equal(XLAllowedValues.List, users.Cell(2, 9).GetDataValidation().AllowedValues);
+        Assert.Equal(XLAllowedValues.Custom, users.Cell(2, 1).GetDataValidation().AllowedValues);
+
+        var groups = workbook.Worksheet("Yetki Grupları");
+        Assert.Equal(101L, groups.Cell(2, 1).GetValue<long>());
+        Assert.Equal("Depo Operasyon", groups.Cell(2, 2).GetString());
+        Assert.DoesNotContain(
+            groups.CellsUsed().Select(cell => cell.GetString()),
+            value => value.Contains("Eski Grup", StringComparison.Ordinal));
     }
 
     private static UserManagementService CreateService(WmsDbContext db, RecordingAuditWriter audit) =>
