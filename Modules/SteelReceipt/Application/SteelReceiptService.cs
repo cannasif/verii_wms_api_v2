@@ -196,9 +196,7 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
                 plan.TargetWarehouseId,plan.ReceivingLocationId,request.DocumentDate,plan.WaybillNo,plan.WaybillDate,null,plan.ExportReferenceNo,
                 null,null,null,null,null,null,plan.PlannedArrivalAtUtc,null,GoodsReceiptLabelStrategy.PreGenerate,GoodsReceiptExecutionMode.Import,
                 request.Priority,null,Clean(request.Description,1000),assignedUserIds,
-                selected.Select(x=>new ManualGoodsReceiptLineRequest(x.StockId,x.YapCodeId,x.ApprovedQuantity,x.UnitCode,x.HeatNumber,
-                    x.SupplierSerialNo,null,null,null,null,$"SAC {x.DCode} · Seri {x.SupplierSerialNo}",
-                    x.TargetWarehouseId,x.ReceivingLocationId)).ToList());
+                selected.Select(BuildManualGoodsReceiptLineForConvert).ToList());
             var result=await grOperations.CreateOrderlessTaskAsync(manual,actor,token);
             var header=await uow.Repository<GoodsReceiptHeader>().Query(true).FirstAsync(x=>x.Id==result.Id,token);
             header.ReceiptType=GoodsReceiptType.SteelPlate;header.SourceSystem=verii_wms_api_v2.Modules.WarehouseOperations.Domain.WarehouseOperationSourceSystem.Import;
@@ -378,6 +376,16 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             s.Any(x=>x.InspectionStatus!=SteelInspectionStatus.Pending)?SteelReceiptPlanStatus.InspectionInProgress:SteelReceiptPlanStatus.Imported;
         plan.UpdatedDate=DateTime.UtcNow;await uow.SaveChangesAsync(ct);
     }
+    internal static ManualGoodsReceiptLineRequest BuildManualGoodsReceiptLineForConvert(SteelReceiptPlanLine line)
+    {
+        var serialNo=string.IsNullOrWhiteSpace(line.SupplierSerialNo)?line.DCode:line.SupplierSerialNo.Trim();
+        var description=string.IsNullOrWhiteSpace(line.HeatNumber)
+            ?$"SAC {line.DCode} · Seri {serialNo}"
+            :$"SAC {line.DCode} · Seri {serialNo} · Isı {line.HeatNumber.Trim()}";
+        return new ManualGoodsReceiptLineRequest(line.StockId,line.YapCodeId,line.ApprovedQuantity,line.UnitCode,null,serialNo,
+            null,null,null,null,Clean(description,1000),line.TargetWarehouseId,line.ReceivingLocationId);
+    }
+
     private static string Key(long supplierId,SteelImportLineRequest x)=>Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
         $"{supplierId}|{x.NetsisOrderNo?.Trim().ToUpperInvariant()}|{x.NetsisOrderLineNo?.Trim().ToUpperInvariant()}|{x.StockId?.ToString()??x.StockCode.Trim().ToUpperInvariant()}|{x.SupplierSerialNo?.Trim().ToUpperInvariant()}|{x.SecondarySerialNo?.Trim().ToUpperInvariant()}")));
     private static string SerialKey(long stockId,string serial)=>$"{stockId}|{serial.Trim().ToUpperInvariant()}";
