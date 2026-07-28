@@ -135,10 +135,7 @@ public sealed class SteelVehicleAcceptanceService(
                 var branch = NormalizeBranch(request.Vehicle.BranchCode);
                 if (lines.Any(x => x.BranchCode != branch || x.Plan.BranchCode != branch))
                     throw AppException.BadRequest("Seçilen SAC levhaları araç girişinin şubesiyle uyuşmuyor.");
-                if (lines.Any(x => x.VehicleAcceptanceId.HasValue
-                                   || x.ArrivalStatus != SteelArrivalStatus.Expected
-                                   || x.InspectionStatus != SteelInspectionStatus.Pending
-                                   || x.ConversionStatus != SteelReceiptConversionStatus.NotCreated))
+                if (HasSelectedPlateConflict(lines))
                     throw AppException.Conflict("Seçilen levhalardan biri daha önce kabul edilmiş, kontrol edilmiş veya mal kabule aktarılmış.");
 
                 foreach (var line in lines)
@@ -163,18 +160,6 @@ public sealed class SteelVehicleAcceptanceService(
                     throw AppException.Conflict("Bu araç girişinin SAC kabul işlemi daha önce tamamlanmış veya iptal edilmiş.");
 
                 var plans = lines.Select(x => x.Plan).DistinctBy(x => x.Id).ToList();
-                var planIds = plans.Select(x => x.Id).ToArray();
-                var acceptedVehicleIds = await (
-                    from siblingLine in Lines.Query()
-                    join siblingAcceptance in Acceptances.Query()
-                        on siblingLine.VehicleAcceptanceId equals (long?)siblingAcceptance.Id
-                    where planIds.Contains(siblingLine.PlanId)
-                          && siblingAcceptance.Status == SteelVehicleAcceptanceStatus.Completed
-                    select siblingAcceptance.VehicleCheckInId)
-                    .Distinct()
-                    .ToListAsync(token);
-                if (HasConflictingAcceptedVehicle(acceptedVehicleIds, vehicle.Id))
-                    throw AppException.Conflict("Seçilen SAC planındaki levhalardan biri başka bir araç tarafından daha önce kabul edilmiştir.");
 
                 var locationIds = plateRequests.Values.Select(x => x.ReceivingLocationId).Distinct().ToArray();
                 var locations = await uow.Repository<WarehouseLocation>().Query()
@@ -286,13 +271,6 @@ public sealed class SteelVehicleAcceptanceService(
                     line.InspectedAtUtc = acceptedAt;
                     line.UpdatedBy = actor;
                     line.UpdatedDate = DateTime.UtcNow;
-                }
-
-                foreach (var plan in plans)
-                {
-                    plan.VehicleCheckInId = vehicle.Id;
-                    plan.UpdatedBy = actor;
-                    plan.UpdatedDate = DateTime.UtcNow;
                 }
 
                 vehicle.Status = VehicleCheckInStatus.Completed;
@@ -426,10 +404,13 @@ public sealed class SteelVehicleAcceptanceService(
         return normalized.Length <= max ? normalized : normalized[..max];
     }
 
-    internal static bool HasConflictingAcceptedVehicle(
-        IEnumerable<long> acceptedVehicleIds,
-        long currentVehicleId) =>
-        acceptedVehicleIds.Any(vehicleId => vehicleId != currentVehicleId);
+    internal static bool HasSelectedPlateConflict(
+        IEnumerable<SteelReceiptPlanLine> selectedLines) =>
+        selectedLines.Any(line =>
+            line.VehicleAcceptanceId.HasValue
+            || line.ArrivalStatus != SteelArrivalStatus.Expected
+            || line.InspectionStatus != SteelInspectionStatus.Pending
+            || line.ConversionStatus != SteelReceiptConversionStatus.NotCreated);
 
     private sealed record StoredFile(Action<string> Delete, string Path);
 }
