@@ -109,6 +109,7 @@ public sealed class GoodsReceiptLifecycleService(
                 line.UpdatedDate = DateTime.UtcNow;
             }
 
+            ApplyShortCloseToTasks(header, requested, actor);
             RefreshCompletion(header, actor);
             Touch(header, actor);
             AddHistory(header, GoodsReceiptStatusArea.Operation, null, "ShortClosed",
@@ -348,9 +349,55 @@ public sealed class GoodsReceiptLifecycleService(
         await Headers.Query(true)
             .Include(x => x.Lines)
             .Include(x => x.Tasks).ThenInclude(x => x.Lines)
+            .Include(x => x.Tasks).ThenInclude(x => x.Assignments)
             .Include(x => x.StatusHistory)
             .FirstOrDefaultAsync(x => x.Id == id, ct)
         ?? throw AppException.NotFound("Mal kabul kaydı bulunamadı.");
+
+    internal static void ApplyShortCloseToTasks(
+        GoodsReceiptHeader header,
+        IReadOnlyDictionary<long, GoodsReceiptShortCloseLineRequest> requested,
+        long actor)
+    {
+        var now = DateTimeOffset.UtcNow;
+        foreach (var item in requested.Values)
+        {
+            var remainingToClose = item.Quantity;
+            foreach (var taskLine in header.Tasks.SelectMany(x => x.Lines)
+                         .Where(x => x.GrLineId == item.LineId)
+                         .OrderByDescending(x => x.PlannedQuantity - x.ProcessedQuantity))
+            {
+                var open = Math.Max(0, taskLine.PlannedQuantity - taskLine.ProcessedQuantity);
+                var closed = Math.Min(open, remainingToClose);
+                taskLine.PlannedQuantity -= closed;
+                remainingToClose -= closed;
+                if (taskLine.ProcessedQuantity >= taskLine.PlannedQuantity)
+                    taskLine.Status = GoodsReceiptTaskStatus.Completed;
+                taskLine.UpdatedBy = actor;
+                taskLine.UpdatedDate = DateTime.UtcNow;
+                if (remainingToClose <= 0) break;
+            }
+        }
+
+        foreach (var task in header.Tasks.Where(x => x.Lines.All(line =>
+                     line.Status is GoodsReceiptTaskStatus.Completed or GoodsReceiptTaskStatus.Cancelled)))
+        {
+            task.Status = GoodsReceiptTaskStatus.Completed;
+            task.CompletedAtUtc ??= now;
+            task.UpdatedBy = actor;
+            task.UpdatedDate = DateTime.UtcNow;
+            foreach (var assignment in task.Assignments.Where(x =>
+                         x.Status is not (GoodsReceiptAssignmentStatus.Unassigned
+                             or GoodsReceiptAssignmentStatus.Rejected
+                             or GoodsReceiptAssignmentStatus.Completed)))
+            {
+                assignment.Status = GoodsReceiptAssignmentStatus.Completed;
+                assignment.CompletedAtUtc ??= now;
+                assignment.UpdatedBy = actor;
+                assignment.UpdatedDate = DateTime.UtcNow;
+            }
+        }
+    }
 
     private async Task<bool> IsReplayAsync(
         GoodsReceiptHeader header,

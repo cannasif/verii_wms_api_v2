@@ -25,7 +25,7 @@ public sealed record ManualGoodsReceiptResult(
     long Id, string DocumentNo, GoodsReceiptInitiationMode InitiationMode,
     WarehouseOperationStatus Status, long? TaskId, string? TaskNo,
     long? ExecutionId, long? StockMovementOperationId, long? QualityInspectionId,
-    int LineCount, decimal Quantity, bool Replayed);
+    int LineCount, decimal Quantity, bool Replayed, IReadOnlyList<long> GeneratedLabelIds);
 
 public sealed record GoodsReceiptGridRow(
     long Id, string BranchCode, string DocumentNo, DateOnly DocumentDate,

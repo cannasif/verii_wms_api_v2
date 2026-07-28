@@ -24,10 +24,17 @@ public sealed class GoodsReceiptTaskService(IUnitOfWork unitOfWork, IAuditLogWri
         if (assignedOnly)
         {
             var userId = currentUserId!.Value;
+            var taskLines = unitOfWork.Repository<GoodsReceiptTaskLine>().Query();
+            var labels = unitOfWork.Repository<GoodsReceiptLabel>().Query();
             tasks = tasks.Where(t => t.Assignments.Any(a => a.UserId == userId
                 && a.Status != GoodsReceiptAssignmentStatus.Unassigned
                 && a.Status != GoodsReceiptAssignmentStatus.Rejected
-                && a.Status != GoodsReceiptAssignmentStatus.Completed));
+                && (a.Status != GoodsReceiptAssignmentStatus.Completed
+                    || labels.Any(label => label.GrTaskLineId.HasValue
+                        && taskLines.Any(taskLine => taskLine.Id == label.GrTaskLineId.Value
+                            && taskLine.GrTaskId == t.Id)
+                        && label.Status == GoodsReceiptLabelStatus.Generated
+                        && label.PrintCount == 0))));
         }
 
         var headers = unitOfWork.Repository<GoodsReceiptHeader>().Query();
@@ -45,7 +52,7 @@ public sealed class GoodsReceiptTaskService(IUnitOfWork unitOfWork, IAuditLogWri
                      select new { Task = task, Header = header, Warehouse = warehouse };
         var query = joined.Select(x => new GoodsReceiptTaskGridRow(
             x.Task.Id, x.Header.Id, x.Task.BranchCode, x.Task.TaskNo, x.Header.DocumentNo, x.Task.TaskType, x.Task.Status,
-            x.Header.Status, x.Header.ProcessType, x.Task.Priority, x.Warehouse.Id, x.Warehouse.WarehouseCode,
+            x.Header.Status, x.Header.ProcessType, x.Header.LabelStrategy, x.Task.Priority, x.Warehouse.Id, x.Warehouse.WarehouseCode,
             x.Warehouse.WarehouseName, x.Header.SupplierCodeSnapshot, x.Header.SupplierNameSnapshot,
             lines.Count(line => line.GrTaskId == x.Task.Id),
             lines.Where(line => line.GrTaskId == x.Task.Id).Sum(line => (decimal?)line.PlannedQuantity) ?? 0,

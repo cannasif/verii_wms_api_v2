@@ -17,6 +17,7 @@ using verii_wms_api_v2.Modules.StockTracking.Domain;
 using verii_wms_api_v2.Modules.Warehouse.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Shared;
+using verii_wms_api_v2.Shared.Application.Exceptions;
 using verii_wms_api_v2.Shared.Infrastructure.Persistence;
 using Xunit;
 
@@ -24,6 +25,133 @@ namespace verii_wms_api_v2.QueryTests;
 
 public sealed class GoodsReceiptExecutionFlowTests
 {
+    [Fact]
+    public void Over_receipt_within_policy_tolerance_is_allowed_for_task_execution()
+    {
+        GoodsReceiptExecutionService.ValidateReceiptQuantity(
+            quantity: 10.5m,
+            processedQuantity: 0,
+            plannedQuantity: 10m,
+            receivedQuantity: 0,
+            expectedQuantity: 10m,
+            lineAllowsOverReceipt: false,
+            headerAllowsOverReceipt: true,
+            lineTolerancePercent: 0,
+            headerTolerancePercent: 5m);
+    }
+
+    [Theory]
+    [InlineData(10.500001)]
+    [InlineData(11)]
+    public void Over_receipt_above_policy_tolerance_is_rejected(decimal quantity)
+    {
+        Assert.Throws<AppException>(() =>
+            GoodsReceiptExecutionService.ValidateReceiptQuantity(
+                quantity,
+                processedQuantity: 0,
+                plannedQuantity: 10m,
+                receivedQuantity: 0,
+                expectedQuantity: 10m,
+                lineAllowsOverReceipt: false,
+                headerAllowsOverReceipt: true,
+                lineTolerancePercent: 0,
+                headerTolerancePercent: 5m));
+    }
+
+    [Fact]
+    public void Completing_first_of_multiple_tasks_does_not_make_header_erp_eligible()
+    {
+        var header = HeaderWithLines(requirePutaway: false);
+        header.Tasks.Add(new GoodsReceiptTask
+        {
+            BranchCode = "0",
+            Header = header,
+            TaskNo = "TASK-1",
+            Status = GoodsReceiptTaskStatus.Completed
+        });
+        header.Tasks.Add(new GoodsReceiptTask
+        {
+            BranchCode = "0",
+            Header = header,
+            TaskNo = "TASK-2",
+            Status = GoodsReceiptTaskStatus.InProgress
+        });
+
+        GoodsReceiptExecutionService.RefreshHeaderStatus(header, actor: 42);
+
+        Assert.Equal(WarehouseOperationStatus.InProgress, header.Status);
+        Assert.False(GoodsReceiptErpPostingPolicyEvaluator.IsEligible(
+            header.Status,
+            OperationApprovalStatus.NotRequired,
+            OperationQualityStatus.NotRequired,
+            GoodsReceiptErpPostingPolicy.AfterReceipt));
+    }
+
+    [Fact]
+    public void All_tasks_complete_without_remaining_gates_completes_header()
+    {
+        var header = HeaderWithLines(requirePutaway: false);
+        header.Tasks.Add(new GoodsReceiptTask
+        {
+            BranchCode = "0",
+            Header = header,
+            TaskNo = "TASK-1",
+            Status = GoodsReceiptTaskStatus.Completed
+        });
+
+        GoodsReceiptExecutionService.RefreshHeaderStatus(header, actor: 42);
+
+        Assert.Equal(WarehouseOperationStatus.Completed, header.Status);
+        Assert.Equal(OperationPutawayStatus.NotRequired, header.PutawayStatus);
+        Assert.NotNull(header.CompletedAtUtc);
+    }
+
+    [Fact]
+    public void Completed_receipt_waiting_for_putaway_stays_processed()
+    {
+        var header = HeaderWithLines(requirePutaway: true);
+        header.Tasks.Add(new GoodsReceiptTask
+        {
+            BranchCode = "0",
+            Header = header,
+            TaskNo = "TASK-1",
+            Status = GoodsReceiptTaskStatus.Completed
+        });
+
+        GoodsReceiptExecutionService.RefreshHeaderStatus(header, actor: 42);
+
+        Assert.Equal(WarehouseOperationStatus.Processed, header.Status);
+        Assert.Equal(OperationPutawayStatus.Pending, header.PutawayStatus);
+    }
+
+    private static GoodsReceiptHeader HeaderWithLines(bool requirePutaway)
+    {
+        var header = new GoodsReceiptHeader
+        {
+            BranchCode = "0",
+            DocumentNo = "GR-STATUS-001",
+            DocumentDate = DateOnly.FromDateTime(DateTime.Today),
+            RequirePutaway = requirePutaway,
+            QualityStatus = OperationQualityStatus.NotRequired,
+            ApprovalStatus = OperationApprovalStatus.NotRequired
+        };
+        header.Lines.Add(new GoodsReceiptLine
+        {
+            BranchCode = "0",
+            Header = header,
+            LineNo = 1,
+            StockId = 1,
+            StockCodeSnapshot = "STK-001",
+            UnitCode = "AD",
+            BaseUnitCode = "AD",
+            ExpectedQuantity = 10,
+            ReceivedQuantity = 10,
+            AcceptedQuantity = 10,
+            PutawayQuantity = 0
+        });
+        return header;
+    }
+
     [Fact]
     public async Task Printed_label_completes_receipt_once_and_invokes_synchronous_erp_coordinator()
     {
@@ -107,6 +235,14 @@ public sealed class GoodsReceiptExecutionFlowTests
             AssignedAtUtc = DateTimeOffset.UtcNow,
             StartedAtUtc = DateTimeOffset.UtcNow
         });
+        task.Assignments.Add(new GoodsReceiptTaskAssignment
+        {
+            BranchCode = "0",
+            Task = task,
+            UserId = 84,
+            Status = GoodsReceiptAssignmentStatus.Accepted,
+            AssignedAtUtc = DateTimeOffset.UtcNow
+        });
         task.Lines.Add(taskLine);
         header.Lines.Add(line);
         header.Tasks.Add(task);
@@ -158,7 +294,8 @@ public sealed class GoodsReceiptExecutionFlowTests
             new PermissiveSerialPolicyResolver(),
             new UnexpectedBarcodeResolver(),
             new NullAuditLogWriter(),
-            erp);
+            erp,
+            new NoOpOnReceiptLabelService());
         var request = new ReceiveGoodsReceiptTaskRequest(
             Guid.NewGuid(),
             taskLineId,
@@ -186,14 +323,17 @@ public sealed class GoodsReceiptExecutionFlowTests
 
         var persistedHeader = await db.GoodsReceiptHeaders.SingleAsync(x => x.Id == headerId);
         var persistedTask = await db.Set<GoodsReceiptTask>().SingleAsync(x => x.Id == taskId);
-        var persistedAssignment = await db.Set<GoodsReceiptTaskAssignment>().SingleAsync(x => x.GrTaskId == taskId);
+        var persistedAssignments = await db.Set<GoodsReceiptTaskAssignment>()
+            .Where(x => x.GrTaskId == taskId)
+            .ToListAsync();
         var persistedLine = await db.Set<GoodsReceiptLine>().SingleAsync(x => x.Id == line.Id);
         var persistedLabel = await db.Set<GoodsReceiptLabel>().SingleAsync(x => x.Id == labelId);
         var persistedBatch = await db.Set<GoodsReceiptLabelBatch>().SingleAsync(x => x.Id == batch.Id);
 
-        Assert.Equal(WarehouseOperationStatus.Processed, persistedHeader.Status);
+        Assert.Equal(WarehouseOperationStatus.Completed, persistedHeader.Status);
         Assert.Equal(GoodsReceiptTaskStatus.Completed, persistedTask.Status);
-        Assert.Equal(GoodsReceiptAssignmentStatus.Completed, persistedAssignment.Status);
+        Assert.All(persistedAssignments,
+            x => Assert.Equal(GoodsReceiptAssignmentStatus.Completed, x.Status));
         Assert.Equal(quantity, persistedLine.ReceivedQuantity);
         Assert.Equal(GoodsReceiptLabelStatus.Consumed, persistedLabel.Status);
         Assert.Equal(GoodsReceiptLabelBatchStatus.Consumed, persistedBatch.Status);
@@ -232,6 +372,17 @@ public sealed class GoodsReceiptExecutionFlowTests
             GoodsReceiptIds.Add(goodsReceiptId);
             return Task.FromResult<ErpPostingResult?>(null);
         }
+    }
+
+    private sealed class NoOpOnReceiptLabelService : IGoodsReceiptOnReceiptLabelService
+    {
+        public Task<IReadOnlyList<long>> GenerateForExecutionAsync(
+            GoodsReceiptHeader header,
+            GoodsReceiptExecution execution,
+            IReadOnlyCollection<GoodsReceiptExecutionLine> lines,
+            long actor,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult<IReadOnlyList<long>>([]);
     }
 
     private sealed class NoQualityPolicyResolver : IQualityPolicyResolver

@@ -32,7 +32,8 @@ public sealed class GoodsReceiptExecutionService(
     ISerialNumberPolicyResolver serialPolicy,
     IWarehouseBarcodeResolver barcodeResolver,
     IAuditLogWriter audit,
-    IGoodsReceiptErpPostingCoordinator erpPosting) : IGoodsReceiptExecutionService
+    IGoodsReceiptErpPostingCoordinator erpPosting,
+    IGoodsReceiptOnReceiptLabelService onReceiptLabels) : IGoodsReceiptExecutionService
 {
     public async Task<ReceiveGoodsReceiptTaskResult> ReceiveAsync(long taskId, ReceiveGoodsReceiptTaskRequest request,
         long actor, CancellationToken ct = default)
@@ -51,7 +52,8 @@ public sealed class GoodsReceiptExecutionService(
             }
 
             var task = await uow.Repository<GoodsReceiptTask>().Query(true)
-                .Include(x => x.Header)
+                .Include(x => x.Header).ThenInclude(x => x.Lines)
+                .Include(x => x.Header).ThenInclude(x => x.Tasks)
                 .Include(x => x.Assignments)
                 .Include(x => x.Lines).ThenInclude(x => x.Line).ThenInclude(x => x.Sources)
                 .Include(x => x.Lines).ThenInclude(x => x.Trackings)
@@ -113,13 +115,16 @@ public sealed class GoodsReceiptExecutionService(
             if (!location.IsActive || location.WarehouseId != task.WarehouseId)
                 throw AppException.BadRequest("Kabul rafı aktif ve emir deposuna bağlı olmalıdır.");
 
-            var maxLineQuantity = taskLine.Line.ExpectedQuantity;
-            if (taskLine.Line.AllowOverReceipt || task.Header.AllowOverReceipt)
-                maxLineQuantity += taskLine.Line.ExpectedQuantity * Math.Max(taskLine.Line.OverReceiptTolerancePercent,
-                    task.Header.OverReceiptTolerancePercent) / 100m;
-            if (quantity <= 0 || taskLine.ProcessedQuantity + quantity > taskLine.PlannedQuantity
-                || taskLine.Line.ReceivedQuantity + quantity > maxLineQuantity)
-                throw AppException.Conflict("Okutulan miktar emir veya fazla kabul toleransını aşıyor.");
+            ValidateReceiptQuantity(
+                quantity,
+                taskLine.ProcessedQuantity,
+                taskLine.PlannedQuantity,
+                taskLine.Line.ReceivedQuantity,
+                taskLine.Line.ExpectedQuantity,
+                taskLine.Line.AllowOverReceipt,
+                task.Header.AllowOverReceipt,
+                taskLine.Line.OverReceiptTolerancePercent,
+                task.Header.OverReceiptTolerancePercent);
 
             var policy = await qualityPolicy.ResolveAsync(task.BranchCode, taskLine.Line.StockId, null, token);
             var requiresQuality = taskLine.Line.RequireQualityControl
@@ -231,6 +236,8 @@ public sealed class GoodsReceiptExecutionService(
                 taskLine.Line.QuarantineQuantity += quantity;
             else
                 taskLine.Line.AcceptedQuantity += quantity;
+            if (!requiresQuality && location.IsPutaway)
+                taskLine.Line.PutawayQuantity += quantity;
             taskLine.Line.Status = taskLine.Line.ReceivedQuantity >= taskLine.Line.ExpectedQuantity
                 ? GoodsReceiptLineStatus.Received : GoodsReceiptLineStatus.PartiallyReceived;
             AllocateSources(taskLine.Line, quantity);
@@ -248,8 +255,16 @@ public sealed class GoodsReceiptExecutionService(
             {
                 task.Status = GoodsReceiptTaskStatus.Completed;
                 task.CompletedAtUtc = now;
-                assignment.Status = GoodsReceiptAssignmentStatus.Completed;
-                assignment.CompletedAtUtc = now;
+                foreach (var activeAssignment in task.Assignments.Where(x =>
+                             x.Status is not (GoodsReceiptAssignmentStatus.Unassigned
+                                 or GoodsReceiptAssignmentStatus.Rejected
+                                 or GoodsReceiptAssignmentStatus.Completed)))
+                {
+                    activeAssignment.Status = GoodsReceiptAssignmentStatus.Completed;
+                    activeAssignment.CompletedAtUtc ??= now;
+                    activeAssignment.UpdatedBy = actor;
+                    activeAssignment.UpdatedDate = DateTime.UtcNow;
+                }
                 var queuedInspection = inspection ?? await uow.Repository<QualityInspection>().Query(true)
                     .FirstOrDefaultAsync(x => x.SourceDocumentType == "GoodsReceipt"
                         && x.SourceDocumentId == task.Header.Id
@@ -265,15 +280,17 @@ public sealed class GoodsReceiptExecutionService(
             else task.Status = GoodsReceiptTaskStatus.InProgress;
             task.Header.ReceivedAtUtc ??= now;
             task.Header.ReceivedBy ??= actor;
-            task.Header.Status = task.Status == GoodsReceiptTaskStatus.Completed
-                ? WarehouseOperationStatus.Processed : WarehouseOperationStatus.InProgress;
             if (requiresQuality) task.Header.QualityStatus = OperationQualityStatus.InProgress;
+            RefreshHeaderStatus(task.Header, actor);
+            var generatedLabelIds = await onReceiptLabels.GenerateForExecutionAsync(
+                task.Header, execution, execution.Lines.ToArray(), actor, token);
             await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("goods-receipt.task.scan", nameof(GoodsReceiptExecution), execution.Id.ToString(),
                 "Succeeded", "goods-receipt", NewValues: new { TaskId = task.Id, TaskLineId = taskLine.Id, quantity, labelId = label?.Id,
                     movement.OperationId, inspectionId = inspection?.Id }, ChangedFields: ["Execution", "Inventory", "Task", "Quality"]), token);
 
-            return Result(execution, task, taskLine, movement.OperationId, inspection?.Id, label?.Id, false);
+            return Result(execution, task, taskLine, movement.OperationId, inspection?.Id, label?.Id,
+                generatedLabelIds.SingleOrDefault(), false);
         }, ct, IsolationLevel.Serializable);
         await erpPosting.PostIfEligibleAsync(result.GoodsReceiptId, actor, ct);
         return result;
@@ -288,8 +305,13 @@ public sealed class GoodsReceiptExecutionService(
         var inspectionId = line.QualityInspectionLineId.HasValue
             ? await uow.Repository<QualityInspectionLine>().Query().Where(x => x.Id == line.QualityInspectionLineId)
                 .Select(x => (long?)x.QualityInspectionId).FirstOrDefaultAsync(ct) : null;
+        var generatedLabelId = await uow.Repository<GoodsReceiptLabelBatch>().Query()
+            .Where(x => x.CorrelationId == execution.IdempotencyKey)
+            .SelectMany(x => x.Labels)
+            .Select(x => (long?)x.Id)
+            .FirstOrDefaultAsync(ct);
         return Result(execution, task, taskLine, execution.StockMovementOperationId ?? 0,
-            inspectionId, line.GoodsReceiptLabelId, true);
+            inspectionId, line.GoodsReceiptLabelId, generatedLabelId, true);
     }
 
     private async Task RefreshBatch(long batchId, long actor, CancellationToken ct)
@@ -387,16 +409,73 @@ public sealed class GoodsReceiptExecutionService(
     }
 
     private static ReceiveGoodsReceiptTaskResult Result(GoodsReceiptExecution execution, GoodsReceiptTask task,
-        GoodsReceiptTaskLine line, long movementId, long? inspectionId, long? labelId, bool replayed) =>
+        GoodsReceiptTaskLine line, long movementId, long? inspectionId, long? labelId,
+        long? generatedLabelId, bool replayed) =>
         new(execution.Id, movementId, task.GrHeaderId, task.Id, line.Id, line.ProcessedQuantity,
             Math.Max(0, line.PlannedQuantity - line.ProcessedQuantity), task.Status.ToString(), line.Status.ToString(),
-            inspectionId, labelId, replayed);
+            inspectionId, labelId, generatedLabelId, replayed);
 
     private static void ValidateRequest(long taskId, ReceiveGoodsReceiptTaskRequest request)
     {
         if (taskId <= 0 || request.IdempotencyKey == Guid.Empty || string.IsNullOrWhiteSpace(request.Barcode)
             || request.Barcode.Trim().Length > 250 || request.Quantity is <= 0)
             throw AppException.BadRequest("Barkod okutma isteği geçersiz.");
+    }
+    internal static void ValidateReceiptQuantity(
+        decimal quantity,
+        decimal processedQuantity,
+        decimal plannedQuantity,
+        decimal receivedQuantity,
+        decimal expectedQuantity,
+        bool lineAllowsOverReceipt,
+        bool headerAllowsOverReceipt,
+        decimal lineTolerancePercent,
+        decimal headerTolerancePercent)
+    {
+        var allowsOverReceipt = lineAllowsOverReceipt || headerAllowsOverReceipt;
+        var tolerancePercent = allowsOverReceipt
+            ? Math.Max(lineTolerancePercent, headerTolerancePercent)
+            : 0m;
+        var maximumQuantity = expectedQuantity + expectedQuantity * tolerancePercent / 100m;
+        var taskMaximumQuantity = allowsOverReceipt
+            ? maximumQuantity
+            : plannedQuantity;
+        if (quantity <= 0
+            || processedQuantity + quantity > taskMaximumQuantity
+            || receivedQuantity + quantity > maximumQuantity)
+            throw AppException.Conflict("Okutulan miktar emir veya fazla kabul toleransını aşıyor.");
+    }
+    internal static void RefreshHeaderStatus(GoodsReceiptHeader header, long actor)
+    {
+        var receiptTerminal = header.Tasks.Count > 0
+            ? header.Tasks.All(x => x.Status is GoodsReceiptTaskStatus.Completed or GoodsReceiptTaskStatus.Cancelled)
+            : header.Lines.All(x => x.ReceivedQuantity + x.ShortClosedQuantity >= x.ExpectedQuantity);
+        if (!receiptTerminal)
+        {
+            header.Status = WarehouseOperationStatus.InProgress;
+            return;
+        }
+
+        header.PutawayStatus = !header.RequirePutaway
+            ? OperationPutawayStatus.NotRequired
+            : header.Lines.All(x => x.PutawayQuantity >= x.AcceptedQuantity)
+                ? OperationPutawayStatus.Completed
+                : header.Lines.Any(x => x.PutawayQuantity > 0)
+                    ? OperationPutawayStatus.PartiallyCompleted
+                    : OperationPutawayStatus.Pending;
+        var qualityTerminal = header.QualityStatus is OperationQualityStatus.NotRequired
+            or OperationQualityStatus.Passed
+            or OperationQualityStatus.Failed;
+        var putawayTerminal = !header.RequirePutaway
+            || header.PutawayStatus == OperationPutawayStatus.Completed;
+        header.Status = qualityTerminal && putawayTerminal
+            ? WarehouseOperationStatus.Completed
+            : WarehouseOperationStatus.Processed;
+        if (header.Status == WarehouseOperationStatus.Completed)
+        {
+            header.CompletedAtUtc ??= DateTimeOffset.UtcNow;
+            header.CompletedBy ??= actor;
+        }
     }
     private static decimal Sample(decimal quantity, ResolvedQualityPolicy policy) => policy.SamplingMode switch
     {

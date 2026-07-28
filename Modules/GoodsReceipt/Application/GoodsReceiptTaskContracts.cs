@@ -7,7 +7,8 @@ namespace verii_wms_api_v2.Modules.GoodsReceipt.Application;
 public sealed record GoodsReceiptTaskGridRow(
     long Id, long GoodsReceiptId, string BranchCode, string TaskNo, string DocumentNo,
     GoodsReceiptTaskType TaskType, GoodsReceiptTaskStatus Status,
-    WarehouseOperationStatus ReceiptStatus, GoodsReceiptProcessType ProcessType, byte Priority,
+    WarehouseOperationStatus ReceiptStatus, GoodsReceiptProcessType ProcessType,
+    GoodsReceiptLabelStrategy LabelStrategy, byte Priority,
     long WarehouseId, int WarehouseCode, string WarehouseName,
     string? SupplierCode, string? SupplierName,
     int LineCount, decimal PlannedQuantity, decimal ProcessedQuantity,

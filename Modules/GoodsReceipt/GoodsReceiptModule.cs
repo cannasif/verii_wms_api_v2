@@ -10,6 +10,7 @@ public static class GoodsReceiptModule
         .AddScoped<IGoodsReceiptOperationsService, GoodsReceiptOperationsService>()
         .AddScoped<IGoodsReceiptTaskService, GoodsReceiptTaskService>()
         .AddScoped<IGoodsReceiptLabelService, GoodsReceiptLabelService>()
+        .AddScoped<IGoodsReceiptOnReceiptLabelService, GoodsReceiptOnReceiptLabelService>()
         .AddScoped<IGoodsReceiptExecutionService, GoodsReceiptExecutionService>()
         .AddScoped<IGoodsReceiptLifecycleService, GoodsReceiptLifecycleService>()
         .AddScoped<IGoodsReceiptRoutingService, GoodsReceiptRoutingService>()

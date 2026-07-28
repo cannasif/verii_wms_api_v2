@@ -39,6 +39,8 @@ public sealed class GoodsReceiptLabelService(
                 ?? throw AppException.NotFound("Mal kabul emri bulunamadı.");
             if (task.Status is GoodsReceiptTaskStatus.Completed or GoodsReceiptTaskStatus.Cancelled)
                 throw AppException.Conflict("Tamamlanmış veya iptal edilmiş emir için etiket üretilemez.");
+            if (task.Header.LabelStrategy != GoodsReceiptLabelStrategy.PreGenerate)
+                throw AppException.Conflict("Manuel ön etiket yalnızca 'Önceden üret' etiket stratejisinde oluşturulabilir.");
             if (restrictToActorAssignment && !HasActiveAssignment(task.Assignments, actor))
                 throw AppException.Forbidden("Yalnızca size atanmış aktif mal kabul emirleri için etiket üretebilirsiniz.");
 
@@ -194,10 +196,21 @@ public sealed class GoodsReceiptLabelService(
     private async Task EnsureLabelsBelongToActorAssignments(
         IReadOnlyCollection<GoodsReceiptLabel> labels, long actor, CancellationToken ct)
     {
+        var directHeaderIds = labels.Where(x => !x.GrTaskLineId.HasValue)
+            .Select(x => x.GrHeaderId).Distinct().ToArray();
+        if (directHeaderIds.Length > 0)
+        {
+            var authorizedDirectCount = await uow.Repository<GoodsReceiptHeader>().Query()
+                .CountAsync(x => directHeaderIds.Contains(x.Id)
+                    && x.InitiationMode == GoodsReceiptInitiationMode.DirectReceipt
+                    && (x.ReceivedBy == actor || x.CreatedBy == actor), ct);
+            if (authorizedDirectCount != directHeaderIds.Length)
+                throw AppException.Forbidden("Yalnızca kendi tamamladığınız direkt mal kabul etiketlerini yazdırabilirsiniz.");
+        }
+
         var taskLineIds = labels.Select(x => x.GrTaskLineId).Where(x => x.HasValue)
             .Select(x => x!.Value).Distinct().ToArray();
-        if (taskLineIds.Length == 0 || labels.Any(x => !x.GrTaskLineId.HasValue))
-            throw AppException.Forbidden("Bu etiketler atanmış bir mal kabul emrine ait değil.");
+        if (taskLineIds.Length == 0) return;
 
         var taskIds = await uow.Repository<GoodsReceiptTaskLine>().Query()
             .Where(x => taskLineIds.Contains(x.Id))
@@ -212,7 +225,8 @@ public sealed class GoodsReceiptLabelService(
                 && x.UserId == actor
                 && (x.Status == GoodsReceiptAssignmentStatus.Assigned
                     || x.Status == GoodsReceiptAssignmentStatus.Accepted
-                    || x.Status == GoodsReceiptAssignmentStatus.InProgress))
+                    || x.Status == GoodsReceiptAssignmentStatus.InProgress
+                    || x.Status == GoodsReceiptAssignmentStatus.Completed))
             .Select(x => x.GrTaskId)
             .Distinct()
             .CountAsync(ct);

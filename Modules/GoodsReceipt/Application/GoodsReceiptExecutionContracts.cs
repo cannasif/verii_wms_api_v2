@@ -7,7 +7,7 @@ public sealed record ReceiveGoodsReceiptTaskRequest(Guid IdempotencyKey, long Ta
 public sealed record ReceiveGoodsReceiptTaskResult(long ExecutionId, long StockMovementOperationId,
     long GoodsReceiptId, long TaskId, long TaskLineId, decimal ProcessedQuantity,
     decimal RemainingQuantity, string TaskStatus, string LineStatus, long? QualityInspectionId,
-    long? ConsumedLabelId, bool Replayed);
+    long? ConsumedLabelId, long? GeneratedLabelId, bool Replayed);
 
 public interface IGoodsReceiptExecutionService
 {

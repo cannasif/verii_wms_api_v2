@@ -41,7 +41,8 @@ public sealed class GoodsReceiptOperationsService(
     IStockMovementService stockMovementService,
     IGoodsReceiptRoutingService routing,
     IAuditLogWriter audit,
-    IGoodsReceiptErpPostingCoordinator erpPosting) : IGoodsReceiptOperationsService
+    IGoodsReceiptErpPostingCoordinator erpPosting,
+    IGoodsReceiptOnReceiptLabelService onReceiptLabels) : IGoodsReceiptOperationsService
 {
     private IGenericRepository<GoodsReceiptHeader> Headers => unitOfWork.Repository<GoodsReceiptHeader>();
     private IGenericRepository<GoodsReceiptExecution> Executions => unitOfWork.Repository<GoodsReceiptExecution>();
@@ -242,6 +243,10 @@ public sealed class GoodsReceiptOperationsService(
             var trackingPolicies = new Dictionary<long, EffectiveStockTrackingPolicy>();
             foreach (var stock in stocks.Values) trackingPolicies[stock.Id] = await trackingPolicyResolver.ResolveAsync(branch, stock.Id, token);
             var requiresQuality = policy.RequireQualityApproval || resolved.Values.Any(x => x.InspectionMode != QualityInspectionMode.NoCheck);
+            ValidateQualityReceivingLocations(
+                requiresQuality,
+                policy.BlockPutawayUntilQualityDecision,
+                requestedLineLocationIds.Select(id => lineLocations[id].IsPutaway));
 
             ValidateTrackedLines(request, stocks, resolved, trackingPolicies, requireCompleteCapture: direct);
             foreach (var input in request.Lines)
@@ -318,6 +323,9 @@ public sealed class GoodsReceiptOperationsService(
                     ExpectedQuantity = input.Quantity, ReceivedQuantity = direct ? input.Quantity : 0,
                     AcceptedQuantity = direct && !qualityRequired ? input.Quantity : 0,
                     QuarantineQuantity = direct && qualityRequired ? input.Quantity : 0,
+                    PutawayQuantity = direct && !qualityRequired && lineLocations[lineLocationId].IsPutaway
+                        ? input.Quantity
+                        : 0,
                     TrackingType = trackingPolicy.TrackingType,
                     RequireLot = trackingPolicy.RequireLot, RequireSerial = trackingPolicy.RequireSerial,
                     RequireExpirationDate = trackingPolicy.RequireExpirationDate,
@@ -377,6 +385,8 @@ public sealed class GoodsReceiptOperationsService(
                 }, actor));
             }
 
+            if (direct)
+                GoodsReceiptExecutionService.RefreshHeaderStatus(header, actor);
             header.StatusHistory.Add(Stamp(new GoodsReceiptStatusHistory { BranchCode = branch, Header = header,
                 StatusArea = GoodsReceiptStatusArea.Operation, ToStatus = header.Status.ToString(), ChangedAtUtc = now,
                 ChangedBy = actor, Description = direct ? "Direct receipt posted" : "Orderless receipt task created",
@@ -388,7 +398,8 @@ public sealed class GoodsReceiptOperationsService(
                 await audit.WriteAsync(new("goods-receipt.create-orderless", nameof(GoodsReceiptHeader), header.Id.ToString(), "Succeeded", "goods-receipt",
                     NewValues: new { header.DocumentNo, header.WaybillNo, LineCount = grLines.Count, Quantity = grLines.Sum(x => x.ExpectedQuantity) },
                     ChangedFields: ["Header", "Lines", "Task", "Assignments"]), token);
-                return new(header.Id, header.DocumentNo, header.InitiationMode, header.Status, task!.Id, task.TaskNo, null, null, null, grLines.Count, grLines.Sum(x => x.ExpectedQuantity), false);
+                return new(header.Id, header.DocumentNo, header.InitiationMode, header.Status, task!.Id, task.TaskNo,
+                    null, null, null, grLines.Count, grLines.Sum(x => x.ExpectedQuantity), false, []);
             }
 
             return await PostDirectAsync(request, requestHash, header, grLines, warehouse, resolved, actor, now, token);
@@ -447,13 +458,16 @@ public sealed class GoodsReceiptOperationsService(
             execution.Lines.Select(x => new StockMovementLineRequest(x.StockId, x.YapCodeId, x.Quantity, null, null,
                 x.WarehouseId, x.LocationId, x.UnitCode, x.LotNo, x.SerialNo, x.StockStatus)).ToList()), ct);
         execution.StockMovementOperationId = movement.OperationId;
+        var generatedLabelIds = await onReceiptLabels.GenerateForExecutionAsync(
+            header, execution, execution.Lines.ToArray(), actor, ct);
         await unitOfWork.SaveChangesAsync(ct);
         await audit.WriteAsync(new("goods-receipt.direct", nameof(GoodsReceiptHeader), header.Id.ToString(), "Succeeded", "goods-receipt",
             NewValues: new { header.DocumentNo, execution.ExecutionNo, movement.OperationId, QualityInspectionId = inspection?.Id,
                 LineCount = lines.Count, Quantity = lines.Sum(x => x.ReceivedQuantity) },
             ChangedFields: ["Header", "Lines", "Execution", "StockMovement", "Quality"]), ct);
         return new(header.Id, header.DocumentNo, header.InitiationMode, header.Status, null, null, execution.Id,
-            movement.OperationId, inspection?.Id, lines.Count, lines.Sum(x => x.ReceivedQuantity), false);
+            movement.OperationId, inspection?.Id, lines.Count, lines.Sum(x => x.ReceivedQuantity), false,
+            generatedLabelIds);
     }
 
     private async Task<ManualGoodsReceiptResult> ExistingResult(GoodsReceiptHeader header, GoodsReceiptExecution? execution, CancellationToken ct)
@@ -463,7 +477,14 @@ public sealed class GoodsReceiptOperationsService(
         var inspection = await unitOfWork.Repository<QualityInspection>().Query().FirstOrDefaultAsync(x => x.SourceDocumentType == "GoodsReceipt" && x.SourceDocumentId == header.Id, ct);
         return new(header.Id, header.DocumentNo, header.InitiationMode, header.Status, task?.Id, task?.TaskNo,
             execution?.Id, execution?.StockMovementOperationId, inspection?.Id, await lines.CountAsync(ct),
-            await lines.SumAsync(x => header.InitiationMode == GoodsReceiptInitiationMode.DirectReceipt ? x.ReceivedQuantity : x.ExpectedQuantity, ct), true);
+            await lines.SumAsync(x => header.InitiationMode == GoodsReceiptInitiationMode.DirectReceipt ? x.ReceivedQuantity : x.ExpectedQuantity, ct), true,
+            execution is null
+                ? []
+                : await unitOfWork.Repository<GoodsReceiptLabelBatch>().Query()
+                    .Where(x => x.CorrelationId == execution.IdempotencyKey)
+                    .SelectMany(x => x.Labels)
+                    .Select(x => x.Id)
+                    .ToArrayAsync(ct));
     }
 
     private static void Validate(CreateManualGoodsReceiptRequest request, bool direct)
@@ -475,6 +496,7 @@ public sealed class GoodsReceiptOperationsService(
             || request.Lines.Where(x => !string.IsNullOrWhiteSpace(x.SerialNo)).GroupBy(x => new { x.StockId, Serial = x.SerialNo!.Trim() }).Any(x => x.Count() > 1))
             throw AppException.BadRequest("Mal kabul isteği veya satırları geçersizdir.");
         if (direct && request.ExecutionMode == 0) throw AppException.BadRequest("Direkt kabul giriş yöntemi zorunludur.");
+        if (direct) ValidateDirectLabelMode(request.LabelStrategy, request.ExecutionMode);
         var waybillNo = NormalizeDocumentNumber(request.WaybillNo);
         var electronicWaybillNo = NormalizeDocumentNumber(request.ElectronicWaybillNo);
         ValidateDocumentReference(waybillNo, electronicWaybillNo, request.WaybillDate, request.ExecutionMode);
@@ -498,6 +520,31 @@ public sealed class GoodsReceiptOperationsService(
             throw AppException.BadRequest("Normal irsaliye numarası veya e-irsaliye numarasından biri zorunludur.");
         if ((hasWaybill || hasElectronicWaybill) && !waybillDate.HasValue)
             throw AppException.BadRequest("İrsaliye numarası girildiğinde irsaliye tarihi zorunludur.");
+    }
+
+    internal static void ValidateDirectLabelMode(
+        GoodsReceiptLabelStrategy labelStrategy,
+        GoodsReceiptExecutionMode executionMode)
+    {
+        if (labelStrategy == GoodsReceiptLabelStrategy.PreGenerate
+            || executionMode == GoodsReceiptExecutionMode.PreGeneratedLabel)
+            throw AppException.BadRequest(
+                "Direkt kabulde iç ön etiket kullanılamaz. Ön etiketli işlem için mal kabul emri; dış etiket için tedarikçi etiketi seçilmelidir.");
+        if (labelStrategy == GoodsReceiptLabelStrategy.SupplierLabel
+            && executionMode != GoodsReceiptExecutionMode.SupplierLabel)
+            throw AppException.BadRequest("Tedarikçi etiketi stratejisinde giriş yöntemi de tedarikçi etiketi olmalıdır.");
+    }
+
+    internal static void ValidateQualityReceivingLocations(
+        bool requiresQuality,
+        bool blockPutawayUntilQualityDecision,
+        IEnumerable<bool> selectedLocationsArePutaway)
+    {
+        if (requiresQuality
+            && blockPutawayUntilQualityDecision
+            && selectedLocationsArePutaway.Any(isPutaway => isPutaway))
+            throw AppException.BadRequest(
+                "Kalite kararı verilene kadar rafa kaldırma kapalıdır. Kalite kontrollü ürün için kabul veya staging alanı seçiniz.");
     }
 
     private static void ValidateTrackedLines(

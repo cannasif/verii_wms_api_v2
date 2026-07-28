@@ -76,6 +76,52 @@ public sealed class GoodsReceiptLabelServiceTests
         Assert.Equal(1, label.PrintCount);
     }
 
+    [Fact]
+    public async Task Generate_rejects_manual_labels_when_strategy_is_not_pre_generate()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var header = await fixture.Db.GoodsReceiptHeaders.SingleAsync(x => x.Id == fixture.HeaderId);
+        header.LabelStrategy = GoodsReceiptLabelStrategy.GenerateOnReceipt;
+        await fixture.Db.SaveChangesAsync();
+        fixture.Db.ChangeTracker.Clear();
+
+        var exception = await Assert.ThrowsAsync<AppException>(() =>
+            fixture.Service.GenerateAsync(
+                fixture.HeaderId,
+                fixture.Request(Guid.NewGuid()),
+                Fixture.AssignedUserId,
+                restrictToActorAssignment: true));
+
+        Assert.Equal(StatusCodes.Status409Conflict, exception.StatusCode);
+        Assert.Empty(await fixture.Db.Set<GoodsReceiptLabel>().ToListAsync());
+    }
+
+    [Fact]
+    public async Task Completed_assignee_can_print_labels_generated_during_receipt()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var created = await fixture.Service.GenerateAsync(
+            fixture.HeaderId, fixture.Request(Guid.NewGuid()), actor: 999,
+            restrictToActorAssignment: false);
+
+        var task = await fixture.Db.Set<GoodsReceiptTask>().SingleAsync(x => x.Id == fixture.TaskId);
+        var assignment = await fixture.Db.Set<GoodsReceiptTaskAssignment>()
+            .SingleAsync(x => x.GrTaskId == fixture.TaskId);
+        task.Status = GoodsReceiptTaskStatus.Completed;
+        assignment.Status = GoodsReceiptAssignmentStatus.Completed;
+        assignment.CompletedAtUtc = DateTimeOffset.UtcNow;
+        await fixture.Db.SaveChangesAsync();
+        fixture.Db.ChangeTracker.Clear();
+
+        await fixture.Service.MarkPrintedAsync(
+            new MarkGoodsReceiptLabelsPrintedRequest(created.Labels.Select(x => x.Id).ToArray()),
+            Fixture.AssignedUserId,
+            restrictToActorAssignment: true);
+
+        Assert.Equal(GoodsReceiptLabelStatus.Printed,
+            (await fixture.Db.Set<GoodsReceiptLabel>().SingleAsync()).Status);
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         public const long AssignedUserId = 42;
@@ -131,7 +177,8 @@ public sealed class GoodsReceiptLabelServiceTests
                 DocumentDate = DateOnly.FromDateTime(DateTime.Today),
                 TargetWarehouseId = 1,
                 ReceivingLocationId = 1,
-                Status = WarehouseOperationStatus.Released
+                Status = WarehouseOperationStatus.Released,
+                LabelStrategy = GoodsReceiptLabelStrategy.PreGenerate
             };
             var line = new GoodsReceiptLine
             {

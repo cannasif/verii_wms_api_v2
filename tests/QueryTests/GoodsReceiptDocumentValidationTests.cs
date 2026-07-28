@@ -8,6 +8,53 @@ namespace verii_wms_api_v2.QueryTests;
 public sealed class GoodsReceiptDocumentValidationTests
 {
     [Fact]
+    public void Direct_receipt_rejects_internal_pre_generated_label_mode()
+    {
+        Assert.Throws<AppException>(() =>
+            GoodsReceiptOperationsService.ValidateDirectLabelMode(
+                GoodsReceiptLabelStrategy.PreGenerate,
+                GoodsReceiptExecutionMode.PreGeneratedLabel));
+    }
+
+    [Fact]
+    public void Direct_supplier_label_requires_matching_execution_mode()
+    {
+        Assert.Throws<AppException>(() =>
+            GoodsReceiptOperationsService.ValidateDirectLabelMode(
+                GoodsReceiptLabelStrategy.SupplierLabel,
+                GoodsReceiptExecutionMode.Manual));
+
+        GoodsReceiptOperationsService.ValidateDirectLabelMode(
+            GoodsReceiptLabelStrategy.SupplierLabel,
+            GoodsReceiptExecutionMode.SupplierLabel);
+    }
+
+    [Fact]
+    public void Quality_gated_receipt_cannot_be_received_directly_into_putaway_location()
+    {
+        var exception = Assert.Throws<AppException>(() =>
+            GoodsReceiptOperationsService.ValidateQualityReceivingLocations(
+                requiresQuality: true,
+                blockPutawayUntilQualityDecision: true,
+                selectedLocationsArePutaway: [false, true]));
+
+        Assert.Contains("kabul veya staging", exception.Message);
+    }
+
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void Putaway_location_is_allowed_when_quality_gate_does_not_block_it(
+        bool requiresQuality,
+        bool blockPutawayUntilQualityDecision)
+    {
+        GoodsReceiptOperationsService.ValidateQualityReceivingLocations(
+            requiresQuality,
+            blockPutawayUntilQualityDecision,
+            selectedLocationsArePutaway: [true]);
+    }
+
+    [Fact]
     public void Import_flow_accepts_missing_waybill_reference()
     {
         GoodsReceiptOperationsService.ValidateDocumentReference(
