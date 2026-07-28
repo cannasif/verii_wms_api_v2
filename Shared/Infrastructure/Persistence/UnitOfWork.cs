@@ -45,7 +45,13 @@ public sealed class UnitOfWork(WmsDbContext context, IHttpContextAccessor httpCo
         if (_transaction is not null) return await operation(cancellationToken);
         await BeginTransactionAsync(isolationLevel, cancellationToken);
         try { var result = await operation(cancellationToken); await CommitTransactionAsync(cancellationToken); return result; }
-        catch { await RollbackTransactionAsync(cancellationToken); throw; }
+        catch
+        {
+            await RollbackTransactionAsync(cancellationToken);
+            // Failed inserts/updates must not leak into a later operation that reuses this scoped DbContext.
+            context.ChangeTracker.Clear();
+            throw;
+        }
     }
 
     public async ValueTask DisposeAsync()

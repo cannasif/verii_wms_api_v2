@@ -10,6 +10,11 @@ namespace verii_wms_api_v2.Modules.SystemManagement.Api;
 [Authorize, ApiController, Route("api/users")]
 public sealed class UserManagementController(IUserManagementService service, IPermissionAuthorizationService permissions) : ControllerBase
 {
+    private const long MaxImportFileSize = UserManagementService.MaxImportFileSize;
+    private const long MaxImportRequestSize = MaxImportFileSize + (1024 * 1024);
+    private const string XlsxContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    private const string BinaryContentType = "application/octet-stream";
+
     [HttpPost("paged")]
     public async Task<IActionResult> Paged(PagedRequest request, CancellationToken ct)
     { await Require("SYSTEM.USERS.VIEW", ct); return Ok(ApiResponse<PagedResponse<UserGridRow>>.Ok(await service.GetPagedAsync(request, ct))); }
@@ -22,6 +27,21 @@ public sealed class UserManagementController(IUserManagementService service, IPe
     public async Task<IActionResult> Create(CreateUserRequest request, CancellationToken ct)
     { await Require("SYSTEM.USERS.MANAGE", ct); return Ok(ApiResponse<object>.Ok(await service.CreateAsync(request, ct), "Kullanıcı oluşturuldu.")); }
 
+    [HttpPost("import")]
+    [Consumes("multipart/form-data")]
+    [RequestSizeLimit(MaxImportRequestSize)]
+    [RequestFormLimits(MultipartBodyLengthLimit = MaxImportFileSize)]
+    public async Task<IActionResult> Import([FromForm] IFormFile? file, CancellationToken ct)
+    {
+        await Require("SYSTEM.USERS.MANAGE", ct);
+        ValidateImportFile(file);
+        await using var stream = file!.OpenReadStream();
+        var result = await service.ImportAsync(stream, ct);
+        return Ok(ApiResponse<UserImportResult>.Ok(
+            result,
+            $"{result.CreatedCount} kullanıcı oluşturuldu; {result.SkippedCount} satır atlandı, {result.FailedCount} satır başarısız."));
+    }
+
     [HttpPut("{id:long}"), HttpPost("{id:long}/update")]
     public async Task<IActionResult> Update(long id, UpdateUserRequest request, CancellationToken ct)
     { await Require("SYSTEM.USERS.MANAGE", ct); return Ok(ApiResponse<bool>.Ok(await service.UpdateAsync(id, request, ct), "Kullanıcı güncellendi.")); }
@@ -32,4 +52,17 @@ public sealed class UserManagementController(IUserManagementService service, IPe
 
     private async Task Require(string code, CancellationToken ct)
     { if (!await permissions.HasPermissionAsync(User, code, ct)) throw AppException.Forbidden(); }
+
+    private static void ValidateImportFile(IFormFile? file)
+    {
+        if (file is null || file.Length == 0)
+            throw AppException.BadRequest("Yüklenecek XLSX dosyası zorunludur.");
+        if (file.Length > MaxImportFileSize)
+            throw AppException.BadRequest("XLSX dosyası en fazla 5 MB olabilir.");
+        if (!Path.GetExtension(file.FileName).Equals(".xlsx", StringComparison.OrdinalIgnoreCase))
+            throw AppException.BadRequest("Yalnızca .xlsx uzantılı Excel dosyaları yüklenebilir.");
+        if (!string.Equals(file.ContentType, XlsxContentType, StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(file.ContentType, BinaryContentType, StringComparison.OrdinalIgnoreCase))
+            throw AppException.BadRequest($"Geçersiz dosya içerik türü. Beklenen: {XlsxContentType}.");
+    }
 }
