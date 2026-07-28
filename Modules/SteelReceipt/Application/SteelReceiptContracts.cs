@@ -26,9 +26,12 @@ public sealed record SteelReceiptLineGridRow(long Id,long PlanId,string ImportRe
 public sealed record InspectSteelReceiptLineRequest(bool IsArrived,decimal ArrivedQuantity,decimal ApprovedQuantity,decimal RejectedQuantity,
     string? RejectReason,string? Note,string RowVersion);
 public sealed record ConvertSteelReceiptRequest(Guid IdempotencyKey,DateOnly DocumentDate,IReadOnlyList<long> LineIds,
-    IReadOnlyList<long>? AssignedUserIds,bool AssignToAllActiveUsers,byte Priority,string? Description);
-public sealed record ConvertSteelReceiptResult(long GoodsReceiptId,string DocumentNo,long TaskId,string TaskNo,int ConvertedLineCount,
-    decimal ConvertedQuantity,bool Replayed);
+    IReadOnlyList<long>? AssignedUserIds,bool AssignToAllActiveUsers,byte Priority,string? Description,
+    SteelReceiptConversionMode Mode=0,string? WaybillNo=null,
+    string? ElectronicWaybillNo=null,DateOnly? WaybillDate=null);
+public sealed record ConvertSteelReceiptResult(long GoodsReceiptId,string DocumentNo,long? TaskId,string? TaskNo,
+    long? ExecutionId,long? StockMovementOperationId,IReadOnlyList<long> GeneratedLabelIds,
+    int ConvertedLineCount,decimal ConvertedQuantity,SteelReceiptConversionMode Mode,bool Replayed);
 public sealed record PlaceSteelReceiptLineRequest(Guid IdempotencyKey,long LocationId,string RowVersion);
 public sealed record PlaceSteelReceiptLineResult(long PlacementId,long StockMovementOperationId,bool Replayed,
     long LocationId,SteelPlacementType PlacementType,int RowNo,int PositionNo,int StackOrderNo);

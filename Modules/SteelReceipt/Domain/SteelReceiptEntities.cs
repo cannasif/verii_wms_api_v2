@@ -6,6 +6,7 @@ public enum SteelReceiptPlanStatus { Imported=1, InspectionInProgress=2, ReadyFo
 public enum SteelArrivalStatus { Expected=1, Arrived=2, Missing=3 }
 public enum SteelInspectionStatus { Pending=1, Inspected=2, Approved=3, PartiallyApproved=4, Rejected=5 }
 public enum SteelReceiptConversionStatus { NotCreated=1, Created=2 }
+public enum SteelReceiptConversionMode { Task=1, Direct=2 }
 public enum SteelPutawayStatus { Pending=1, Placed=2 }
 public enum SteelPlacementType { SideBySide=1, Stacked=2 }
 public enum SteelVehicleAcceptanceStatus { Completed=1, Cancelled=2 }

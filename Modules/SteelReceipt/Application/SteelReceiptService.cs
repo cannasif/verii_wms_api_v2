@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
+using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
@@ -21,6 +22,7 @@ using WarehouseEntity=verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 namespace verii_wms_api_v2.Modules.SteelReceipt.Application;
 
 public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsService grOperations,
+    IGoodsReceiptErpPostingCoordinator erpPosting,
     IStockMovementService stockMovement,IAuditLogWriter audit,ISteelReceiptAttachmentStorage attachmentStorage):ISteelReceiptService
 {
     private IGenericRepository<SteelReceiptPlan> Plans=>uow.Repository<SteelReceiptPlan>();
@@ -179,25 +181,72 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             return await GridQuery().FirstAsync(x=>x.Id==line.Id,token);
         },ct);
 
-    public Task<ConvertSteelReceiptResult> ConvertAsync(long planId,ConvertSteelReceiptRequest request,long actor,CancellationToken ct=default)
+    public async Task<ConvertSteelReceiptResult> ConvertAsync(long planId,ConvertSteelReceiptRequest request,long actor,CancellationToken ct=default)
     {
         if(request.IdempotencyKey==Guid.Empty)throw AppException.BadRequest("Idempotency anahtarı zorunludur.");
-        return uow.ExecuteInTransactionAsync<ConvertSteelReceiptResult>(async token=>{
+        if(request.LineIds is not{Count:>0})throw AppException.BadRequest("En az bir SAC levhası seçilmelidir.");
+        var legacyTaskRequest=request.Mode==0;
+        var mode=legacyTaskRequest?SteelReceiptConversionMode.Task:request.Mode;
+        ValidateConversionMode(mode,request.AssignToAllActiveUsers,request.AssignedUserIds);
+
+        var converted=await uow.ExecuteInTransactionAsync<ConvertSteelReceiptResult>(async token=>{
             var plan=await Plans.Query(true).Include(x=>x.Lines).FirstOrDefaultAsync(x=>x.Id==planId,token)??throw AppException.NotFound("SAC planı bulunamadı.");
             var ids=request.LineIds.Where(x=>x>0).Distinct().ToArray();var selected=plan.Lines.Where(x=>ids.Contains(x.Id)).OrderBy(x=>x.LineNo).ToList();
             if(selected.Count==0||selected.Count!=ids.Length)throw AppException.BadRequest("Seçilen SAC satırlarından biri bulunamadı.");
+            var waybillNo=Clean(request.WaybillNo??plan.WaybillNo,50);
+            var electronicWaybillNo=Clean(request.ElectronicWaybillNo,50);
+            var waybillDate=request.WaybillDate??plan.WaybillDate;
+            GoodsReceiptOperationsService.ValidateDocumentReference(
+                waybillNo,electronicWaybillNo,waybillDate,
+                legacyTaskRequest?GoodsReceiptExecutionMode.Import:GoodsReceiptExecutionMode.Manual);
+
+            if(selected.All(x=>x.ConversionStatus==SteelReceiptConversionStatus.Created))
+            {
+                var receiptIds=selected.Select(x=>x.GoodsReceiptId).Distinct().ToArray();
+                if(receiptIds.Length!=1||!receiptIds[0].HasValue)
+                    throw AppException.Conflict("Seçilen levhaların mevcut mal kabul bağlantıları tutarsızdır.");
+                var existingHeader=await uow.Repository<GoodsReceiptHeader>().Query()
+                    .FirstOrDefaultAsync(x=>x.Id==receiptIds[0]!.Value,token)
+                    ??throw AppException.Conflict("Bağlı mal kabul kaydı bulunamadı.");
+                if(!IsCompatibleReplay(
+                    existingHeader,request.IdempotencyKey,mode,
+                    waybillNo,electronicWaybillNo,waybillDate))
+                    throw AppException.Conflict("Levhalar daha önce farklı bir mal kabul isteğiyle aktarılmış.");
+                var existingTask=await uow.Repository<GoodsReceiptTask>().Query()
+                    .FirstOrDefaultAsync(x=>x.GrHeaderId==existingHeader.Id,token);
+                var existingExecution=await uow.Repository<GoodsReceiptExecution>().Query()
+                    .FirstOrDefaultAsync(x=>x.GrHeaderId==existingHeader.Id,token);
+                var labelIds=existingExecution is null
+                    ?[]
+                    :await uow.Repository<GoodsReceiptLabelBatch>().Query()
+                        .Where(x=>x.CorrelationId==existingExecution.IdempotencyKey)
+                        .SelectMany(x=>x.Labels).Select(x=>x.Id).ToArrayAsync(token);
+                return new(existingHeader.Id,existingHeader.DocumentNo,existingTask?.Id,existingTask?.TaskNo,
+                    existingExecution?.Id,existingExecution?.StockMovementOperationId,labelIds,
+                    selected.Count,selected.Sum(x=>x.ApprovedQuantity),mode,true);
+            }
             if(selected.Any(x=>x.InspectionStatus is not(SteelInspectionStatus.Approved or SteelInspectionStatus.PartiallyApproved)
                 ||x.ApprovedQuantity<=0||x.ConversionStatus==SteelReceiptConversionStatus.Created))throw AppException.Conflict("Yalnızca onaylı ve aktarılmamış levhalar seçilebilir.");
-            var assignedUserIds=request.AssignToAllActiveUsers
-                ?await uow.Repository<verii_wms_api_v2.Modules.Identity.Domain.User>().Query().Where(x=>x.IsActive).Select(x=>x.Id).ToListAsync(token)
-                :request.AssignedUserIds?.Where(x=>x>0).Distinct().ToList();
-            if(assignedUserIds is null||assignedUserIds.Count==0)throw AppException.BadRequest("SAC mal kabul emri için en az bir aktif kullanıcı atanmalıdır.");
+            List<long>? assignedUserIds=null;
+            if(mode==SteelReceiptConversionMode.Task)
+            {
+                assignedUserIds=request.AssignToAllActiveUsers
+                    ?await uow.Repository<verii_wms_api_v2.Modules.Identity.Domain.User>().Query()
+                        .Where(x=>x.IsActive).Select(x=>x.Id).ToListAsync(token)
+                    :request.AssignedUserIds?.Where(x=>x>0).Distinct().ToList();
+                if(assignedUserIds is null||assignedUserIds.Count==0)
+                    throw AppException.BadRequest("SAC mal kabul emri için en az bir aktif kullanıcı atanmalıdır.");
+            }
             var manual=new CreateManualGoodsReceiptRequest(request.IdempotencyKey,plan.BranchCode,plan.DocumentSeriesId,plan.SupplierId,
-                plan.TargetWarehouseId,plan.ReceivingLocationId,request.DocumentDate,plan.WaybillNo,plan.WaybillDate,null,plan.ExportReferenceNo,
-                null,null,null,null,null,null,plan.PlannedArrivalAtUtc,null,GoodsReceiptLabelStrategy.PreGenerate,GoodsReceiptExecutionMode.Import,
+                plan.TargetWarehouseId,plan.ReceivingLocationId,request.DocumentDate,waybillNo,waybillDate,electronicWaybillNo,plan.ExportReferenceNo,
+                null,null,null,null,null,null,plan.PlannedArrivalAtUtc,null,
+                mode==SteelReceiptConversionMode.Direct?GoodsReceiptLabelStrategy.GenerateOnReceipt:GoodsReceiptLabelStrategy.PreGenerate,
+                legacyTaskRequest?GoodsReceiptExecutionMode.Import:GoodsReceiptExecutionMode.Manual,
                 request.Priority,null,Clean(request.Description,1000),assignedUserIds,
                 selected.Select(BuildManualGoodsReceiptLineForConvert).ToList());
-            var result=await grOperations.CreateOrderlessTaskAsync(manual,actor,token);
+            var result=mode==SteelReceiptConversionMode.Direct
+                ?await grOperations.CreateDirectReceiptDeferredErpAsync(manual,actor,qualityAlreadyApproved:true,token)
+                :await grOperations.CreateOrderlessTaskAsync(manual,actor,token);
             var header=await uow.Repository<GoodsReceiptHeader>().Query(true).FirstAsync(x=>x.Id==result.Id,token);
             header.ReceiptType=GoodsReceiptType.SteelPlate;header.SourceSystem=verii_wms_api_v2.Modules.WarehouseOperations.Domain.WarehouseOperationSourceSystem.Import;
             header.Description=Clean($"{header.Description} | SAC plan: {plan.ImportReferenceNo}",1000);
@@ -207,9 +256,13 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
                 selected[i].ConversionStatus=SteelReceiptConversionStatus.Created;selected[i].UpdatedBy=actor;selected[i].UpdatedDate=DateTime.UtcNow;}
             await RefreshPlanAsync(plan,token);await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("steel-receipt.convert",nameof(SteelReceiptPlan),plan.Id.ToString(),"Succeeded","steel-receipt",
-                NewValues:new{result.Id,result.DocumentNo,LineIds=ids},ChangedFields:["GoodsReceipt","ConversionStatus"]),token);
-            return new(result.Id,result.DocumentNo,result.TaskId??0,result.TaskNo??string.Empty,selected.Count,selected.Sum(x=>x.ApprovedQuantity),result.Replayed);
+                NewValues:new{result.Id,result.DocumentNo,Mode=mode,LineIds=ids},ChangedFields:["GoodsReceipt","ConversionStatus"]),token);
+            return new(result.Id,result.DocumentNo,result.TaskId,result.TaskNo,result.ExecutionId,result.StockMovementOperationId,
+                result.GeneratedLabelIds,selected.Count,selected.Sum(x=>x.ApprovedQuantity),mode,result.Replayed);
         },ct,IsolationLevel.Serializable);
+        if(mode==SteelReceiptConversionMode.Direct)
+            await erpPosting.PostIfEligibleAsync(converted.GoodsReceiptId,actor,ct);
+        return converted;
     }
 
     public Task<PlaceSteelReceiptLineResult> PlaceAsync(long lineId,PlaceSteelReceiptLineRequest request,long actor,CancellationToken ct=default)
@@ -384,6 +437,35 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             :$"SAC {line.DCode} · Seri {serialNo} · Isı {line.HeatNumber.Trim()}";
         return new ManualGoodsReceiptLineRequest(line.StockId,line.YapCodeId,line.ApprovedQuantity,line.UnitCode,null,serialNo,
             null,null,null,null,Clean(description,1000),line.TargetWarehouseId,line.ReceivingLocationId);
+    }
+
+    internal static void ValidateConversionMode(
+        SteelReceiptConversionMode mode,
+        bool assignToAllActiveUsers,
+        IReadOnlyCollection<long>? assignedUserIds)
+    {
+        if(mode is not(SteelReceiptConversionMode.Task or SteelReceiptConversionMode.Direct))
+            throw AppException.BadRequest("Geçersiz SAC mal kabul işlem modu.");
+        if(mode==SteelReceiptConversionMode.Direct
+            &&(assignToAllActiveUsers||assignedUserIds is{Count:>0}))
+            throw AppException.BadRequest("Doğrudan mal kabulde kullanıcı ataması yapılamaz.");
+    }
+
+    internal static bool IsCompatibleReplay(
+        GoodsReceiptHeader existingHeader,
+        Guid idempotencyKey,
+        SteelReceiptConversionMode mode,
+        string? waybillNo,
+        string? electronicWaybillNo,
+        DateOnly? waybillDate)
+    {
+        var expectedInitiation=mode==SteelReceiptConversionMode.Direct
+            ?GoodsReceiptInitiationMode.DirectReceipt:GoodsReceiptInitiationMode.UnplannedTask;
+        return existingHeader.CorrelationId==idempotencyKey
+            &&existingHeader.InitiationMode==expectedInitiation
+            &&existingHeader.WaybillNo==waybillNo
+            &&existingHeader.ElectronicWaybillNo==electronicWaybillNo
+            &&existingHeader.WaybillDate==waybillDate;
     }
 
     private static string Key(long supplierId,SteelImportLineRequest x)=>Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(

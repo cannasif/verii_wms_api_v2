@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using verii_wms_api_v2.Modules.AccessControl.Application;
 using verii_wms_api_v2.Modules.SteelReceipt.Application;
+using verii_wms_api_v2.Modules.SteelReceipt.Domain;
 using verii_wms_api_v2.Modules.VehicleCheckIn.Application;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -94,7 +95,15 @@ public sealed class SteelReceiptsController(
     [HttpPut("lines/{id:long}/inspection")] public async Task<IActionResult> Inspect(long id,InspectSteelReceiptLineRequest request,CancellationToken ct)
     {await Require("WMS.STEEL_RECEIPT.INSPECT",ct);return Ok(ApiResponse<SteelReceiptLineGridRow>.Ok(await service.InspectAsync(id,request,UserId(),ct),"SAC kontrol kararı kaydedildi."));}
     [HttpPost("{id:long}/convert")] public async Task<IActionResult> Convert(long id,ConvertSteelReceiptRequest request,CancellationToken ct)
-    {await Require("WMS.STEEL_RECEIPT.CONVERT",ct);return Ok(ApiResponse<ConvertSteelReceiptResult>.Ok(await service.ConvertAsync(id,request,UserId(),ct),"Levhalar ortak mal kabul emrine aktarıldı."));}
+    {
+        await Require("WMS.STEEL_RECEIPT.CONVERT",ct);
+        if(request.Mode==SteelReceiptConversionMode.Direct)await Require("WMS.GOODS_RECEIPT.RECEIVE",ct);
+        var result=await service.ConvertAsync(id,request,UserId(),ct);
+        var message=result.Mode==SteelReceiptConversionMode.Direct
+            ?"Seçilen levhaların mal kabulü tamamlandı."
+            :"Levhalar ortak mal kabul emrine aktarıldı.";
+        return Ok(ApiResponse<ConvertSteelReceiptResult>.Ok(result,message));
+    }
     [HttpPost("lines/{id:long}/place")] public async Task<IActionResult> Place(long id,PlaceSteelReceiptLineRequest request,CancellationToken ct)
     {await Require("WMS.STEEL_RECEIPT.PUTAWAY",ct);return Ok(ApiResponse<PlaceSteelReceiptLineResult>.Ok(await service.PlaceAsync(id,request,UserId(),ct),"SAC levhası nihai rafa yerleştirildi."));}
     [HttpGet("lines/{id:long}/attachments")] public async Task<IActionResult> Attachments(long id,CancellationToken ct)
