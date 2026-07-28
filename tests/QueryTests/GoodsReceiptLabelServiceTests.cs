@@ -122,6 +122,32 @@ public sealed class GoodsReceiptLabelServiceTests
             (await fixture.Db.Set<GoodsReceiptLabel>().SingleAsync()).Status);
     }
 
+    [Fact]
+    public async Task Direct_receipt_owner_can_print_receipt_generated_label_without_task_assignment()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var created = await fixture.Service.GenerateAsync(
+            fixture.HeaderId, fixture.Request(Guid.NewGuid()), actor: 999,
+            restrictToActorAssignment: false);
+        var header = await fixture.Db.GoodsReceiptHeaders
+            .SingleAsync(x => x.Id == fixture.HeaderId);
+        var label = await fixture.Db.Set<GoodsReceiptLabel>()
+            .SingleAsync(x => x.Id == created.Labels[0].Id);
+        header.InitiationMode = GoodsReceiptInitiationMode.DirectReceipt;
+        header.ReceivedBy = Fixture.AssignedUserId;
+        label.GrTaskLineId = null;
+        await fixture.Db.SaveChangesAsync();
+        fixture.Db.ChangeTracker.Clear();
+
+        await fixture.Service.MarkPrintedAsync(
+            new MarkGoodsReceiptLabelsPrintedRequest([label.Id]),
+            Fixture.AssignedUserId,
+            restrictToActorAssignment: true);
+
+        Assert.Equal(GoodsReceiptLabelStatus.Printed,
+            (await fixture.Db.Set<GoodsReceiptLabel>().SingleAsync()).Status);
+    }
+
     private sealed class Fixture : IAsyncDisposable
     {
         public const long AssignedUserId = 42;
