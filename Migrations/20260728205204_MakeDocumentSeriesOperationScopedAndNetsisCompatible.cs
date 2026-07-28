@@ -32,6 +32,50 @@ namespace verii_wms_api_v2.Migrations
 
             migrationBuilder.Sql(
                 """
+                ;WITH [SeriesShape] AS
+                (
+                    SELECT
+                        [Id],
+                        CASE [YearFormat]
+                            WHEN N'TwoDigit' THEN 2
+                            WHEN N'FourDigit' THEN 4
+                            ELSE 0
+                        END AS [YearLength],
+                        CASE
+                            WHEN LEN(CONVERT(varchar(20), [StartNumber])) >= LEN(CONVERT(varchar(20), [NextNumber]))
+                                THEN LEN(CONVERT(varchar(20), [StartNumber]))
+                            ELSE LEN(CONVERT(varchar(20), [NextNumber]))
+                        END AS [CounterLength],
+                        [NumberLength]
+                    FROM [RII_DOCUMENT_SERIES]
+                ),
+                [NormalizedShape] AS
+                (
+                    SELECT
+                        [Id],
+                        [YearLength],
+                        CASE
+                            WHEN [CounterLength] > 15 - [YearLength] THEN [CounterLength]
+                            WHEN [NumberLength] < 3 THEN
+                                CASE WHEN [CounterLength] > 3 THEN [CounterLength] ELSE 3 END
+                            WHEN [NumberLength] > 15 - [YearLength] THEN 15 - [YearLength]
+                            WHEN [NumberLength] < [CounterLength] THEN [CounterLength]
+                            ELSE [NumberLength]
+                        END AS [NormalizedNumberLength]
+                    FROM [SeriesShape]
+                )
+                UPDATE [series]
+                SET
+                    [NumberLength] = [shape].[NormalizedNumberLength],
+                    [Prefix] = LEFT([series].[Prefix],
+                        CASE
+                            WHEN 15 - [shape].[YearLength] - [shape].[NormalizedNumberLength] > 0
+                                THEN 15 - [shape].[YearLength] - [shape].[NormalizedNumberLength]
+                            ELSE 0
+                        END)
+                FROM [RII_DOCUMENT_SERIES] AS [series]
+                INNER JOIN [NormalizedShape] AS [shape] ON [shape].[Id] = [series].[Id];
+
                 IF EXISTS
                 (
                     SELECT 1
