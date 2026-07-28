@@ -7,7 +7,7 @@ public sealed record SteelImportLineRequest(int RowNumber,string? NetsisOrderNo,
     long? YapCodeId,string? YapCode,string SupplierSerialNo,string? SecondarySerialNo,decimal ExpectedQuantity,string UnitCode,string? CombinedSize,string? MaterialGrade,
     string? HeatNumber,string? CertificateNumber,long? TargetWarehouseId,long? ReceivingLocationId);
 public sealed record PreviewSteelReceiptImportRequest(string BranchCode,string ImportReferenceNo,string SourceFileName,string? ExportReferenceNo,
-    long? VehicleCheckInId,long SupplierId,long TargetWarehouseId,long ReceivingLocationId,long DocumentSeriesId,string? WaybillNo,DateOnly? WaybillDate,
+    long? VehicleCheckInId,long SupplierId,long TargetWarehouseId,long? ReceivingLocationId,long DocumentSeriesId,string? WaybillNo,DateOnly? WaybillDate,
     DateTimeOffset? PlannedArrivalAtUtc,IReadOnlyList<SteelImportLineRequest> Lines);
 public sealed record SteelImportPreviewLine(int RowNumber,string SupplierSerialNo,string? StockCode,string Action,string? ExistingDCode,IReadOnlyList<string> Errors);
 public sealed record SteelImportPreview(int TotalRows,int NewRows,int ExistingRows,int ErrorRows,decimal TotalExpectedQuantity,IReadOnlyList<SteelImportPreviewLine> Lines);
@@ -22,7 +22,10 @@ public sealed record SteelReceiptLineGridRow(long Id,long PlanId,string ImportRe
     string? HeatNumber,string? CertificateNumber,decimal ExpectedQuantity,decimal ArrivedQuantity,decimal ApprovedQuantity,
     decimal RejectedQuantity,string UnitCode,SteelArrivalStatus ArrivalStatus,SteelInspectionStatus InspectionStatus,
     SteelReceiptConversionStatus ConversionStatus,SteelPutawayStatus PutawayStatus,string? GoodsReceiptNo,long? GoodsReceiptId,
-    long TargetWarehouseId,long ReceivingLocationId,long? GoodsReceiptLineId,long? CreatedBy,DateTime? CreatedDate,long? UpdatedBy,DateTime? UpdatedDate,string RowVersion);
+    string? ErpIntegrationStatus,long TargetWarehouseId,long ReceivingLocationId,long? GoodsReceiptLineId,long? CreatedBy,DateTime? CreatedDate,long? UpdatedBy,DateTime? UpdatedDate,string RowVersion);
+public sealed record SteelReceiptSourceRow(long PlanId,string ImportReferenceNo,string SourceFileName,string? WaybillNo,DateOnly? WaybillDate,
+    long SupplierId,string SupplierCode,string SupplierName,SteelReceiptPlanStatus Status,int TotalLineCount,decimal TotalExpectedQuantity,
+    IReadOnlyList<SteelReceiptLineGridRow> Lines);
 public sealed record InspectSteelReceiptLineRequest(bool IsArrived,decimal ArrivedQuantity,decimal ApprovedQuantity,decimal RejectedQuantity,
     string? RejectReason,string? Note,string RowVersion);
 public sealed record ConvertSteelReceiptRequest(Guid IdempotencyKey,DateOnly DocumentDate,IReadOnlyList<long> LineIds,
@@ -50,6 +53,7 @@ public interface ISteelReceiptService
     Task<PagedResponse<SteelReceiptPlanGridRow>> GetPlansPagedAsync(PagedRequest request,CancellationToken ct=default);
     Task<PagedResponse<SteelReceiptLineGridRow>> GetLinesPagedAsync(PagedRequest request,CancellationToken ct=default);
     Task<PagedResponse<SteelReceiptLineGridRow>> GetReceiptCandidatesPagedAsync(PagedRequest request,CancellationToken ct=default);
+    Task<SteelReceiptSourceRow> GetReceiptSourceAsync(string reference,CancellationToken ct=default);
     Task<PagedResponse<SteelReceiptLineGridRow>> GetPlacementCandidatesPagedAsync(PagedRequest request,CancellationToken ct=default);
     Task<SteelReceiptLineGridRow> GetLineAsync(long lineId,CancellationToken ct=default);
     Task<IReadOnlyList<SteelPlacementOccupancyRow>> GetOccupancyAsync(long locationId,CancellationToken ct=default);
