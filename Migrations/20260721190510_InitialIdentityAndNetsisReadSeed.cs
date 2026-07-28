@@ -11,7 +11,7 @@ namespace verii_wms_api_v2.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.Sql("""
+            migrationBuilder.Sql(SqlServerMigrationSql.CreateOrAlterFunction("dbo.RII_FN_BRANCHES", """
 -- RII_FN_BRANCHES
 CREATE OR ALTER FUNCTION [dbo].[RII_FN_BRANCHES]  
 (  
@@ -31,10 +31,10 @@ RETURN
         -- TBLSUBELER’de MERKEZMI = 'E' olan satırlarda UNVAN boş olabilir.  
         -- İstersen NULL yerine SUBE_KODU döndürebilirsin.  
 );
-""");
-            migrationBuilder.Sql("""
+"""));
+            migrationBuilder.Sql(SqlServerMigrationSql.CreateOrAlterFunction("dbo.RII_FN_CARI", """
 -- RII_FN_CARI
-CREATE OR ALTER FUNCTION RII_FN_CARI    
+CREATE OR ALTER FUNCTION [dbo].[RII_FN_CARI]
 (    
     @CariKodu NVARCHAR(MAX) = NULL,    
     @SubeKodu NVARCHAR(MAX) = NULL    
@@ -43,18 +43,6 @@ RETURNS TABLE
 AS    
 RETURN    
 (  
-    WITH CARI_LIST AS   
-    (  
-        SELECT LTRIM(RTRIM(value)) AS CARI_KODU  
-        FROM STRING_SPLIT(ISNULL(@CariKodu,''), ',')  
-        WHERE LTRIM(RTRIM(value)) <> ''  
-    ),  
-    SUBE_LIST AS   
-    (  
-        SELECT LTRIM(RTRIM(value)) AS SUBE_KODU  
-        FROM STRING_SPLIT(ISNULL(@SubeKodu,''), ',')  
-        WHERE LTRIM(RTRIM(value)) <> ''  
-    )  
     SELECT     
         CS.[SUBE_KODU],    
         CS.[ISLETME_KODU],    
@@ -146,13 +134,20 @@ RETURN
     LEFT JOIN V3RIICO..TBLCASABITEK CE   
         ON CS.CARI_KOD = CE.CARI_KOD    
     WHERE    
-        (NOT EXISTS (SELECT 1 FROM CARI_LIST) OR CS.CARI_KOD IN (SELECT CARI_KODU FROM CARI_LIST))    
-        AND (NOT EXISTS (SELECT 1 FROM SUBE_LIST) OR CS.SUBE_KODU IN (SELECT SUBE_KODU FROM SUBE_LIST))  
+        (NULLIF(REPLACE(LTRIM(RTRIM(@CariKodu)), N' ', N''), N'') IS NULL
+         OR CHARINDEX(
+             N',' + LTRIM(RTRIM(CONVERT(NVARCHAR(100), CS.CARI_KOD))) + N',',
+             N',' + REPLACE(@CariKodu, N' ', N'') + N',') > 0)
+        AND
+        (NULLIF(REPLACE(LTRIM(RTRIM(@SubeKodu)), N' ', N''), N'') IS NULL
+         OR CHARINDEX(
+             N',' + LTRIM(RTRIM(CONVERT(NVARCHAR(50), CS.SUBE_KODU))) + N',',
+             N',' + REPLACE(@SubeKodu, N' ', N'') + N',') > 0)
 );
-""");
-            migrationBuilder.Sql("""
+"""));
+            migrationBuilder.Sql(SqlServerMigrationSql.CreateOrAlterFunction("dbo.RII_FN_DEPO", """
 -- RII_FN_DEPO
-CREATE OR ALTER FUNCTION RII_FN_DEPO  
+CREATE OR ALTER FUNCTION [dbo].[RII_FN_DEPO]
 (  
     @DepoKodu NVARCHAR(MAX) = NULL,   -- A11,A12,A13 gibi  
     @SubeKodu NVARCHAR(50) = NULL  
@@ -161,11 +156,6 @@ RETURNS TABLE
 AS  
 RETURN  
 (  
-    WITH DepoList AS  
-    (  
-        SELECT TRIM(value) AS DepoKodu  
-        FROM STRING_SPLIT(@DepoKodu, ',')  
-    )  
     SELECT   
           [DEPO_KODU]  
         , [DEPO_ISMI]  
@@ -191,14 +181,16 @@ RETURN
     WHERE  
         (  
             @DepoKodu IS NULL OR @DepoKodu = ''   
-            OR D.DEPO_KODU IN (SELECT DepoKodu FROM DepoList)  
+            OR CHARINDEX(
+                N',' + LTRIM(RTRIM(CONVERT(NVARCHAR(100), D.DEPO_KODU))) + N',',
+                N',' + REPLACE(@DepoKodu, N' ', N'') + N',') > 0
         )  
         AND (@SubeKodu IS NULL OR @SubeKodu = '' OR D.SUBE_KODU = @SubeKodu)  
 );
-""");
-            migrationBuilder.Sql("""
+"""));
+            migrationBuilder.Sql(SqlServerMigrationSql.CreateOrAlterFunction("dbo.RII_FN_ESNYAPMAS", """
 -- RII_FN_ESNYAPMAS
-CREATE OR ALTER FUNCTION RII_FN_ESNYAPMAS ()    
+CREATE OR ALTER FUNCTION [dbo].[RII_FN_ESNYAPMAS] ()
 RETURNS TABLE    
 AS    
 RETURN    
@@ -211,10 +203,10 @@ RETURN
         CAST(NULL AS BIGINT) AS StockId
     FROM V3RIICO..TBLESNYAPMAS AS ESNYAPMAS
 );
-""");
-            migrationBuilder.Sql("""
+"""));
+            migrationBuilder.Sql(SqlServerMigrationSql.CreateOrAlterFunction("dbo.RII_FN_STOK", """
 -- RII_FN_STOK
-CREATE OR ALTER FUNCTION RII_FN_STOK    
+CREATE OR ALTER FUNCTION [dbo].[RII_FN_STOK]
 (    
     @StokKodu NVARCHAR(MAX) = NULL,   -- Artık birden fazla değer içerebilir  
     @SubeKodu NVARCHAR(MAX) = NULL    
@@ -223,18 +215,6 @@ RETURNS TABLE
 AS    
 RETURN    
 (  
-    WITH STOK_LIST AS   
-    (  
-        SELECT LTRIM(RTRIM(value)) AS STOK_KODU  
-        FROM STRING_SPLIT(ISNULL(@StokKodu,''), ',')  
-        WHERE LTRIM(RTRIM(value)) <> ''  
-    ),  
-    SUBE_LIST AS   
-    (  
-        SELECT LTRIM(RTRIM(value)) AS SUBE_KODU  
-        FROM STRING_SPLIT(ISNULL(@SubeKodu,''), ',')  
-        WHERE LTRIM(RTRIM(value)) <> ''  
-    )  
     SELECT       
         X.SUBE_KODU,    
         X.ISLETME_KODU,    
@@ -379,10 +359,17 @@ RETURN
     LEFT JOIN V3RIICO..TBLSTSABITEK Y WITH (NOLOCK)     
         ON X.STOK_KODU = Y.STOK_KODU    
     WHERE    
-        (NOT EXISTS (SELECT 1 FROM STOK_LIST) OR X.STOK_KODU IN (SELECT STOK_KODU FROM STOK_LIST))    
-        AND (NOT EXISTS (SELECT 1 FROM SUBE_LIST) OR X.SUBE_KODU IN (SELECT SUBE_KODU FROM SUBE_LIST))  
+        (NULLIF(REPLACE(LTRIM(RTRIM(@StokKodu)), N' ', N''), N'') IS NULL
+         OR CHARINDEX(
+             N',' + LTRIM(RTRIM(CONVERT(NVARCHAR(100), X.STOK_KODU))) + N',',
+             N',' + REPLACE(@StokKodu, N' ', N'') + N',') > 0)
+        AND
+        (NULLIF(REPLACE(LTRIM(RTRIM(@SubeKodu)), N' ', N''), N'') IS NULL
+         OR CHARINDEX(
+             N',' + LTRIM(RTRIM(CONVERT(NVARCHAR(50), X.SUBE_KODU))) + N',',
+             N',' + REPLACE(@SubeKodu, N' ', N'') + N',') > 0)
 );
-""");
+"""));
             migrationBuilder.CreateTable(
                 name: "RII_USERS",
                 columns: table => new
@@ -449,13 +436,11 @@ RETURN
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.Sql("""
-DROP FUNCTION IF EXISTS dbo.RII_FN_STOK;
-DROP FUNCTION IF EXISTS dbo.RII_FN_ESNYAPMAS;
-DROP FUNCTION IF EXISTS dbo.RII_FN_DEPO;
-DROP FUNCTION IF EXISTS dbo.RII_FN_CARI;
-DROP FUNCTION IF EXISTS dbo.RII_FN_BRANCHES;
-""");
+            migrationBuilder.Sql(SqlServerMigrationSql.DropFunction("dbo.RII_FN_STOK"));
+            migrationBuilder.Sql(SqlServerMigrationSql.DropFunction("dbo.RII_FN_ESNYAPMAS"));
+            migrationBuilder.Sql(SqlServerMigrationSql.DropFunction("dbo.RII_FN_DEPO"));
+            migrationBuilder.Sql(SqlServerMigrationSql.DropFunction("dbo.RII_FN_CARI"));
+            migrationBuilder.Sql(SqlServerMigrationSql.DropFunction("dbo.RII_FN_BRANCHES"));
             migrationBuilder.DropTable(
                 name: "RII_USER_DETAILS");
 

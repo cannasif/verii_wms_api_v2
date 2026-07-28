@@ -148,7 +148,7 @@ WHERE P.Code LIKE 'WMS.WAREHOUSE_TRANSFER.%'
   AND NOT EXISTS (SELECT 1 FROM dbo.RII_PERMISSION_GROUP_PERMISSIONS G WHERE G.PermissionDefinitionId=P.Id AND G.PermissionGroupId=1001);
 """);
 
-            migrationBuilder.Sql("""
+            migrationBuilder.Sql(SqlServerMigrationSql.CreateOrAlterFunction("dbo.RII_FN_WT_HEADER", """
 CREATE OR ALTER FUNCTION dbo.RII_FN_WT_HEADER
 (
     @CustomerCode varchar(30),
@@ -200,9 +200,9 @@ SELECT 'H' Mode,O.FISNO SiparisNo,CAST(NULL AS int) OrderID,@CustomerCode Custom
 FROM Orders O
 LEFT JOIN Allocated A ON A.ExternalDocumentNo=O.FISNO
 WHERE (O.OrderedQty-O.DeliveredQty)-ISNULL(A.PlannedQtyAllocated,0)>0;
-""");
+"""));
 
-            migrationBuilder.Sql("""
+            migrationBuilder.Sql(SqlServerMigrationSql.CreateOrAlterFunction("dbo.RII_FN_WT_LINE", """
 CREATE OR ALTER FUNCTION dbo.RII_FN_WT_LINE
 (
     @SiparisNoCsv nvarchar(max),
@@ -211,11 +211,7 @@ CREATE OR ALTER FUNCTION dbo.RII_FN_WT_LINE
 RETURNS TABLE
 AS
 RETURN
-WITH SelectedOrders AS
-(
-    SELECT LTRIM(RTRIM(value)) SiparisNo FROM STRING_SPLIT(@SiparisNoCsv,',') WHERE LTRIM(RTRIM(value))<>''
-),
-Base AS
+WITH Base AS
 (
     SELECT S.FISNO,S.SUBE_KODU BranchCode,S.DEPO_KODU TargetWh,S.PROJE_KODU ProjectCode,S.STHAR_TARIH OrderDate,
            S.INCKEYNO OrderID,S.STOK_KODU StockCode,ST.STOK_ADI StockName,
@@ -223,13 +219,16 @@ Base AS
            CASE WHEN ISNULL(S.L_YEDEK9,0)=-1 THEN ISNULL(S.STHAR_GCMIK2,0) ELSE ISNULL(S.STHAR_GCMIK,0) END OrderedQty,
            ISNULL(S.FIRMA_DOVTUT,0) DeliveredQty,CAST('' AS varchar(50)) YapKod,CAST('' AS varchar(200)) YapAcik
     FROM V3RIICO.dbo.TBLSIPATRA S WITH(NOLOCK)
-    JOIN SelectedOrders O ON O.SiparisNo=S.FISNO
     LEFT JOIN V3RIICO.dbo.TBLSIPAMAS M WITH(NOLOCK) ON M.FATIRS_NO=S.FISNO AND M.FTIRSIP=S.STHAR_FTIRSIP
     LEFT JOIN V3RIICO.dbo.TBLCASABIT C WITH(NOLOCK) ON C.CARI_KOD=COALESCE(M.CARI_KODU,S.STHAR_ACIKLAMA)
     LEFT JOIN V3RIICO.dbo.TBLSTSABIT ST WITH(NOLOCK) ON ST.STOK_KODU=S.STOK_KODU
     WHERE S.STHAR_FTIRSIP='6' AND S.STHAR_GCKOD='C' AND S.STHAR_HTUR<>'K' AND ISNULL(S.L_YEDEK9,0)<=0
       AND NOT(S.REDNEDEN=2 AND EXISTS(SELECT 1 FROM V3RIICO.dbo.TBLASORTIMAS A WITH(NOLOCK) WHERE A.ASORTIKOD=S.EKALAN1))
       AND (@BranchCode IS NULL OR @BranchCode='' OR CONVERT(varchar(10),S.SUBE_KODU)=@BranchCode)
+      AND (NULLIF(REPLACE(LTRIM(RTRIM(@SiparisNoCsv)),N' ',N''),N'') IS NULL
+           OR CHARINDEX(
+               N','+LTRIM(RTRIM(CONVERT(nvarchar(100),S.FISNO)))+N',',
+               N','+REPLACE(@SiparisNoCsv,N' ',N'')+N',')>0)
 ),
 Orders AS
 (
@@ -257,13 +256,14 @@ SELECT 'L' Mode,O.FISNO SiparisNo,O.OrderID,O.StockCode,O.StockName,O.CustomerCo
 FROM Orders O
 LEFT JOIN Allocated A ON A.ExternalDocumentNo=O.FISNO AND A.ExternalLineId=CONVERT(varchar(100),O.OrderID)
 WHERE O.RemainingHamax-ISNULL(A.PlannedQtyAllocated,0)>0;
-""");
+"""));
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.Sql("DROP FUNCTION IF EXISTS dbo.RII_FN_WT_LINE; DROP FUNCTION IF EXISTS dbo.RII_FN_WT_HEADER;");
+            migrationBuilder.Sql(SqlServerMigrationSql.DropFunction("dbo.RII_FN_WT_LINE"));
+            migrationBuilder.Sql(SqlServerMigrationSql.DropFunction("dbo.RII_FN_WT_HEADER"));
             migrationBuilder.DropTable(
                 name: "RII_WT_POLICIES");
 

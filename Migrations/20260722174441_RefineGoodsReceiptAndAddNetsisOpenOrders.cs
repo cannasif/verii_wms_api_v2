@@ -41,7 +41,7 @@ namespace verii_wms_api_v2.Migrations
                 unique: true,
                 filter: "[IsDeleted] = 0 AND [Status] <> N'Unassigned' AND [Status] <> N'Rejected'");
 
-            migrationBuilder.Sql("""
+            migrationBuilder.Sql(SqlServerMigrationSql.CreateOrAlterFunction("dbo.RII_FN_GR_OPENORDERS_HEADER", """
 CREATE OR ALTER FUNCTION dbo.RII_FN_GR_OPENORDERS_HEADER
 (
     @CustomerCode VARCHAR(30),
@@ -120,9 +120,9 @@ SELECT
 FROM OrderTotals AS H
 LEFT JOIN ActiveAllocations AS A ON A.ExternalDocumentNo = H.FISNO
 WHERE (H.OrderedQty - H.DeliveredQty) - ISNULL(A.PlannedQtyAllocated, 0) > 0;
-""");
+"""));
 
-            migrationBuilder.Sql("""
+            migrationBuilder.Sql(SqlServerMigrationSql.CreateOrAlterFunction("dbo.RII_FN_GR_OPENORDERS_LINE", """
 CREATE OR ALTER FUNCTION dbo.RII_FN_GR_OPENORDERS_LINE
 (
     @SiparisNoCsv NVARCHAR(MAX) = NULL,
@@ -132,13 +132,7 @@ CREATE OR ALTER FUNCTION dbo.RII_FN_GR_OPENORDERS_LINE
 RETURNS TABLE
 AS
 RETURN
-WITH OrderNumbers AS
-(
-    SELECT DISTINCT CONVERT(VARCHAR(50), LTRIM(RTRIM(value))) COLLATE DATABASE_DEFAULT AS SiparisNo
-    FROM STRING_SPLIT(ISNULL(@SiparisNoCsv, N''), N',')
-    WHERE LTRIM(RTRIM(value)) <> N''
-),
-OrderRows AS
+WITH OrderRows AS
 (
     SELECT
         S.FISNO AS FisNo,
@@ -168,8 +162,10 @@ OrderRows AS
       AND (CASE WHEN ISNULL(S.L_YEDEK9, 0) = -1 THEN S.STHAR_GCMIK2 ELSE S.STHAR_GCMIK END) - S.FIRMA_DOVTUT > 0
       AND (@CustomerCode IS NULL OR @CustomerCode = '' OR COALESCE(M.CARI_KODU, S.STHAR_ACIKLAMA) = @CustomerCode)
       AND (@BranchCode IS NULL OR @BranchCode = '' OR S.SUBE_KODU = @BranchCode)
-      AND (@SiparisNoCsv IS NULL OR LTRIM(RTRIM(@SiparisNoCsv)) = '' OR EXISTS
-          (SELECT 1 FROM OrderNumbers AS O WHERE O.SiparisNo = S.FISNO))
+      AND (NULLIF(REPLACE(LTRIM(RTRIM(@SiparisNoCsv)), N' ', N''), N'') IS NULL
+           OR CHARINDEX(
+               N',' + LTRIM(RTRIM(CONVERT(NVARCHAR(100), S.FISNO))) + N',',
+               N',' + REPLACE(@SiparisNoCsv, N' ', N'') + N',') > 0)
 ),
 OrderLines AS
 (
@@ -219,14 +215,14 @@ SELECT
 FROM OrderLines AS X
 LEFT JOIN ActiveAllocations AS A ON A.ExternalLineId = CONVERT(NVARCHAR(100), X.OrderID)
 WHERE X.RemainingHamax - ISNULL(A.PlannedQtyAllocated, 0) > 0;
-""");
+"""));
         }
 
         /// <inheritdoc />
         protected override void Down(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.Sql("DROP FUNCTION IF EXISTS dbo.RII_FN_GR_OPENORDERS_LINE;");
-            migrationBuilder.Sql("DROP FUNCTION IF EXISTS dbo.RII_FN_GR_OPENORDERS_HEADER;");
+            migrationBuilder.Sql(SqlServerMigrationSql.DropFunction("dbo.RII_FN_GR_OPENORDERS_LINE"));
+            migrationBuilder.Sql(SqlServerMigrationSql.DropFunction("dbo.RII_FN_GR_OPENORDERS_HEADER"));
 
             migrationBuilder.DropCheckConstraint(
                 name: "CK_RII_GR_TASK_LINE_QUANTITY",
