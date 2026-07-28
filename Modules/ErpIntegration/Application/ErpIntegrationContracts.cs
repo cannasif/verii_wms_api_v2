@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Hangfire;
 using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 using verii_wms_api_v2.Modules.GoodsReceipt.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
@@ -93,6 +94,7 @@ public interface IGoodsReceiptErpAutomation
 
 public interface IGoodsReceiptErpPostingJob
 {
+    [DisableConcurrentExecution(timeoutInSeconds: 300)]
     Task PostIfEligibleAsync(
         long goodsReceiptId,
         long actorUserId,
