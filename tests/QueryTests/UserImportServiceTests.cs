@@ -46,10 +46,10 @@ public sealed class UserImportServiceTests
         var audit = new RecordingAuditWriter();
         var service = CreateService(db, audit);
         await using var workbook = Workbook(
-            ["new.user", "new.user@firma.com", "TemporaryPass!2026", "Yeni", "Kullanıcı", "", "User", "true", ""],
-            ["EXISTING.USER", "different@firma.com", "TemporaryPass!2026", "", "", "", "Admin", "true", ""],
-            ["another.user", "not-an-email", "TemporaryPass!2026", "", "", "", "User", "true", ""],
-            ["duplicate.email", "NEW.USER@FIRMA.COM", "TemporaryPass!2026", "", "", "", "User", "true", ""]);
+            ["new.user", "new.user@firma.com", "TempPass!2026", "Yeni", "Kullanıcı", "", "User", "true", ""],
+            ["EXISTING.USER", "different@firma.com", "TempPass!2026", "", "", "", "Admin", "true", ""],
+            ["another.user", "not-an-email", "TempPass!2026", "", "", "", "User", "true", ""],
+            ["duplicate.email", "NEW.USER@FIRMA.COM", "TempPass!2026", "", "", "", "User", "true", ""]);
 
         var result = await service.ImportAsync(workbook, CancellationToken.None);
 
@@ -67,9 +67,10 @@ public sealed class UserImportServiceTests
 
         var created = await db.Users.SingleAsync(user => user.Username == "new.user");
         Assert.Equal("new.user@firma.com", created.Email);
+        Assert.Equal("TempPass!2026".Length, created.PasswordLength);
         Assert.True(created.IsActive);
         Assert.Single(audit.Entries);
-        Assert.DoesNotContain("TemporaryPass!2026", string.Join(" ", result.Rows.Select(row => row.Message)));
+        Assert.DoesNotContain("TempPass!2026", string.Join(" ", result.Rows.Select(row => row.Message)));
     }
 
     [Fact]
@@ -78,7 +79,7 @@ public sealed class UserImportServiceTests
         await using var db = CreateDbContext();
         var service = CreateService(db, new RecordingAuditWriter());
         await using var workbook = Workbook(
-            [["new.user", "new.user@firma.com", "TemporaryPass!2026", "", "", "", "User", "true", ""]],
+            [["new.user", "new.user@firma.com", "TempPass!2026", "", "", "", "User", "true", ""]],
             ["Kullanıcı Adı", .. Headers.Skip(1)]);
 
         var exception = await Assert.ThrowsAsync<AppException>(
@@ -92,7 +93,8 @@ public sealed class UserImportServiceTests
         new(
             new UnitOfWork(db, new HttpContextAccessor()),
             audit,
-            new NoOpSessionValidator());
+            new NoOpSessionValidator(),
+            new FixedPasswordPolicyService());
 
     private static WmsDbContext CreateDbContext()
     {
@@ -136,5 +138,17 @@ public sealed class UserImportServiceTests
     {
         public Task<bool> IsValidAsync(long userId, int tokenVersion) => Task.FromResult(true);
         public void Invalidate(long userId) { }
+    }
+
+    private sealed class FixedPasswordPolicyService : IPasswordPolicyService
+    {
+        public Task<PasswordPolicyResponse> GetAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new PasswordPolicyResponse(6, 15));
+
+        public Task ValidateAsync(string? password, CancellationToken cancellationToken = default)
+        {
+            IdentitySecurity.ValidatePassword(password, 6);
+            return Task.CompletedTask;
+        }
     }
 }

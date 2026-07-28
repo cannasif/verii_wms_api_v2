@@ -9,6 +9,7 @@ public static class IdentityModule
         .AddMemoryCache()
         .AddSingleton<IIdentitySessionValidator, IdentitySessionValidator>()
         .AddScoped<IIdentityService, IdentityService>()
+        .AddScoped<IPasswordPolicyService, PasswordPolicyService>()
         .AddScoped<IUserProfileService, UserProfileService>()
         .AddSingleton<ITokenIssuer, JwtTokenIssuer>()
         .AddSingleton<IProfileImageStorage, ProfileImageStorage>();

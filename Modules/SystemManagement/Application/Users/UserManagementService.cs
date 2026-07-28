@@ -14,7 +14,8 @@ namespace verii_wms_api_v2.Modules.SystemManagement.Application.Users;
 public sealed partial class UserManagementService(
     IUnitOfWork unitOfWork,
     IAuditLogWriter audit,
-    IIdentitySessionValidator sessionValidator) : IUserManagementService
+    IIdentitySessionValidator sessionValidator,
+    IPasswordPolicyService passwordPolicy) : IUserManagementService
 {
     private static readonly IReadOnlyDictionary<string, string> AllowedRoles = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
     { ["User"] = "User", ["Manager"] = "Manager", ["Admin"] = "Admin" };
@@ -50,7 +51,7 @@ public sealed partial class UserManagementService(
         return await unitOfWork.ExecuteInTransactionAsync<object>(async ct =>
         {
             var groupIds = request.PermissionGroupIds.Distinct().OrderBy(x => x).ToList();
-            var user = new User { Username = request.Username.Trim(), Email = request.Email.Trim().ToLowerInvariant(), Role = AllowedRoles[request.Role.Trim()], IsActive = request.IsActive, PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password) };
+            var user = new User { Username = request.Username.Trim(), Email = request.Email.Trim().ToLowerInvariant(), Role = AllowedRoles[request.Role.Trim()], IsActive = request.IsActive, PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password), PasswordLength = request.Password.Length };
             await Users.AddAsync(user, ct); await unitOfWork.SaveChangesAsync(ct);
             await Details.AddAsync(new UserDetail { UserId = user.Id, FirstName = request.FirstName?.Trim() ?? "", LastName = request.LastName?.Trim() ?? "", Phone = Normalize(request.PhoneNumber), CreatedDate = DateTime.UtcNow }, ct);
             await SetGroupsAsync(user.Id, groupIds, ct); await unitOfWork.SaveChangesAsync(ct);
@@ -83,6 +84,7 @@ public sealed partial class UserManagementService(
             if (!string.IsNullOrWhiteSpace(request.Password))
             {
                 user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.Password);
+                user.PasswordLength = request.Password.Length;
                 user.TokenVersion++;
                 invalidateSession = true;
                 await RevokeSessionsAsync(user.Id, "PasswordChangedByAdministrator", ct);
@@ -118,7 +120,7 @@ public sealed partial class UserManagementService(
         if (username.Length is < 3 or > 100 || !UsernamePattern().IsMatch(username)) throw AppException.BadRequest("Kullanıcı adı 3-100 karakter olmalı ve yalnızca harf, rakam, nokta, tire veya alt çizgi içermelidir.");
         if (email.Length > 200 || !MailAddress.TryCreate(email, out _)) throw AppException.BadRequest("Geçerli bir e-posta adresi giriniz.");
         if (passwordRequired && string.IsNullOrWhiteSpace(password)) throw AppException.BadRequest("Şifre zorunludur.");
-        if (!string.IsNullOrEmpty(password)) IdentitySecurity.ValidatePassword(password);
+        if (!string.IsNullOrEmpty(password)) await passwordPolicy.ValidateAsync(password, ct);
         if (firstName?.Length > 100 || lastName?.Length > 100 || phone?.Length > 40) throw AppException.BadRequest("Profil alanlarının uzunluğu geçersiz.");
         if (!AllowedRoles.ContainsKey(role) && !(allowSuperAdmin && role.Equals("superadmin", StringComparison.OrdinalIgnoreCase))) throw AppException.BadRequest("Geçersiz kullanıcı rolü.");
         if (await Users.AnyAsync(x => x.Id != currentId && x.Username == username, ct)) throw AppException.Conflict("Bu kullanıcı adı zaten kullanılıyor.");

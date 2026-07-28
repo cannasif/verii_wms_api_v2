@@ -10,6 +10,7 @@ public sealed class IdentityService(
     IUnitOfWork unitOfWork,
     ITokenIssuer tokenIssuer,
     IIdentitySessionValidator sessionValidator,
+    IPasswordPolicyService passwordPolicy,
     IIdentityEmailSender emailSender,
     IConfiguration configuration,
     ILogger<IdentityService> logger) : IIdentityService
@@ -170,7 +171,7 @@ public sealed class IdentityService(
 
     public async Task ResetPasswordAsync(ResetPasswordRequest request, CancellationToken cancellationToken = default)
     {
-        IdentitySecurity.ValidatePassword(request.NewPassword);
+        await passwordPolicy.ValidateAsync(request.NewPassword, cancellationToken);
         if (string.IsNullOrWhiteSpace(request.Token)) throw InvalidResetToken();
         var tokenHash = IdentitySecurity.HashToken(request.Token);
 
@@ -183,6 +184,7 @@ public sealed class IdentityService(
                 return null;
 
             token.User.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+            token.User.PasswordLength = request.NewPassword.Length;
             token.User.TokenVersion++;
 
             var userTokens = await ResetTokens.Query(tracking: true)
@@ -200,7 +202,7 @@ public sealed class IdentityService(
 
     public async Task<AuthSessionResult> ChangePasswordAsync(long userId, ChangePasswordRequest request, ClientContext client, CancellationToken cancellationToken = default)
     {
-        IdentitySecurity.ValidatePassword(request.NewPassword);
+        await passwordPolicy.ValidateAsync(request.NewPassword, cancellationToken);
         var result = await unitOfWork.ExecuteInTransactionAsync(async ct =>
         {
             var user = await Users.Query(tracking: true).Include(x => x.Detail)
@@ -211,6 +213,7 @@ public sealed class IdentityService(
 
             var now = DateTime.UtcNow;
             user.PasswordHash = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+            user.PasswordLength = request.NewPassword.Length;
             user.TokenVersion++;
             await RevokeAllSessionsAsync(user.Id, "PasswordChanged", client, now, ct);
             var session = await CreateSessionAsync(user, Guid.NewGuid(), client, ct);

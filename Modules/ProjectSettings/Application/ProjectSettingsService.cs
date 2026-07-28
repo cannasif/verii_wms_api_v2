@@ -1,5 +1,8 @@
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
+using verii_wms_api_v2.Modules.Identity.Application;
+using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.ProjectSettings.Domain;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -15,6 +18,7 @@ public sealed class ProjectSettingsService(IUnitOfWork unitOfWork, IMemoryCache 
     private static readonly HashSet<string> YearFormats = ["yyyy", "yy"];
     private static readonly HashSet<string> TimeZones = ["Europe/Istanbul", "UTC", "Europe/Berlin", "America/New_York"];
     private IGenericRepository<ProjectSetting> Settings => unitOfWork.Repository<ProjectSetting>();
+    private IGenericRepository<User> Users => unitOfWork.Repository<User>();
 
     public async Task<ProjectSettingsResponse> GetAsync(CancellationToken cancellationToken = default)
     {
@@ -29,6 +33,14 @@ public sealed class ProjectSettingsService(IUnitOfWork unitOfWork, IMemoryCache 
     public async Task<ProjectSettingsResponse> UpdateAsync(UpdateProjectSettingsRequest request, CancellationToken cancellationToken = default)
     {
         var normalized = ValidateAndNormalize(request);
+        var shortestPasswordLength = await Users.Query()
+            .Where(x => x.PasswordLength > 0)
+            .Select(x => (int?)x.PasswordLength)
+            .MinAsync(cancellationToken);
+        if (shortestPasswordLength.HasValue && normalized.PasswordMinimumLength > shortestPasswordLength.Value)
+            throw AppException.BadRequest(
+                $"Minimum şifre uzunluğu mevcut en kısa şifre nedeniyle en fazla {shortestPasswordLength.Value} olabilir.");
+
         var entity = await Settings.FirstOrDefaultAsync(x => x.SettingKey == "GLOBAL", tracking: true, cancellationToken);
         if (entity is null)
         {
@@ -43,13 +55,13 @@ public sealed class ProjectSettingsService(IUnitOfWork unitOfWork, IMemoryCache 
         entity.YearFormat = normalized.YearFormat;
         entity.TimeZoneId = normalized.TimeZoneId;
         entity.SendSerialsToErp = normalized.SendSerialsToErp;
-        Settings.Update(entity);
+        entity.PasswordMinimumLength = normalized.PasswordMinimumLength;
         await unitOfWork.SaveChangesAsync(cancellationToken);
         var response = ToResponse(entity);
         cache.Remove(CacheKey);
         cache.Set(CacheKey, response, TimeSpan.FromMinutes(5));
         await audit.WriteAsync(new AuditLogWriteEntry("project-settings.update", "ProjectSetting", entity.Id.ToString(), "Succeeded", "project-settings",
-            OldValues: old, NewValues: response, ChangedFields: ["NumberLocale", "DecimalPlaces", "DateFormat", "TimeFormat", "YearFormat", "TimeZoneId", "SendSerialsToErp"]), cancellationToken);
+            OldValues: old, NewValues: response, ChangedFields: ["NumberLocale", "DecimalPlaces", "DateFormat", "TimeFormat", "YearFormat", "TimeZoneId", "SendSerialsToErp", "PasswordMinimumLength"]), cancellationToken);
         return response;
     }
 
@@ -66,11 +78,15 @@ public sealed class ProjectSettingsService(IUnitOfWork unitOfWork, IMemoryCache 
         if (!TimeFormats.Contains(time)) throw AppException.BadRequest("Desteklenmeyen saat formatı.");
         if (!YearFormats.Contains(year)) throw AppException.BadRequest("Desteklenmeyen yıl formatı.");
         if (!TimeZones.Contains(zone)) throw AppException.BadRequest("Desteklenmeyen zaman dilimi.");
-        return new(locale, request.DecimalPlaces, date, time, year, zone, request.SendSerialsToErp);
+        if (request.PasswordMinimumLength is < IdentitySecurity.MinimumConfigurablePasswordLength or > IdentitySecurity.MaximumPasswordLength)
+            throw AppException.BadRequest(
+                $"Minimum şifre uzunluğu {IdentitySecurity.MinimumConfigurablePasswordLength}-{IdentitySecurity.MaximumPasswordLength} arasında olmalıdır.");
+        return new(locale, request.DecimalPlaces, date, time, year, zone, request.SendSerialsToErp, request.PasswordMinimumLength);
     }
 
     private static ProjectSetting DefaultEntity() => new() { SettingKey = "GLOBAL", BranchCode = "0" };
     private static ProjectSettingsResponse ToResponse(ProjectSetting x) => new(x.Id, x.NumberLocale, x.DecimalPlaces,
-        x.DateFormat, x.TimeFormat, x.YearFormat, x.TimeZoneId, x.SendSerialsToErp,
+        x.DateFormat, x.TimeFormat, x.YearFormat, x.TimeZoneId, x.SendSerialsToErp, x.PasswordMinimumLength,
+        IdentitySecurity.MaximumPasswordLength,
         x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate);
 }

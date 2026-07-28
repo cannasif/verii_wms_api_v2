@@ -119,7 +119,7 @@ public sealed class UserImportValidationTests
     }
 
     private static UserManagementService ServiceWithoutDatabase() =>
-        new(new ThrowingUnitOfWork(), new NoopAuditWriter(), new NoopSessionValidator());
+        new(new ThrowingUnitOfWork(), new NoopAuditWriter(), new NoopSessionValidator(), new FixedPasswordPolicyService());
 
     private static UserManagementController Controller(IUserManagementService service) =>
         new(service, new AllowAllPermissions())
@@ -168,6 +168,18 @@ public sealed class UserImportValidationTests
             throw new NotSupportedException();
         public Task<bool> DeactivateAsync(long id, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+    }
+
+    private sealed class FixedPasswordPolicyService : IPasswordPolicyService
+    {
+        public Task<PasswordPolicyResponse> GetAsync(CancellationToken cancellationToken = default) =>
+            Task.FromResult(new PasswordPolicyResponse(6, 15));
+
+        public Task ValidateAsync(string? password, CancellationToken cancellationToken = default)
+        {
+            IdentitySecurity.ValidatePassword(password, 6);
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class ThrowingUnitOfWork : IUnitOfWork

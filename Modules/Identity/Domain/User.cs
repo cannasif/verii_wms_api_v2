@@ -5,6 +5,7 @@ public sealed class User
     public string Username { get; set; } = "";
     public string Email { get; set; } = "";
     public string PasswordHash { get; set; } = "";
+    public int PasswordLength { get; set; } = 15;
     public string Role { get; set; } = "User";
     public bool IsActive { get; set; } = true;
     public DateTime? LastLoginAt { get; set; }

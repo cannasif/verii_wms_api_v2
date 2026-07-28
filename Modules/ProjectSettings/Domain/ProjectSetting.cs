@@ -12,4 +12,5 @@ public sealed class ProjectSetting : BaseEntity
     public string YearFormat { get; set; } = "yyyy";
     public string TimeZoneId { get; set; } = "Europe/Istanbul";
     public bool SendSerialsToErp { get; set; } = true;
+    public int PasswordMinimumLength { get; set; } = 6;
 }

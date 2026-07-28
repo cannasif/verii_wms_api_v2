@@ -209,8 +209,9 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             entity.ToTable("RII_USERS"); entity.HasKey(x => x.Id); entity.Property(x => x.Id).ValueGeneratedOnAdd();
             entity.Property(x => x.Username).HasMaxLength(100).IsRequired(); entity.Property(x => x.Email).HasMaxLength(200).IsRequired();
             entity.Property(x => x.PasswordHash).HasMaxLength(500).IsRequired(); entity.Property(x => x.Role).HasMaxLength(50).IsRequired();
+            entity.Property(x => x.PasswordLength).HasDefaultValue(15).IsRequired();
             entity.Property(x => x.TokenVersion).HasDefaultValue(1).IsRequired(); entity.HasIndex(x => x.Username).IsUnique(); entity.HasIndex(x => x.Email).IsUnique();
-            entity.HasData(new User { Id = 1, Username = "admin", Email = "admin@v3rii.com", PasswordHash = "$2a$11$/miyTaLTVkU0keOJabjkQ.bKF4Rb6a2jhuLWDz67I4LLxjwWQ6IJW", Role = "superadmin", IsActive = true });
+            entity.HasData(new User { Id = 1, Username = "admin", Email = "admin@v3rii.com", PasswordHash = "$2a$11$/miyTaLTVkU0keOJabjkQ.bKF4Rb6a2jhuLWDz67I4LLxjwWQ6IJW", PasswordLength = 15, Role = "superadmin", IsActive = true });
         });
         modelBuilder.Entity<UserDetail>(entity =>
         {
@@ -455,7 +456,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             Segment(12,4,1,BarcodePolicyField.DocumentNo,true), DateSegment(13,4,2), Sequence(14,4,3),
             Segment(15,5,1,BarcodePolicyField.DocumentNo,true), Sequence(16,5,2));
         modelBuilder.Entity<ProjectSetting>().HasData(new ProjectSetting { Id=1, BranchCode="0", SettingKey="GLOBAL", NumberLocale="tr-TR",
-            DecimalPlaces=2, DateFormat="dd.MM.yyyy", TimeFormat="HH:mm", YearFormat="yyyy", TimeZoneId="Europe/Istanbul", CreatedDate=seedDate });
+            DecimalPlaces=2, DateFormat="dd.MM.yyyy", TimeFormat="HH:mm", YearFormat="yyyy", TimeZoneId="Europe/Istanbul",
+            PasswordMinimumLength=6, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionDefinition>().HasData(
             new PermissionDefinition { Id=2100, BranchCode="0", Code="WMS.WAREHOUSE_INBOUND.VIEW", Name="Ambar girişlerini görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2101, BranchCode="0", Code="WMS.WAREHOUSE_INBOUND.CREATE", Name="Ambar girişi oluştur", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },

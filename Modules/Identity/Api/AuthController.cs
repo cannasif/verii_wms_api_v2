@@ -8,7 +8,10 @@ using verii_wms_api_v2.Shared;
 namespace verii_wms_api_v2.Modules.Identity.Api;
 
 [ApiController, Route("api/auth"), ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
-public sealed class AuthController(IIdentityService identityService, IWebHostEnvironment environment) : ControllerBase
+public sealed class AuthController(
+    IIdentityService identityService,
+    IPasswordPolicyService passwordPolicy,
+    IWebHostEnvironment environment) : ControllerBase
 {
     private string RefreshCookieName => environment.IsDevelopment() ? "wms.refresh.dev" : "__Host-wms-refresh";
 
@@ -19,6 +22,10 @@ public sealed class AuthController(IIdentityService identityService, IWebHostEnv
         SetRefreshCookie(session);
         return Ok(ApiResponse<AuthTokenResponse>.Ok(session.Response, "Giriş başarılı."));
     }
+
+    [AllowAnonymous, HttpGet("password-policy")]
+    public async Task<IActionResult> PasswordPolicy(CancellationToken cancellationToken) =>
+        Ok(ApiResponse<PasswordPolicyResponse>.Ok(await passwordPolicy.GetAsync(cancellationToken)));
 
     [AllowAnonymous, EnableRateLimiting("identity-refresh"), HttpPost("refresh")]
     public async Task<IActionResult> Refresh(CancellationToken cancellationToken)
