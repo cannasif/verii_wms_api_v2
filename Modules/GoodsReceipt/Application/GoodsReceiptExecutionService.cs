@@ -32,7 +32,7 @@ public sealed class GoodsReceiptExecutionService(
     ISerialNumberPolicyResolver serialPolicy,
     IWarehouseBarcodeResolver barcodeResolver,
     IAuditLogWriter audit,
-    IGoodsReceiptErpAutomation erpAutomation) : IGoodsReceiptExecutionService
+    IGoodsReceiptErpPostingCoordinator erpPosting) : IGoodsReceiptExecutionService
 {
     public async Task<ReceiveGoodsReceiptTaskResult> ReceiveAsync(long taskId, ReceiveGoodsReceiptTaskRequest request,
         long actor, CancellationToken ct = default)
@@ -275,7 +275,7 @@ public sealed class GoodsReceiptExecutionService(
 
             return Result(execution, task, taskLine, movement.OperationId, inspection?.Id, label?.Id, false);
         }, ct, IsolationLevel.Serializable);
-        erpAutomation.Enqueue(result.GoodsReceiptId, actor);
+        await erpPosting.PostIfEligibleAsync(result.GoodsReceiptId, actor, ct);
         return result;
     }
 

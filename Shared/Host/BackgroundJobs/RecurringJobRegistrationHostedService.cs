@@ -73,9 +73,6 @@ public sealed class RecurringJobRegistrationHostedService(
             "packing-print-queue",
             service => service.DispatchPendingAsync(CancellationToken.None),
             Cron.Minutely);
-        recurringJobs.AddOrUpdate<IGoodsReceiptErpPostingJob>(
-            "goods-receipt-automatic-erp-posting",
-            service => service.DispatchPendingAsync(CancellationToken.None),
-            Cron.Minutely);
+        recurringJobs.RemoveIfExists("goods-receipt-automatic-erp-posting");
     }
 }

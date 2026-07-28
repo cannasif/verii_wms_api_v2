@@ -1,5 +1,4 @@
 using System.Text.Json.Serialization;
-using Hangfire;
 using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 using verii_wms_api_v2.Modules.GoodsReceipt.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
@@ -87,20 +86,12 @@ public interface IErpPostingService
         CancellationToken cancellationToken);
 }
 
-public interface IGoodsReceiptErpAutomation
+public interface IGoodsReceiptErpPostingCoordinator
 {
-    void Enqueue(long goodsReceiptId, long actorUserId);
-}
-
-public interface IGoodsReceiptErpPostingJob
-{
-    [DisableConcurrentExecution(timeoutInSeconds: 300)]
-    Task PostIfEligibleAsync(
+    Task<ErpPostingResult?> PostIfEligibleAsync(
         long goodsReceiptId,
         long actorUserId,
         CancellationToken cancellationToken);
-
-    Task DispatchPendingAsync(CancellationToken cancellationToken);
 }
 
 public static class GoodsReceiptErpPostingPolicyEvaluator

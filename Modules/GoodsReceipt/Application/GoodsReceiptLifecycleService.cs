@@ -20,7 +20,7 @@ public sealed class GoodsReceiptLifecycleService(
     IUnitOfWork uow,
     IStockMovementService movements,
     IAuditLogWriter audit,
-    IGoodsReceiptErpAutomation erpAutomation) : IGoodsReceiptLifecycleService
+    IGoodsReceiptErpPostingCoordinator erpPosting) : IGoodsReceiptLifecycleService
 {
     private IGenericRepository<GoodsReceiptHeader> Headers => uow.Repository<GoodsReceiptHeader>();
     private IGenericRepository<GoodsReceiptStatusHistory> Histories => uow.Repository<GoodsReceiptStatusHistory>();
@@ -58,7 +58,7 @@ public sealed class GoodsReceiptLifecycleService(
             await WriteAudit("approve", header, null, 0, actor, ct);
             return Result(header, null, 0, false);
         }, cancellationToken, IsolationLevel.Serializable);
-        erpAutomation.Enqueue(result.Id, actor);
+        await erpPosting.PostIfEligibleAsync(result.Id, actor, cancellationToken);
         return result;
     }
 
@@ -118,7 +118,7 @@ public sealed class GoodsReceiptLifecycleService(
             await WriteAudit("short-close", header, null, affected, actor, ct);
             return Result(header, null, affected, false);
         }, cancellationToken, IsolationLevel.Serializable);
-        erpAutomation.Enqueue(result.Id, actor);
+        await erpPosting.PostIfEligibleAsync(result.Id, actor, cancellationToken);
         return result;
     }
 

@@ -23,7 +23,7 @@ public sealed class QualityService(
     IUnitOfWork uow,
     IAuditLogWriter audit,
     IStockMovementService stockMovement,
-    IGoodsReceiptErpAutomation erpAutomation) : IQualityService, IQualityPolicyResolver
+    IGoodsReceiptErpPostingCoordinator erpPosting) : IQualityService, IQualityPolicyResolver
 {
     private IGenericRepository<QualityParameter> Parameters => uow.Repository<QualityParameter>();
     private IGenericRepository<QualityRule> Rules => uow.Repository<QualityRule>();
@@ -250,7 +250,7 @@ public sealed class QualityService(
                 ChangedFields: ["Status", "Lines", "InventoryStatus"]), token);
             return gr.Id;
         }, ct);
-        erpAutomation.Enqueue(goodsReceiptId, actor);
+        await erpPosting.PostIfEligibleAsync(goodsReceiptId, actor, ct);
     }
 
     private Task DecideInspectionLegacyAsync(long id, DecideQualityInspectionRequest request,long actor,CancellationToken ct=default)

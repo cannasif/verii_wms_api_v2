@@ -41,7 +41,7 @@ public sealed class GoodsReceiptOperationsService(
     IStockMovementService stockMovementService,
     IGoodsReceiptRoutingService routing,
     IAuditLogWriter audit,
-    IGoodsReceiptErpAutomation erpAutomation) : IGoodsReceiptOperationsService
+    IGoodsReceiptErpPostingCoordinator erpPosting) : IGoodsReceiptOperationsService
 {
     private IGenericRepository<GoodsReceiptHeader> Headers => unitOfWork.Repository<GoodsReceiptHeader>();
     private IGenericRepository<GoodsReceiptExecution> Executions => unitOfWork.Repository<GoodsReceiptExecution>();
@@ -55,7 +55,7 @@ public sealed class GoodsReceiptOperationsService(
         CancellationToken cancellationToken = default)
     {
         var result = await CreateAsync(request, actorUserId, direct: true, cancellationToken);
-        erpAutomation.Enqueue(result.Id, actorUserId);
+        await erpPosting.PostIfEligibleAsync(result.Id, actorUserId, cancellationToken);
         return result;
     }
 
