@@ -70,6 +70,20 @@ public sealed class GoodsReceiptDocumentValidationTests
             GoodsReceiptExecutionMode.SupplierLabel);
     }
 
+    [Theory]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, false)]
+    public void Only_orderless_direct_receipt_requires_unplanned_permission(
+        bool direct,
+        bool hasOrderSources,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            GoodsReceiptOperationsService.RequiresUnplannedReceiptPermission(direct, hasOrderSources));
+    }
+
     [Fact]
     public void Quality_gated_receipt_cannot_be_received_directly_into_putaway_location()
     {

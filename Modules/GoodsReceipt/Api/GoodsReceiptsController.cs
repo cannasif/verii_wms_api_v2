@@ -28,13 +28,16 @@ public sealed class GoodsReceiptsController(
     IStringLocalizer<GoodsReceiptResource> localizer) : ControllerBase
 {
     [HttpGet("warehouse-access")]
-    public async Task<IActionResult> GetWarehouseAccess([FromQuery] string branchCode, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetWarehouseAccess(
+        [FromHeader(Name = "X-Branch-Code")] string? branchCode,
+        CancellationToken cancellationToken)
     {
         await RequireAny(["WMS.GOODS_RECEIPT.CREATE", "WMS.GOODS_RECEIPT.RECEIVE"], cancellationToken);
-        if (string.IsNullOrWhiteSpace(branchCode))
+        var currentBranchCode = branchCode?.Trim();
+        if (string.IsNullOrWhiteSpace(currentBranchCode))
             throw AppException.BadRequest("Şube kodu zorunludur.");
         var access = await UserWarehouseAccessService.ResolveAsync(
-            unitOfWork, CurrentUserId(), branchCode.Trim(), cancellationToken);
+            unitOfWork, CurrentUserId(), currentBranchCode, cancellationToken);
         return Ok(ApiResponse<UserWarehouseAccess>.Ok(access));
     }
 

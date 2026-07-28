@@ -8,7 +8,8 @@ public sealed record ManualGoodsReceiptLineRequest(
     long StockId, long? YapCodeId, decimal Quantity, string? UnitCode,
     string? LotNo, string? SerialNo, DateOnly? ManufacturingDate, DateOnly? ExpirationDate,
     string? ScannedBarcode, long? GoodsReceiptLabelId, string? Description,
-    long? TargetWarehouseId, long? ReceivingLocationId);
+    long? TargetWarehouseId, long? ReceivingLocationId,
+    string? SourceOrderNumber = null, int? SourceOrderId = null);
 
 public sealed record CreateManualGoodsReceiptRequest(
     Guid IdempotencyKey, string BranchCode, long DocumentSeriesId, long SupplierId,

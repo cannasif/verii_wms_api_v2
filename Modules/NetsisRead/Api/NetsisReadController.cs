@@ -48,7 +48,17 @@ public sealed class NetsisReadController(INetsisReadService service, ILogger<Net
     public async Task<ActionResult<ApiResponse<IReadOnlyList<GoodsReceiptOpenOrderHeaderDto>>>> GoodsReceiptOpenOrderHeaders([FromQuery] string customerCode, [FromQuery] string? branchCode, CancellationToken ct) { await Require(ct); return await Execute(() => service.GetGoodsReceiptOpenOrderHeadersAsync(customerCode, branchCode, ct)); }
 
     [HttpGet("goods-receipt/open-orders/lines")]
-    public async Task<ActionResult<ApiResponse<IReadOnlyList<GoodsReceiptOpenOrderLineDto>>>> GoodsReceiptOpenOrderLines([FromQuery] string? orderNumbersCsv, [FromQuery] string? customerCode, [FromQuery] string? branchCode, CancellationToken ct) { await Require(ct); return await Execute(() => service.GetGoodsReceiptOpenOrderLinesAsync(orderNumbersCsv, customerCode, branchCode, ct)); }
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<GoodsReceiptOpenOrderLineDto>>>> GoodsReceiptOpenOrderLines(
+        [FromQuery] string? orderNumbersCsv,
+        [FromQuery] string? customerCode,
+        [FromQuery] string? branchCode,
+        [FromQuery] bool includeUnavailable,
+        CancellationToken ct)
+    {
+        await Require(ct);
+        return await Execute(() => service.GetGoodsReceiptOpenOrderLinesAsync(
+            orderNumbersCsv, customerCode, branchCode, includeUnavailable, ct));
+    }
 
     [HttpGet("warehouse-transfer/open-orders/headers")]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<WarehouseTransferOpenOrderHeaderDto>>>> WarehouseTransferOpenOrderHeaders([FromQuery]string customerCode,[FromQuery]string? branchCode,CancellationToken ct){await Require(ct);return await Execute(()=>service.GetWarehouseTransferOpenOrderHeadersAsync(customerCode,branchCode,ct));}

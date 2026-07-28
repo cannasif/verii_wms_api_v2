@@ -64,14 +64,19 @@ public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INet
             ct, Parameter("@customerCode", customerCode), Parameter("@branchCode", Normalize(branchCode)));
     }
 
-    public async Task<IReadOnlyList<GoodsReceiptOpenOrderLineDto>> GetGoodsReceiptOpenOrderLinesAsync(string? orderNumbersCsv, string? customerCode, string? branchCode, CancellationToken ct)
+    public async Task<IReadOnlyList<GoodsReceiptOpenOrderLineDto>> GetGoodsReceiptOpenOrderLinesAsync(
+        string? orderNumbersCsv,
+        string? customerCode,
+        string? branchCode,
+        bool includeUnavailable,
+        CancellationToken ct)
     {
         orderNumbersCsv = Normalize(orderNumbersCsv);
         customerCode = Normalize(customerCode);
         if (orderNumbersCsv is null && customerCode is null)
             throw new ArgumentException("Sipariş numarası veya müşteri kodu zorunludur.");
 
-        return await queryExecutor.QueryAsync<GoodsReceiptOpenOrderLineDto>(
+        var rows = await queryExecutor.QueryAsync<GoodsReceiptOpenOrderLineDto>(
             "RII_FN_GR_OPENORDERS_LINE",
             "SELECT * FROM dbo.RII_FN_GR_OPENORDERS_LINE(@orderNumbersCsv, @customerCode, @branchCode)",
             r => new GoodsReceiptOpenOrderLineDto(
@@ -86,6 +91,9 @@ public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INet
                 Nullable<decimal>(r, "PlannedQtyAllocated"), Nullable<decimal>(r, "RemainingForImport")),
             ct, Parameter("@orderNumbersCsv", orderNumbersCsv), Parameter("@customerCode", customerCode),
             Parameter("@branchCode", Normalize(branchCode)));
+        return includeUnavailable
+            ? rows
+            : rows.Where(x => x.AvailableQuantity > 0).ToList();
     }
 
     public async Task<IReadOnlyList<WarehouseTransferOpenOrderHeaderDto>> GetWarehouseTransferOpenOrderHeadersAsync(string customerCode,string? branchCode,CancellationToken ct)

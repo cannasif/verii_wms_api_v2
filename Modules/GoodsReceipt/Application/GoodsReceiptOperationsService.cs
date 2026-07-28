@@ -43,7 +43,8 @@ public sealed class GoodsReceiptOperationsService(
     IGoodsReceiptRoutingService routing,
     IAuditLogWriter audit,
     IGoodsReceiptErpPostingCoordinator erpPosting,
-    IGoodsReceiptOnReceiptLabelService onReceiptLabels) : IGoodsReceiptOperationsService
+    IGoodsReceiptOnReceiptLabelService onReceiptLabels,
+    IGoodsReceiptOrderSource orderSource) : IGoodsReceiptOperationsService
 {
     private IGenericRepository<GoodsReceiptHeader> Headers => unitOfWork.Repository<GoodsReceiptHeader>();
     private IGenericRepository<GoodsReceiptExecution> Executions => unitOfWork.Repository<GoodsReceiptExecution>();
@@ -192,6 +193,9 @@ public sealed class GoodsReceiptOperationsService(
         bool qualityAlreadyApproved,
         CancellationToken ct)
     {
+        // Orderless/direct receipts are operational captures, not planned work.
+        // Keep them at the lowest queue priority regardless of client payload.
+        request = ApplyUnplannedDefaults(request);
         Validate(request, direct);
         return unitOfWork.ExecuteInTransactionAsync(async token =>
         {
@@ -217,6 +221,35 @@ public sealed class GoodsReceiptOperationsService(
                 throw AppException.Conflict("Bu tedarikçi için aynı mal kabul numarası daha önce kullanılmış.");
             var warehouse = await unitOfWork.Repository<WarehouseEntity>().FirstOrDefaultAsync(x => x.Id == request.TargetWarehouseId && x.BranchCode == branch, false, token)
                 ?? throw AppException.BadRequest("Hedef depo bulunamadı.");
+            var hasOrderSources = request.Lines.Any(x => !string.IsNullOrWhiteSpace(x.SourceOrderNumber) || x.SourceOrderId.HasValue);
+            if (hasOrderSources && !direct)
+                throw AppException.BadRequest("Sipariş kaynaklı satırlar yalnızca doğrudan mal kabul işleminde kullanılabilir.");
+            if (hasOrderSources && request.Lines.Any(x => string.IsNullOrWhiteSpace(x.SourceOrderNumber) || !x.SourceOrderId.HasValue))
+                throw AppException.BadRequest("Siparişten doğrudan kabulde tüm kalemlerin sipariş numarası ve satır kimliği bulunmalıdır.");
+            var orderSourceByKey = new Dictionary<(string OrderNumber, int OrderId), GoodsReceiptOrderSourceLine>();
+            if (hasOrderSources)
+            {
+                var orderNumbers = request.Lines.Select(x => x.SourceOrderNumber!.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+                var sourceRows = await orderSource.GetOpenLinesAsync(
+                    string.Join(',', orderNumbers), supplier.CustomerCode, branch, token);
+                orderSourceByKey = sourceRows.ToDictionary(
+                    x => (x.OrderNumber.ToUpperInvariant(), x.OrderId), x => x);
+                foreach (var group in request.Lines.GroupBy(x =>
+                             (OrderNumber: x.SourceOrderNumber!.Trim().ToUpperInvariant(), OrderId: x.SourceOrderId!.Value)))
+                {
+                    if (!orderSourceByKey.TryGetValue(group.Key, out var source))
+                        throw AppException.Conflict("Seçilen sipariş satırlarından biri artık açık değildir. Siparişleri yenileyip tekrar deneyiniz.");
+                    if (!string.Equals(source.CustomerCode, supplier.CustomerCode, StringComparison.OrdinalIgnoreCase)
+                        || source.BranchCode?.ToString() != branch)
+                        throw AppException.BadRequest("Sipariş satırı seçilen tedarikçi veya şube ile uyuşmuyor.");
+                    if (source.TargetWarehouseCode.HasValue && source.TargetWarehouseCode.Value != warehouse.WarehouseCode)
+                        throw AppException.Forbidden($"Sipariş satırı depo {source.TargetWarehouseCode} içindir; depo {warehouse.WarehouseCode} üzerinden kabul edilemez.");
+                    var requestedQuantity = group.Sum(x => x.Quantity);
+                    if (requestedQuantity <= 0 || requestedQuantity > source.AvailableQuantity)
+                        throw AppException.Conflict($"Sipariş {source.OrderNumber}/{source.OrderId} için kabul miktarı açık miktarı aşıyor.");
+                }
+            }
             var location = await unitOfWork.Repository<WarehouseLocation>().FindByIdAsync(request.ReceivingLocationId, false, token)
                 ?? throw AppException.BadRequest("Mal kabul alanı bulunamadı.");
             if (!location.IsActive || location.WarehouseId != warehouse.Id || location.LocationType is not (LocationTypes.Receiving or LocationTypes.Staging))
@@ -246,13 +279,25 @@ public sealed class GoodsReceiptOperationsService(
             var stockIds = request.Lines.Select(x => x.StockId).Distinct().ToList();
             var stocks = await unitOfWork.Repository<StockEntity>().Query().Where(x => x.BranchCode == branch && stockIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, token);
             if (stocks.Count != stockIds.Count) throw AppException.BadRequest("Geçersiz veya farklı şubeye ait stok seçildi.");
+            if (hasOrderSources && request.Lines.Any(input =>
+                    !orderSourceByKey.TryGetValue((input.SourceOrderNumber!.Trim().ToUpperInvariant(), input.SourceOrderId!.Value), out var source)
+                    || !string.Equals(source.StockCode, stocks[input.StockId].ErpStockCode, StringComparison.OrdinalIgnoreCase)))
+                throw AppException.BadRequest("Sipariş satırındaki stok ile kabul kalemindeki stok uyuşmuyor.");
             var yapIds = request.Lines.Where(x => x.YapCodeId.HasValue).Select(x => x.YapCodeId!.Value).Distinct().ToList();
             var yaps = await unitOfWork.Repository<Modules.YapCode.Domain.YapCode>().Query().Where(x => x.BranchCode == branch && yapIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, token);
             if (yaps.Count != yapIds.Count) throw AppException.BadRequest("Geçersiz veya farklı şubeye ait YAP kodu seçildi.");
+            if (hasOrderSources && request.Lines.Any(input =>
+                    orderSourceByKey.TryGetValue((input.SourceOrderNumber!.Trim().ToUpperInvariant(), input.SourceOrderId!.Value), out var source)
+                    && ((!string.IsNullOrWhiteSpace(source.YapCode)
+                         && (!input.YapCodeId.HasValue
+                             || !string.Equals(source.YapCode, yaps[input.YapCodeId.Value].ConfigurationCode, StringComparison.OrdinalIgnoreCase)))
+                        || (string.IsNullOrWhiteSpace(source.YapCode) && input.YapCodeId.HasValue))))
+                throw AppException.BadRequest("Sipariş satırındaki YAP kodu ile kabul kalemindeki YAP kodu uyuşmuyor.");
 
             var policy = await receiptPolicyService.GetAsync(branch, token);
             if (!direct && !policy.AllowOrderlessReceipt) throw AppException.Forbidden("Siparişsiz mal kabul emri politika gereği kapalıdır.");
-            if (direct && !policy.AllowUnplannedReceipt) throw AppException.Forbidden("Emirsiz direkt mal kabul politika gereği kapalıdır.");
+            if (RequiresUnplannedReceiptPermission(direct, hasOrderSources) && !policy.AllowUnplannedReceipt)
+                throw AppException.Forbidden("Emirsiz direkt mal kabul politika gereği kapalıdır.");
             var resolved = new Dictionary<long, ResolvedQualityPolicy>();
             foreach (var stock in stocks.Values) resolved[stock.Id] = await qualityPolicyResolver.ResolveAsync(branch, stock.Id, stock.GroupCode, token);
             var trackingPolicies = new Dictionary<long, EffectiveStockTrackingPolicy>();
@@ -280,10 +325,13 @@ public sealed class GoodsReceiptOperationsService(
             var header = Stamp(new GoodsReceiptHeader
             {
                 BranchCode = branch, DocumentSeriesId = allocated.DocumentSeriesId, DocumentNo = allocated.DocumentNumber,
-                DocumentDate = request.DocumentDate, ReceiptType = GoodsReceiptType.Direct,
+                DocumentDate = request.DocumentDate, ReceiptType = hasOrderSources ? GoodsReceiptType.PurchaseOrder : GoodsReceiptType.Direct,
                 InitiationMode = direct ? GoodsReceiptInitiationMode.DirectReceipt : GoodsReceiptInitiationMode.UnplannedTask,
-                ProcessType = direct ? GoodsReceiptProcessType.OrderlessDirectReceipt : GoodsReceiptProcessType.OrderlessTask,
-                LabelStrategy = request.LabelStrategy, SourceSystem = WarehouseOperationSourceSystem.Manual,
+                ProcessType = direct
+                    ? hasOrderSources ? GoodsReceiptProcessType.OrderBasedDirectReceipt : GoodsReceiptProcessType.OrderlessDirectReceipt
+                    : GoodsReceiptProcessType.OrderlessTask,
+                LabelStrategy = request.LabelStrategy,
+                SourceSystem = hasOrderSources ? WarehouseOperationSourceSystem.Netsis : WarehouseOperationSourceSystem.Manual,
                 CorrelationId = request.IdempotencyKey, SupplierId = supplier.Id, SupplierCodeSnapshot = supplier.CustomerCode,
                 SupplierNameSnapshot = supplier.CustomerName, TargetWarehouseId = warehouse.Id, ReceivingLocationId = location.Id,
                 Status = direct ? WarehouseOperationStatus.Processed : WarehouseOperationStatus.Draft,
@@ -312,6 +360,31 @@ public sealed class GoodsReceiptOperationsService(
             await Headers.AddAsync(header, token);
             await unitOfWork.SaveChangesAsync(token);
 
+            var orderDocuments = new Dictionary<string, GoodsReceiptSourceDocument>(StringComparer.OrdinalIgnoreCase);
+            if (hasOrderSources)
+            {
+                foreach (var group in orderSourceByKey.Values
+                             .Where(x => request.Lines.Any(input => string.Equals(input.SourceOrderNumber?.Trim(), x.OrderNumber, StringComparison.OrdinalIgnoreCase)))
+                             .GroupBy(x => x.OrderNumber, StringComparer.OrdinalIgnoreCase))
+                {
+                    var source = group.First();
+                    var document = Stamp(new GoodsReceiptSourceDocument
+                    {
+                        BranchCode = branch,
+                        Header = header,
+                        SourceDocumentType = GoodsReceiptSourceDocumentType.PurchaseOrder,
+                        SourceSystem = WarehouseOperationSourceSystem.Netsis,
+                        ExternalDocumentId = source.OrderNumber,
+                        ExternalDocumentNo = source.OrderNumber,
+                        ExternalDocumentDate = source.OrderDate.HasValue ? DateOnly.FromDateTime(source.OrderDate.Value) : null,
+                        SupplierCodeSnapshot = supplier.CustomerCode,
+                        SupplierNameSnapshot = supplier.CustomerName,
+                        ExternalStatus = "Open"
+                    }, actor);
+                    orderDocuments[source.OrderNumber] = document;
+                    header.SourceDocuments.Add(document);
+                }
+            }
             if (!string.IsNullOrWhiteSpace(header.WaybillNo))
                 await unitOfWork.Repository<GoodsReceiptSourceDocument>().AddAsync(Stamp(new GoodsReceiptSourceDocument
                 {
@@ -361,6 +434,25 @@ public sealed class GoodsReceiptOperationsService(
                     DefaultPutawayLocationId = lineLocations[lineLocationId].IsPutaway ? lineLocationId : null,
                     Description = Clean(input.Description, 500)
                 }, actor);
+                if (hasOrderSources)
+                {
+                    var source = orderSourceByKey[(input.SourceOrderNumber!.Trim().ToUpperInvariant(), input.SourceOrderId!.Value)];
+                    line.Sources.Add(Stamp(new GoodsReceiptLineSource
+                    {
+                        BranchCode = branch,
+                        Line = line,
+                        SourceDocument = orderDocuments[source.OrderNumber],
+                        ExternalLineId = source.OrderId.ToString(),
+                        ExternalStockCode = source.StockCode ?? stock.ErpStockCode,
+                        ExternalYapCode = source.YapCode,
+                        OrderedQuantity = source.OrderedQuantity,
+                        PreviouslyReceivedQuantity = source.DeliveredQuantity,
+                        AllocatedQuantity = input.Quantity,
+                        ReceivedQuantity = direct ? input.Quantity : 0,
+                        UnitCode = unit,
+                        ExternalStatus = "Open"
+                    }, actor));
+                }
                 grLines.Add(line); header.Lines.Add(line);
             }
 
@@ -530,6 +622,10 @@ public sealed class GoodsReceiptOperationsService(
             throw AppException.BadRequest("E-irsaliye numarası 3 karakter birim kodu, 4 karakter yıl ve 9 karakter sıra numarasından oluşmalıdır.");
     }
 
+    internal static CreateManualGoodsReceiptRequest ApplyUnplannedDefaults(
+        CreateManualGoodsReceiptRequest request) =>
+        request with { Priority = 1 };
+
     internal static void ValidateDocumentReference(
         string? waybillNo,
         string? electronicWaybillNo,
@@ -558,6 +654,9 @@ public sealed class GoodsReceiptOperationsService(
             && executionMode != GoodsReceiptExecutionMode.SupplierLabel)
             throw AppException.BadRequest("Tedarikçi etiketi stratejisinde giriş yöntemi de tedarikçi etiketi olmalıdır.");
     }
+
+    internal static bool RequiresUnplannedReceiptPermission(bool direct, bool hasOrderSources)
+        => direct && !hasOrderSources;
 
     internal static void ValidateQualityReceivingLocations(
         bool requiresQuality,
