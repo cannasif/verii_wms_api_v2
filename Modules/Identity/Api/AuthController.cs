@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Mvc;
 using verii_wms_api_v2.Modules.Identity.Application;
 using verii_wms_api_v2.Shared;
+using verii_wms_api_v2.Shared.Application.Exceptions;
 
 namespace verii_wms_api_v2.Modules.Identity.Api;
 
@@ -11,7 +12,8 @@ namespace verii_wms_api_v2.Modules.Identity.Api;
 public sealed class AuthController(
     IIdentityService identityService,
     IPasswordPolicyService passwordPolicy,
-    IWebHostEnvironment environment) : ControllerBase
+    IWebHostEnvironment environment,
+    ILogger<AuthController> logger) : ControllerBase
 {
     private string RefreshCookieName => environment.IsDevelopment() ? "wms.refresh.dev" : "__Host-wms-refresh";
 
@@ -30,18 +32,60 @@ public sealed class AuthController(
     [AllowAnonymous, EnableRateLimiting("identity-refresh"), HttpPost("refresh")]
     public async Task<IActionResult> Refresh(CancellationToken cancellationToken)
     {
-        var refreshToken = Request.Cookies[RefreshCookieName] ?? string.Empty;
-        var session = await identityService.RefreshAsync(refreshToken, CurrentClient(), cancellationToken);
-        SetRefreshCookie(session);
-        return Ok(ApiResponse<AuthTokenResponse>.Ok(session.Response));
+        try
+        {
+            var refreshToken = Request.Cookies[RefreshCookieName] ?? string.Empty;
+            var session = await identityService.RefreshAsync(refreshToken, CurrentClient(), cancellationToken);
+            SetRefreshCookie(session);
+            return Ok(ApiResponse<AuthTokenResponse>.Ok(session.Response));
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (AppException exception) when (exception.StatusCode is
+            StatusCodes.Status401Unauthorized or StatusCodes.Status403Forbidden)
+        {
+            DeleteRefreshCookies();
+            throw;
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(
+                exception,
+                "Refresh token processing failed. TraceId={TraceId}",
+                HttpContext.TraceIdentifier);
+            DeleteRefreshCookies();
+            throw AppException.Unauthorized("Oturum yenilenemedi. Lütfen yeniden giriş yapın.");
+        }
     }
 
     [AllowAnonymous, HttpPost("revoke")]
     public async Task<IActionResult> Revoke(CancellationToken cancellationToken)
     {
-        var refreshToken = Request.Cookies[RefreshCookieName] ?? string.Empty;
-        await identityService.RevokeAsync(refreshToken, CurrentClient(), cancellationToken);
-        DeleteRefreshCookies();
+        try
+        {
+            var refreshToken = Request.Cookies[RefreshCookieName] ?? string.Empty;
+            await identityService.RevokeAsync(refreshToken, CurrentClient(), cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            // Logout is idempotent from the browser's perspective. A stale or corrupt server-side
+            // session must never prevent the HttpOnly cookie from being cleared.
+            logger.LogWarning(
+                exception,
+                "Refresh token revocation could not be persisted. The client cookie will still be cleared. TraceId={TraceId}",
+                HttpContext.TraceIdentifier);
+        }
+        finally
+        {
+            DeleteRefreshCookies();
+        }
+
         return Ok(ApiResponse<string>.Ok(string.Empty, "Oturum kapatıldı."));
     }
 
