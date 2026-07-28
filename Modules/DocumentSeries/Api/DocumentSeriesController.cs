@@ -31,10 +31,14 @@ public sealed class DocumentSeriesController(
     }
 
     [HttpGet("lookup")]
-    public async Task<IActionResult> GetLookup([FromQuery] WmsDocumentType documentType, [FromQuery] long? warehouseId, CancellationToken cancellationToken)
+    public async Task<IActionResult> GetLookup(
+        [FromQuery] WmsDocumentType documentType,
+        [FromHeader(Name = "X-Branch-Code")] string? branchCode,
+        CancellationToken cancellationToken)
     {
         await RequireAsync("WMS.DOCUMENT_SERIES.VIEW", cancellationToken);
-        return Ok(ApiResponse<IReadOnlyList<DocumentSeriesLookupRow>>.Ok(await service.GetLookupAsync(documentType, warehouseId, cancellationToken)));
+        return Ok(ApiResponse<IReadOnlyList<DocumentSeriesLookupRow>>.Ok(
+            await service.GetLookupAsync(documentType, branchCode ?? "0", cancellationToken)));
     }
 
     [HttpPost]

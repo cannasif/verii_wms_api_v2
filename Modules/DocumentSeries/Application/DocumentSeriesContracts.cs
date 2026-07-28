@@ -6,12 +6,10 @@ namespace verii_wms_api_v2.Modules.DocumentSeries.Application;
 
 public sealed record DocumentSeriesUpsertRequest(
     string BranchCode,
-    long? WarehouseId,
     string Code,
     string Name,
     WmsDocumentType DocumentType,
     string Prefix,
-    string Separator,
     DocumentYearFormat YearFormat,
     int NumberLength,
     long StartNumber,
@@ -25,14 +23,10 @@ public sealed class DocumentSeriesGridRow
 {
     public long Id { get; init; }
     public string BranchCode { get; init; } = string.Empty;
-    public long? WarehouseId { get; init; }
-    public int? WarehouseCode { get; init; }
-    public string? WarehouseName { get; init; }
     public string Code { get; init; } = string.Empty;
     public string Name { get; init; } = string.Empty;
     public string DocumentType { get; init; } = string.Empty;
     public string Prefix { get; init; } = string.Empty;
-    public string Separator { get; init; } = string.Empty;
     public string YearFormat { get; init; } = string.Empty;
     public int NumberLength { get; init; }
     public long StartNumber { get; init; }
@@ -42,9 +36,14 @@ public sealed class DocumentSeriesGridRow
     {
         get
         {
-            var year = YearFormat switch { "TwoDigit" => DateTime.UtcNow.ToString("yy"), "FourDigit" => DateTime.UtcNow.ToString("yyyy"), _ => string.Empty };
-            var number = NextNumber.ToString().PadLeft(NumberLength, '0');
-            return string.IsNullOrEmpty(year) ? $"{Prefix}{Separator}{number}" : $"{Prefix}{Separator}{year}{Separator}{number}";
+            var year = YearFormat switch
+            {
+                "TwoDigit" => DateTime.UtcNow.ToString("yy", System.Globalization.CultureInfo.InvariantCulture),
+                "FourDigit" => DateTime.UtcNow.ToString("yyyy", System.Globalization.CultureInfo.InvariantCulture),
+                _ => string.Empty
+            };
+            var number = NextNumber.ToString(System.Globalization.CultureInfo.InvariantCulture).PadLeft(NumberLength, '0');
+            return $"{Prefix}{year}{number}";
         }
     }
     public bool IsDefault { get; init; }
@@ -69,7 +68,7 @@ public interface IDocumentSeriesService
 {
     Task<PagedResponse<DocumentSeriesGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default);
     Task<DocumentSeriesGridRow> GetByIdAsync(long id, CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<DocumentSeriesLookupRow>> GetLookupAsync(WmsDocumentType documentType, long? warehouseId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<DocumentSeriesLookupRow>> GetLookupAsync(WmsDocumentType documentType, string branchCode, CancellationToken cancellationToken = default);
     Task<long> CreateAsync(DocumentSeriesUpsertRequest request, CancellationToken cancellationToken = default);
     Task UpdateAsync(long id, DocumentSeriesUpsertRequest request, CancellationToken cancellationToken = default);
     Task DeleteAsync(long id, CancellationToken cancellationToken = default);

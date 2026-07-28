@@ -24,12 +24,10 @@ public enum DocumentYearFormat
 
 public sealed class DocumentSeries : BaseEntity
 {
-    public long? WarehouseId { get; set; }
     public string Code { get; set; } = string.Empty;
     public string Name { get; set; } = string.Empty;
     public WmsDocumentType DocumentType { get; set; }
     public string Prefix { get; set; } = string.Empty;
-    public string Separator { get; set; } = "-";
     public DocumentYearFormat YearFormat { get; set; } = DocumentYearFormat.FourDigit;
     public int NumberLength { get; set; } = 8;
     public long StartNumber { get; set; } = 1;

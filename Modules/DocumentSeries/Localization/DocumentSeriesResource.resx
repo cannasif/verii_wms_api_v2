@@ -8,17 +8,15 @@
   <data name="InvalidCode" xml:space="preserve"><value>Seri kodu 2-20 karakter olmalı; yalnızca harf, rakam, tire ve alt çizgi içermelidir.</value></data>
   <data name="InvalidName" xml:space="preserve"><value>Seri adı 2-150 karakter olmalıdır.</value></data>
   <data name="InvalidPrefix" xml:space="preserve"><value>Ön ek 1-10 karakter olmalı; yalnızca harf ve rakam içermelidir.</value></data>
-  <data name="InvalidSeparator" xml:space="preserve"><value>Ayraç en fazla 3 karakter olmalı ve boşluk içermemelidir.</value></data>
-  <data name="InvalidNumberSettings" xml:space="preserve"><value>Numara uzunluğu 3-18, başlangıç ve sıradaki numara pozitif, artış değeri 1-1000 aralığında olmalıdır.</value></data>
-  <data name="WarehouseNotFound" xml:space="preserve"><value>Seçilen depo bulunamadı.</value></data>
-  <data name="BranchMismatch" xml:space="preserve"><value>Seçilen depo ile seri şube kodu aynı olmalıdır.</value></data>
+  <data name="InvalidNumberSettings" xml:space="preserve"><value>Numara uzunluğu 3-15 olmalı; ön ek, yıl ve numara toplamı 15 karakteri aşmamalıdır. Başlangıç ve sıradaki numara pozitif, artış değeri 1-1000 aralığında olmalıdır.</value></data>
   <data name="DuplicateCode" xml:space="preserve"><value>Aynı şube ve belge türünde bu seri kodu zaten kullanılıyor.</value></data>
-  <data name="DuplicateDefault" xml:space="preserve"><value>Aynı şube, belge türü ve depo kapsamı için yalnızca bir aktif varsayılan seri olabilir.</value></data>
-  <data name="IssuedSeriesImmutable" xml:space="preserve"><value>Numara üretmiş bir serinin kodu, kapsamı veya numaralandırma alanları değiştirilemez. Yeni seri tanımlayın.</value></data>
+  <data name="DuplicateDefault" xml:space="preserve"><value>Aynı şube ve işlem türü için yalnızca bir aktif varsayılan seri olabilir.</value></data>
+  <data name="IssuedSeriesImmutable" xml:space="preserve"><value>Numara üretmiş bir serinin kodu, işlem türü veya numaralandırma alanları değiştirilemez. Yeni seri tanımlayın.</value></data>
   <data name="IssuedSeriesDeleteBlocked" xml:space="preserve"><value>Numara üretmiş bir seri silinemez; pasif duruma getirin.</value></data>
   <data name="InactiveSeries" xml:space="preserve"><value>Pasif belge serisinden numara üretilemez.</value></data>
   <data name="DocumentTypeMismatch" xml:space="preserve"><value>Belge serisi istenen işlem türüyle eşleşmiyor.</value></data>
   <data name="NumberAllocationFailed" xml:space="preserve"><value>Belge numarası atomik olarak ayrılamadı.</value></data>
+  <data name="SequenceExhausted" xml:space="preserve"><value>Belge serisinin 15 karakterlik numara kapasitesi doldu. Yeni seri tanımlayın.</value></data>
   <data name="ConcurrencyConflict" xml:space="preserve"><value>Belge serisi başka bir işlem tarafından değiştirildi. Veriyi yenileyip tekrar deneyin.</value></data>
   <data name="Created" xml:space="preserve"><value>Belge serisi oluşturuldu.</value></data>
   <data name="Updated" xml:space="preserve"><value>Belge serisi güncellendi.</value></data>

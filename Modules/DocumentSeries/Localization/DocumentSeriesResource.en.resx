@@ -8,17 +8,15 @@
   <data name="InvalidCode" xml:space="preserve"><value>Series code must be 2-20 characters and contain only letters, numbers, hyphens and underscores.</value></data>
   <data name="InvalidName" xml:space="preserve"><value>Series name must be 2-150 characters.</value></data>
   <data name="InvalidPrefix" xml:space="preserve"><value>Prefix must be 1-10 alphanumeric characters.</value></data>
-  <data name="InvalidSeparator" xml:space="preserve"><value>Separator must be at most 3 characters and contain no whitespace.</value></data>
-  <data name="InvalidNumberSettings" xml:space="preserve"><value>Number length must be 3-18, start and next numbers positive, and increment 1-1000.</value></data>
-  <data name="WarehouseNotFound" xml:space="preserve"><value>The selected warehouse was not found.</value></data>
-  <data name="BranchMismatch" xml:space="preserve"><value>The warehouse and document series branch codes must match.</value></data>
+  <data name="InvalidNumberSettings" xml:space="preserve"><value>Number length must be 3-15, and prefix, year and number must not exceed 15 characters in total. Start and next numbers must be positive and increment must be 1-1000.</value></data>
   <data name="DuplicateCode" xml:space="preserve"><value>This series code is already used for the same branch and document type.</value></data>
-  <data name="DuplicateDefault" xml:space="preserve"><value>Only one active default series is allowed for the same branch, document type and warehouse scope.</value></data>
-  <data name="IssuedSeriesImmutable" xml:space="preserve"><value>Scope and numbering fields of a series that issued numbers cannot be changed. Create a new series.</value></data>
+  <data name="DuplicateDefault" xml:space="preserve"><value>Only one active default series is allowed for the same branch and operation type.</value></data>
+  <data name="IssuedSeriesImmutable" xml:space="preserve"><value>The code, operation type and numbering fields of a series that issued numbers cannot be changed. Create a new series.</value></data>
   <data name="IssuedSeriesDeleteBlocked" xml:space="preserve"><value>A series that issued numbers cannot be deleted; deactivate it instead.</value></data>
   <data name="InactiveSeries" xml:space="preserve"><value>An inactive document series cannot issue a number.</value></data>
   <data name="DocumentTypeMismatch" xml:space="preserve"><value>The document series does not match the requested operation type.</value></data>
   <data name="NumberAllocationFailed" xml:space="preserve"><value>The document number could not be allocated atomically.</value></data>
+  <data name="SequenceExhausted" xml:space="preserve"><value>The document series has exhausted its 15-character number capacity. Create a new series.</value></data>
   <data name="ConcurrencyConflict" xml:space="preserve"><value>The document series was changed by another operation. Refresh and retry.</value></data>
   <data name="Created" xml:space="preserve"><value>Document series was created.</value></data>
   <data name="Updated" xml:space="preserve"><value>Document series was updated.</value></data>

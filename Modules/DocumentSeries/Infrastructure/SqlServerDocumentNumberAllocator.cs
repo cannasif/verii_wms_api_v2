@@ -31,10 +31,11 @@ public sealed class SqlServerDocumentNumberAllocator(
                     [HasIssuedNumbers] = CAST(1 AS bit),
                     [LastIssuedAt] = @issuedAt,
                     [UpdatedDate] = @issuedAt
-                OUTPUT DELETED.[NextNumber], INSERTED.[DocumentType], INSERTED.[Prefix], INSERTED.[Separator],
+                OUTPUT DELETED.[NextNumber], INSERTED.[DocumentType], INSERTED.[Prefix],
                        INSERTED.[YearFormat], INSERTED.[NumberLength]
                 WHERE [Id] = @id AND [IsDeleted] = CAST(0 AS bit) AND [IsActive] = CAST(1 AS bit)
-                  AND [DocumentType] = @documentType;
+                  AND [DocumentType] = @documentType
+                  AND LEN(CONVERT(varchar(20), [NextNumber])) <= [NumberLength];
                 """;
             AddParameter(command, "@id", documentSeriesId, DbType.Int64);
             AddParameter(command, "@issuedAt", timestamp, DbType.DateTime2);
@@ -46,21 +47,22 @@ public sealed class SqlServerDocumentNumberAllocator(
                 await reader.DisposeAsync();
                 var exists = await dbContext.DocumentSeries.AsNoTracking().IgnoreQueryFilters()
                     .Where(x => x.Id == documentSeriesId)
-                    .Select(x => new { x.IsDeleted, x.IsActive, x.DocumentType })
+                    .Select(x => new { x.IsDeleted, x.IsActive, x.DocumentType, x.NextNumber, x.NumberLength })
                     .FirstOrDefaultAsync(cancellationToken);
                 if (exists is null || exists.IsDeleted) throw AppException.NotFound(localizer[DocumentSeriesMessageKeys.NotFound].Value);
                 if (!exists.IsActive) throw AppException.Conflict(localizer[DocumentSeriesMessageKeys.InactiveSeries].Value);
+                if (exists.NextNumber.ToString(System.Globalization.CultureInfo.InvariantCulture).Length > exists.NumberLength)
+                    throw AppException.Conflict(localizer[DocumentSeriesMessageKeys.SequenceExhausted].Value);
                 throw AppException.Conflict(localizer[DocumentSeriesMessageKeys.DocumentTypeMismatch].Value);
             }
 
             var sequenceNumber = reader.GetInt64(0);
             var documentType = Enum.Parse<WmsDocumentType>(reader.GetString(1));
             var prefix = reader.GetString(2);
-            var separator = reader.GetString(3);
-            var yearFormat = Enum.Parse<DocumentYearFormat>(reader.GetString(4));
-            var numberLength = reader.GetInt32(5);
+            var yearFormat = Enum.Parse<DocumentYearFormat>(reader.GetString(3));
+            var numberLength = reader.GetInt32(4);
             return new AllocatedDocumentNumber(documentSeriesId, documentType, sequenceNumber,
-                DocumentSeriesService.FormatNumber(prefix, separator, yearFormat, numberLength, sequenceNumber, timestamp), timestamp);
+                DocumentSeriesService.FormatNumber(prefix, yearFormat, numberLength, sequenceNumber, timestamp), timestamp);
         }
         catch (AppException) { throw; }
         catch (Exception exception) { throw new InvalidOperationException(localizer[DocumentSeriesMessageKeys.NumberAllocationFailed].Value, exception); }

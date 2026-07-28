@@ -8,7 +8,6 @@ using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
-using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 using SeriesEntity = verii_wms_api_v2.Modules.DocumentSeries.Domain.DocumentSeries;
 
 namespace verii_wms_api_v2.Modules.DocumentSeries.Application;
@@ -27,8 +26,6 @@ public sealed partial class DocumentSeriesService(
             ["name"] = nameof(DocumentSeriesGridRow.Name),
             ["prefix"] = nameof(DocumentSeriesGridRow.Prefix),
             ["documentType"] = nameof(DocumentSeriesGridRow.DocumentType),
-            ["warehouseCode"] = nameof(DocumentSeriesGridRow.WarehouseCode),
-            ["warehouseName"] = nameof(DocumentSeriesGridRow.WarehouseName),
             ["nextNumber"] = nameof(DocumentSeriesGridRow.NextNumber),
             ["createdBy"] = nameof(DocumentSeriesGridRow.CreatedBySearchText),
             ["updatedBy"] = nameof(DocumentSeriesGridRow.UpdatedBySearchText)
@@ -36,7 +33,6 @@ public sealed partial class DocumentSeriesService(
     private static readonly string[] DefaultSearchColumns = ["code", "name"];
 
     private IGenericRepository<SeriesEntity> Series => unitOfWork.Repository<SeriesEntity>();
-    private IGenericRepository<WarehouseEntity> Warehouses => unitOfWork.Repository<WarehouseEntity>();
     private IGenericRepository<User> Users => unitOfWork.Repository<User>();
     private IGenericRepository<UserDetail> UserDetails => unitOfWork.Repository<UserDetail>();
 
@@ -55,18 +51,19 @@ public sealed partial class DocumentSeriesService(
         await BuildGridQuery().FirstOrDefaultAsync(x => x.Id == id, cancellationToken)
         ?? throw AppException.NotFound(Message(DocumentSeriesMessageKeys.NotFound));
 
-    public async Task<IReadOnlyList<DocumentSeriesLookupRow>> GetLookupAsync(WmsDocumentType documentType, long? warehouseId, CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<DocumentSeriesLookupRow>> GetLookupAsync(WmsDocumentType documentType, string branchCode, CancellationToken cancellationToken = default)
     {
-        var rows = await Series.Query().Where(x => x.IsActive && x.DocumentType == documentType
-                && (!x.WarehouseId.HasValue || x.WarehouseId == warehouseId))
-            .OrderByDescending(x => x.WarehouseId == warehouseId)
-            .ThenByDescending(x => x.IsDefault)
+        var normalizedBranchCode = string.IsNullOrWhiteSpace(branchCode) ? "0" : branchCode.Trim();
+        var rows = await Series.Query().Where(x => x.IsActive
+                && x.BranchCode == normalizedBranchCode
+                && x.DocumentType == documentType)
+            .OrderByDescending(x => x.IsDefault)
             .ThenBy(x => x.Code)
-            .Select(x => new { x.Id, x.Code, x.Name, x.Prefix, x.Separator, x.YearFormat, x.NumberLength, x.NextNumber, x.IsDefault })
+            .Select(x => new { x.Id, x.Code, x.Name, x.Prefix, x.YearFormat, x.NumberLength, x.NextNumber, x.IsDefault })
             .ToListAsync(cancellationToken);
 
         return rows.Select(x => new DocumentSeriesLookupRow(
-            x.Id, x.Code, x.Name, FormatNumber(x.Prefix, x.Separator, x.YearFormat, x.NumberLength, x.NextNumber, DateTime.UtcNow), x.IsDefault)).ToList();
+            x.Id, x.Code, x.Name, FormatNumber(x.Prefix, x.YearFormat, x.NumberLength, x.NextNumber, DateTime.UtcNow), x.IsDefault)).ToList();
     }
 
     public async Task<long> CreateAsync(DocumentSeriesUpsertRequest request, CancellationToken cancellationToken = default)
@@ -109,12 +106,9 @@ public sealed partial class DocumentSeriesService(
     private IQueryable<DocumentSeriesGridRow> BuildGridQuery()
     {
         var series = Series.Query();
-        var warehouses = Warehouses.Query();
         var users = Users.Query();
         var userDetails = UserDetails.Query();
         return from item in series
-               join warehouse in warehouses on item.WarehouseId equals warehouse.Id into warehouseRows
-               from warehouse in warehouseRows.DefaultIfEmpty()
                join createdUser in users on item.CreatedBy equals (long?)createdUser.Id into createdUsers
                from createdUser in createdUsers.DefaultIfEmpty()
                join createdDetail in userDetails on item.CreatedBy equals (long?)createdDetail.UserId into createdDetails
@@ -127,9 +121,6 @@ public sealed partial class DocumentSeriesService(
                {
                    Id = item.Id,
                    BranchCode = item.BranchCode,
-                   WarehouseId = item.WarehouseId,
-                   WarehouseCode = warehouse == null ? null : warehouse.WarehouseCode,
-                   WarehouseName = warehouse == null ? null : warehouse.WarehouseName,
                    Code = item.Code,
                    Name = item.Name,
                    DocumentType = item.DocumentType == WmsDocumentType.GoodsReceipt ? "GoodsReceipt"
@@ -137,11 +128,11 @@ public sealed partial class DocumentSeriesService(
                        : item.DocumentType == WmsDocumentType.Shipment ? "Shipment"
                        : item.DocumentType == WmsDocumentType.WarehouseReceipt ? "WarehouseReceipt"
                        : item.DocumentType == WmsDocumentType.WarehouseIssue ? "WarehouseIssue"
+                       : item.DocumentType == WmsDocumentType.ProductionOrder ? "ProductionOrder"
                        : item.DocumentType == WmsDocumentType.ProductionTransfer ? "ProductionTransfer"
                        : item.DocumentType == WmsDocumentType.SubcontractingIssue ? "SubcontractingIssue"
                        : "SubcontractingReceipt",
                    Prefix = item.Prefix,
-                   Separator = item.Separator,
                    YearFormat = item.YearFormat == DocumentYearFormat.None ? "None"
                        : item.YearFormat == DocumentYearFormat.TwoDigit ? "TwoDigit" : "FourDigit",
                    NumberLength = item.NumberLength,
@@ -184,30 +175,32 @@ public sealed partial class DocumentSeriesService(
         var code = request.Code?.Trim().ToUpperInvariant() ?? string.Empty;
         var name = request.Name?.Trim() ?? string.Empty;
         var prefix = request.Prefix?.Trim().ToUpperInvariant() ?? string.Empty;
-        var separator = request.Separator?.Trim() ?? string.Empty;
         if (!CodePattern().IsMatch(code)) throw AppException.BadRequest(Message(DocumentSeriesMessageKeys.InvalidCode));
         if (name.Length is < 2 or > 150) throw AppException.BadRequest(Message(DocumentSeriesMessageKeys.InvalidName));
         if (!PrefixPattern().IsMatch(prefix)) throw AppException.BadRequest(Message(DocumentSeriesMessageKeys.InvalidPrefix));
-        if (separator.Length > 3 || separator.Any(char.IsWhiteSpace)) throw AppException.BadRequest(Message(DocumentSeriesMessageKeys.InvalidSeparator));
-        if (request.NumberLength is < 3 or > 18 || request.StartNumber < 1 || request.NextNumber < request.StartNumber || request.IncrementBy is < 1 or > 1000)
+        var yearLength = request.YearFormat switch
+        {
+            DocumentYearFormat.TwoDigit => 2,
+            DocumentYearFormat.FourDigit => 4,
+            _ => 0
+        };
+        if (request.NumberLength is < 3 or > 15
+            || prefix.Length + yearLength + request.NumberLength > 15
+            || request.StartNumber < 1
+            || request.NextNumber < request.StartNumber
+            || DigitCount(request.StartNumber) > request.NumberLength
+            || DigitCount(request.NextNumber) > request.NumberLength
+            || request.IncrementBy is < 1 or > 1000)
             throw AppException.BadRequest(Message(DocumentSeriesMessageKeys.InvalidNumberSettings));
         if (request.Description?.Length > 500) throw AppException.BadRequest(Message(DocumentSeriesMessageKeys.InvalidName));
-
-        if (request.WarehouseId.HasValue)
-        {
-            var warehouse = await Warehouses.Query().Where(x => x.Id == request.WarehouseId.Value)
-                .Select(x => new { x.Id, x.BranchCode }).FirstOrDefaultAsync(cancellationToken)
-                ?? throw AppException.BadRequest(Message(DocumentSeriesMessageKeys.WarehouseNotFound));
-            branchCode = warehouse.BranchCode;
-        }
 
         if (await Series.AnyAsync(x => x.Id != currentId && x.BranchCode == branchCode && x.DocumentType == request.DocumentType && x.Code == code, cancellationToken))
             throw AppException.Conflict(Message(DocumentSeriesMessageKeys.DuplicateCode));
         if (request.IsDefault && request.IsActive && await Series.AnyAsync(x => x.Id != currentId && x.BranchCode == branchCode
-                && x.DocumentType == request.DocumentType && x.WarehouseId == request.WarehouseId && x.IsDefault && x.IsActive, cancellationToken))
+                && x.DocumentType == request.DocumentType && x.IsDefault && x.IsActive, cancellationToken))
             throw AppException.Conflict(Message(DocumentSeriesMessageKeys.DuplicateDefault));
 
-        return new NormalizedRequest(branchCode, code, name, prefix, separator);
+        return new NormalizedRequest(branchCode, code, name, prefix);
     }
 
     private static void Apply(SeriesEntity entity, DocumentSeriesUpsertRequest request, NormalizedRequest value, bool allowNumberingChanges)
@@ -218,11 +211,9 @@ public sealed partial class DocumentSeriesService(
         entity.Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim();
         if (!allowNumberingChanges) return;
         entity.BranchCode = value.BranchCode;
-        entity.WarehouseId = request.WarehouseId;
         entity.Code = value.Code;
         entity.DocumentType = request.DocumentType;
         entity.Prefix = value.Prefix;
-        entity.Separator = value.Separator;
         entity.YearFormat = request.YearFormat;
         entity.NumberLength = request.NumberLength;
         entity.StartNumber = request.StartNumber;
@@ -231,8 +222,8 @@ public sealed partial class DocumentSeriesService(
     }
 
     private static bool NumberingIdentityChanged(SeriesEntity entity, DocumentSeriesUpsertRequest request, NormalizedRequest value) =>
-        entity.BranchCode != value.BranchCode || entity.WarehouseId != request.WarehouseId || entity.Code != value.Code
-        || entity.DocumentType != request.DocumentType || entity.Prefix != value.Prefix || entity.Separator != value.Separator
+        entity.BranchCode != value.BranchCode || entity.Code != value.Code
+        || entity.DocumentType != request.DocumentType || entity.Prefix != value.Prefix
         || entity.YearFormat != request.YearFormat || entity.NumberLength != request.NumberLength || entity.StartNumber != request.StartNumber
         || entity.NextNumber != request.NextNumber || entity.IncrementBy != request.IncrementBy;
 
@@ -242,18 +233,22 @@ public sealed partial class DocumentSeriesService(
         catch (DbUpdateConcurrencyException) { throw AppException.Conflict(Message(DocumentSeriesMessageKeys.ConcurrencyConflict)); }
     }
 
-    internal static string FormatNumber(string prefix, string separator, DocumentYearFormat yearFormat, int numberLength, long number, DateTime issuedAt)
+    internal static string FormatNumber(string prefix, DocumentYearFormat yearFormat, int numberLength, long number, DateTime issuedAt)
     {
-        var year = yearFormat switch { DocumentYearFormat.TwoDigit => issuedAt.ToString("yy"), DocumentYearFormat.FourDigit => issuedAt.ToString("yyyy"), _ => string.Empty };
-        return string.IsNullOrEmpty(year)
-            ? $"{prefix}{separator}{number.ToString().PadLeft(numberLength, '0')}"
-            : $"{prefix}{separator}{year}{separator}{number.ToString().PadLeft(numberLength, '0')}";
+        var year = yearFormat switch
+        {
+            DocumentYearFormat.TwoDigit => issuedAt.ToString("yy", System.Globalization.CultureInfo.InvariantCulture),
+            DocumentYearFormat.FourDigit => issuedAt.ToString("yyyy", System.Globalization.CultureInfo.InvariantCulture),
+            _ => string.Empty
+        };
+        return $"{prefix}{year}{number.ToString(System.Globalization.CultureInfo.InvariantCulture).PadLeft(numberLength, '0')}";
     }
 
-    private static object Snapshot(SeriesEntity x) => new { x.Id, x.BranchCode, x.WarehouseId, x.Code, x.Name, x.DocumentType, x.Prefix, x.Separator, x.YearFormat, x.NumberLength, x.StartNumber, x.NextNumber, x.IncrementBy, x.IsDefault, x.IsActive, x.HasIssuedNumbers, x.LastIssuedAt, x.Description };
+    private static int DigitCount(long value) => value.ToString(System.Globalization.CultureInfo.InvariantCulture).Length;
+    private static object Snapshot(SeriesEntity x) => new { x.Id, x.BranchCode, x.Code, x.Name, x.DocumentType, x.Prefix, x.YearFormat, x.NumberLength, x.StartNumber, x.NextNumber, x.IncrementBy, x.IsDefault, x.IsActive, x.HasIssuedNumbers, x.LastIssuedAt, x.Description };
     private string Message(string key) => localizer[key].Value;
-    private static readonly string[] Fields = ["BranchCode", "WarehouseId", "Code", "Name", "DocumentType", "Prefix", "Separator", "YearFormat", "NumberLength", "StartNumber", "NextNumber", "IncrementBy", "IsDefault", "IsActive", "Description"];
-    private sealed record NormalizedRequest(string BranchCode, string Code, string Name, string Prefix, string Separator);
+    private static readonly string[] Fields = ["BranchCode", "Code", "Name", "DocumentType", "Prefix", "YearFormat", "NumberLength", "StartNumber", "NextNumber", "IncrementBy", "IsDefault", "IsActive", "Description"];
+    private sealed record NormalizedRequest(string BranchCode, string Code, string Name, string Prefix);
     [GeneratedRegex("^[A-Z0-9_-]{2,20}$", RegexOptions.CultureInvariant)] private static partial Regex CodePattern();
     [GeneratedRegex("^[A-Z0-9]{1,10}$", RegexOptions.CultureInvariant)] private static partial Regex PrefixPattern();
 }

@@ -8,10 +8,7 @@ public static class DocumentSeriesMessageKeys
     public const string InvalidCode = nameof(InvalidCode);
     public const string InvalidName = nameof(InvalidName);
     public const string InvalidPrefix = nameof(InvalidPrefix);
-    public const string InvalidSeparator = nameof(InvalidSeparator);
     public const string InvalidNumberSettings = nameof(InvalidNumberSettings);
-    public const string WarehouseNotFound = nameof(WarehouseNotFound);
-    public const string BranchMismatch = nameof(BranchMismatch);
     public const string DuplicateCode = nameof(DuplicateCode);
     public const string DuplicateDefault = nameof(DuplicateDefault);
     public const string IssuedSeriesImmutable = nameof(IssuedSeriesImmutable);
@@ -19,6 +16,7 @@ public static class DocumentSeriesMessageKeys
     public const string InactiveSeries = nameof(InactiveSeries);
     public const string DocumentTypeMismatch = nameof(DocumentTypeMismatch);
     public const string NumberAllocationFailed = nameof(NumberAllocationFailed);
+    public const string SequenceExhausted = nameof(SequenceExhausted);
     public const string ConcurrencyConflict = nameof(ConcurrencyConflict);
     public const string Created = nameof(Created);
     public const string Updated = nameof(Updated);
