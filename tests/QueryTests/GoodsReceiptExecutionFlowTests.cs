@@ -26,6 +26,56 @@ namespace verii_wms_api_v2.QueryTests;
 public sealed class GoodsReceiptExecutionFlowTests
 {
     [Fact]
+    public void Pre_generated_label_strategy_rejects_a_non_label_barcode_with_actionable_message()
+    {
+        var (task, line) = LabelValidationEntities(GoodsReceiptLabelStrategy.PreGenerate);
+
+        var exception = Assert.Throws<AppException>(() =>
+            GoodsReceiptExecutionService.ValidateLabel(null, task, line));
+
+        Assert.Contains("Ürün/tedarikçi barkodu kullanılamaz", exception.Message);
+        Assert.Contains("ön etiketin üzerindeki barkodu okutun", exception.Message);
+    }
+
+    [Fact]
+    public void Printed_pre_generated_label_is_accepted_for_its_own_task_line()
+    {
+        var (task, line) = LabelValidationEntities(GoodsReceiptLabelStrategy.PreGenerate);
+        var label = new GoodsReceiptLabel
+        {
+            Id = 300,
+            GrHeaderId = task.GrHeaderId,
+            GrLineId = line.GrLineId,
+            GrTaskLineId = line.Id,
+            Status = GoodsReceiptLabelStatus.Printed,
+            PrintCount = 1,
+            BarcodeValue = "WMS-GR-TEST"
+        };
+
+        GoodsReceiptExecutionService.ValidateLabel(label, task, line);
+    }
+
+    [Fact]
+    public void Generated_but_unprinted_pre_label_is_rejected()
+    {
+        var (task, line) = LabelValidationEntities(GoodsReceiptLabelStrategy.PreGenerate);
+        var label = new GoodsReceiptLabel
+        {
+            Id = 300,
+            GrHeaderId = task.GrHeaderId,
+            GrLineId = line.GrLineId,
+            GrTaskLineId = line.Id,
+            Status = GoodsReceiptLabelStatus.Generated,
+            BarcodeValue = "WMS-GR-TEST"
+        };
+
+        var exception = Assert.Throws<AppException>(() =>
+            GoodsReceiptExecutionService.ValidateLabel(label, task, line));
+
+        Assert.Contains("önce yazdırılmalı", exception.Message);
+    }
+
+    [Fact]
     public void Over_receipt_within_policy_tolerance_is_allowed_for_task_execution()
     {
         GoodsReceiptExecutionService.ValidateReceiptQuantity(
@@ -150,6 +200,39 @@ public sealed class GoodsReceiptExecutionFlowTests
             PutawayQuantity = 0
         });
         return header;
+    }
+
+    private static (GoodsReceiptTask Task, GoodsReceiptTaskLine Line) LabelValidationEntities(
+        GoodsReceiptLabelStrategy strategy)
+    {
+        var header = new GoodsReceiptHeader
+        {
+            Id = 100,
+            BranchCode = "0",
+            DocumentNo = "GR-LABEL-TEST",
+            DocumentDate = DateOnly.FromDateTime(DateTime.Today),
+            LabelStrategy = strategy
+        };
+        var task = new GoodsReceiptTask
+        {
+            Id = 200,
+            BranchCode = "0",
+            GrHeaderId = header.Id,
+            Header = header,
+            TaskNo = "GR-LABEL-TEST-RCV-01"
+        };
+        var line = new GoodsReceiptTaskLine
+        {
+            Id = 201,
+            BranchCode = "0",
+            GrTaskId = task.Id,
+            GrLineId = 101,
+            Task = task,
+            SequenceNo = 1,
+            PlannedQuantity = 1,
+            UnitCode = "AD"
+        };
+        return (task, line);
     }
 
     [Fact]

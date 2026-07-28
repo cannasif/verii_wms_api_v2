@@ -333,12 +333,14 @@ public sealed class GoodsReceiptExecutionService(
         batch.UpdatedDate = DateTime.UtcNow;
     }
 
-    private static void ValidateLabel(GoodsReceiptLabel? label, GoodsReceiptTask task, GoodsReceiptTaskLine line)
+    internal static void ValidateLabel(GoodsReceiptLabel? label, GoodsReceiptTask task, GoodsReceiptTaskLine line)
     {
         if (label is null)
         {
             if (task.Header.LabelStrategy == GoodsReceiptLabelStrategy.PreGenerate)
-                throw AppException.BadRequest("Bu mal kabul ön etiket zorunlu; okutulan barkod tanınmadı.");
+                throw AppException.BadRequest(
+                    "Bu emir ön etiketlidir. Ürün/tedarikçi barkodu kullanılamaz; " +
+                    "oluşturup yazdırdığınız ön etiketin üzerindeki barkodu okutun.");
             return;
         }
         if (label.GrHeaderId != task.GrHeaderId || label.GrTaskLineId != line.Id || label.GrLineId != line.GrLineId)
