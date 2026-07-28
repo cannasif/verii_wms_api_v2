@@ -1,5 +1,8 @@
 using verii_wms_api_v2.Modules.StockTracking.Application;
 using verii_wms_api_v2.Modules.StockTracking.Domain;
+using verii_wms_api_v2.Modules.SerialNumberPolicy.Application;
+using verii_wms_api_v2.Modules.SerialNumberPolicy.Domain;
+using verii_wms_api_v2.Modules.Stock.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using Xunit;
 
@@ -117,6 +120,36 @@ public sealed class StockTrackingPolicyGuardTests
                 StockTrackingType.Lot,
                 [new StockTrackingCapture(1, "LOT-01", null, null, tooSoon)],
                 requireCompleteCapture: true));
+    }
+
+    [Fact]
+    public void Manual_steel_serial_is_not_validated_against_automatic_generation_mask()
+    {
+        var rule = new SerialNumberRule { MaskTemplate = "{STOCK}-{YY}{MM}-{N:6}" };
+        var stock = new Stock { ErpStockCode = "01/022" };
+
+        var error = SerialNumberPolicyService.ValidateSerialMask(
+            rule,
+            stock,
+            "LVH-022",
+            autoGenerateSerials: false);
+
+        Assert.Null(error);
+    }
+
+    [Fact]
+    public void Automatically_generated_serial_is_still_validated_against_its_mask()
+    {
+        var rule = new SerialNumberRule { MaskTemplate = "{STOCK}-{YY}{MM}-{N:6}" };
+        var stock = new Stock { ErpStockCode = "01/022" };
+
+        var error = SerialNumberPolicyService.ValidateSerialMask(
+            rule,
+            stock,
+            "LVH-022",
+            autoGenerateSerials: true);
+
+        Assert.Contains("beklenen maskeye", error);
     }
 
     private static EffectiveStockTrackingPolicy Policy(

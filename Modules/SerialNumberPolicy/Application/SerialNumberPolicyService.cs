@@ -83,9 +83,9 @@ public sealed class SerialNumberPolicyService(IUnitOfWork uow, IAuditLogWriter a
             return rule.IsRequired?Fail(rule,value,"Seri numarası zorunludur."):Pass(rule,value);
         if(value.Length<rule.MinLength||value.Length>rule.MaxLength) return Fail(rule,value,$"Seri uzunluğu {rule.MinLength}-{rule.MaxLength} karakter olmalıdır.");
         if(!Allowed(value,rule.CharacterSet)) return Fail(rule,value,"Seri numarası izin verilen karakter kümesine uymuyor.");
-        Regex regex; try{regex=new Regex(Compile(rule.MaskTemplate,stock.ErpStockCode,stock.GroupCode),RegexOptions.CultureInvariant,TimeSpan.FromMilliseconds(200));}
-        catch(ArgumentException){throw AppException.Conflict("Yayımlanmış seri maskesi geçersizdir.");}
-        if(!regex.IsMatch(value)) return Fail(rule,value,$"Seri beklenen maskeye uymuyor: {rule.MaskTemplate}");
+        var trackingPolicy=await TryResolvePolicyAsync(branch,stock,now,ct);
+        var maskError=ValidateSerialMask(rule,stock,value,trackingPolicy?.AutoGenerateSerials==true);
+        if(maskError is not null)return Fail(rule,value,maskError);
         var duplicate=await IsDuplicate(rule,stockId,yapCodeId,value,ct);
         return duplicate?Fail(rule,value,"Seri numarası seçilen benzersizlik kapsamında daha önce kullanılmış."):Pass(rule,value);
     }
@@ -225,6 +225,10 @@ public sealed class SerialNumberPolicyService(IUnitOfWork uow, IAuditLogWriter a
         return await q.AnyAsync(ct);
     }
     private async Task<StockTrackingPolicy> ResolvePolicyAsync(string branch,StockEntity stock,DateTimeOffset now,CancellationToken ct)
+        =>await TryResolvePolicyAsync(branch,stock,now,ct)
+            ??throw AppException.BadRequest("Stok takip ayarı bulunamadı.");
+
+    private async Task<StockTrackingPolicy?> TryResolvePolicyAsync(string branch,StockEntity stock,DateTimeOffset now,CancellationToken ct)
     {
         var candidates=await uow.Repository<StockTrackingPolicy>().Query().Where(x=>
             x.BranchCode==branch&&x.IsActive&&x.EffectiveFromUtc<=now
@@ -234,8 +238,15 @@ public sealed class SerialNumberPolicyService(IUnitOfWork uow, IAuditLogWriter a
                 ||(x.Scope==StockTrackingPolicyScope.StockGroup&&x.StockGroupCode==stock.GroupCode)))
             .ToListAsync(ct);
         return candidates.OrderByDescending(x=>x.Scope).ThenByDescending(x=>x.Priority)
-            .ThenByDescending(x=>x.Version).FirstOrDefault()
-            ??throw AppException.BadRequest("Stok takip ayarı bulunamadı.");
+            .ThenByDescending(x=>x.Version).FirstOrDefault();
+    }
+    internal static string? ValidateSerialMask(SerialNumberRule rule,StockEntity stock,string value,bool autoGenerateSerials)
+    {
+        if(!autoGenerateSerials)return null;
+        Regex regex;
+        try{regex=new Regex(Compile(rule.MaskTemplate,stock.ErpStockCode,stock.GroupCode),RegexOptions.CultureInvariant,TimeSpan.FromMilliseconds(200));}
+        catch(ArgumentException){throw AppException.Conflict("Yayımlanmış seri maskesi geçersizdir.");}
+        return regex.IsMatch(value)?null:$"Seri beklenen maskeye uymuyor: {rule.MaskTemplate}";
     }
     private static GenerateStockSerialsResult Result(
         StockEntity stock,long? ruleId,string mask,bool replayed,IReadOnlyCollection<StockSerialRegistry> rows)=>
