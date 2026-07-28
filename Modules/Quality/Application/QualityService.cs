@@ -1,5 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography;
 using verii_wms_api_v2.Modules.Audit.Application;
+using verii_wms_api_v2.Modules.DocumentSeries.Application;
+using verii_wms_api_v2.Modules.DocumentSeries.Domain;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Identity.Domain;
@@ -10,6 +13,8 @@ using verii_wms_api_v2.Modules.StockMovement.Application;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
 using verii_wms_api_v2.Modules.Warehouse.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
+using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
+using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -23,6 +28,8 @@ public sealed class QualityService(
     IUnitOfWork uow,
     IAuditLogWriter audit,
     IStockMovementService stockMovement,
+    IWarehouseTransferService warehouseTransfer,
+    IDocumentSeriesService documentSeries,
     IGoodsReceiptErpPostingCoordinator erpPosting) : IQualityService, IQualityPolicyResolver
 {
     private IGenericRepository<QualityParameter> Parameters => uow.Repository<QualityParameter>();
@@ -193,7 +200,21 @@ public sealed class QualityService(
             if (request.Decision is QualityDecision.Quarantined or QualityDecision.Rejected && !targetLocation.HasValue)
                 throw AppException.Conflict("Seçilen kalite kararı için hedef kalite rafı ayarlarda tanımlı değil.");
 
-            var movementLines = selected.Select(line =>
+            var movementLocationIds = grLines.Values
+                .Select(line => (long?)(line.DefaultReceivingLocationId ?? gr.ReceivingLocationId))
+                .Append(parameter.DefaultQuarantineLocationId)
+                .Append(targetLocation)
+                .Where(locationId => locationId.HasValue)
+                .Select(locationId => locationId!.Value)
+                .Distinct()
+                .ToArray();
+            var movementLocations = await uow.Repository<WarehouseLocation>().Query()
+                .Where(location => movementLocationIds.Contains(location.Id))
+                .ToDictionaryAsync(location => location.Id, token);
+            if (movementLocations.Count != movementLocationIds.Length)
+                throw AppException.Conflict("Kalite stok hareketi için kaynak veya hedef raf bulunamadı.");
+
+            var dispositions = selected.Select(line =>
             {
                 var receiptLine = grLines[line.GoodsReceiptLineId!.Value];
                 var receiptLocation = receiptLine.DefaultReceivingLocationId ?? gr.ReceivingLocationId;
@@ -202,19 +223,87 @@ public sealed class QualityService(
                     ? parameter.DefaultQuarantineLocationId ?? throw AppException.Conflict("Karantina rafı ayarlarda tanımlı değil.")
                     : receiptLocation;
                 var sourceStatus = wasQuarantined ? "Quarantine" : gr.HoldInventoryUntilQualityDecision ? "QualityHold" : "Available";
-                return request.Decision == QualityDecision.Returned
-                    ? new StockMovementLineRequest(line.StockId, line.YapCodeId, line.Quantity, gr.TargetWarehouseId, sourceLocation,
-                        null, null, receiptLine.UnitCode, line.LotNo, line.SerialNo, sourceStatus, sourceStatus, null)
-                    : new StockMovementLineRequest(line.StockId, line.YapCodeId, line.Quantity, gr.TargetWarehouseId, sourceLocation,
-                        gr.TargetWarehouseId, targetLocation ?? receiptLocation, receiptLine.UnitCode, line.LotNo, line.SerialNo,
-                        sourceStatus, sourceStatus, request.Decision switch
-                        { QualityDecision.Accepted => "Available", QualityDecision.Quarantined => "Quarantine", QualityDecision.Rejected => "Rejected", _ => sourceStatus });
-            }).Where(x => request.Decision != QualityDecision.Accepted || !string.Equals(x.SourceStockStatus, "Available", StringComparison.OrdinalIgnoreCase)).ToList();
+                var destinationLocation = targetLocation ?? receiptLocation;
+                var sourceWarehouse = movementLocations[sourceLocation].WarehouseId;
+                var destinationWarehouse = movementLocations[destinationLocation].WarehouseId;
+                var destinationStatus = request.Decision switch
+                {
+                    QualityDecision.Accepted => "Available",
+                    QualityDecision.Quarantined => "Quarantine",
+                    QualityDecision.Rejected => "Rejected",
+                    _ => sourceStatus
+                };
+                return new QualityInventoryDisposition(line, receiptLine, sourceWarehouse, sourceLocation,
+                    destinationWarehouse, destinationLocation, sourceStatus, destinationStatus);
+            }).ToList();
+
+            var datDispositions = dispositions
+                .Where(x => request.Decision != QualityDecision.Returned && RequiresDat(x.SourceWarehouseId, x.TargetWarehouseId))
+                .ToList();
+            var movementLines = dispositions
+                .Where(x => request.Decision == QualityDecision.Returned || !RequiresDat(x.SourceWarehouseId, x.TargetWarehouseId))
+                .Select(x => request.Decision == QualityDecision.Returned
+                    ? new StockMovementLineRequest(x.InspectionLine.StockId, x.InspectionLine.YapCodeId, x.InspectionLine.Quantity,
+                        x.SourceWarehouseId, x.SourceLocationId,
+                        null, null, x.ReceiptLine.UnitCode, x.InspectionLine.LotNo, x.InspectionLine.SerialNo,
+                        x.SourceStockStatus, x.SourceStockStatus, null)
+                    : new StockMovementLineRequest(x.InspectionLine.StockId, x.InspectionLine.YapCodeId, x.InspectionLine.Quantity,
+                        x.SourceWarehouseId, x.SourceLocationId, x.TargetWarehouseId, x.TargetLocationId,
+                        x.ReceiptLine.UnitCode, x.InspectionLine.LotNo, x.InspectionLine.SerialNo,
+                        x.SourceStockStatus, x.SourceStockStatus, x.TargetStockStatus))
+                .Where(x => request.Decision != QualityDecision.Accepted
+                    || !string.Equals(x.SourceStockStatus, "Available", StringComparison.OrdinalIgnoreCase))
+                .ToList();
             StockMovementPostResult? movement = null;
             if (movementLines.Count > 0)
                 movement = await stockMovement.PostAsync(new PostStockMovementRequest($"QUALITY:{inspection.Id}:{request.IdempotencyKey:N}",
                     request.Decision == QualityDecision.Returned ? StockMovementTypes.SupplierReturn : StockMovementTypes.Transfer,
                     "QualityInspection", inspection.InspectionNo, inspection.Id, DateTime.UtcNow, "QualityDisposition", request.Note, movementLines), token);
+
+            var datIds = new List<long>();
+            if (datDispositions.Count > 0)
+            {
+                var series = (await documentSeries.GetLookupAsync(WmsDocumentType.InterWarehouseTransfer, inspection.BranchCode, token))
+                    .FirstOrDefault(x => x.IsDefault)
+                    ?? throw AppException.Conflict("Kalite kaynaklı depo değişikliği için varsayılan DAT belge serisi tanımlı değil.");
+                foreach (var group in datDispositions.GroupBy(x => new { x.SourceWarehouseId, x.TargetWarehouseId }))
+                {
+                    var dat = await warehouseTransfer.CreateDraftAsync(new CreateWarehouseTransferDraftRequest(
+                        CreateDatIdempotencyKey(request.IdempotencyKey, group.Key.SourceWarehouseId, group.Key.TargetWarehouseId),
+                        inspection.BranchCode,
+                        series.Id,
+                        DateOnly.FromDateTime(DateTime.UtcNow),
+                        WarehouseTransferInitiationMode.DirectTransfer,
+                        WarehouseTransferProcessType.ReturnToWarehouse,
+                        group.Key.SourceWarehouseId,
+                        group.Key.TargetWarehouseId,
+                        null,
+                        group.Select(x => (long?)x.TargetLocationId).Distinct().Count() == 1 ? group.First().TargetLocationId : null,
+                        null,
+                        null,
+                        null,
+                        3,
+                        inspection.InspectionNo,
+                        $"Kalite kararı sonrası depo değişikliği. Mal kabul: {gr.DocumentNo}; karar: {request.Decision}.",
+                        group.Select(x => new WarehouseTransferLineDraftRequest(
+                            x.InspectionLine.StockId,
+                            x.InspectionLine.YapCodeId,
+                            x.InspectionLine.Quantity,
+                            x.ReceiptLine.UnitCode,
+                            x.ReceiptLine.TrackingType,
+                            x.ReceiptLine.RequireHandlingUnit,
+                            x.SourceLocationId,
+                            x.TargetLocationId,
+                            request.Note,
+                            BuildDatTrackings(x),
+                            null,
+                            x.SourceStockStatus,
+                            x.TargetStockStatus)).ToList(),
+                        [],
+                        WarehouseTransferBusinessContext.InterWarehouse), actor, token);
+                    datIds.Add(dat.Id);
+                }
+            }
 
             var now = DateTimeOffset.UtcNow;
             foreach (var line in selected)
@@ -246,7 +335,8 @@ public sealed class QualityService(
                 : quarantined > 0 ? OperationQualityStatus.InProgress : OperationQualityStatus.Passed;
             await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("quality.inspection.decide", nameof(QualityInspection), id.ToString(), "Succeeded", "quality",
-                NewValues: new { request.IdempotencyKey, request.Decision, request.LineIds, request.ReasonCode, MovementId = movement?.OperationId },
+                NewValues: new { request.IdempotencyKey, request.Decision, request.LineIds, request.ReasonCode,
+                    MovementId = movement?.OperationId, WarehouseTransferIds = datIds },
                 ChangedFields: ["Status", "Lines", "InventoryStatus"]), token);
             return gr.Id;
         }, ct);
@@ -329,6 +419,38 @@ public sealed class QualityService(
     private static QualityParameter Default(string branch)=>new(){BranchCode=branch,ParameterKey="DEFAULT"};
     private static QualityParameterDto Map(QualityParameter x)=>new(x.Id,x.BranchCode,x.AutoCreateInspectionOnReceipt,x.DefaultInspectionMode,x.DefaultFailAction,x.HoldInventoryUntilDecision,x.BlockPutawayUntilDecision,x.BlockErpPostingUntilDecision,x.RequireManagerApprovalForRelease,x.AllowPartialDecision,x.AllowDirectReceiptWhenNoRule,x.BlockReceiptWhenLotMissing,x.BlockReceiptWhenSerialMissing,x.BlockReceiptWhenExpiryMissing,x.DefaultQualityLocationId,x.DefaultQuarantineLocationId,x.DefaultRejectLocationId,x.UpdatedBy,x.UpdatedDate);
     private static object Snapshot(QualityRule x)=>new{x.Id,x.BranchCode,x.ScopeType,x.StockId,x.StockGroupCode,x.InspectionMode,x.SamplingMode,x.SamplingValue,x.FailAction,x.AutoQuarantine,x.RequireLot,x.RequireSerial,x.RequireExpiryDate,x.MinimumRemainingShelfLifeDays,x.IsActive,x.Description};
+    internal static bool RequiresDat(long sourceWarehouseId,long targetWarehouseId)=>sourceWarehouseId!=targetWarehouseId;
+    private static Guid CreateDatIdempotencyKey(Guid decisionKey,long sourceWarehouseId,long targetWarehouseId)
+    {
+        var input=$"{decisionKey:N}:{sourceWarehouseId}:{targetWarehouseId}";
+        var hash=SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(input));
+        return new Guid(hash[..16]);
+    }
+    private static IReadOnlyList<WarehouseTransferTrackingDraftRequest>? BuildDatTrackings(QualityInventoryDisposition disposition)
+    {
+        if (disposition.ReceiptLine.TrackingType == StockTrackingType.None
+            && string.IsNullOrWhiteSpace(disposition.InspectionLine.LotNo)
+            && string.IsNullOrWhiteSpace(disposition.InspectionLine.SerialNo))
+            return null;
+        return [new WarehouseTransferTrackingDraftRequest(
+            disposition.InspectionLine.Quantity,
+            null,
+            disposition.InspectionLine.LotNo,
+            disposition.InspectionLine.SerialNo,
+            null,
+            disposition.InspectionLine.ExpiryDate,
+            disposition.SourceLocationId,
+            disposition.TargetLocationId)];
+    }
+    private sealed record QualityInventoryDisposition(
+        QualityInspectionLine InspectionLine,
+        GoodsReceiptLine ReceiptLine,
+        long SourceWarehouseId,
+        long SourceLocationId,
+        long TargetWarehouseId,
+        long TargetLocationId,
+        string SourceStockStatus,
+        string TargetStockStatus);
     private static string NormalizeBranch(string? x)=>string.IsNullOrWhiteSpace(x)?"0":x.Trim(); private static string? Clean(string? x,int max){var v=string.IsNullOrWhiteSpace(x)?null:x.Trim();return v?.Length>max?v[..max]:v;}
     private static void ApplyVersion(QualityInspection entity,string? supplied){if(string.IsNullOrWhiteSpace(supplied))return;try{entity.RowVersion=Convert.FromBase64String(supplied);}catch{throw AppException.Conflict("Kalite kaydı güncellik bilgisi geçersiz. Sayfayı yenileyin.");}}
 }
