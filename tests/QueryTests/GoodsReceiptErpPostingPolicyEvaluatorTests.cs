@@ -52,6 +52,34 @@ public sealed class GoodsReceiptErpPostingPolicyEvaluatorTests
     }
 
     [Theory]
+    [InlineData(GoodsReceiptErpPostingPolicy.AfterQualityApproval)]
+    [InlineData(GoodsReceiptErpPostingPolicy.AfterAllApprovals)]
+    public void Rejected_quality_is_a_completed_decision_for_erp_posting(
+        GoodsReceiptErpPostingPolicy postingPolicy)
+    {
+        var eligible = GoodsReceiptErpPostingPolicyEvaluator.IsEligible(
+            WarehouseOperationStatus.Processed,
+            OperationApprovalStatus.Approved,
+            OperationQualityStatus.Failed,
+            postingPolicy);
+
+        Assert.True(eligible);
+    }
+
+    [Fact]
+    public void Rejected_quantity_remains_part_of_the_physical_goods_receipt()
+    {
+        var line = new GoodsReceiptLine
+        {
+            ReceivedQuantity = 10,
+            AcceptedQuantity = 6,
+            RejectedQuantity = 4
+        };
+
+        Assert.Equal(10, ErpPostingService.GoodsReceiptQuantityForErp(line));
+    }
+
+    [Theory]
     [InlineData(WarehouseOperationStatus.Draft)]
     [InlineData(WarehouseOperationStatus.InProgress)]
     [InlineData(WarehouseOperationStatus.Cancelled)]

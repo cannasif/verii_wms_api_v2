@@ -108,7 +108,9 @@ public static class GoodsReceiptErpPostingPolicyEvaluator
         var receiptApprovalCompleted = approvalStatus is
             OperationApprovalStatus.NotRequired or OperationApprovalStatus.Approved;
         var qualityApprovalCompleted = qualityStatus is
-            OperationQualityStatus.NotRequired or OperationQualityStatus.Passed;
+            OperationQualityStatus.NotRequired
+            or OperationQualityStatus.Passed
+            or OperationQualityStatus.Failed;
 
         return postingPolicy switch
         {

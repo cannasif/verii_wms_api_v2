@@ -385,21 +385,22 @@ public sealed class ErpPostingService(
 
         foreach (var line in header.Lines.OrderBy(x => x.LineNo))
         {
-            if (line.AcceptedQuantity <= 0) continue;
+            var receiptQuantity = GoodsReceiptQuantityForErp(line);
+            if (receiptQuantity <= 0) continue;
             var orderNo = ResolveGoodsReceiptOrderNo(header, line);
             var lineSerials = serials.Where(x => x.GrLineId == line.Id).ToList();
             if (sendSerials && line.RequireSerial)
             {
-                if (lineSerials.Count == 0 || lineSerials.Sum(x => x.Quantity) != line.AcceptedQuantity)
+                if (lineSerials.Count == 0 || lineSerials.Sum(x => x.Quantity) != receiptQuantity)
                     throw AppException.Conflict(
-                        $"{line.StockCodeSnapshot} için kabul miktarıyla eşleşen seri kayıtları tamamlanmadan ERP irsaliyesi oluşturulamaz.");
+                        $"{line.StockCodeSnapshot} için teslim alınan miktarla eşleşen seri kayıtları tamamlanmadan ERP irsaliyesi oluşturulamaz.");
                 lines.AddRange(lineSerials.Select(serial => NewLine(
                     line.StockCodeSnapshot, serial.Quantity, warehouse.WarehouseCode, null, null,
                     line.YapCodeSnapshot, serial.SerialNo, orderNo, line.Description)));
             }
             else
             {
-                lines.Add(NewLine(line.StockCodeSnapshot, line.AcceptedQuantity, warehouse.WarehouseCode,
+                lines.Add(NewLine(line.StockCodeSnapshot, receiptQuantity, warehouse.WarehouseCode,
                     null, null, line.YapCodeSnapshot, null, orderNo, line.Description));
             }
         }
@@ -416,6 +417,9 @@ public sealed class ErpPostingService(
             header.Description,
             lines);
     }
+
+    internal static decimal GoodsReceiptQuantityForErp(GoodsReceiptLine line) =>
+        line.ReceivedQuantity;
 
     private NetsisItemSlipRequest MapWarehouseTransfer(
         WarehouseTransferHeader header,
@@ -607,7 +611,9 @@ public sealed class ErpPostingService(
             throw AppException.Conflict("Mal kabul onayı tamamlanmadan ERP irsaliyesi oluşturulamaz.");
         if (header.ErpPostingPolicy is GoodsReceiptErpPostingPolicy.AfterQualityApproval
             or GoodsReceiptErpPostingPolicy.AfterAllApprovals
-            && header.QualityStatus is not (OperationQualityStatus.NotRequired or OperationQualityStatus.Passed))
+            && header.QualityStatus is not (OperationQualityStatus.NotRequired
+                or OperationQualityStatus.Passed
+                or OperationQualityStatus.Failed))
             throw AppException.Conflict("Kalite kararı tamamlanmadan ERP irsaliyesi oluşturulamaz.");
     }
 
