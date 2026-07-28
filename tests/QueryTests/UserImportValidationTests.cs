@@ -192,6 +192,8 @@ public sealed class UserImportValidationTests
             throw new NotSupportedException();
         public Task<bool> UpdateAsync(long id, UpdateUserRequest request, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
+        public Task<IReadOnlyList<long>> UpdateWarehouseAssignmentsAsync(long id, UpdateUserWarehouseAssignmentsRequest request, CancellationToken cancellationToken) =>
+            throw new NotSupportedException();
         public Task<bool> DeactivateAsync(long id, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }

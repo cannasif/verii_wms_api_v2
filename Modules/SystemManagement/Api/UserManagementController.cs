@@ -54,6 +54,17 @@ public sealed class UserManagementController(IUserManagementService service, IPe
     public async Task<IActionResult> Update(long id, UpdateUserRequest request, CancellationToken ct)
     { await Require("SYSTEM.USERS.MANAGE", ct); return Ok(ApiResponse<bool>.Ok(await service.UpdateAsync(id, request, ct), "Kullanıcı güncellendi.")); }
 
+    [HttpPut("{id:long}/warehouse-assignments")]
+    public async Task<IActionResult> UpdateWarehouseAssignments(long id, UpdateUserWarehouseAssignmentsRequest request, CancellationToken ct)
+    {
+        if (!await permissions.HasPermissionAsync(User, "WMS.GOODS_RECEIPT.SETTINGS.MANAGE", ct)
+            && !await permissions.HasPermissionAsync(User, "SYSTEM.USERS.MANAGE", ct))
+            throw AppException.Forbidden();
+        return Ok(ApiResponse<IReadOnlyList<long>>.Ok(
+            await service.UpdateWarehouseAssignmentsAsync(id, request, ct),
+            "Kullanıcının mal kabul depo yetkileri güncellendi."));
+    }
+
     [HttpDelete("{id:long}"), HttpPost("{id:long}/delete")]
     public async Task<IActionResult> Delete(long id, CancellationToken ct)
     { await Require("SYSTEM.USERS.MANAGE", ct); return Ok(ApiResponse<bool>.Ok(await service.DeactivateAsync(id, ct), "Kullanıcı pasife alındı.")); }

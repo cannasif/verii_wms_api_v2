@@ -126,6 +126,44 @@ public sealed partial class UserManagementService(
         return true;
     }
 
+    public async Task<IReadOnlyList<long>> UpdateWarehouseAssignmentsAsync(
+        long id,
+        UpdateUserWarehouseAssignmentsRequest request,
+        CancellationToken cancellationToken)
+    {
+        var user = await Users.FirstOrDefaultAsync(x => x.Id == id, false, cancellationToken)
+            ?? throw AppException.NotFound("Kullanıcı bulunamadı.");
+        var selected = request.WarehouseIds.Distinct().OrderBy(x => x).ToList();
+        if (user.Role.Equals("Admin", StringComparison.OrdinalIgnoreCase)
+            || user.Role.Equals("superadmin", StringComparison.OrdinalIgnoreCase))
+            selected.Clear();
+        if (await unitOfWork.Repository<WarehouseEntity>().CountAsync(x => selected.Contains(x.Id), cancellationToken) != selected.Count)
+            throw AppException.BadRequest("Geçersiz depo seçildi.");
+        var previous = await UserWarehouses.Query()
+            .Where(x => x.UserId == id)
+            .Select(x => x.WarehouseId)
+            .OrderBy(x => x)
+            .ToListAsync(cancellationToken);
+        if (previous.SequenceEqual(selected))
+            return selected;
+
+        return await unitOfWork.ExecuteInTransactionAsync<IReadOnlyList<long>>(async ct =>
+        {
+            await SetWarehousesAsync(id, selected, ct);
+            await unitOfWork.SaveChangesAsync(ct);
+            await audit.WriteAsync(new AuditLogWriteEntry(
+                "user.warehouse-assignments.update",
+                "User",
+                id.ToString(),
+                "Succeeded",
+                "goods-receipt",
+                OldValues: new { WarehouseIds = previous },
+                NewValues: new { WarehouseIds = selected },
+                ChangedFields: ["WarehouseIds"]), ct);
+            return selected;
+        }, cancellationToken);
+    }
+
     private async Task ValidateAsync(string? usernameValue, string? emailValue, string? password, string? firstName, string? lastName, string? phone, string? roleValue, IReadOnlyList<long> groupIds, IReadOnlyList<long>? warehouseIds, long? currentId, bool passwordRequired, bool allowSuperAdmin, CancellationToken ct)
     {
         var username = usernameValue?.Trim() ?? ""; var email = emailValue?.Trim().ToLowerInvariant() ?? ""; var role = roleValue?.Trim() ?? "";

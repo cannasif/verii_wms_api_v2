@@ -6,6 +6,7 @@ public sealed record UserGridRow(long Id, string Username, string Email, string 
 public sealed record UserDetailResponse(long Id, string Username, string Email, string Role, bool IsActive, DateTime? LastLoginAt, string FirstName, string LastName, string? PhoneNumber, IReadOnlyList<long> PermissionGroupIds, IReadOnlyList<long> WarehouseIds);
 public sealed record CreateUserRequest(string Username, string Email, string Password, string? FirstName, string? LastName, string? PhoneNumber, string Role, bool IsActive, IReadOnlyList<long> PermissionGroupIds, IReadOnlyList<long>? WarehouseIds = null);
 public sealed record UpdateUserRequest(string Username, string Email, string? Password, string? FirstName, string? LastName, string? PhoneNumber, string Role, bool IsActive, IReadOnlyList<long> PermissionGroupIds, IReadOnlyList<long>? WarehouseIds = null);
+public sealed record UpdateUserWarehouseAssignmentsRequest(IReadOnlyList<long> WarehouseIds);
 public sealed record UserImportRowResult(int RowNumber, string Status, string? Username, string? Email, string Message);
 public sealed record UserImportResult(
     int TotalRows,
@@ -22,5 +23,6 @@ public interface IUserManagementService
     Task<byte[]> CreateImportTemplateAsync(CancellationToken cancellationToken);
     Task<UserImportResult> ImportAsync(Stream workbookStream, CancellationToken cancellationToken);
     Task<bool> UpdateAsync(long id, UpdateUserRequest request, CancellationToken cancellationToken);
+    Task<IReadOnlyList<long>> UpdateWarehouseAssignmentsAsync(long id, UpdateUserWarehouseAssignmentsRequest request, CancellationToken cancellationToken);
     Task<bool> DeactivateAsync(long id, CancellationToken cancellationToken);
 }
