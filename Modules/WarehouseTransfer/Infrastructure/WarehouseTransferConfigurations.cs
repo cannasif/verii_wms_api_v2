@@ -53,6 +53,7 @@ public sealed class WarehouseTransferLineConfiguration : BaseEntityConfiguration
         b.Property(x=>x.StockCodeSnapshot).HasMaxLength(100).IsRequired(); b.Property(x=>x.StockNameSnapshot).HasMaxLength(300);
         b.Property(x=>x.YapCodeSnapshot).HasMaxLength(100); b.Property(x=>x.UnitCode).HasMaxLength(20).IsRequired();
         b.Property(x=>x.BaseUnitCode).HasMaxLength(20).IsRequired(); b.Property(x=>x.UnitConversionFactor).HasPrecision(20,8);
+        b.Property(x=>x.SourceStockStatus).HasMaxLength(40).IsRequired(); b.Property(x=>x.TargetStockStatus).HasMaxLength(40).IsRequired();
         foreach(var p in new[]{nameof(WarehouseTransferLine.RequestedQuantity),nameof(WarehouseTransferLine.ReservedQuantity),nameof(WarehouseTransferLine.PickedQuantity),nameof(WarehouseTransferLine.PackedQuantity),nameof(WarehouseTransferLine.ShippedQuantity),nameof(WarehouseTransferLine.ReceivedQuantity),nameof(WarehouseTransferLine.PutawayQuantity),nameof(WarehouseTransferLine.DamagedQuantity),nameof(WarehouseTransferLine.LostQuantity),nameof(WarehouseTransferLine.ShortClosedQuantity)}) b.Property(p).HasPrecision(20,6);
         b.Property(x=>x.Description).HasMaxLength(1000); b.Property(x=>x.RowVersion).IsRowVersion();
         b.HasOne(x=>x.Header).WithMany(x=>x.Lines).HasForeignKey(x=>x.WtHeaderId).OnDelete(DeleteBehavior.Restrict);

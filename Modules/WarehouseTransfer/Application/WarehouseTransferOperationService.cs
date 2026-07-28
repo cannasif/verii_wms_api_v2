@@ -371,8 +371,14 @@ public sealed class WarehouseTransferOperationService(
                 ? header.SourceWarehouseId : header.TargetWarehouseId;
             var targetWarehouse = phase == TransferPhase.Pick
                 ? header.SourceWarehouseId : header.TargetWarehouseId;
-            var sourceStatus = phase == TransferPhase.Receive && header.CreateTransitInventory ? "InTransit" : "Available";
-            var targetStatus = phase == TransferPhase.Dispatch && header.CreateTransitInventory ? "InTransit" : "Available";
+            var sourceStatus = phase == TransferPhase.Receive && header.CreateTransitInventory
+                ? "InTransit"
+                : phase is TransferPhase.Pick or TransferPhase.Dispatch
+                    ? line.SourceStockStatus
+                    : line.TargetStockStatus;
+            var targetStatus = phase == TransferPhase.Dispatch && header.CreateTransitInventory
+                ? "InTransit"
+                : phase == TransferPhase.Pick ? line.SourceStockStatus : line.TargetStockStatus;
             return new StockMovementLineRequest(
                 line.StockId, line.YapCodeId, item.Quantity,
                 sourceWarehouse, sourceLocation, targetWarehouse, targetLocation,

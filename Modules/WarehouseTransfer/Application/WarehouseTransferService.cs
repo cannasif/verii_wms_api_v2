@@ -119,6 +119,8 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
                     RequireSerial=trackingPolicy.RequireSerial,RequireHandlingUnit=item.RequireHandlingUnit,
                     SourceWarehouseId=request.SourceWarehouseId,TargetWarehouseId=request.TargetWarehouseId,
                     DefaultSourceLocationId=item.DefaultSourceLocationId,DefaultTargetLocationId=item.DefaultTargetLocationId,
+                    SourceStockStatus=NormalizeStockStatus(item.SourceStockStatus),
+                    TargetStockStatus=NormalizeStockStatus(item.TargetStockStatus),
                     Description=Clean(item.Description,1000),Status=WarehouseTransferLineStatus.Open
                 };
                 foreach(var tracking in item.Trackings??[]){
@@ -371,6 +373,11 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
         _=>throw AppException.BadRequest("Desteklenmeyen transfer bağlamı.")
     };
     private static string? Clean(string? value,int max){var v=value?.Trim();if(string.IsNullOrEmpty(v))return null;return v.Length<=max?v:v[..max];}
+    private static string NormalizeStockStatus(string? value)
+    {
+        var status=Clean(value,40);
+        return string.IsNullOrWhiteSpace(status)?"Available":status;
+    }
     private static void EnsureRowVersion(byte[] current,string supplied){
         byte[] expected;try{expected=Convert.FromBase64String(supplied??string.Empty);}catch(FormatException){throw AppException.BadRequest("Geçersiz eşzamanlılık anahtarı.");}
         if(!System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(current,expected))throw AppException.Conflict("Transfer başka bir kullanıcı tarafından değiştirildi. Listeyi yenileyip tekrar deneyin.");

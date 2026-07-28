@@ -37,7 +37,9 @@ public sealed record WarehouseTransferLineDraftRequest(
     long? DefaultTargetLocationId,
     string? Description,
     IReadOnlyList<WarehouseTransferTrackingDraftRequest>? Trackings,
-    WarehouseTransferLineSourceDraftRequest? Source);
+    WarehouseTransferLineSourceDraftRequest? Source,
+    string? SourceStockStatus = null,
+    string? TargetStockStatus = null);
 
 public sealed record CreateWarehouseTransferDraftRequest(
     Guid IdempotencyKey,

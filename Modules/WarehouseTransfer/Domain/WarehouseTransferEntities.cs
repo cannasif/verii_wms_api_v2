@@ -235,6 +235,8 @@ public sealed class WarehouseTransferLine : BaseEntity
     public long TargetWarehouseId { get; set; }
     public long? DefaultSourceLocationId { get; set; }
     public long? DefaultTargetLocationId { get; set; }
+    public string SourceStockStatus { get; set; } = "Available";
+    public string TargetStockStatus { get; set; } = "Available";
     public WarehouseTransferLineStatus Status { get; set; } = WarehouseTransferLineStatus.Open;
     public string? Description { get; set; }
     public byte[] RowVersion { get; set; } = [];
