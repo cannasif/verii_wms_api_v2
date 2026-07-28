@@ -218,8 +218,8 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             var plan=await Plans.Query(true).Include(x=>x.Lines).FirstOrDefaultAsync(x=>x.Id==planId,token)??throw AppException.NotFound("SAC planı bulunamadı.");
             var ids=request.LineIds.Where(x=>x>0).Distinct().ToArray();var selected=plan.Lines.Where(x=>ids.Contains(x.Id)).OrderBy(x=>x.LineNo).ToList();
             if(selected.Count==0||selected.Count!=ids.Length)throw AppException.BadRequest("Seçilen SAC satırlarından biri bulunamadı.");
-            var waybillNo=Clean(request.WaybillNo??plan.WaybillNo,50);
-            var electronicWaybillNo=Clean(request.ElectronicWaybillNo,50);
+            var (waybillNo,electronicWaybillNo)=ResolveConversionDocumentReference(
+                request.WaybillNo,request.ElectronicWaybillNo,plan.WaybillNo);
             var waybillDate=request.WaybillDate??plan.WaybillDate;
             GoodsReceiptOperationsService.ValidateDocumentReference(
                 waybillNo,electronicWaybillNo,waybillDate,
@@ -518,6 +518,20 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             &&existingHeader.WaybillNo==waybillNo
             &&existingHeader.ElectronicWaybillNo==electronicWaybillNo
             &&existingHeader.WaybillDate==waybillDate;
+    }
+
+    internal static (string? WaybillNo,string? ElectronicWaybillNo) ResolveConversionDocumentReference(
+        string? requestedWaybillNo,
+        string? requestedElectronicWaybillNo,
+        string? sourceWaybillNo)
+    {
+        var waybillNo=Clean(requestedWaybillNo,50);
+        var electronicWaybillNo=Clean(requestedElectronicWaybillNo,50);
+        if(waybillNo is not null||electronicWaybillNo is not null)
+            return(waybillNo,electronicWaybillNo);
+
+        var source=Clean(sourceWaybillNo,50);
+        return source?.Length==16?(null,source):(source,null);
     }
 
     private static string Key(long supplierId,SteelImportLineRequest x)=>Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
