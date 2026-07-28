@@ -616,10 +616,10 @@ public sealed class GoodsReceiptOperationsService(
         var waybillNo = NormalizeDocumentNumber(request.WaybillNo);
         var electronicWaybillNo = NormalizeDocumentNumber(request.ElectronicWaybillNo);
         ValidateDocumentReference(waybillNo, electronicWaybillNo, request.WaybillDate, request.ExecutionMode);
-        if (waybillNo is not null && !Regex.IsMatch(waybillNo, "^[0-9]{15}$", RegexOptions.CultureInvariant))
-            throw AppException.BadRequest("Normal irsaliye mal kabul numarası tam 15 rakam olmalıdır.");
-        if (electronicWaybillNo is not null && !Regex.IsMatch(electronicWaybillNo, "^[A-Z0-9]{3}[0-9]{13}$", RegexOptions.CultureInvariant))
-            throw AppException.BadRequest("E-irsaliye numarası 3 karakter birim kodu, 4 karakter yıl ve 9 karakter sıra numarasından oluşmalıdır.");
+        if (waybillNo is not null && !Regex.IsMatch(waybillNo, "^[A-Z0-9]{15}$", RegexOptions.CultureInvariant))
+            throw AppException.BadRequest("Normal irsaliye numarası tam 15 alfanümerik karakter olmalıdır.");
+        if (electronicWaybillNo is not null && !Regex.IsMatch(electronicWaybillNo, "^[A-Z0-9]{16}$", RegexOptions.CultureInvariant))
+            throw AppException.BadRequest("E-irsaliye numarası tam 16 alfanümerik karakter olmalıdır.");
     }
 
     internal static CreateManualGoodsReceiptRequest ApplyUnplannedDefaults(

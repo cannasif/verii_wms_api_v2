@@ -21,8 +21,8 @@ public sealed class GoodsReceiptDocumentValidationTests
     }
 
     [Theory]
-    [InlineData("000000000000001", null)]
-    [InlineData(null, "gib2026000000001")]
+    [InlineData("irs202600000001", null)]
+    [InlineData(null, "gib2026ab0000001")]
     public void Order_based_receipt_accepts_and_normalizes_valid_waybill(
         string? waybillNo,
         string? electronicWaybillNo)
@@ -30,7 +30,7 @@ public sealed class GoodsReceiptDocumentValidationTests
         var result = GoodsReceiptService.NormalizeDocumentReference(
             waybillNo, electronicWaybillNo, new DateOnly(2026, 7, 28));
 
-        Assert.Equal(waybillNo, result.WaybillNo);
+        Assert.Equal(waybillNo?.ToUpperInvariant(), result.WaybillNo);
         Assert.Equal(electronicWaybillNo?.ToUpperInvariant(), result.ElectronicWaybillNo);
     }
 
@@ -44,7 +44,7 @@ public sealed class GoodsReceiptDocumentValidationTests
             GoodsReceiptService.NormalizeDocumentReference(
                 "000000000000001", null, null));
 
-        Assert.Contains("15 rakam", invalid.Message);
+        Assert.Contains("15 alfanümerik", invalid.Message);
         Assert.Contains("tarihi zorunludur", missingDate.Message);
     }
 

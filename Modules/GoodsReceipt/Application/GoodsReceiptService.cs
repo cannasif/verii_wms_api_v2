@@ -277,7 +277,9 @@ public sealed class GoodsReceiptService(
         string? electronicWaybillNo,
         DateOnly? waybillDate)
     {
-        var normal = string.IsNullOrWhiteSpace(waybillNo) ? null : waybillNo.Trim();
+        var normal = string.IsNullOrWhiteSpace(waybillNo)
+            ? null
+            : waybillNo.Trim().ToUpperInvariant();
         var electronic = string.IsNullOrWhiteSpace(electronicWaybillNo)
             ? null
             : electronicWaybillNo.Trim().ToUpperInvariant();
@@ -286,12 +288,12 @@ public sealed class GoodsReceiptService(
                 "Normal irsaliye veya e-irsaliye türlerinden yalnızca biri seçilmeli ve numarası girilmelidir.");
         if (!waybillDate.HasValue)
             throw AppException.BadRequest("İrsaliye tarihi zorunludur.");
-        if (normal is not null && !Regex.IsMatch(normal, "^[0-9]{15}$", RegexOptions.CultureInvariant))
-            throw AppException.BadRequest("Normal irsaliye numarası tam 15 rakam olmalıdır.");
+        if (normal is not null && !Regex.IsMatch(normal, "^[A-Z0-9]{15}$", RegexOptions.CultureInvariant))
+            throw AppException.BadRequest("Normal irsaliye numarası tam 15 alfanümerik karakter olmalıdır.");
         if (electronic is not null
-            && !Regex.IsMatch(electronic, "^[A-Z0-9]{3}[0-9]{13}$", RegexOptions.CultureInvariant))
+            && !Regex.IsMatch(electronic, "^[A-Z0-9]{16}$", RegexOptions.CultureInvariant))
             throw AppException.BadRequest(
-                "E-irsaliye numarası 3 karakter birim kodu, 4 karakter yıl ve 9 karakter sıra numarasından oluşmalıdır.");
+                "E-irsaliye numarası tam 16 alfanümerik karakter olmalıdır.");
         return (normal, electronic);
     }
 
