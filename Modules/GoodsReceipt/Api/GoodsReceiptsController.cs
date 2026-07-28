@@ -144,8 +144,13 @@ public sealed class GoodsReceiptsController(
     [HttpPost("{id:long}/label-batches")]
     public async Task<IActionResult> GenerateLabels(long id, GenerateGoodsReceiptLabelBatchRequest request, CancellationToken cancellationToken)
     {
-        await Require("WMS.GOODS_RECEIPT.CREATE", cancellationToken);
-        return Ok(ApiResponse<GoodsReceiptLabelBatchDetail>.Ok(await labels.GenerateAsync(id, request, CurrentUserId(), cancellationToken), "Ön etiket paketi oluşturuldu."));
+        var canManageAllLabels = await permissions.HasPermissionAsync(User, "WMS.GOODS_RECEIPT.CREATE", cancellationToken);
+        if (!canManageAllLabels)
+            await Require("WMS.GOODS_RECEIPT.RECEIVE", cancellationToken);
+        return Ok(ApiResponse<GoodsReceiptLabelBatchDetail>.Ok(
+            await labels.GenerateAsync(id, request, CurrentUserId(),
+                restrictToActorAssignment: !canManageAllLabels, cancellationToken),
+            "Ön etiket paketi oluşturuldu."));
     }
 
     [HttpPost("label-batches/paged")]
@@ -173,8 +178,11 @@ public sealed class GoodsReceiptsController(
     [HttpPost("labels/printed")]
     public async Task<IActionResult> MarkLabelsPrinted(MarkGoodsReceiptLabelsPrintedRequest request, CancellationToken cancellationToken)
     {
-        await Require("WMS.BARCODE_DESIGNER.PRINT", cancellationToken);
-        await labels.MarkPrintedAsync(request, CurrentUserId(), cancellationToken);
+        var canPrintAllLabels = await permissions.HasPermissionAsync(User, "WMS.BARCODE_DESIGNER.PRINT", cancellationToken);
+        if (!canPrintAllLabels)
+            await Require("WMS.GOODS_RECEIPT.RECEIVE", cancellationToken);
+        await labels.MarkPrintedAsync(request, CurrentUserId(),
+            restrictToActorAssignment: !canPrintAllLabels, cancellationToken);
         return Ok(ApiResponse<bool>.Ok(true, "Etiket yazdırma kaydı işlendi."));
     }
 

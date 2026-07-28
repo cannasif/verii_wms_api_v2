@@ -19,7 +19,8 @@ public sealed class GoodsReceiptLabelService(
     private IGenericRepository<GoodsReceiptLabel> Labels => uow.Repository<GoodsReceiptLabel>();
 
     public Task<GoodsReceiptLabelBatchDetail> GenerateAsync(long goodsReceiptId,
-        GenerateGoodsReceiptLabelBatchRequest request, long actor, CancellationToken ct = default)
+        GenerateGoodsReceiptLabelBatchRequest request, long actor,
+        bool restrictToActorAssignment, CancellationToken ct = default)
     {
         if (goodsReceiptId <= 0 || request.TaskId <= 0 || request.IdempotencyKey == Guid.Empty
             || request.Lines is not { Count: > 0 and <= 500 }
@@ -29,22 +30,26 @@ public sealed class GoodsReceiptLabelService(
 
         return uow.ExecuteInTransactionAsync(async token =>
         {
-            var replay = await Batches.Query().Include(x => x.Labels)
-                .FirstOrDefaultAsync(x => x.CorrelationId == request.IdempotencyKey, token);
-            if (replay is not null)
-            {
-                if (replay.GrHeaderId != goodsReceiptId) throw AppException.Conflict("Aynı idempotency anahtarı farklı bir mal kabul için kullanılamaz.");
-                return await MapDetail(replay, token);
-            }
-
             var task = await uow.Repository<GoodsReceiptTask>().Query()
                 .Include(x => x.Header)
                 .Include(x => x.Lines).ThenInclude(x => x.Line)
                 .Include(x => x.Lines).ThenInclude(x => x.Trackings)
+                .Include(x => x.Assignments)
                 .FirstOrDefaultAsync(x => x.Id == request.TaskId && x.GrHeaderId == goodsReceiptId, token)
                 ?? throw AppException.NotFound("Mal kabul emri bulunamadı.");
             if (task.Status is GoodsReceiptTaskStatus.Completed or GoodsReceiptTaskStatus.Cancelled)
                 throw AppException.Conflict("Tamamlanmış veya iptal edilmiş emir için etiket üretilemez.");
+            if (restrictToActorAssignment && !HasActiveAssignment(task.Assignments, actor))
+                throw AppException.Forbidden("Yalnızca size atanmış aktif mal kabul emirleri için etiket üretebilirsiniz.");
+
+            var replay = await Batches.Query().Include(x => x.Labels)
+                .FirstOrDefaultAsync(x => x.CorrelationId == request.IdempotencyKey, token);
+            if (replay is not null)
+            {
+                if (replay.GrHeaderId != goodsReceiptId)
+                    throw AppException.Conflict("Aynı idempotency anahtarı farklı bir mal kabul için kullanılamaz.");
+                return await MapDetail(replay, token, task);
+            }
 
             var selectedIds = request.Lines.Select(x => x.TaskLineId).ToHashSet();
             var selected = task.Lines.Where(x => selectedIds.Contains(x.Id)).ToDictionary(x => x.Id);
@@ -55,7 +60,7 @@ public sealed class GoodsReceiptLabelService(
             var batch = Stamp(new GoodsReceiptLabelBatch
             {
                 BranchCode = task.BranchCode,
-                Header = task.Header,
+                GrHeaderId = task.GrHeaderId,
                 CorrelationId = request.IdempotencyKey,
                 BatchNo = BatchNo(task.Header.DocumentNo, request.IdempotencyKey),
                 Status = GoodsReceiptLabelBatchStatus.Draft,
@@ -156,7 +161,8 @@ public sealed class GoodsReceiptLabelService(
         return rows.Select(Map).ToList();
     }
 
-    public Task MarkPrintedAsync(MarkGoodsReceiptLabelsPrintedRequest request, long actor, CancellationToken ct = default)
+    public Task MarkPrintedAsync(MarkGoodsReceiptLabelsPrintedRequest request, long actor,
+        bool restrictToActorAssignment, CancellationToken ct = default)
     {
         var ids = request.LabelIds?.Where(x => x > 0).Distinct().ToArray() ?? [];
         if (ids.Length == 0 || ids.Length > 1000) throw AppException.BadRequest("Yazdırılan etiketler belirtilmelidir.");
@@ -166,6 +172,8 @@ public sealed class GoodsReceiptLabelService(
             if (labels.Count != ids.Length) throw AppException.NotFound("Etiketlerden biri bulunamadı.");
             if (labels.Any(x => x.Status is GoodsReceiptLabelStatus.Void or GoodsReceiptLabelStatus.Consumed))
                 throw AppException.Conflict("İptal veya tüketilmiş etiket yazdırılamaz.");
+            if (restrictToActorAssignment)
+                await EnsureLabelsBelongToActorAssignments(labels, actor, token);
             var now = DateTimeOffset.UtcNow;
             foreach (var label in labels)
             {
@@ -182,6 +190,41 @@ public sealed class GoodsReceiptLabelService(
             return true;
         }, ct);
     }
+
+    private async Task EnsureLabelsBelongToActorAssignments(
+        IReadOnlyCollection<GoodsReceiptLabel> labels, long actor, CancellationToken ct)
+    {
+        var taskLineIds = labels.Select(x => x.GrTaskLineId).Where(x => x.HasValue)
+            .Select(x => x!.Value).Distinct().ToArray();
+        if (taskLineIds.Length == 0 || labels.Any(x => !x.GrTaskLineId.HasValue))
+            throw AppException.Forbidden("Bu etiketler atanmış bir mal kabul emrine ait değil.");
+
+        var taskIds = await uow.Repository<GoodsReceiptTaskLine>().Query()
+            .Where(x => taskLineIds.Contains(x.Id))
+            .Select(x => x.GrTaskId)
+            .Distinct()
+            .ToArrayAsync(ct);
+        if (taskIds.Length == 0)
+            throw AppException.Forbidden("Bu etiketler atanmış bir mal kabul emrine ait değil.");
+
+        var authorizedTaskCount = await uow.Repository<GoodsReceiptTaskAssignment>().Query()
+            .Where(x => taskIds.Contains(x.GrTaskId)
+                && x.UserId == actor
+                && (x.Status == GoodsReceiptAssignmentStatus.Assigned
+                    || x.Status == GoodsReceiptAssignmentStatus.Accepted
+                    || x.Status == GoodsReceiptAssignmentStatus.InProgress))
+            .Select(x => x.GrTaskId)
+            .Distinct()
+            .CountAsync(ct);
+        if (authorizedTaskCount != taskIds.Length)
+            throw AppException.Forbidden("Yalnızca size atanmış aktif mal kabul emirlerinin etiketlerini yazdırabilirsiniz.");
+    }
+
+    private static bool HasActiveAssignment(IEnumerable<GoodsReceiptTaskAssignment> assignments, long actor)
+        => assignments.Any(x => x.UserId == actor
+            && x.Status is GoodsReceiptAssignmentStatus.Assigned
+                or GoodsReceiptAssignmentStatus.Accepted
+                or GoodsReceiptAssignmentStatus.InProgress);
 
     public Task VoidAsync(long labelId, VoidGoodsReceiptLabelRequest request, long actor, CancellationToken ct = default)
     {

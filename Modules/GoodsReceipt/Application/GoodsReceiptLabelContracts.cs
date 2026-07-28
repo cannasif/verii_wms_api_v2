@@ -21,10 +21,12 @@ public sealed record VoidGoodsReceiptLabelRequest(string Reason, string RowVersi
 
 public interface IGoodsReceiptLabelService
 {
-    Task<GoodsReceiptLabelBatchDetail> GenerateAsync(long goodsReceiptId, GenerateGoodsReceiptLabelBatchRequest request, long actor, CancellationToken ct = default);
+    Task<GoodsReceiptLabelBatchDetail> GenerateAsync(long goodsReceiptId, GenerateGoodsReceiptLabelBatchRequest request,
+        long actor, bool restrictToActorAssignment, CancellationToken ct = default);
     Task<PagedResponse<GoodsReceiptLabelBatchRow>> GetPagedAsync(PagedRequest request, CancellationToken ct = default);
     Task<GoodsReceiptLabelBatchDetail> GetAsync(long batchId, CancellationToken ct = default);
     Task<IReadOnlyList<GoodsReceiptLabelRow>> GetForReceiptAsync(long goodsReceiptId, long? lineId = null, CancellationToken ct = default);
-    Task MarkPrintedAsync(MarkGoodsReceiptLabelsPrintedRequest request, long actor, CancellationToken ct = default);
+    Task MarkPrintedAsync(MarkGoodsReceiptLabelsPrintedRequest request, long actor,
+        bool restrictToActorAssignment, CancellationToken ct = default);
     Task VoidAsync(long labelId, VoidGoodsReceiptLabelRequest request, long actor, CancellationToken ct = default);
 }

@@ -55,7 +55,7 @@ public sealed class WarehouseInboundLabelService(
             var batch = Stamp(new WarehouseInboundLabelBatch
             {
                 BranchCode = task.BranchCode,
-                Header = task.Header,
+                GrHeaderId = task.GrHeaderId,
                 CorrelationId = request.IdempotencyKey,
                 BatchNo = BatchNo(task.Header.DocumentNo, request.IdempotencyKey),
                 Status = WarehouseInboundLabelBatchStatus.Draft,
