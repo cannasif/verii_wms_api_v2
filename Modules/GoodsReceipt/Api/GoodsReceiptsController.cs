@@ -6,7 +6,9 @@ using verii_wms_api_v2.Modules.AccessControl.Application;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Localization;
+using verii_wms_api_v2.Modules.Identity.Application;
 using verii_wms_api_v2.Shared;
+using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 
 namespace verii_wms_api_v2.Modules.GoodsReceipt.Api;
@@ -22,8 +24,20 @@ public sealed class GoodsReceiptsController(
     IOperationCancellationCoordinator cancellationCoordinator,
     IGoodsReceiptRoutingService routing,
     IPermissionAuthorizationService permissions,
+    IUnitOfWork unitOfWork,
     IStringLocalizer<GoodsReceiptResource> localizer) : ControllerBase
 {
+    [HttpGet("warehouse-access")]
+    public async Task<IActionResult> GetWarehouseAccess([FromQuery] string branchCode, CancellationToken cancellationToken)
+    {
+        await RequireAny(["WMS.GOODS_RECEIPT.CREATE", "WMS.GOODS_RECEIPT.RECEIVE"], cancellationToken);
+        if (string.IsNullOrWhiteSpace(branchCode))
+            throw AppException.BadRequest("Şube kodu zorunludur.");
+        var access = await UserWarehouseAccessService.ResolveAsync(
+            unitOfWork, CurrentUserId(), branchCode.Trim(), cancellationToken);
+        return Ok(ApiResponse<UserWarehouseAccess>.Ok(access));
+    }
+
     [HttpPost("from-orders")]
     public async Task<IActionResult> CreateFromOrders(CreateOrderBasedGoodsReceiptRequest request, CancellationToken cancellationToken)
     {

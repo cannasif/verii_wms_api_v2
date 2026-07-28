@@ -10,6 +10,7 @@ using verii_wms_api_v2.Modules.DocumentSeries.Domain;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.GoodsReceipt.Localization;
 using verii_wms_api_v2.Modules.Identity.Domain;
+using verii_wms_api_v2.Modules.Identity.Application;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Quality.Application;
 using verii_wms_api_v2.Modules.Quality.Domain;
@@ -67,6 +68,9 @@ public sealed class GoodsReceiptService(
                 throw AppException.BadRequest(Message(GoodsReceiptMessageKeys.InvalidReceivingLocation));
 
             var targetWarehouseIds = request.Lines.Select(x => x.TargetWarehouseId).Append(request.TargetWarehouseId).Distinct().ToArray();
+            if (targetWarehouseIds.Length != 1)
+                throw AppException.BadRequest("Bir mal kabul emrinde yalnızca tek depo seçilebilir. Farklı depoya ait siparişleri ayrı emirlerde oluşturunuz.");
+            await UserWarehouseAccessService.EnsureAsync(unitOfWork, actorUserId, branch, targetWarehouseIds, ct);
             var targetWarehouses = await unitOfWork.Repository<WarehouseEntity>().Query()
                 .Where(x => targetWarehouseIds.Contains(x.Id) && x.BranchCode == branch).ToDictionaryAsync(x => x.Id, ct);
             if (targetWarehouses.Count != targetWarehouseIds.Length) throw AppException.BadRequest(Message(GoodsReceiptMessageKeys.WarehouseNotFound));

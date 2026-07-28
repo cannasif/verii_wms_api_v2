@@ -11,6 +11,7 @@ using verii_wms_api_v2.Modules.DocumentSeries.Domain;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Identity.Domain;
+using verii_wms_api_v2.Modules.Identity.Application;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Quality.Application;
 using verii_wms_api_v2.Modules.Quality.Domain;
@@ -227,6 +228,8 @@ public sealed class GoodsReceiptOperationsService(
                 .ToArray();
             if (requestedLineWarehouseIds.Any(x => x != warehouse.Id))
                 throw AppException.BadRequest("Siparişsiz ve direkt kabulde kalem hedef deposu header deposuyla aynı olmalıdır.");
+            await UserWarehouseAccessService.EnsureAsync(
+                unitOfWork, actor, branch, requestedLineWarehouseIds.Append(warehouse.Id), token);
             var requestedLineLocationIds = request.Lines
                 .Select(x => x.ReceivingLocationId ?? request.ReceivingLocationId)
                 .Distinct()
