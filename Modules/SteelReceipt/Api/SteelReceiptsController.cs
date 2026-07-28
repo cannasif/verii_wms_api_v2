@@ -86,6 +86,8 @@ public sealed class SteelReceiptsController(
     }
     [HttpPost("receipt/candidates/paged")] public async Task<IActionResult> ReceiptCandidates(PagedRequest request,CancellationToken ct)
     {await Require("WMS.STEEL_RECEIPT.CONVERT",ct);return Ok(ApiResponse<PagedResponse<SteelReceiptLineGridRow>>.Ok(await service.GetReceiptCandidatesPagedAsync(request,ct)));}
+    [HttpPost("receipt/sources/paged")] public async Task<IActionResult> PendingReceiptSources(PagedRequest request,CancellationToken ct)
+    {await Require("WMS.STEEL_RECEIPT.CONVERT",ct);return Ok(ApiResponse<PagedResponse<SteelReceiptPendingSourceRow>>.Ok(await service.GetPendingReceiptSourcesPagedAsync(request,ct)));}
     [HttpGet("receipt/source")] public async Task<IActionResult> ReceiptSource([FromQuery]string reference,CancellationToken ct)
     {await Require("WMS.STEEL_RECEIPT.CONVERT",ct);return Ok(ApiResponse<SteelReceiptSourceRow>.Ok(await service.GetReceiptSourceAsync(reference,ct)));}
     [HttpPost("placement/candidates/paged")] public async Task<IActionResult> PlacementCandidates(PagedRequest request,CancellationToken ct)

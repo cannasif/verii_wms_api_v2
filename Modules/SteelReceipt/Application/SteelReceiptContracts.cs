@@ -26,6 +26,9 @@ public sealed record SteelReceiptLineGridRow(long Id,long PlanId,string ImportRe
 public sealed record SteelReceiptSourceRow(long PlanId,string ImportReferenceNo,string SourceFileName,string? WaybillNo,DateOnly? WaybillDate,
     long SupplierId,string SupplierCode,string SupplierName,SteelReceiptPlanStatus Status,int TotalLineCount,decimal TotalExpectedQuantity,
     IReadOnlyList<SteelReceiptLineGridRow> Lines);
+public sealed record SteelReceiptPendingSourceRow(long PlanId,string BranchCode,string ImportReferenceNo,string SourceFileName,
+    string? WaybillNo,DateOnly? WaybillDate,string SupplierCode,string SupplierName,int PendingLineCount,int TotalLineCount,
+    DateTimeOffset ImportedAtUtc);
 public sealed record InspectSteelReceiptLineRequest(bool IsArrived,decimal ArrivedQuantity,decimal ApprovedQuantity,decimal RejectedQuantity,
     string? RejectReason,string? Note,string RowVersion);
 public sealed record ConvertSteelReceiptRequest(Guid IdempotencyKey,DateOnly DocumentDate,IReadOnlyList<long> LineIds,
@@ -53,6 +56,7 @@ public interface ISteelReceiptService
     Task<PagedResponse<SteelReceiptPlanGridRow>> GetPlansPagedAsync(PagedRequest request,CancellationToken ct=default);
     Task<PagedResponse<SteelReceiptLineGridRow>> GetLinesPagedAsync(PagedRequest request,CancellationToken ct=default);
     Task<PagedResponse<SteelReceiptLineGridRow>> GetReceiptCandidatesPagedAsync(PagedRequest request,CancellationToken ct=default);
+    Task<PagedResponse<SteelReceiptPendingSourceRow>> GetPendingReceiptSourcesPagedAsync(PagedRequest request,CancellationToken ct=default);
     Task<SteelReceiptSourceRow> GetReceiptSourceAsync(string reference,CancellationToken ct=default);
     Task<PagedResponse<SteelReceiptLineGridRow>> GetPlacementCandidatesPagedAsync(PagedRequest request,CancellationToken ct=default);
     Task<SteelReceiptLineGridRow> GetLineAsync(long lineId,CancellationToken ct=default);

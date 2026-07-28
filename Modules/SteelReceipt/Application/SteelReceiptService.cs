@@ -137,6 +137,24 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
         PageLinesAsync(GridQuery(Lines.Query().Where(x=>(x.InspectionStatus==SteelInspectionStatus.Approved||x.InspectionStatus==SteelInspectionStatus.PartiallyApproved)
             &&x.ApprovedQuantity>0&&x.ConversionStatus==SteelReceiptConversionStatus.NotCreated)),request,ct);
 
+    public async Task<PagedResponse<SteelReceiptPendingSourceRow>> GetPendingReceiptSourcesPagedAsync(
+        PagedRequest request,
+        CancellationToken ct=default)
+    {
+        var query=Plans.Query()
+            .Where(plan=>plan.Status!=SteelReceiptPlanStatus.Cancelled
+                &&plan.Lines.Any(line=>line.ConversionStatus==SteelReceiptConversionStatus.NotCreated))
+            .Select(plan=>new SteelReceiptPendingSourceRow(
+                plan.Id,plan.BranchCode,plan.ImportReferenceNo,plan.SourceFileName,plan.WaybillNo,plan.WaybillDate,
+                plan.SupplierCodeSnapshot,plan.SupplierNameSnapshot,
+                plan.Lines.Count(line=>line.ConversionStatus==SteelReceiptConversionStatus.NotCreated),
+                plan.TotalLineCount,plan.ImportedAtUtc));
+        query=query.ApplySearch(request,["ImportReferenceNo","WaybillNo","SupplierCode","SupplierName"]);
+        return await query.ApplyAdvancedFilters(request)
+            .ApplySort(request,nameof(SteelReceiptPendingSourceRow.ImportedAtUtc))
+            .ToPagedResponseAsync(request,ct);
+    }
+
     public async Task<SteelReceiptSourceRow> GetReceiptSourceAsync(string reference,CancellationToken ct=default)
     {
         var value=Clean(reference,100,true)!;
