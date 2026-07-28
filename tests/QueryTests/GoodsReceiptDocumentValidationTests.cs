@@ -55,6 +55,28 @@ public sealed class GoodsReceiptDocumentValidationTests
     }
 
     [Fact]
+    public void Already_inspected_steel_does_not_enter_a_second_quality_queue()
+    {
+        Assert.False(GoodsReceiptOperationsService.RequiresQuality(
+            qualityAlreadyApproved: true,
+            receiptPolicyRequiresQuality: true,
+            anyStockPolicyRequiresQuality: true));
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void Uninspected_receipt_respects_quality_policies(
+        bool receiptPolicyRequiresQuality,
+        bool anyStockPolicyRequiresQuality)
+    {
+        Assert.True(GoodsReceiptOperationsService.RequiresQuality(
+            qualityAlreadyApproved: false,
+            receiptPolicyRequiresQuality,
+            anyStockPolicyRequiresQuality));
+    }
+
+    [Fact]
     public void Import_flow_accepts_missing_waybill_reference()
     {
         GoodsReceiptOperationsService.ValidateDocumentReference(

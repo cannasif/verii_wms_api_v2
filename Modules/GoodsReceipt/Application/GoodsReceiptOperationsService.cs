@@ -48,17 +48,24 @@ public sealed class GoodsReceiptOperationsService(
     private IGenericRepository<GoodsReceiptExecution> Executions => unitOfWork.Repository<GoodsReceiptExecution>();
 
     public Task<ManualGoodsReceiptResult> CreateOrderlessTaskAsync(CreateManualGoodsReceiptRequest request, long actorUserId, CancellationToken cancellationToken = default) =>
-        CreateAsync(request, actorUserId, direct: false, cancellationToken);
+        CreateAsync(request, actorUserId, direct: false, qualityAlreadyApproved: false, cancellationToken);
 
     public async Task<ManualGoodsReceiptResult> CreateDirectReceiptAsync(
         CreateManualGoodsReceiptRequest request,
         long actorUserId,
         CancellationToken cancellationToken = default)
     {
-        var result = await CreateAsync(request, actorUserId, direct: true, cancellationToken);
+        var result = await CreateAsync(request, actorUserId, direct: true, qualityAlreadyApproved: false, cancellationToken);
         await erpPosting.PostIfEligibleAsync(result.Id, actorUserId, cancellationToken);
         return result;
     }
+
+    public Task<ManualGoodsReceiptResult> CreateDirectReceiptDeferredErpAsync(
+        CreateManualGoodsReceiptRequest request,
+        long actorUserId,
+        bool qualityAlreadyApproved,
+        CancellationToken cancellationToken = default) =>
+        CreateAsync(request, actorUserId, direct: true, qualityAlreadyApproved, cancellationToken);
 
     public async Task<PagedResponse<GoodsReceiptGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
@@ -177,7 +184,12 @@ public sealed class GoodsReceiptOperationsService(
         return new GoodsReceiptDetail(grid, detailLines, putawayCandidates, documents, taskNumbers, executionCount);
     }
 
-    private Task<ManualGoodsReceiptResult> CreateAsync(CreateManualGoodsReceiptRequest request, long actor, bool direct, CancellationToken ct)
+    private Task<ManualGoodsReceiptResult> CreateAsync(
+        CreateManualGoodsReceiptRequest request,
+        long actor,
+        bool direct,
+        bool qualityAlreadyApproved,
+        CancellationToken ct)
     {
         Validate(request, direct);
         return unitOfWork.ExecuteInTransactionAsync(async token =>
@@ -242,13 +254,19 @@ public sealed class GoodsReceiptOperationsService(
             foreach (var stock in stocks.Values) resolved[stock.Id] = await qualityPolicyResolver.ResolveAsync(branch, stock.Id, stock.GroupCode, token);
             var trackingPolicies = new Dictionary<long, EffectiveStockTrackingPolicy>();
             foreach (var stock in stocks.Values) trackingPolicies[stock.Id] = await trackingPolicyResolver.ResolveAsync(branch, stock.Id, token);
-            var requiresQuality = policy.RequireQualityApproval || resolved.Values.Any(x => x.InspectionMode != QualityInspectionMode.NoCheck);
+            var requiresQuality = RequiresQuality(
+                qualityAlreadyApproved,
+                policy.RequireQualityApproval,
+                resolved.Values.Any(x => x.InspectionMode != QualityInspectionMode.NoCheck));
             ValidateQualityReceivingLocations(
                 requiresQuality,
                 policy.BlockPutawayUntilQualityDecision,
                 requestedLineLocationIds.Select(id => lineLocations[id].IsPutaway));
 
-            ValidateTrackedLines(request, stocks, resolved, trackingPolicies, requireCompleteCapture: direct);
+            ValidateTrackedLines(
+                request, stocks, resolved, trackingPolicies,
+                requireCompleteCapture: direct,
+                includeQualityRequirements: !qualityAlreadyApproved);
             foreach (var input in request.Lines)
             {
                 var validation = await serialPolicyResolver.ValidateAsync(branch, input.StockId, input.YapCodeId, input.SerialNo, token);
@@ -267,7 +285,9 @@ public sealed class GoodsReceiptOperationsService(
                 SupplierNameSnapshot = supplier.CustomerName, TargetWarehouseId = warehouse.Id, ReceivingLocationId = location.Id,
                 Status = direct ? WarehouseOperationStatus.Processed : WarehouseOperationStatus.Draft,
                 ApprovalStatus = policy.RequireReceiptApproval ? OperationApprovalStatus.Pending : OperationApprovalStatus.NotRequired,
-                QualityStatus = requiresQuality ? OperationQualityStatus.Pending : OperationQualityStatus.NotRequired,
+                QualityStatus = qualityAlreadyApproved
+                    ? OperationQualityStatus.Passed
+                    : requiresQuality ? OperationQualityStatus.Pending : OperationQualityStatus.NotRequired,
                 PutawayStatus = OperationPutawayStatus.Pending, ErpIntegrationStatus = ErpIntegrationStatus.Pending,
                 PlannedArrivalAtUtc = request.PlannedArrivalAtUtc?.ToUniversalTime(), ActualArrivalAtUtc = direct ? now : null,
                 ReceivedAtUtc = direct ? now : null, ReceivedBy = direct ? actor : null,
@@ -314,7 +334,8 @@ public sealed class GoodsReceiptOperationsService(
                 yaps.TryGetValue(input.YapCodeId ?? 0, out var yap); var qp = resolved[stock.Id];
                 var trackingPolicy = trackingPolicies[stock.Id];
                 var unit = StockUnitPolicy.Resolve(stock, input.UnitCode);
-                var qualityRequired = policy.RequireQualityApproval || qp.InspectionMode != QualityInspectionMode.NoCheck;
+                var qualityRequired = !qualityAlreadyApproved
+                    && (policy.RequireQualityApproval || qp.InspectionMode != QualityInspectionMode.NoCheck);
                 var line = Stamp(new GoodsReceiptLine
                 {
                     BranchCode = branch, Header = header, LineNo = index + 1, StockId = stock.Id,
@@ -547,26 +568,35 @@ public sealed class GoodsReceiptOperationsService(
                 "Kalite kararı verilene kadar rafa kaldırma kapalıdır. Kalite kontrollü ürün için kabul veya staging alanı seçiniz.");
     }
 
+    internal static bool RequiresQuality(
+        bool qualityAlreadyApproved,
+        bool receiptPolicyRequiresQuality,
+        bool anyStockPolicyRequiresQuality) =>
+        !qualityAlreadyApproved && (receiptPolicyRequiresQuality || anyStockPolicyRequiresQuality);
+
     private static void ValidateTrackedLines(
         CreateManualGoodsReceiptRequest request,
         IReadOnlyDictionary<long, StockEntity> stocks,
         IReadOnlyDictionary<long, ResolvedQualityPolicy> qualityPolicies,
         IReadOnlyDictionary<long, EffectiveStockTrackingPolicy> trackingPolicies,
-        bool requireCompleteCapture)
+        bool requireCompleteCapture,
+        bool includeQualityRequirements)
     {
         foreach (var line in request.Lines)
         {
             var qualityPolicy = qualityPolicies[line.StockId];
             var policy = trackingPolicies[line.StockId];
-            if (policy.TrackingType == StockTrackingType.None
+            if (includeQualityRequirements
+                && policy.TrackingType == StockTrackingType.None
                 && (qualityPolicy.RequireLot || qualityPolicy.RequireSerial || qualityPolicy.RequireExpiryDate))
                 throw AppException.BadRequest(
                     $"{stocks[line.StockId].ErpStockCode}: kalite kuralı lot/seri/SKT isterken merkezî stok takip politikası Takipsiz olamaz.");
             var effectivePolicy = policy with
             {
-                RequireLot = policy.RequireLot || qualityPolicy.RequireLot,
-                RequireSerial = policy.RequireSerial || qualityPolicy.RequireSerial,
-                RequireExpirationDate = policy.RequireExpirationDate || qualityPolicy.RequireExpiryDate
+                RequireLot = policy.RequireLot || includeQualityRequirements && qualityPolicy.RequireLot,
+                RequireSerial = policy.RequireSerial || includeQualityRequirements && qualityPolicy.RequireSerial,
+                RequireExpirationDate = policy.RequireExpirationDate
+                    || includeQualityRequirements && qualityPolicy.RequireExpiryDate
             };
             var submittedType = !string.IsNullOrWhiteSpace(line.SerialNo) && !string.IsNullOrWhiteSpace(line.LotNo)
                 ? StockTrackingType.LotAndSerial

@@ -79,6 +79,9 @@ public interface IGoodsReceiptOperationsService
 {
     Task<ManualGoodsReceiptResult> CreateOrderlessTaskAsync(CreateManualGoodsReceiptRequest request, long actorUserId, CancellationToken cancellationToken = default);
     Task<ManualGoodsReceiptResult> CreateDirectReceiptAsync(CreateManualGoodsReceiptRequest request, long actorUserId, CancellationToken cancellationToken = default);
+    Task<ManualGoodsReceiptResult> CreateDirectReceiptDeferredErpAsync(
+        CreateManualGoodsReceiptRequest request, long actorUserId,
+        bool qualityAlreadyApproved, CancellationToken cancellationToken = default);
     Task<PagedResponse<GoodsReceiptGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default);
     Task<GoodsReceiptDetail> GetDetailAsync(long id, CancellationToken cancellationToken = default);
 }
