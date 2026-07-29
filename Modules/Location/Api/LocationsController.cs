@@ -10,8 +10,30 @@ using verii_wms_api_v2.Shared.Application.Exceptions;
 namespace verii_wms_api_v2.Modules.Location.Api;
 
 [Authorize, ApiController, Route("api/locations")]
-public sealed class LocationsController(ILocationService service, IPermissionAuthorizationService permissions, IStringLocalizer<LocationResource> localizer) : ControllerBase
+public sealed class LocationsController(ILocationService service, ILocationImportService importService,
+    IPermissionAuthorizationService permissions, IStringLocalizer<LocationResource> localizer) : ControllerBase
 {
+    [HttpGet("import/template")]
+    public async Task<IActionResult> DownloadImportTemplate([FromQuery] string branchCode = "0",
+        CancellationToken cancellationToken = default)
+    {
+        await RequireAsync("WMS.LOCATIONS.CREATE", cancellationToken);
+        var bytes = await importService.CreateTemplateAsync(branchCode, cancellationToken);
+        return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            $"wms-v2-raf-ilk-aktarim-{DateTime.UtcNow:yyyyMMdd}.xlsx");
+    }
+
+    [HttpPost("import"), RequestSizeLimit(LocationImportService.MaxFileSize)]
+    public async Task<IActionResult> Import([FromForm] IFormFile? file, [FromQuery] string branchCode = "0",
+        CancellationToken cancellationToken = default)
+    {
+        await RequireAsync("WMS.LOCATIONS.CREATE", cancellationToken);
+        ValidateXlsx(file, LocationImportService.MaxFileSize);
+        await using var stream = file!.OpenReadStream();
+        var result = await importService.ImportAsync(stream, branchCode, cancellationToken);
+        return Ok(ApiResponse<LocationImportResult>.Ok(result, $"{result.CreatedRows} raf tanımı oluşturuldu."));
+    }
+
     [HttpPost("paged")]
     public async Task<IActionResult> GetPaged(PagedRequest request, CancellationToken cancellationToken)
     {
@@ -83,5 +105,13 @@ public sealed class LocationsController(ILocationService service, IPermissionAut
     private async Task RequireAsync(string permission, CancellationToken cancellationToken)
     {
         if (!await permissions.HasPermissionAsync(User, permission, cancellationToken)) throw AppException.Forbidden(localizer[LocationMessageKeys.Forbidden].Value);
+    }
+
+    private static void ValidateXlsx(IFormFile? file, int maxSize)
+    {
+        if (file is null || file.Length == 0) throw AppException.BadRequest("Yüklenecek XLSX dosyası zorunludur.");
+        if (file.Length > maxSize) throw AppException.BadRequest("XLSX dosyası en fazla 5 MB olabilir.");
+        if (!string.Equals(Path.GetExtension(file.FileName), ".xlsx", StringComparison.OrdinalIgnoreCase))
+            throw AppException.BadRequest("Yalnızca .xlsx dosyası yüklenebilir.");
     }
 }
