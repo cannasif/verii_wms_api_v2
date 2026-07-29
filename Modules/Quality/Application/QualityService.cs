@@ -178,7 +178,9 @@ public sealed class QualityService(
     public async Task DecideInspectionAsync(long id, DecideQualityInspectionRequest request, long actor,
         bool canReleaseQuarantine, CancellationToken ct = default)
     {
-        if (request.IdempotencyKey == Guid.Empty || request.Decision is QualityDecision.Pending or QualityDecision.Hold)
+        var hasQuantityDecisions = request.QuantityDecisions is { Count: > 0 };
+        if (request.IdempotencyKey == Guid.Empty
+            || !hasQuantityDecisions && request.Decision is QualityDecision.Pending or QualityDecision.Hold)
             throw AppException.BadRequest("Nihai karar kabul, ret, karantina veya tedarikçiye iade olmalıdır.");
         var goodsReceiptId = await uow.ExecuteInTransactionAsync(async token =>
         {
@@ -193,7 +195,13 @@ public sealed class QualityService(
                 ?? throw AppException.NotFound("Mal kabul kaydı bulunamadı.");
             var parameter = await Parameters.FirstOrDefaultAsync(x => x.BranchCode == inspection.BranchCode && x.ParameterKey == "DEFAULT", false, token)
                 ?? Default(inspection.BranchCode);
-            var requestedIds = request.LineIds?.Where(x => x > 0).Distinct().ToHashSet();
+            var quantityDecisionGroups = request.QuantityDecisions?.GroupBy(x => x.LineId).ToList();
+            if (quantityDecisionGroups?.Any(x => x.Count() != 1) == true)
+                throw AppException.BadRequest("Aynı kalite satırı için birden fazla miktar dağılımı gönderilemez.");
+            var quantityDecisions = quantityDecisionGroups?.ToDictionary(x => x.Key, x => x.Single());
+            var requestedIds = hasQuantityDecisions
+                ? quantityDecisions!.Keys.Where(x => x > 0).ToHashSet()
+                : request.LineIds?.Where(x => x > 0).Distinct().ToHashSet();
             var eligible = inspection.Lines.Where(x => x.Decision is QualityDecision.Pending or QualityDecision.Hold or QualityDecision.Quarantined).ToList();
             var selected = requestedIds is { Count: > 0 } ? eligible.Where(x => requestedIds.Contains(x.Id)).ToList() : eligible;
             if (selected.Count == 0 || requestedIds is { Count: > 0 } && selected.Count != requestedIds.Count)
@@ -201,26 +209,36 @@ public sealed class QualityService(
             if (selected.Count != eligible.Count && !parameter.AllowPartialDecision)
                 throw AppException.Conflict("Kalite ayarlarında kısmi karar kapalı; bekleyen satırların tamamı seçilmelidir.");
 
-            var releasesQuarantine = request.Decision == QualityDecision.Accepted && selected.Any(x => x.Decision == QualityDecision.Quarantined);
+            var decisionParts = BuildDecisionParts(selected, quantityDecisions, request.Decision);
+            var releasesQuarantine = decisionParts.Any(x =>
+                x.Decision == QualityDecision.Accepted
+                && x.Line.Decision == QualityDecision.Quarantined);
             if (releasesQuarantine && parameter.RequireManagerApprovalForRelease && !canReleaseQuarantine)
                 throw AppException.Forbidden("Karantinadan serbest bırakma için yönetici izni gerekir.");
             var grLineIds = selected.Where(x => x.GoodsReceiptLineId.HasValue).Select(x => x.GoodsReceiptLineId!.Value).Distinct().ToArray();
             var grLines = await uow.Repository<GoodsReceiptLine>().Query(true).Where(x => grLineIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, token);
             if (grLines.Count != grLineIds.Length) throw AppException.Conflict("Kalite satırının mal kabul bağlantısı eksik.");
-
-            long? targetLocation = request.Decision switch
+            foreach (var line in selected.Where(x =>
+                         !string.IsNullOrWhiteSpace(x.SerialNo)
+                         || grLines[x.GoodsReceiptLineId!.Value].TrackingType == StockTrackingType.Serial))
             {
-                QualityDecision.Quarantined => parameter.DefaultQuarantineLocationId,
-                QualityDecision.Rejected => parameter.DefaultRejectLocationId,
-                _ => null
-            };
-            if (request.Decision is QualityDecision.Quarantined or QualityDecision.Rejected && !targetLocation.HasValue)
-                throw AppException.Conflict("Seçilen kalite kararı için hedef kalite rafı ayarlarda tanımlı değil.");
+                var outcomeCount = decisionParts.Count(x => x.Line.Id == line.Id && x.Quantity > 0);
+                if (outcomeCount > 1)
+                    throw AppException.Conflict(
+                        $"'{line.SerialNo ?? line.StockCodeSnapshot}' seri takipli satırı birden fazla kalite sonucuna bölünemez.");
+            }
+
+            if (decisionParts.Any(x => x.Decision == QualityDecision.Quarantined)
+                && !parameter.DefaultQuarantineLocationId.HasValue)
+                throw AppException.Conflict("Karantina kararı için hedef kalite rafı ayarlarda tanımlı değil.");
+            if (decisionParts.Any(x => x.Decision == QualityDecision.Rejected)
+                && !parameter.DefaultRejectLocationId.HasValue)
+                throw AppException.Conflict("Ret kararı için hedef kalite rafı ayarlarda tanımlı değil.");
 
             var movementLocationIds = grLines.Values
                 .Select(line => (long?)(line.DefaultReceivingLocationId ?? gr.ReceivingLocationId))
                 .Append(parameter.DefaultQuarantineLocationId)
-                .Append(targetLocation)
+                .Append(parameter.DefaultRejectLocationId)
                 .Where(locationId => locationId.HasValue)
                 .Select(locationId => locationId!.Value)
                 .Distinct()
@@ -231,8 +249,9 @@ public sealed class QualityService(
             if (movementLocations.Count != movementLocationIds.Length)
                 throw AppException.Conflict("Kalite stok hareketi için kaynak veya hedef raf bulunamadı.");
 
-            var dispositions = selected.Select(line =>
+            var dispositions = decisionParts.Select(part =>
             {
+                var line = part.Line;
                 var receiptLine = grLines[line.GoodsReceiptLineId!.Value];
                 var receiptLocation = receiptLine.DefaultReceivingLocationId ?? gr.ReceivingLocationId;
                 var wasQuarantined = line.Decision == QualityDecision.Quarantined;
@@ -240,10 +259,15 @@ public sealed class QualityService(
                     ? parameter.DefaultQuarantineLocationId ?? throw AppException.Conflict("Karantina rafı ayarlarda tanımlı değil.")
                     : receiptLocation;
                 var sourceStatus = wasQuarantined ? "Quarantine" : gr.HoldInventoryUntilQualityDecision ? "QualityHold" : "Available";
-                var destinationLocation = targetLocation ?? receiptLocation;
+                var destinationLocation = part.Decision switch
+                {
+                    QualityDecision.Quarantined => parameter.DefaultQuarantineLocationId!.Value,
+                    QualityDecision.Rejected => parameter.DefaultRejectLocationId!.Value,
+                    _ => receiptLocation
+                };
                 var sourceWarehouse = movementLocations[sourceLocation].WarehouseId;
                 var destinationWarehouse = movementLocations[destinationLocation].WarehouseId;
-                var destinationStatus = request.Decision switch
+                var destinationStatus = part.Decision switch
                 {
                     QualityDecision.Accepted => "Available",
                     QualityDecision.Quarantined => "Quarantine",
@@ -251,30 +275,34 @@ public sealed class QualityService(
                     _ => sourceStatus
                 };
                 return new QualityInventoryDisposition(line, receiptLine, sourceWarehouse, sourceLocation,
-                    destinationWarehouse, destinationLocation, sourceStatus, destinationStatus);
+                    destinationWarehouse, destinationLocation, sourceStatus, destinationStatus,
+                    part.Decision, part.Quantity);
             }).ToList();
 
             var datDispositions = dispositions
-                .Where(x => request.Decision != QualityDecision.Returned && RequiresDat(x.SourceWarehouseId, x.TargetWarehouseId))
+                .Where(x => x.Decision != QualityDecision.Returned && RequiresDat(x.SourceWarehouseId, x.TargetWarehouseId))
                 .ToList();
             var movementLines = dispositions
-                .Where(x => request.Decision == QualityDecision.Returned || !RequiresDat(x.SourceWarehouseId, x.TargetWarehouseId))
-                .Select(x => request.Decision == QualityDecision.Returned
-                    ? new StockMovementLineRequest(x.InspectionLine.StockId, x.InspectionLine.YapCodeId, x.InspectionLine.Quantity,
+                .Where(x => x.Decision == QualityDecision.Returned || !RequiresDat(x.SourceWarehouseId, x.TargetWarehouseId))
+                .Where(x => x.Decision == QualityDecision.Returned
+                    || x.SourceLocationId != x.TargetLocationId
+                    || !string.Equals(x.SourceStockStatus, x.TargetStockStatus, StringComparison.OrdinalIgnoreCase))
+                .Select(x => x.Decision == QualityDecision.Returned
+                    ? new StockMovementLineRequest(x.InspectionLine.StockId, x.InspectionLine.YapCodeId, x.Quantity,
                         x.SourceWarehouseId, x.SourceLocationId,
                         null, null, x.ReceiptLine.UnitCode, x.InspectionLine.LotNo, x.InspectionLine.SerialNo,
                         x.SourceStockStatus, x.SourceStockStatus, null)
-                    : new StockMovementLineRequest(x.InspectionLine.StockId, x.InspectionLine.YapCodeId, x.InspectionLine.Quantity,
+                    : new StockMovementLineRequest(x.InspectionLine.StockId, x.InspectionLine.YapCodeId, x.Quantity,
                         x.SourceWarehouseId, x.SourceLocationId, x.TargetWarehouseId, x.TargetLocationId,
                         x.ReceiptLine.UnitCode, x.InspectionLine.LotNo, x.InspectionLine.SerialNo,
                         x.SourceStockStatus, x.SourceStockStatus, x.TargetStockStatus))
-                .Where(x => request.Decision != QualityDecision.Accepted
-                    || !string.Equals(x.SourceStockStatus, "Available", StringComparison.OrdinalIgnoreCase))
                 .ToList();
             StockMovementPostResult? movement = null;
             if (movementLines.Count > 0)
                 movement = await stockMovement.PostAsync(new PostStockMovementRequest($"QUALITY:{inspection.Id}:{request.IdempotencyKey:N}",
-                    request.Decision == QualityDecision.Returned ? StockMovementTypes.SupplierReturn : StockMovementTypes.Transfer,
+                    dispositions.All(x => x.Decision == QualityDecision.Returned)
+                        ? StockMovementTypes.SupplierReturn
+                        : StockMovementTypes.Transfer,
                     "QualityInspection", inspection.InspectionNo, inspection.Id, DateTime.UtcNow, "QualityDisposition", request.Note, movementLines), token);
 
             var datIds = new List<long>();
@@ -301,11 +329,11 @@ public sealed class QualityService(
                         null,
                         3,
                         inspection.InspectionNo,
-                        $"Kalite kararı sonrası depo değişikliği. Mal kabul: {gr.DocumentNo}; karar: {request.Decision}.",
+                        $"Kalite kararı sonrası depo değişikliği. Mal kabul: {gr.DocumentNo}.",
                         group.Select(x => new WarehouseTransferLineDraftRequest(
                             x.InspectionLine.StockId,
                             x.InspectionLine.YapCodeId,
-                            x.InspectionLine.Quantity,
+                            x.Quantity,
                             x.ReceiptLine.UnitCode,
                             x.ReceiptLine.TrackingType,
                             x.ReceiptLine.RequireHandlingUnit,
@@ -326,18 +354,11 @@ public sealed class QualityService(
             foreach (var line in selected)
             {
                 var receiptLine = grLines[line.GoodsReceiptLineId!.Value];
-                receiptLine.QuarantineQuantity = Math.Max(0, receiptLine.QuarantineQuantity - line.Quantity);
-                if (request.Decision == QualityDecision.Accepted) receiptLine.AcceptedQuantity += line.Quantity;
-                else if (request.Decision is QualityDecision.Rejected or QualityDecision.Returned) receiptLine.RejectedQuantity += line.Quantity;
-                else receiptLine.QuarantineQuantity += line.Quantity;
-                line.Decision = request.Decision; line.DecisionBy = actor; line.DecisionAtUtc = now;
-                line.ReasonCode = Clean(request.ReasonCode, 100); line.ReasonNote = Clean(request.Note, 1000);
-                line.AcceptedQuantity = request.Decision == QualityDecision.Accepted ? line.Quantity : 0;
-                line.RejectedQuantity = request.Decision is QualityDecision.Rejected or QualityDecision.Returned ? line.Quantity : 0;
-                line.QuarantineQuantity = request.Decision == QualityDecision.Quarantined ? line.Quantity : 0;
+                var parts = decisionParts.Where(x => x.Line.Id == line.Id).ToList();
+                ApplyDecisionParts(line, receiptLine, parts, actor, now, request.ReasonCode, request.Note);
             }
             var decisionState = ResolveDecisionState(
-                inspection.Lines.Select(x => x.Decision),
+                inspection.Lines,
                 releasesQuarantine);
             inspection.Status = decisionState.InspectionStatus;
             inspection.DecidedAtUtc = decisionState.IsTerminal ? now : null;
@@ -347,7 +368,7 @@ public sealed class QualityService(
             await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("quality.inspection.decide", nameof(QualityInspection), id.ToString(), "Succeeded", "quality",
                 NewValues: new { request.IdempotencyKey, request.Decision, request.LineIds, request.ReasonCode,
-                    MovementId = movement?.OperationId, WarehouseTransferIds = datIds },
+                    request.QuantityDecisions, MovementId = movement?.OperationId, WarehouseTransferIds = datIds },
                 ChangedFields: ["Status", "Lines", "InventoryStatus"]), token);
             return gr.Id;
         }, ct);
@@ -486,6 +507,106 @@ public sealed class QualityService(
                     : OperationQualityStatus.Passed;
         return new(inspectionStatus, receiptStatus, pending == 0);
     }
+    internal static QualityDecisionState ResolveDecisionState(
+        IEnumerable<QualityInspectionLine> lines,
+        bool releasesQuarantine)
+    {
+        var values = lines.ToArray();
+        var pending = values.Any(x => DecidedQuantity(x) < x.Quantity);
+        var failed = values.Any(x => x.RejectedQuantity > 0);
+        var quarantined = values.Any(x => x.QuarantineQuantity > 0);
+        var inspectionStatus = pending
+            ? QualityInspectionStatus.PartiallyDecided
+            : quarantined
+                ? QualityInspectionStatus.Quarantined
+                : failed
+                    ? QualityInspectionStatus.Failed
+                    : releasesQuarantine
+                        ? QualityInspectionStatus.Released
+                        : QualityInspectionStatus.Passed;
+        var receiptStatus = pending
+            ? OperationQualityStatus.PartiallyCompleted
+            : quarantined
+                ? OperationQualityStatus.InProgress
+                : failed
+                    ? OperationQualityStatus.Failed
+                    : OperationQualityStatus.Passed;
+        return new(inspectionStatus, receiptStatus, !pending);
+    }
+    internal static IReadOnlyList<QualityDecisionPart> BuildDecisionParts(
+        IReadOnlyList<QualityInspectionLine> selected,
+        IReadOnlyDictionary<long, QualityInspectionQuantityDecisionRequest>? quantityDecisions,
+        QualityDecision fallbackDecision)
+    {
+        var result = new List<QualityDecisionPart>();
+        foreach (var line in selected)
+        {
+            var actionable = ActionableQuantity(line);
+            if (actionable <= 0)
+                throw AppException.Conflict($"'{line.StockCodeSnapshot}' kalite satırında karar bekleyen miktar bulunmuyor.");
+            if (quantityDecisions is null)
+            {
+                result.Add(new(line, fallbackDecision, actionable));
+                continue;
+            }
+
+            var allocation = quantityDecisions[line.Id];
+            if (allocation.AcceptedQuantity < 0 || allocation.RejectedQuantity < 0 || allocation.QuarantineQuantity < 0)
+                throw AppException.BadRequest("Kalite karar miktarları negatif olamaz.");
+            var allocated = allocation.AcceptedQuantity + allocation.RejectedQuantity + allocation.QuarantineQuantity;
+            if (Math.Abs(allocated - actionable) > 0.000001m)
+                throw AppException.BadRequest(
+                    $"'{line.StockCodeSnapshot}' için onay, ret ve karantina toplamı karar bekleyen {actionable:0.######} miktara eşit olmalıdır.");
+            if (allocation.AcceptedQuantity > 0) result.Add(new(line, QualityDecision.Accepted, allocation.AcceptedQuantity));
+            if (allocation.RejectedQuantity > 0) result.Add(new(line, QualityDecision.Rejected, allocation.RejectedQuantity));
+            if (allocation.QuarantineQuantity > 0) result.Add(new(line, QualityDecision.Quarantined, allocation.QuarantineQuantity));
+        }
+        return result;
+    }
+    internal static void ApplyDecisionParts(
+        QualityInspectionLine line,
+        GoodsReceiptLine receiptLine,
+        IReadOnlyList<QualityDecisionPart> parts,
+        long actor,
+        DateTimeOffset decidedAt,
+        string? reasonCode,
+        string? note)
+    {
+        var sourceQuantity = ActionableQuantity(line);
+        var accepted = parts.Where(x => x.Decision == QualityDecision.Accepted).Sum(x => x.Quantity);
+        var rejected = parts.Where(x => x.Decision is QualityDecision.Rejected or QualityDecision.Returned).Sum(x => x.Quantity);
+        var quarantined = parts.Where(x => x.Decision == QualityDecision.Quarantined).Sum(x => x.Quantity);
+        var heldSource = Math.Min(receiptLine.QuarantineQuantity, sourceQuantity);
+        receiptLine.QuarantineQuantity -= heldSource;
+        var availableSource = sourceQuantity - heldSource;
+        if (availableSource > 0)
+            receiptLine.AcceptedQuantity = Math.Max(0, receiptLine.AcceptedQuantity - availableSource);
+        receiptLine.AcceptedQuantity += accepted;
+        receiptLine.RejectedQuantity += rejected;
+        receiptLine.QuarantineQuantity += quarantined;
+        line.AcceptedQuantity += accepted;
+        line.RejectedQuantity += rejected;
+        line.QuarantineQuantity = quarantined;
+        line.Decision = ResolveLineDecision(line);
+        line.DecisionBy = actor;
+        line.DecisionAtUtc = decidedAt;
+        line.ReasonCode = Clean(reasonCode, 100);
+        line.ReasonNote = Clean(note, 1000);
+    }
+    private static decimal ActionableQuantity(QualityInspectionLine line) =>
+        line.Decision == QualityDecision.Quarantined
+            ? line.QuarantineQuantity
+            : Math.Max(0, line.Quantity - DecidedQuantity(line));
+    private static decimal DecidedQuantity(QualityInspectionLine line) =>
+        line.AcceptedQuantity + line.RejectedQuantity + line.QuarantineQuantity;
+    private static QualityDecision ResolveLineDecision(QualityInspectionLine line) =>
+        DecidedQuantity(line) < line.Quantity
+            ? QualityDecision.Hold
+            : line.QuarantineQuantity > 0
+                ? QualityDecision.Quarantined
+                : line.RejectedQuantity > 0
+                    ? QualityDecision.Rejected
+                    : QualityDecision.Accepted;
     internal static bool RequiresDat(long sourceWarehouseId,long targetWarehouseId)=>sourceWarehouseId!=targetWarehouseId;
     private static Guid CreateDatIdempotencyKey(Guid decisionKey,long sourceWarehouseId,long targetWarehouseId)
     {
@@ -500,7 +621,7 @@ public sealed class QualityService(
             && string.IsNullOrWhiteSpace(disposition.InspectionLine.SerialNo))
             return null;
         return [new WarehouseTransferTrackingDraftRequest(
-            disposition.InspectionLine.Quantity,
+            disposition.Quantity,
             null,
             disposition.InspectionLine.LotNo,
             disposition.InspectionLine.SerialNo,
@@ -517,7 +638,13 @@ public sealed class QualityService(
         long TargetWarehouseId,
         long TargetLocationId,
         string SourceStockStatus,
-        string TargetStockStatus);
+        string TargetStockStatus,
+        QualityDecision Decision,
+        decimal Quantity);
+    internal sealed record QualityDecisionPart(
+        QualityInspectionLine Line,
+        QualityDecision Decision,
+        decimal Quantity);
     internal sealed record QualityDecisionState(
         QualityInspectionStatus InspectionStatus,
         OperationQualityStatus ReceiptStatus,

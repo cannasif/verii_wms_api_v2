@@ -58,8 +58,15 @@ public sealed record ResolvedQualityPolicy(string Source, long? RuleId, QualityI
     bool RequireLot, bool RequireSerial, bool RequireExpiryDate, int? MinimumRemainingShelfLifeDays,
     bool HoldInventoryUntilDecision, bool BlockPutawayUntilDecision, bool BlockErpPostingUntilDecision);
 
+public sealed record QualityInspectionQuantityDecisionRequest(
+    long LineId,
+    decimal AcceptedQuantity,
+    decimal RejectedQuantity,
+    decimal QuarantineQuantity);
+
 public sealed record DecideQualityInspectionRequest(Guid IdempotencyKey, QualityDecision Decision,
-    string? ReasonCode, string? Note, IReadOnlyList<long>? LineIds, string? RowVersion);
+    string? ReasonCode, string? Note, IReadOnlyList<long>? LineIds, string? RowVersion,
+    IReadOnlyList<QualityInspectionQuantityDecisionRequest>? QuantityDecisions = null);
 
 public sealed record QualityInspectionLineDto(long Id, long? GoodsReceiptLineId, long StockId,
     string StockCode, string? StockName, string? YapCode, string? LotNo, string? SerialNo,
