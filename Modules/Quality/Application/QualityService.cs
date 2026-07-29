@@ -381,20 +381,49 @@ public sealed class QualityService(
 
     public async Task<ResolvedQualityPolicy> ResolveAsync(string branchCode,long stockId,string? stockGroupCode,CancellationToken ct=default)
     {
-        var branch=NormalizeBranch(branchCode); var parameter=await Parameters.FirstOrDefaultAsync(x=>x.BranchCode==branch&&x.ParameterKey=="DEFAULT",false,ct)??Default(branch);
-        var rule=await Rules.Query().Where(x=>x.BranchCode==branch&&x.IsActive&&(x.StockId==stockId||(x.StockId==null&&x.StockGroupCode==stockGroupCode))).OrderByDescending(x=>x.StockId==stockId).ThenByDescending(x=>x.Id).FirstOrDefaultAsync(ct);
-        return rule is null ? new("GlobalParameter",null,parameter.DefaultInspectionMode,QualitySamplingMode.All,100,parameter.DefaultFailAction,false,false,false,false,null,parameter.HoldInventoryUntilDecision,parameter.BlockPutawayUntilDecision,parameter.BlockErpPostingUntilDecision)
+        var branch=NormalizeBranch(branchCode);
+        var parameter=await Parameters.FirstOrDefaultAsync(x=>x.BranchCode==branch&&x.ParameterKey=="DEFAULT",false,ct)??Default(branch);
+        var rule=await Rules.Query()
+            .Where(x=>x.BranchCode==branch&&x.IsActive&&x.ScopeType==QualityRuleScopeTypes.Stock&&x.StockId==stockId)
+            .OrderByDescending(x=>x.Id)
+            .FirstOrDefaultAsync(ct);
+        var normalizedGroup=Clean(stockGroupCode,50)?.ToUpperInvariant();
+        if(rule is null&&!string.IsNullOrWhiteSpace(normalizedGroup))
+            rule=await Rules.Query()
+                .Where(x=>x.BranchCode==branch&&x.IsActive&&x.ScopeType==QualityRuleScopeTypes.StockGroup
+                    &&x.StockGroupCode!=null&&x.StockGroupCode.Trim().ToUpper()==normalizedGroup)
+                .OrderByDescending(x=>x.Id)
+                .FirstOrDefaultAsync(ct);
+        return rule is null ? new("NoRule",null,QualityInspectionMode.NoCheck,QualitySamplingMode.All,100,parameter.DefaultFailAction,false,false,false,false,null,parameter.HoldInventoryUntilDecision,parameter.BlockPutawayUntilDecision,parameter.BlockErpPostingUntilDecision)
             : new(rule.StockId.HasValue?"StockRule":"StockGroupRule",rule.Id,rule.InspectionMode,rule.SamplingMode,rule.SamplingValue,rule.FailAction,rule.AutoQuarantine,rule.RequireLot,rule.RequireSerial,rule.RequireExpiryDate,rule.MinimumRemainingShelfLifeDays,parameter.HoldInventoryUntilDecision,parameter.BlockPutawayUntilDecision,parameter.BlockErpPostingUntilDecision);
     }
 
     private async Task ApplyRule(QualityRule entity,QualityRuleUpsertRequest r,long? currentId,CancellationToken ct)
     {
-        var branch=NormalizeBranch(r.BranchCode); var scope=r.ScopeType?.Trim()??""; if(!QualityRuleScopeTypes.All.Contains(scope)) throw AppException.BadRequest("Geçersiz kalite kapsamı.");
+        var branch=NormalizeBranch(r.BranchCode);
+        var scope=QualityRuleScopeTypes.All.FirstOrDefault(x=>string.Equals(x,r.ScopeType?.Trim(),StringComparison.OrdinalIgnoreCase))
+            ?? throw AppException.BadRequest("Geçersiz kalite kapsamı.");
+        long? stockId=null;
+        string? stockGroupCode=null;
         if(r.SamplingValue<=0||(r.SamplingMode==QualitySamplingMode.Percentage&&r.SamplingValue>100)||r.MinimumRemainingShelfLifeDays<0) throw AppException.BadRequest("Geçersiz örnekleme veya raf ömrü değeri.");
-        if(scope.Equals(QualityRuleScopeTypes.Stock,StringComparison.OrdinalIgnoreCase)) { if(!r.StockId.HasValue||!await uow.Repository<StockEntity>().AnyAsync(x=>x.Id==r.StockId&&x.BranchCode==branch,ct)) throw AppException.BadRequest("Stok bulunamadı."); }
-        else if(string.IsNullOrWhiteSpace(r.StockGroupCode)) throw AppException.BadRequest("Stok grup kodu zorunludur.");
-        if(await Rules.AnyAsync(x=>x.Id!=currentId&&x.BranchCode==branch&&x.ScopeType==scope&&x.StockId==r.StockId&&x.StockGroupCode==Clean(r.StockGroupCode,50)&&x.IsActive,ct)) throw AppException.Conflict("Bu kapsam için aktif kalite kuralı zaten var.");
-        entity.BranchCode=branch; entity.ScopeType=scope; entity.StockId=scope.Equals(QualityRuleScopeTypes.Stock,StringComparison.OrdinalIgnoreCase)?r.StockId:null; entity.StockGroupCode=scope.Equals(QualityRuleScopeTypes.StockGroup,StringComparison.OrdinalIgnoreCase)?Clean(r.StockGroupCode,50):null;
+        if(scope==QualityRuleScopeTypes.Stock)
+        {
+            if(!r.StockId.HasValue||!await uow.Repository<StockEntity>().AnyAsync(x=>x.Id==r.StockId&&x.BranchCode==branch,ct))
+                throw AppException.BadRequest("Stok bulunamadı.");
+            stockId=r.StockId;
+        }
+        else
+        {
+            stockGroupCode=Clean(r.StockGroupCode,50)?.ToUpperInvariant();
+            if(string.IsNullOrWhiteSpace(stockGroupCode))
+                throw AppException.BadRequest("Stok grup kodu zorunludur.");
+            if(!await uow.Repository<StockEntity>().AnyAsync(x=>x.BranchCode==branch&&x.GroupCode!=null&&x.GroupCode.Trim().ToUpper()==stockGroupCode,ct))
+                throw AppException.BadRequest($"'{stockGroupCode}' stok grubu bulunamadı.");
+        }
+        if(await Rules.AnyAsync(x=>x.Id!=currentId&&x.BranchCode==branch&&x.ScopeType==scope&&x.StockId==stockId
+            &&(stockGroupCode==null?x.StockGroupCode==null:x.StockGroupCode!=null&&x.StockGroupCode.Trim().ToUpper()==stockGroupCode)&&x.IsActive,ct))
+            throw AppException.Conflict("Bu kapsam için aktif kalite kuralı zaten var.");
+        entity.BranchCode=branch; entity.ScopeType=scope; entity.StockId=stockId; entity.StockGroupCode=stockGroupCode;
         entity.InspectionMode=r.InspectionMode; entity.SamplingMode=r.SamplingMode; entity.SamplingValue=r.SamplingValue; entity.FailAction=r.FailAction; entity.AutoQuarantine=r.AutoQuarantine; entity.RequireLot=r.RequireLot; entity.RequireSerial=r.RequireSerial; entity.RequireExpiryDate=r.RequireExpiryDate; entity.MinimumRemainingShelfLifeDays=r.MinimumRemainingShelfLifeDays; entity.IsActive=r.IsActive; entity.Description=Clean(r.Description,500);
     }
     private async Task ValidateLocations(UpdateQualityParameterRequest r,string branch,CancellationToken ct)
