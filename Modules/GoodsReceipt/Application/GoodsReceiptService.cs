@@ -62,10 +62,12 @@ public sealed class GoodsReceiptService(
                 throw AppException.Conflict("Bu tedarikçi ve irsaliye numarasıyla daha önce mal kabul oluşturulmuş.");
             var warehouse = await unitOfWork.Repository<WarehouseEntity>().FirstOrDefaultAsync(x => x.Id == request.TargetWarehouseId && x.BranchCode == branch, false, ct)
                 ?? throw AppException.BadRequest(Message(GoodsReceiptMessageKeys.WarehouseNotFound));
+            var receiptPolicy = await receiptPolicyService.GetAsync(branch, ct);
             var location = await unitOfWork.Repository<WarehouseLocation>().FindByIdAsync(request.ReceivingLocationId, false, ct)
                 ?? throw AppException.BadRequest(Message(GoodsReceiptMessageKeys.ReceivingLocationNotFound));
-            if (!location.IsActive || location.WarehouseId != warehouse.Id || location.LocationType is not (LocationTypes.Receiving or LocationTypes.Staging))
-                throw AppException.BadRequest(Message(GoodsReceiptMessageKeys.InvalidReceivingLocation));
+            if (!GoodsReceiptLocationPolicy.IsAllowed(receiptPolicy.LocationSelectionPolicy, location, warehouse.Id))
+                throw AppException.BadRequest(
+                    GoodsReceiptOperationsService.LocationPolicyError(receiptPolicy.LocationSelectionPolicy));
 
             var targetWarehouseIds = request.Lines.Select(x => x.TargetWarehouseId).Append(request.TargetWarehouseId).Distinct().ToArray();
             if (targetWarehouseIds.Length != 1)
@@ -80,8 +82,10 @@ public sealed class GoodsReceiptService(
             if (receivingLocations.Count != receivingLocationIds.Length
                 || request.Lines.Any(x => !receivingLocations.TryGetValue(x.ReceivingLocationId, out var targetLocation)
                     || targetLocation.WarehouseId != x.TargetWarehouseId
-                    || targetLocation.LocationType is not (LocationTypes.Receiving or LocationTypes.Staging)))
-                throw AppException.BadRequest(Message(GoodsReceiptMessageKeys.InvalidReceivingLocation));
+                    || !GoodsReceiptLocationPolicy.IsAllowed(
+                        receiptPolicy.LocationSelectionPolicy, targetLocation, x.TargetWarehouseId)))
+                throw AppException.BadRequest(
+                    GoodsReceiptOperationsService.LocationPolicyError(receiptPolicy.LocationSelectionPolicy));
 
             var selected = request.Lines.GroupBy(x => (x.OrderNumber.Trim(), x.OrderId)).Select(x => x.Single()).ToList();
             var orderCsv = string.Join(',', selected.Select(x => x.OrderNumber).Distinct(StringComparer.OrdinalIgnoreCase));
@@ -104,7 +108,6 @@ public sealed class GoodsReceiptService(
             var stockByCode = stocks.ToDictionary(x => x.ErpStockCode, StringComparer.OrdinalIgnoreCase);
             if (stockCodes.Any(x => string.IsNullOrWhiteSpace(x) || !stockByCode.ContainsKey(x))) throw AppException.BadRequest(Message(GoodsReceiptMessageKeys.StockMirrorMissing));
 
-            var receiptPolicy = await receiptPolicyService.GetAsync(branch, ct);
             var qualityPolicies = new Dictionary<long, ResolvedQualityPolicy>();
             foreach (var stock in stocks)
                 qualityPolicies[stock.Id] = await qualityPolicyResolver.ResolveAsync(branch, stock.Id, stock.GroupCode, ct);
@@ -114,6 +117,10 @@ public sealed class GoodsReceiptService(
             sourceSelected = await ApplyAutomaticSerialsAsync(
                 sourceSelected, stockByCode, trackingPolicies, branch, request.IdempotencyKey, actorUserId, ct);
             var requiresQuality = qualityPolicies.Values.Any(x => x.InspectionMode != QualityInspectionMode.NoCheck);
+            GoodsReceiptOperationsService.ValidateQualityReceivingLocations(
+                requiresQuality,
+                receiptPolicy.BlockPutawayUntilQualityDecision,
+                receivingLocationIds.Select(id => receivingLocations[id].IsPutaway));
 
             var yapCodes = sourceSelected.Select(x => x.Source.YapCode).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             var yaps = await unitOfWork.Repository<YapCodeEntity>().Query().Where(x => x.BranchCode == branch && yapCodes.Contains(x.ConfigurationCode)).ToListAsync(ct);

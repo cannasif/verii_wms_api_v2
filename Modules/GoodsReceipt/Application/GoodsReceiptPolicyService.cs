@@ -9,12 +9,14 @@ public sealed record GoodsReceiptPolicyDto(long Id,string BranchCode,OverReceipt
     bool AllowUnderReceipt,bool RequireShortCloseApproval,bool RequireReceiptApproval,bool RequireQualityApproval,bool RequireErpApproval,
     bool HoldInventoryUntilQualityDecision,bool BlockPutawayUntilQualityDecision,InventoryAvailabilityPolicy InventoryAvailabilityPolicy,
     GoodsReceiptErpPostingPolicy ErpPostingPolicy,bool AllowOrderlessReceipt,bool AllowUnplannedReceipt,bool ShowAllocatedOpenOrderLines,
+    GoodsReceiptLocationSelectionPolicy LocationSelectionPolicy,
     long? UpdatedBy,DateTime? UpdatedDate);
 
 public sealed record UpdateGoodsReceiptPolicyRequest(string BranchCode,OverReceiptPolicy OverReceiptPolicy,decimal OverReceiptTolerancePercent,
     bool AllowUnderReceipt,bool RequireShortCloseApproval,bool RequireReceiptApproval,bool RequireQualityApproval,bool RequireErpApproval,
     bool HoldInventoryUntilQualityDecision,bool BlockPutawayUntilQualityDecision,InventoryAvailabilityPolicy InventoryAvailabilityPolicy,
-    GoodsReceiptErpPostingPolicy ErpPostingPolicy,bool AllowOrderlessReceipt,bool AllowUnplannedReceipt,bool ShowAllocatedOpenOrderLines);
+    GoodsReceiptErpPostingPolicy ErpPostingPolicy,bool AllowOrderlessReceipt,bool AllowUnplannedReceipt,bool ShowAllocatedOpenOrderLines,
+    GoodsReceiptLocationSelectionPolicy LocationSelectionPolicy);
 
 public interface IGoodsReceiptPolicyService
 {
@@ -30,14 +32,16 @@ public sealed class GoodsReceiptPolicyService(IUnitOfWork uow,IAuditLogWriter au
     {
         if(r.OverReceiptTolerancePercent is <0 or >100) throw AppException.BadRequest("Fazla kabul toleransı 0-100 arasında olmalıdır.");
         if(r.OverReceiptPolicy==OverReceiptPolicy.NotAllowed&&r.OverReceiptTolerancePercent!=0) throw AppException.BadRequest("Fazla kabul kapalıyken tolerans sıfır olmalıdır.");
+        if(!Enum.IsDefined(r.LocationSelectionPolicy)) throw AppException.BadRequest("Geçersiz mal kabul raf politikası.");
         var branch=Branch(r.BranchCode);var entity=await Policies.FirstOrDefaultAsync(x=>x.BranchCode==branch&&x.PolicyKey=="DEFAULT",true,ct);var before=entity is null?null:Map(entity);
         if(entity is null){entity=Default(branch);entity.CreatedBy=actor;entity.CreatedDate=DateTime.UtcNow;await Policies.AddAsync(entity,ct);}
         entity.OverReceiptPolicy=r.OverReceiptPolicy;entity.OverReceiptTolerancePercent=r.OverReceiptTolerancePercent;entity.AllowUnderReceipt=r.AllowUnderReceipt;entity.RequireShortCloseApproval=r.RequireShortCloseApproval;
         entity.RequireReceiptApproval=r.RequireReceiptApproval;entity.RequireQualityApproval=r.RequireQualityApproval;entity.RequireErpApproval=r.RequireErpApproval;entity.HoldInventoryUntilQualityDecision=r.HoldInventoryUntilQualityDecision;
         entity.BlockPutawayUntilQualityDecision=r.BlockPutawayUntilQualityDecision;entity.InventoryAvailabilityPolicy=r.InventoryAvailabilityPolicy;entity.ErpPostingPolicy=r.ErpPostingPolicy;entity.AllowOrderlessReceipt=r.AllowOrderlessReceipt;entity.AllowUnplannedReceipt=r.AllowUnplannedReceipt;
         entity.ShowAllocatedOpenOrderLines=r.ShowAllocatedOpenOrderLines;
+        entity.LocationSelectionPolicy=r.LocationSelectionPolicy;
         entity.UpdatedBy=actor;entity.UpdatedDate=DateTime.UtcNow;await uow.SaveChangesAsync(ct);var result=Map(entity);await audit.WriteAsync(new("goods-receipt.policy.update",nameof(GoodsReceiptPolicy),entity.Id.ToString(),"Succeeded","goods-receipt",OldValues:before,NewValues:result,ChangedFields:["Policy"]),ct);return result;
     }
     private static GoodsReceiptPolicy Default(string branch)=>new(){BranchCode=branch,PolicyKey="DEFAULT"}; private static string Branch(string? x)=>string.IsNullOrWhiteSpace(x)?"0":x.Trim();
-    private static GoodsReceiptPolicyDto Map(GoodsReceiptPolicy x)=>new(x.Id,x.BranchCode,x.OverReceiptPolicy,x.OverReceiptTolerancePercent,x.AllowUnderReceipt,x.RequireShortCloseApproval,x.RequireReceiptApproval,x.RequireQualityApproval,x.RequireErpApproval,x.HoldInventoryUntilQualityDecision,x.BlockPutawayUntilQualityDecision,x.InventoryAvailabilityPolicy,x.ErpPostingPolicy,x.AllowOrderlessReceipt,x.AllowUnplannedReceipt,x.ShowAllocatedOpenOrderLines,x.UpdatedBy,x.UpdatedDate);
+    private static GoodsReceiptPolicyDto Map(GoodsReceiptPolicy x)=>new(x.Id,x.BranchCode,x.OverReceiptPolicy,x.OverReceiptTolerancePercent,x.AllowUnderReceipt,x.RequireShortCloseApproval,x.RequireReceiptApproval,x.RequireQualityApproval,x.RequireErpApproval,x.HoldInventoryUntilQualityDecision,x.BlockPutawayUntilQualityDecision,x.InventoryAvailabilityPolicy,x.ErpPostingPolicy,x.AllowOrderlessReceipt,x.AllowUnplannedReceipt,x.ShowAllocatedOpenOrderLines,x.LocationSelectionPolicy,x.UpdatedBy,x.UpdatedDate);
 }

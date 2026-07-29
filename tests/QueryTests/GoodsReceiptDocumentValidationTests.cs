@@ -1,5 +1,6 @@
 using verii_wms_api_v2.Modules.GoodsReceipt.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
+using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 using Xunit;
 
@@ -7,6 +8,72 @@ namespace verii_wms_api_v2.QueryTests;
 
 public sealed class GoodsReceiptDocumentValidationTests
 {
+    [Theory]
+    [InlineData(LocationTypes.Receiving, true)]
+    [InlineData(LocationTypes.Staging, true)]
+    [InlineData(LocationTypes.Rack, false)]
+    [InlineData(LocationTypes.Shelf, false)]
+    public void Strict_location_policy_only_allows_receiving_and_staging(
+        string locationType,
+        bool expected)
+    {
+        var location = new WarehouseLocation
+        {
+            WarehouseId = 10,
+            LocationType = locationType,
+            IsActive = true
+        };
+
+        Assert.Equal(
+            expected,
+            GoodsReceiptLocationPolicy.IsAllowed(
+                GoodsReceiptLocationSelectionPolicy.ReceivingOrStagingOnly,
+                location,
+                warehouseId: 10));
+    }
+
+    [Theory]
+    [InlineData(LocationTypes.Receiving)]
+    [InlineData(LocationTypes.Staging)]
+    [InlineData(LocationTypes.Rack)]
+    [InlineData(LocationTypes.Shelf)]
+    [InlineData(LocationTypes.Cell)]
+    public void Any_active_location_policy_allows_every_active_location_in_selected_warehouse(
+        string locationType)
+    {
+        var location = new WarehouseLocation
+        {
+            WarehouseId = 10,
+            LocationType = locationType,
+            IsActive = true
+        };
+
+        Assert.True(GoodsReceiptLocationPolicy.IsAllowed(
+            GoodsReceiptLocationSelectionPolicy.AnyActiveWarehouseLocation,
+            location,
+            warehouseId: 10));
+    }
+
+    [Theory]
+    [InlineData(false, 10)]
+    [InlineData(true, 11)]
+    public void Any_active_location_policy_rejects_inactive_or_other_warehouse_locations(
+        bool isActive,
+        long warehouseId)
+    {
+        var location = new WarehouseLocation
+        {
+            WarehouseId = warehouseId,
+            LocationType = LocationTypes.Rack,
+            IsActive = isActive
+        };
+
+        Assert.False(GoodsReceiptLocationPolicy.IsAllowed(
+            GoodsReceiptLocationSelectionPolicy.AnyActiveWarehouseLocation,
+            location,
+            warehouseId: 10));
+    }
+
     [Fact]
     public void Order_based_receipt_requires_exactly_one_waybill_type()
     {

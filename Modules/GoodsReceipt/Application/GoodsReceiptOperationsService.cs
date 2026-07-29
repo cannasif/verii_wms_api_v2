@@ -262,6 +262,7 @@ public sealed class GoodsReceiptOperationsService(
                 throw AppException.BadRequest("Sipariş kaynaklı satırlar yalnızca doğrudan mal kabul işleminde kullanılabilir.");
             if (hasOrderSources && request.Lines.Any(x => string.IsNullOrWhiteSpace(x.SourceOrderNumber) || !x.SourceOrderId.HasValue))
                 throw AppException.BadRequest("Siparişten doğrudan kabulde tüm kalemlerin sipariş numarası ve satır kimliği bulunmalıdır.");
+            var policy = await receiptPolicyService.GetAsync(branch, token);
             var orderSourceByKey = new Dictionary<(string OrderNumber, int OrderId), GoodsReceiptOrderSourceLine>();
             if (hasOrderSources)
             {
@@ -288,8 +289,8 @@ public sealed class GoodsReceiptOperationsService(
             }
             var location = await unitOfWork.Repository<WarehouseLocation>().FindByIdAsync(request.ReceivingLocationId, false, token)
                 ?? throw AppException.BadRequest("Mal kabul alanı bulunamadı.");
-            if (!location.IsActive || location.WarehouseId != warehouse.Id || location.LocationType is not (LocationTypes.Receiving or LocationTypes.Staging))
-                throw AppException.BadRequest("Seçilen lokasyon aktif bir kabul veya staging alanı olmalıdır.");
+            if (!GoodsReceiptLocationPolicy.IsAllowed(policy.LocationSelectionPolicy, location, warehouse.Id))
+                throw AppException.BadRequest(LocationPolicyError(policy.LocationSelectionPolicy));
 
             var requestedLineWarehouseIds = request.Lines
                 .Select(x => x.TargetWarehouseId ?? request.TargetWarehouseId)
@@ -307,10 +308,9 @@ public sealed class GoodsReceiptOperationsService(
                 .Where(x => requestedLineLocationIds.Contains(x.Id))
                 .ToDictionaryAsync(x => x.Id, token);
             if (lineLocations.Count != requestedLineLocationIds.Length
-                || lineLocations.Values.Any(x => !x.IsActive || x.WarehouseId != warehouse.Id
-                    || (x.LocationType is not (LocationTypes.Receiving or LocationTypes.Staging) && !x.IsPutaway)
-                    || x.IsQuarantine))
-                throw AppException.BadRequest("Kalem hedef rafı aktif, aynı depoda ve kabul/putaway kullanımına uygun olmalıdır.");
+                || lineLocations.Values.Any(x =>
+                    !GoodsReceiptLocationPolicy.IsAllowed(policy.LocationSelectionPolicy, x, warehouse.Id)))
+                throw AppException.BadRequest(LocationPolicyError(policy.LocationSelectionPolicy));
 
             var stockIds = request.Lines.Select(x => x.StockId).Distinct().ToList();
             var stocks = await unitOfWork.Repository<StockEntity>().Query().Where(x => x.BranchCode == branch && stockIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, token);
@@ -330,7 +330,6 @@ public sealed class GoodsReceiptOperationsService(
                         || (string.IsNullOrWhiteSpace(source.YapCode) && input.YapCodeId.HasValue))))
                 throw AppException.BadRequest("Sipariş satırındaki YAP kodu ile kabul kalemindeki YAP kodu uyuşmuyor.");
 
-            var policy = await receiptPolicyService.GetAsync(branch, token);
             if (!direct && !policy.AllowOrderlessReceipt) throw AppException.Forbidden("Siparişsiz mal kabul emri politika gereği kapalıdır.");
             if (RequiresUnplannedReceiptPermission(direct, hasOrderSources) && !policy.AllowUnplannedReceipt)
                 throw AppException.Forbidden("Emirsiz direkt mal kabul politika gereği kapalıdır.");
@@ -691,6 +690,11 @@ public sealed class GoodsReceiptOperationsService(
 
     internal static bool RequiresUnplannedReceiptPermission(bool direct, bool hasOrderSources)
         => direct && !hasOrderSources;
+
+    internal static string LocationPolicyError(GoodsReceiptLocationSelectionPolicy policy) =>
+        policy == GoodsReceiptLocationSelectionPolicy.AnyActiveWarehouseLocation
+            ? "Seçilen raf aktif ve hedef depoya ait olmalıdır."
+            : "Seçilen raf aktif, hedef depoya ait bir kabul veya staging alanı olmalıdır.";
 
     internal static void ValidateQualityReceivingLocations(
         bool requiresQuality,

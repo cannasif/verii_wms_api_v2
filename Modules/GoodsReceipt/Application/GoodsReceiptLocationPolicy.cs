@@ -1,0 +1,19 @@
+using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
+using verii_wms_api_v2.Modules.Location.Domain;
+
+namespace verii_wms_api_v2.Modules.GoodsReceipt.Application;
+
+internal static class GoodsReceiptLocationPolicy
+{
+    internal static bool IsAllowed(
+        GoodsReceiptLocationSelectionPolicy policy,
+        WarehouseLocation location,
+        long warehouseId)
+    {
+        if (!location.IsActive || location.WarehouseId != warehouseId)
+            return false;
+
+        return policy == GoodsReceiptLocationSelectionPolicy.AnyActiveWarehouseLocation
+            || location.LocationType is LocationTypes.Receiving or LocationTypes.Staging;
+    }
+}
