@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.Mvc;
 using verii_wms_api_v2.Modules.Identity.Application;
+using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 
@@ -107,7 +108,12 @@ public sealed class AuthController(
     [Authorize, HttpPost("change-password")]
     public async Task<IActionResult> ChangePassword(ChangePasswordRequest request, CancellationToken cancellationToken)
     {
-        var session = await identityService.ChangePasswordAsync(CurrentUserId(), request, CurrentClient(), cancellationToken);
+        var session = await identityService.ChangePasswordAsync(
+            CurrentUserId(),
+            CurrentBranchCode(),
+            request,
+            CurrentClient(),
+            cancellationToken);
         SetRefreshCookie(session);
         return Ok(ApiResponse<AuthTokenResponse>.Ok(session.Response, "Şifre güncellendi."));
     }
@@ -145,4 +151,8 @@ public sealed class AuthController(
     });
 
     private long CurrentUserId() => long.Parse(User.FindFirstValue(ClaimTypes.NameIdentifier)!);
+
+    private string CurrentBranchCode() =>
+        User.FindFirstValue(JwtTokenIssuer.BranchCodeClaim)
+        ?? throw AppException.Unauthorized("Oturum şube bilgisi geçersiz.");
 }

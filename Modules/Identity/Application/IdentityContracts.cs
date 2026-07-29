@@ -7,6 +7,7 @@ public sealed record LoginRequest
     public string? Identifier { get; init; }
     public string? Email { get; init; } // Legacy client compatibility.
     public string Password { get; init; } = string.Empty;
+    public string BranchCode { get; init; } = string.Empty;
 
     public string ResolveIdentifier() =>
         !string.IsNullOrWhiteSpace(Identifier) ? Identifier : Email ?? string.Empty;
@@ -16,7 +17,10 @@ public sealed record ResetPasswordRequest(string Token, string NewPassword);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 public sealed record ClientContext(string? IpAddress, string? UserAgent);
 public sealed record AccessTokenResult(string Value, DateTime ExpiresAt);
-public sealed record AuthTokenResponse(string AccessToken, DateTime AccessTokenExpiresAt);
+public sealed record AuthTokenResponse(
+    string AccessToken,
+    DateTime AccessTokenExpiresAt,
+    string BranchCode);
 public sealed record AuthSessionResult(AuthTokenResponse Response, string RefreshToken, DateTime RefreshTokenExpiresAt);
 
 public sealed record ProfileRequest(decimal? Height, decimal? Weight, string? Description, int? Gender);
@@ -42,10 +46,10 @@ public interface IIdentityService
     Task RevokeAsync(string refreshToken, ClientContext client, CancellationToken cancellationToken = default);
     Task ForgotPasswordAsync(ForgotPasswordRequest request, ClientContext client, CancellationToken cancellationToken = default);
     Task ResetPasswordAsync(ResetPasswordRequest request, CancellationToken cancellationToken = default);
-    Task<AuthSessionResult> ChangePasswordAsync(long userId, ChangePasswordRequest request, ClientContext client, CancellationToken cancellationToken = default);
+    Task<AuthSessionResult> ChangePasswordAsync(long userId, string branchCode, ChangePasswordRequest request, ClientContext client, CancellationToken cancellationToken = default);
 }
 
-public interface ITokenIssuer { AccessTokenResult CreateAccessToken(User user); }
+public interface ITokenIssuer { AccessTokenResult CreateAccessToken(User user, string branchCode); }
 
 public interface IIdentityEmailSender
 {

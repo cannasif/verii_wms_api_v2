@@ -22,6 +22,7 @@ public sealed class IdentityService(
     public async Task<AuthSessionResult> LoginAsync(LoginRequest request, ClientContext client, CancellationToken cancellationToken = default)
     {
         var value = request.ResolveIdentifier().Trim().ToLowerInvariant();
+        var branchCode = NormalizeBranchCode(request.BranchCode);
         if (string.IsNullOrWhiteSpace(value) || string.IsNullOrWhiteSpace(request.Password))
             throw AppException.Unauthorized("Kullanıcı adı veya şifre hatalı.");
 
@@ -31,7 +32,7 @@ public sealed class IdentityService(
             throw AppException.Unauthorized("Kullanıcı adı veya şifre hatalı.");
 
         user.LastLoginAt = DateTime.UtcNow;
-        var session = await CreateSessionAsync(user, Guid.NewGuid(), client, cancellationToken);
+        var session = await CreateSessionAsync(user, branchCode, Guid.NewGuid(), client, cancellationToken);
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return ToAuthSession(user, session);
     }
@@ -200,7 +201,7 @@ public sealed class IdentityService(
         sessionValidator.Invalidate(resetUserId.Value);
     }
 
-    public async Task<AuthSessionResult> ChangePasswordAsync(long userId, ChangePasswordRequest request, ClientContext client, CancellationToken cancellationToken = default)
+    public async Task<AuthSessionResult> ChangePasswordAsync(long userId, string branchCode, ChangePasswordRequest request, ClientContext client, CancellationToken cancellationToken = default)
     {
         await passwordPolicy.ValidateAsync(request.NewPassword, cancellationToken);
         var result = await unitOfWork.ExecuteInTransactionAsync(async ct =>
@@ -216,7 +217,7 @@ public sealed class IdentityService(
             user.PasswordLength = request.NewPassword.Length;
             user.TokenVersion++;
             await RevokeAllSessionsAsync(user.Id, "PasswordChanged", client, now, ct);
-            var session = await CreateSessionAsync(user, Guid.NewGuid(), client, ct);
+            var session = await CreateSessionAsync(user, NormalizeBranchCode(branchCode), Guid.NewGuid(), client, ct);
             await unitOfWork.SaveChangesAsync(ct);
             return ToAuthSession(user, session);
         }, cancellationToken, IsolationLevel.Serializable);
@@ -226,6 +227,7 @@ public sealed class IdentityService(
 
     private async Task<IssuedRefreshSession> CreateSessionAsync(
         User user,
+        string branchCode,
         Guid familyId,
         ClientContext client,
         CancellationToken cancellationToken,
@@ -236,6 +238,7 @@ public sealed class IdentityService(
             ?? DateTime.UtcNow.AddDays(configuration.GetValue("Identity:RefreshTokenDays", 30));
         var entity = new RefreshTokenSession
         {
+            BranchCode = NormalizeBranchCode(branchCode),
             UserId = user.Id,
             User = user,
             FamilyId = familyId,
@@ -273,8 +276,21 @@ public sealed class IdentityService(
 
     private AuthSessionResult ToAuthSession(User user, IssuedRefreshSession session)
     {
-        var accessToken = tokenIssuer.CreateAccessToken(user);
-        return new AuthSessionResult(new AuthTokenResponse(accessToken.Value, accessToken.ExpiresAt), session.RawToken, session.Entity.ExpiresAt);
+        var accessToken = tokenIssuer.CreateAccessToken(user, session.Entity.BranchCode);
+        return new AuthSessionResult(
+            new AuthTokenResponse(accessToken.Value, accessToken.ExpiresAt, session.Entity.BranchCode),
+            session.RawToken,
+            session.Entity.ExpiresAt);
+    }
+
+    private static string NormalizeBranchCode(string? branchCode)
+    {
+        var normalized = branchCode?.Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+            throw AppException.BadRequest("Şube kodu zorunludur.");
+        if (normalized.Length > 10)
+            throw AppException.BadRequest("Şube kodu en fazla 10 karakter olabilir.");
+        return normalized;
     }
 
     private static AppException InvalidResetToken() =>

@@ -9,7 +9,9 @@ namespace verii_wms_api_v2.Modules.Identity.Infrastructure;
 
 public sealed class JwtTokenIssuer(IConfiguration configuration) : ITokenIssuer
 {
-    public AccessTokenResult CreateAccessToken(User user)
+    public const string BranchCodeClaim = "branch_code";
+
+    public AccessTokenResult CreateAccessToken(User user, string branchCode)
     {
         var secret = configuration["JwtSettings:SecretKey"] ?? throw new InvalidOperationException("JwtSettings:SecretKey is missing.");
         var expiresAt = DateTime.UtcNow.AddMinutes(configuration.GetValue("JwtSettings:AccessTokenMinutes", 15));
@@ -20,6 +22,7 @@ public sealed class JwtTokenIssuer(IConfiguration configuration) : ITokenIssuer
             new Claim(ClaimTypes.Name, user.Username),
             new Claim(ClaimTypes.Email, user.Email),
             new Claim(ClaimTypes.Role, user.Role),
+            new Claim(BranchCodeClaim, branchCode),
             new Claim("tokenVersion", user.TokenVersion.ToString()),
             new Claim("firstName", user.Detail?.FirstName ?? string.Empty),
             new Claim("lastName", user.Detail?.LastName ?? string.Empty)
