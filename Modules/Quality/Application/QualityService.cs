@@ -319,20 +319,14 @@ public sealed class QualityService(
                 line.RejectedQuantity = request.Decision is QualityDecision.Rejected or QualityDecision.Returned ? line.Quantity : 0;
                 line.QuarantineQuantity = request.Decision == QualityDecision.Quarantined ? line.Quantity : 0;
             }
-            var pending = inspection.Lines.Count(x => x.Decision is QualityDecision.Pending or QualityDecision.Hold);
-            var accepted = inspection.Lines.Count(x => x.Decision == QualityDecision.Accepted);
-            var quarantined = inspection.Lines.Count(x => x.Decision == QualityDecision.Quarantined);
-            var failed = inspection.Lines.Count(x => x.Decision is QualityDecision.Rejected or QualityDecision.Returned);
-            inspection.Status = pending > 0 || accepted > 0 && quarantined > 0 ? QualityInspectionStatus.PartiallyDecided
-                : failed > 0 ? QualityInspectionStatus.Failed
-                : quarantined > 0 ? QualityInspectionStatus.Quarantined
-                : releasesQuarantine ? QualityInspectionStatus.Released : QualityInspectionStatus.Passed;
-            inspection.DecidedAtUtc = pending == 0 ? now : null;
+            var decisionState = ResolveDecisionState(
+                inspection.Lines.Select(x => x.Decision),
+                releasesQuarantine);
+            inspection.Status = decisionState.InspectionStatus;
+            inspection.DecidedAtUtc = decisionState.IsTerminal ? now : null;
             inspection.InspectorUserId = actor; inspection.Note = Clean(request.Note, 1000);
             inspection.UpdatedBy = actor; inspection.UpdatedDate = DateTime.UtcNow;
-            gr.QualityStatus = pending > 0 ? OperationQualityStatus.PartiallyCompleted
-                : failed > 0 ? OperationQualityStatus.Failed
-                : quarantined > 0 ? OperationQualityStatus.InProgress : OperationQualityStatus.Passed;
+            gr.QualityStatus = decisionState.ReceiptStatus;
             await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("quality.inspection.decide", nameof(QualityInspection), id.ToString(), "Succeeded", "quality",
                 NewValues: new { request.IdempotencyKey, request.Decision, request.LineIds, request.ReasonCode,
@@ -419,6 +413,33 @@ public sealed class QualityService(
     private static QualityParameter Default(string branch)=>new(){BranchCode=branch,ParameterKey="DEFAULT"};
     private static QualityParameterDto Map(QualityParameter x)=>new(x.Id,x.BranchCode,x.AutoCreateInspectionOnReceipt,x.DefaultInspectionMode,x.DefaultFailAction,x.HoldInventoryUntilDecision,x.BlockPutawayUntilDecision,x.BlockErpPostingUntilDecision,x.RequireManagerApprovalForRelease,x.AllowPartialDecision,x.AllowDirectReceiptWhenNoRule,x.BlockReceiptWhenLotMissing,x.BlockReceiptWhenSerialMissing,x.BlockReceiptWhenExpiryMissing,x.DefaultQualityLocationId,x.DefaultQuarantineLocationId,x.DefaultRejectLocationId,x.UpdatedBy,x.UpdatedDate);
     private static object Snapshot(QualityRule x)=>new{x.Id,x.BranchCode,x.ScopeType,x.StockId,x.StockGroupCode,x.InspectionMode,x.SamplingMode,x.SamplingValue,x.FailAction,x.AutoQuarantine,x.RequireLot,x.RequireSerial,x.RequireExpiryDate,x.MinimumRemainingShelfLifeDays,x.IsActive,x.Description};
+    internal static QualityDecisionState ResolveDecisionState(
+        IEnumerable<QualityDecision> decisions,
+        bool releasesQuarantine)
+    {
+        var values = decisions.ToArray();
+        var pending = values.Count(x => x is QualityDecision.Pending or QualityDecision.Hold);
+        var accepted = values.Count(x => x == QualityDecision.Accepted);
+        var quarantined = values.Count(x => x == QualityDecision.Quarantined);
+        var failed = values.Count(x => x is QualityDecision.Rejected or QualityDecision.Returned);
+        var inspectionStatus = pending > 0 || accepted > 0 && quarantined > 0
+            ? QualityInspectionStatus.PartiallyDecided
+            : failed > 0
+                ? QualityInspectionStatus.Failed
+                : quarantined > 0
+                    ? QualityInspectionStatus.Quarantined
+                    : releasesQuarantine
+                        ? QualityInspectionStatus.Released
+                        : QualityInspectionStatus.Passed;
+        var receiptStatus = pending > 0
+            ? OperationQualityStatus.PartiallyCompleted
+            : failed > 0
+                ? OperationQualityStatus.Failed
+                : quarantined > 0
+                    ? OperationQualityStatus.InProgress
+                    : OperationQualityStatus.Passed;
+        return new(inspectionStatus, receiptStatus, pending == 0);
+    }
     internal static bool RequiresDat(long sourceWarehouseId,long targetWarehouseId)=>sourceWarehouseId!=targetWarehouseId;
     private static Guid CreateDatIdempotencyKey(Guid decisionKey,long sourceWarehouseId,long targetWarehouseId)
     {
@@ -451,6 +472,10 @@ public sealed class QualityService(
         long TargetLocationId,
         string SourceStockStatus,
         string TargetStockStatus);
+    internal sealed record QualityDecisionState(
+        QualityInspectionStatus InspectionStatus,
+        OperationQualityStatus ReceiptStatus,
+        bool IsTerminal);
     private static string NormalizeBranch(string? x)=>string.IsNullOrWhiteSpace(x)?"0":x.Trim(); private static string? Clean(string? x,int max){var v=string.IsNullOrWhiteSpace(x)?null:x.Trim();return v?.Length>max?v[..max]:v;}
     private static void ApplyVersion(QualityInspection entity,string? supplied){if(string.IsNullOrWhiteSpace(supplied))return;try{entity.RowVersion=Convert.FromBase64String(supplied);}catch{throw AppException.Conflict("Kalite kaydı güncellik bilgisi geçersiz. Sayfayı yenileyin.");}}
 }
