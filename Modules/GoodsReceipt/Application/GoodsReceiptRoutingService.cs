@@ -162,7 +162,7 @@ public sealed class GoodsReceiptRoutingService(
             throw AppException.Conflict("İptal edilmiş mal kabul yönlendirilemez.");
         if (header.ApprovalStatus is not (OperationApprovalStatus.NotRequired or OperationApprovalStatus.Approved))
             throw AppException.Conflict("Mal kabul onayı tamamlanmadan yönlendirme yapılamaz.");
-        if (header.QualityStatus is not (OperationQualityStatus.NotRequired or OperationQualityStatus.Passed))
+        if (!CanRouteAfterQuality(header.QualityStatus))
             throw AppException.Conflict("Kalite/GKK kararı tamamlanmadan ürünler yönlendirilemez.");
 
         var ids = requests.Select(x => x.GoodsReceiptLineId).ToArray();
@@ -188,6 +188,11 @@ public sealed class GoodsReceiptRoutingService(
 
         return new RoutingContext(header, warehouses[0], requestedLines);
     }
+
+    internal static bool CanRouteAfterQuality(OperationQualityStatus status) =>
+        status is OperationQualityStatus.NotRequired
+            or OperationQualityStatus.Passed
+            or OperationQualityStatus.Failed;
 
     private async Task<Dictionary<long, decimal>> GetActiveAllocatedQuantitiesCoreAsync(long[] lineIds, CancellationToken ct)
     {
