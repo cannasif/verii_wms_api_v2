@@ -301,7 +301,7 @@ public sealed class WarehouseOpeningImportService(
         }
 
         await using var balanceStream = new MemoryStream(prepared.BalanceWorkbook);
-        var balanceResult = await openingBalanceImport.ImportAsync(
+        var balanceResult = await openingBalanceImport.ImportWarehouseOpeningAsync(
             balanceStream, branchCode, idempotencyKey, cancellationToken);
         return new(prepared.FileHash, locationResult, balanceResult);
     }

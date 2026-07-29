@@ -69,4 +69,9 @@ public interface IOpeningBalanceImportService
     Task<byte[]> CreateTemplateAsync(string branchCode, CancellationToken cancellationToken = default);
     Task<OpeningBalanceImportResult> ImportAsync(Stream workbookStream, string branchCode, string idempotencyKey,
         CancellationToken cancellationToken = default);
+    Task<OpeningBalanceImportResult> ImportWarehouseOpeningAsync(
+        Stream workbookStream,
+        string branchCode,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default);
 }

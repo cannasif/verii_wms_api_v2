@@ -16,6 +16,7 @@ public sealed class OpeningBalanceImportService(
     IStockMovementService stockMovements) : IOpeningBalanceImportService
 {
     public const int MaxRows = 200;
+    public const int WarehouseOpeningMaxRows = 2000;
     public const int MaxFileSize = 5 * 1024 * 1024;
     private const int LastTemplateRow = MaxRows + 1;
     private static readonly string[] Headers =
@@ -69,7 +70,9 @@ public sealed class OpeningBalanceImportService(
         guide.Cell("A3").Value =
             "Bu işlem raf bakiyesi tablosuna doğrudan yazmaz; denetlenebilir bir ilk bakiye stok hareketi oluşturur. " +
             "Her hedef deponun hareket defteri tamamen boş olmalıdır. Aynı idempotency anahtarıyla güvenli biçimde tekrar denenebilir. " +
-            "Mevcut bakiye güncellenmez veya silinmez; sonraki düzeltmeler normal stok düzeltme işlemiyle yapılmalıdır.";
+            "Mevcut bakiye güncellenmez veya silinmez; sonraki düzeltmeler normal stok düzeltme işlemiyle yapılmalıdır. " +
+            "'Stoklar' ve 'YAP Kodları' sayfaları yalnızca ilk 5.000 kaydı örnek referans olarak gösterir. Bu listelerde görünmeyen " +
+            "geçerli kodlar da ana sayfaya yazılabilir ve yükleme sırasında doğrudan veritabanından doğrulanır.";
         guide.Range("A3:F5").Style.Fill.SetBackgroundColor(XLColor.FromHtml("#FFF4D6"))
             .Font.SetFontColor(XLColor.FromHtml("#7A4B00")).Font.SetBold().Alignment.SetWrapText();
         var notes = new[]
@@ -145,8 +148,31 @@ public sealed class OpeningBalanceImportService(
         return stream.ToArray();
     }
 
-    public async Task<OpeningBalanceImportResult> ImportAsync(Stream workbookStream, string branchCode,
-        string idempotencyKey, CancellationToken cancellationToken = default)
+    public Task<OpeningBalanceImportResult> ImportAsync(
+        Stream workbookStream,
+        string branchCode,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+        => ImportCoreAsync(workbookStream, branchCode, idempotencyKey, MaxRows, cancellationToken);
+
+    public Task<OpeningBalanceImportResult> ImportWarehouseOpeningAsync(
+        Stream workbookStream,
+        string branchCode,
+        string idempotencyKey,
+        CancellationToken cancellationToken = default)
+        => ImportCoreAsync(
+            workbookStream,
+            branchCode,
+            idempotencyKey,
+            WarehouseOpeningMaxRows,
+            cancellationToken);
+
+    private async Task<OpeningBalanceImportResult> ImportCoreAsync(
+        Stream workbookStream,
+        string branchCode,
+        string idempotencyKey,
+        int maxRows,
+        CancellationToken cancellationToken)
     {
         var branch = NormalizeBranch(branchCode);
         var key = idempotencyKey?.Trim() ?? string.Empty;
@@ -158,23 +184,59 @@ public sealed class OpeningBalanceImportService(
         ValidateHeaders(worksheet);
         var rows = worksheet.RowsUsed()
             .Where(x => x.RowNumber() > 1 && Enumerable.Range(1, Headers.Length).Any(c => !string.IsNullOrWhiteSpace(x.Cell(c).GetString())))
-            .Take(MaxRows + 1).ToList();
+            .Take(maxRows + 1).ToList();
         if (rows.Count == 0) throw AppException.BadRequest("Aktarılacak ilk bakiye satırı bulunamadı.");
-        if (rows.Count > MaxRows) throw AppException.BadRequest($"Tek aktarımda en fazla {MaxRows} bakiye satırı kullanılabilir.");
+        if (rows.Count > maxRows) throw AppException.BadRequest($"Tek aktarımda en fazla {maxRows} bakiye satırı kullanılabilir.");
 
+        var requestedWarehouseCodes = rows
+            .Select(x => Text(x, 1))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var requestedWarehouseNumbers = requestedWarehouseCodes
+            .Select(x => int.TryParse(x, out var value) ? (int?)value : null)
+            .Where(x => x.HasValue)
+            .Select(x => x!.Value)
+            .Distinct()
+            .ToList();
+        var requestedLocationCodes = rows
+            .Select(x => Text(x, 2).ToUpperInvariant())
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var requestedStockCodes = rows
+            .Select(x => Text(x, 3))
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var requestedYapCodes = rows
+            .Select(x => Null(Text(x, 4)))
+            .Where(x => x is not null)
+            .Select(x => x!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
         var warehouses = await unitOfWork.Repository<WarehouseEntity>().Query()
-            .Where(x => x.BranchCode == branch).Select(x => new { x.Id, x.WarehouseCode }).ToListAsync(cancellationToken);
+            .Where(x => x.BranchCode == branch
+                && requestedWarehouseNumbers.Contains(x.WarehouseCode))
+            .Select(x => new { x.Id, x.WarehouseCode })
+            .ToListAsync(cancellationToken);
         var warehouseByCode = warehouses.ToDictionary(x => x.WarehouseCode.ToString(), StringComparer.OrdinalIgnoreCase);
         var warehouseIds = warehouses.Select(x => x.Id).ToList();
         var locations = await unitOfWork.Repository<WarehouseLocation>().Query()
-            .Where(x => warehouseIds.Contains(x.WarehouseId) && x.IsActive)
+            .Where(x => warehouseIds.Contains(x.WarehouseId)
+                && x.IsActive
+                && requestedLocationCodes.Contains(x.Code))
             .Select(x => new { x.Id, x.WarehouseId, x.Code }).ToListAsync(cancellationToken);
         var locationByKey = locations.ToDictionary(x => $"{x.WarehouseId}|{x.Code}", StringComparer.OrdinalIgnoreCase);
         var stocks = await unitOfWork.Repository<StockEntity>().Query()
-            .Where(x => x.BranchCode == branch).ToListAsync(cancellationToken);
+            .Where(x => x.BranchCode == branch
+                && requestedStockCodes.Contains(x.ErpStockCode))
+            .ToListAsync(cancellationToken);
         var stockByCode = stocks.ToDictionary(x => x.ErpStockCode, StringComparer.OrdinalIgnoreCase);
         var yapCodes = await unitOfWork.Repository<YapCodeEntity>().Query()
-            .Where(x => x.BranchCode == branch).ToListAsync(cancellationToken);
+            .Where(x => x.BranchCode == branch
+                && requestedYapCodes.Contains(x.ConfigurationCode))
+            .ToListAsync(cancellationToken);
         var yapByCode = yapCodes.GroupBy(x => x.ConfigurationCode, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
 

@@ -320,6 +320,16 @@ public sealed class InitialWarehouseImportTests
             string branchCode,
             string idempotencyKey,
             CancellationToken cancellationToken = default)
+            => RecordAsync(workbookStream);
+
+        public Task<OpeningBalanceImportResult> ImportWarehouseOpeningAsync(
+            Stream workbookStream,
+            string branchCode,
+            string idempotencyKey,
+            CancellationToken cancellationToken = default)
+            => RecordAsync(workbookStream);
+
+        private Task<OpeningBalanceImportResult> RecordAsync(Stream workbookStream)
         {
             using var workbook = new XLWorkbook(workbookStream);
             var rows = workbook.Worksheet("İlk Raf Bakiyeleri").RowsUsed().Where(x => x.RowNumber() > 1).ToList();
