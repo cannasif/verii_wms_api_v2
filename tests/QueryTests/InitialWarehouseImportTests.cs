@@ -139,6 +139,86 @@ public sealed class InitialWarehouseImportTests
         Assert.Equal("Available", line.StockStatus);
     }
 
+    [Fact]
+    public async Task Combined_opening_preview_deduplicates_repeated_location_and_preserves_each_serial_row()
+    {
+        await using var db = CreateDb();
+        db.Add(new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" });
+        await db.SaveChangesAsync();
+        var locations = new RecordingLocationImportService();
+        var balances = new RecordingOpeningBalanceImportService();
+        var service = new WarehouseOpeningImportService(Uow(db), locations, balances);
+        await using var stream = CombinedOpeningWorkbook(
+            [1, "A01-R01-G01", "Göz 1", "", "STK-01", 1m, "SR-001"],
+            [1, "A01-R01-G01", "", "Cell", "STK-01", 1m, "SR-002"],
+            [1, "A01-R01-G01", "", "", "STK-02", 5m, ""]);
+
+        var preview = await service.PreviewAsync(stream, "0");
+
+        Assert.Equal(1, preview.NewLocationCount);
+        Assert.Equal(3, preview.BalanceRowCount);
+        Assert.Equal(2, preview.DistinctStockCount);
+        Assert.Equal(2, preview.SerialCount);
+        Assert.Equal(7m, preview.TotalQuantity);
+        Assert.Equal(1, locations.ImportedRows);
+        Assert.Equal("Göz 1", locations.ImportedName);
+        Assert.Equal("Cell", locations.ImportedType);
+        Assert.Equal(3, balances.ImportedRows);
+    }
+
+    [Fact]
+    public async Task Combined_opening_preview_rejects_conflicting_metadata_for_same_location()
+    {
+        await using var db = CreateDb();
+        db.Add(new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" });
+        await db.SaveChangesAsync();
+        var service = new WarehouseOpeningImportService(
+            Uow(db), new RecordingLocationImportService(), new RecordingOpeningBalanceImportService());
+        await using var stream = CombinedOpeningWorkbook(
+            [1, "A01-R01-G01", "Göz 1", "Cell", "STK-01", 1m, "SR-001"],
+            [1, "A01-R01-G01", "Başka Göz", "Cell", "STK-02", 1m, "SR-002"]);
+
+        var error = await Assert.ThrowsAsync<verii_wms_api_v2.Shared.Application.Exceptions.AppException>(
+            () => service.PreviewAsync(stream, "0"));
+
+        Assert.Contains("LocationName", error.Message);
+        Assert.Contains("çelişemez", error.Message);
+    }
+
+    private static MemoryStream CombinedOpeningWorkbook(params object[][] rows)
+    {
+        using var workbook = new XLWorkbook();
+        var sheet = workbook.Worksheets.Add("Depo Açılışları");
+        var headers = new[]
+        {
+            "WarehouseCode", "LocationCode", "LocationName", "LocationType", "ParentLocationCode",
+            "Barcode", "ZoneCode", "AisleNo", "RackNo", "LevelNo", "BinNo",
+            "IsPickable", "IsPutaway", "IsQuarantine",
+            "StockCode", "YapCode", "Quantity", "UnitCode", "LotNo", "SerialNo",
+            "StockStatus", "OccurredAt", "Description"
+        };
+        for (var column = 0; column < headers.Length; column++) sheet.Cell(1, column + 1).Value = headers[column];
+        for (var index = 0; index < rows.Length; index++)
+        {
+            var source = rows[index];
+            object?[] values =
+            [
+                source[0], source[1], source[2], source[3], null,
+                null, null, null, null, null, null,
+                true, true, false,
+                source[4], null, source[5], "ADET", null, source[6],
+                "Available", null, "İlk açılış"
+            ];
+            for (var column = 0; column < values.Length; column++)
+                if (values[column] is not null)
+                    sheet.Cell(index + 2, column + 1).Value = XLCellValue.FromObject(values[column]);
+        }
+        var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        stream.Position = 0;
+        return stream;
+    }
+
     private static void WriteLocationRow(IXLWorksheet sheet, int row, string code, string type, string? parent)
     {
         object?[] values =
@@ -200,5 +280,56 @@ public sealed class InitialWarehouseImportTests
         public Task<StockMovementDetail> GetByIdAsync(long id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<PagedResponse<StockMovementGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
         public Task<StockMovementPostResult> ReverseAsync(long operationId, ReverseStockMovementRequest request, CancellationToken cancellationToken = default) => throw new NotSupportedException();
+    }
+
+    private sealed class RecordingLocationImportService : ILocationImportService
+    {
+        public int ImportedRows { get; private set; }
+        public string? ImportedName { get; private set; }
+        public string? ImportedType { get; private set; }
+
+        public Task<byte[]> CreateTemplateAsync(string branchCode, CancellationToken cancellationToken = default) =>
+            Task.FromResult(Array.Empty<byte>());
+
+        public Task<LocationImportResult> ImportAsync(
+            Stream workbookStream,
+            string branchCode,
+            CancellationToken cancellationToken = default)
+        {
+            using var workbook = new XLWorkbook(workbookStream);
+            var rows = workbook.Worksheet("Raf Tanımları").RowsUsed().Where(x => x.RowNumber() > 1).ToList();
+            ImportedRows = rows.Count;
+            ImportedName = rows.FirstOrDefault()?.Cell(3).GetString();
+            ImportedType = rows.FirstOrDefault()?.Cell(4).GetString();
+            return Task.FromResult(new LocationImportResult(
+                rows.Count, rows.Count, 0,
+                rows.Select(x => new LocationImportRowResult(
+                    x.RowNumber(), "Created", x.Cell(1).GetString(), x.Cell(2).GetString(), "OK")).ToList()));
+        }
+    }
+
+    private sealed class RecordingOpeningBalanceImportService : IOpeningBalanceImportService
+    {
+        public int ImportedRows { get; private set; }
+
+        public Task<byte[]> CreateTemplateAsync(string branchCode, CancellationToken cancellationToken = default) =>
+            Task.FromResult(Array.Empty<byte>());
+
+        public Task<OpeningBalanceImportResult> ImportAsync(
+            Stream workbookStream,
+            string branchCode,
+            string idempotencyKey,
+            CancellationToken cancellationToken = default)
+        {
+            using var workbook = new XLWorkbook(workbookStream);
+            var rows = workbook.Worksheet("İlk Raf Bakiyeleri").RowsUsed().Where(x => x.RowNumber() > 1).ToList();
+            ImportedRows = rows.Count;
+            var total = rows.Sum(x => x.Cell(5).GetValue<decimal>());
+            return Task.FromResult(new OpeningBalanceImportResult(
+                1, Guid.NewGuid(), false, rows.Count, total,
+                rows.Select(x => new OpeningBalanceImportRowResult(
+                    x.RowNumber(), "Posted", x.Cell(1).GetString(), x.Cell(2).GetString(),
+                    x.Cell(3).GetString(), "OK")).ToList()));
+        }
     }
 }
