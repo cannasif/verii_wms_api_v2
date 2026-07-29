@@ -22,5 +22,6 @@ public sealed class GoodsReceiptPolicy : BaseEntity
     public GoodsReceiptErpPostingPolicy ErpPostingPolicy { get; set; } = GoodsReceiptErpPostingPolicy.AfterAllApprovals;
     public bool AllowOrderlessReceipt { get; set; } = true;
     public bool AllowUnplannedReceipt { get; set; } = true;
+    public bool ShowAllocatedOpenOrderLines { get; set; }
     public byte[] RowVersion { get; set; } = [];
 }
