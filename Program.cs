@@ -50,6 +50,7 @@ using verii_wms_api_v2.Modules.WarehouseInbound;
 using verii_wms_api_v2.Modules.WarehouseOutbound;
 using verii_wms_api_v2.Shared.Infrastructure.Persistence;
 using verii_wms_api_v2.Shared.Host.BackgroundJobs;
+using verii_wms_api_v2.Shared.Host.Filters;
 using verii_wms_api_v2.Shared.Host.Middleware;
 using verii_wms_api_v2.Shared.Host.Localization;
 using verii_wms_api_v2.Shared.Host.Routing;
@@ -59,7 +60,11 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
-builder.Services.AddControllers(options => options.Conventions.Add(new IisSafeHttpMethodConvention()))
+builder.Services.AddControllers(options =>
+    {
+        options.Conventions.Add(new IisSafeHttpMethodConvention());
+        options.Filters.Add<AuthenticatedBranchScopeFilter>();
+    })
     .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
 builder.Services.AddWmsLocalization();
 var databaseConnection = builder.Configuration.GetConnectionString("DefaultConnection")
@@ -158,7 +163,10 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
         {
             var userIdValue = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
             var tokenVersionValue = context.Principal?.FindFirstValue("tokenVersion");
-            if (!long.TryParse(userIdValue, out var userId) || !int.TryParse(tokenVersionValue, out var tokenVersion))
+            var branchCode = context.Principal?.FindFirstValue(JwtTokenIssuer.BranchCodeClaim);
+            if (!long.TryParse(userIdValue, out var userId)
+                || !int.TryParse(tokenVersionValue, out var tokenVersion)
+                || string.IsNullOrWhiteSpace(branchCode))
             {
                 context.Fail("Invalid token claims.");
                 return;
