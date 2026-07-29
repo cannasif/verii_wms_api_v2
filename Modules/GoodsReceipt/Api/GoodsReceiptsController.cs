@@ -49,6 +49,18 @@ public sealed class GoodsReceiptsController(
         return Ok(ApiResponse<CreateGoodsReceiptResult>.Ok(result, localizer[GoodsReceiptMessageKeys.Created].Value));
     }
 
+    [HttpPost("quality-requirements")]
+    public async Task<IActionResult> ResolveQualityRequirements(
+        ResolveGoodsReceiptQualityRequest request,
+        CancellationToken cancellationToken)
+    {
+        await RequireAny(
+            ["WMS.GOODS_RECEIPT.CREATE", "WMS.GOODS_RECEIPT.RECEIVE"],
+            cancellationToken);
+        return Ok(ApiResponse<GoodsReceiptQualityRequirementResult>.Ok(
+            await operations.ResolveQualityRequirementsAsync(request, cancellationToken)));
+    }
+
     [HttpPost("orderless")]
     public async Task<IActionResult> CreateOrderless(CreateManualGoodsReceiptRequest request, CancellationToken cancellationToken)
     {

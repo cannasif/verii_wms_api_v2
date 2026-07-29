@@ -1,4 +1,5 @@
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
+using verii_wms_api_v2.Modules.Quality.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Shared;
 
@@ -27,6 +28,22 @@ public sealed record ManualGoodsReceiptResult(
     WarehouseOperationStatus Status, long? TaskId, string? TaskNo,
     long? ExecutionId, long? StockMovementOperationId, long? QualityInspectionId,
     int LineCount, decimal Quantity, bool Replayed, IReadOnlyList<long> GeneratedLabelIds);
+
+public sealed record ResolveGoodsReceiptQualityRequest(
+    string BranchCode,
+    IReadOnlyList<long> StockIds);
+
+public sealed record GoodsReceiptStockQualityRequirement(
+    long StockId,
+    bool RequiresQualityControl,
+    string Source,
+    long? RuleId,
+    QualityInspectionMode InspectionMode);
+
+public sealed record GoodsReceiptQualityRequirementResult(
+    bool RequiresQualityControl,
+    string NextAction,
+    IReadOnlyList<GoodsReceiptStockQualityRequirement> Stocks);
 
 public sealed record GoodsReceiptGridRow(
     long Id, string BranchCode, string DocumentNo, DateOnly DocumentDate,
@@ -78,6 +95,9 @@ public sealed record GoodsReceiptDetail(
 
 public interface IGoodsReceiptOperationsService
 {
+    Task<GoodsReceiptQualityRequirementResult> ResolveQualityRequirementsAsync(
+        ResolveGoodsReceiptQualityRequest request,
+        CancellationToken cancellationToken = default);
     Task<ManualGoodsReceiptResult> CreateOrderlessTaskAsync(CreateManualGoodsReceiptRequest request, long actorUserId, CancellationToken cancellationToken = default);
     Task<ManualGoodsReceiptResult> CreateDirectReceiptAsync(CreateManualGoodsReceiptRequest request, long actorUserId, CancellationToken cancellationToken = default);
     Task<ManualGoodsReceiptResult> CreateDirectReceiptDeferredErpAsync(

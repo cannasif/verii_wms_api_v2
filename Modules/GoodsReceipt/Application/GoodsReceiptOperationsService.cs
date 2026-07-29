@@ -49,6 +49,42 @@ public sealed class GoodsReceiptOperationsService(
     private IGenericRepository<GoodsReceiptHeader> Headers => unitOfWork.Repository<GoodsReceiptHeader>();
     private IGenericRepository<GoodsReceiptExecution> Executions => unitOfWork.Repository<GoodsReceiptExecution>();
 
+    public async Task<GoodsReceiptQualityRequirementResult> ResolveQualityRequirementsAsync(
+        ResolveGoodsReceiptQualityRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var branch = string.IsNullOrWhiteSpace(request.BranchCode) ? "0" : request.BranchCode.Trim();
+        var stockIds = request.StockIds?.Where(x => x > 0).Distinct().ToArray() ?? [];
+        if (stockIds.Length == 0 || stockIds.Length > 200)
+            throw AppException.BadRequest("Kalite kontrolü için 1-200 arası geçerli stok seçilmelidir.");
+
+        var stocks = await unitOfWork.Repository<StockEntity>().Query()
+            .Where(x => x.BranchCode == branch && stockIds.Contains(x.Id))
+            .Select(x => new { x.Id, x.GroupCode })
+            .ToListAsync(cancellationToken);
+        if (stocks.Count != stockIds.Length)
+            throw AppException.BadRequest("Seçilen stoklardan biri bulunamadı veya farklı şubeye ait.");
+
+        var requirements = new List<GoodsReceiptStockQualityRequirement>(stocks.Count);
+        foreach (var stock in stocks)
+        {
+            var policy = await qualityPolicyResolver.ResolveAsync(
+                branch, stock.Id, stock.GroupCode, cancellationToken);
+            requirements.Add(new(
+                stock.Id,
+                RequiresQualityForLine(false, policy),
+                policy.Source,
+                policy.RuleId,
+                policy.InspectionMode));
+        }
+
+        var requiresQuality = requirements.Any(x => x.RequiresQualityControl);
+        return new(
+            requiresQuality,
+            ResolveNextAction(requiresQuality),
+            requirements.OrderBy(x => x.StockId).ToArray());
+    }
+
     public Task<ManualGoodsReceiptResult> CreateOrderlessTaskAsync(CreateManualGoodsReceiptRequest request, long actorUserId, CancellationToken cancellationToken = default) =>
         CreateAsync(request, actorUserId, direct: false, qualityAlreadyApproved: false, cancellationToken);
 
