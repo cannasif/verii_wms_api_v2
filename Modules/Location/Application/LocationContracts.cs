@@ -86,6 +86,9 @@ public sealed record PutawayLocationSuggestion(
     int Score,
     string Reason);
 
+public sealed record LocationImportRowResult(int RowNumber, string Status, string WarehouseCode, string LocationCode, string Message);
+public sealed record LocationImportResult(int TotalRows, int CreatedRows, int FailedRows, IReadOnlyList<LocationImportRowResult> Rows);
+
 public interface ILocationService
 {
     Task<PagedResponse<LocationGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default);
@@ -103,4 +106,10 @@ public interface ILocationService
     Task<long> CreateAsync(LocationUpsertRequest request, CancellationToken cancellationToken = default);
     Task UpdateAsync(long id, LocationUpsertRequest request, CancellationToken cancellationToken = default);
     Task DeleteAsync(long id, CancellationToken cancellationToken = default);
+}
+
+public interface ILocationImportService
+{
+    Task<byte[]> CreateTemplateAsync(string branchCode, CancellationToken cancellationToken = default);
+    Task<LocationImportResult> ImportAsync(Stream workbookStream, string branchCode, CancellationToken cancellationToken = default);
 }
