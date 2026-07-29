@@ -178,16 +178,6 @@ public sealed class SteelVehicleAcceptanceService(
                         throw AppException.BadRequest($"{line.DCode} için seçilen kabul rafı uygun değil.");
                 }
 
-                var imagesByLine = plateImages.GroupBy(x => x.PlanLineId)
-                    .ToDictionary(x => x.Key, x => x.ToList());
-                foreach (var line in lines)
-                {
-                    var existingImageCount = line.Attachments.Count(x => !x.IsDeleted);
-                    var newImageCount = imagesByLine.GetValueOrDefault(line.Id)?.Count ?? 0;
-                    if (existingImageCount + newImageCount == 0)
-                        throw AppException.BadRequest($"{line.DCode} levhası için en az bir görsel zorunludur.");
-                }
-
                 var existingVehicleImageCount = await VehicleImages.CountAsync(x => x.HeaderId == vehicle.Id, token);
                 if (existingVehicleImageCount + vehicleImages.Count == 0)
                     throw AppException.BadRequest("Araç kabulü için en az bir araç görseli zorunludur.");
