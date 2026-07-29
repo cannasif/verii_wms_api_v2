@@ -18,6 +18,8 @@ using verii_wms_api_v2.Shared.Application.Exceptions;
 
 namespace verii_wms_api_v2.Modules.WarehouseInbound.Application;
 
+using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
+
 /// <summary>
 /// Posts one physical scan as immutable execution evidence. Projection updates, inventory movement,
 /// quality hold and label consumption are committed in the same transaction.
@@ -115,7 +117,15 @@ public sealed class WarehouseInboundExecutionService(
                 || taskLine.Line.ReceivedQuantity + quantity > maxLineQuantity)
                 throw AppException.Conflict("Okutulan miktar emir veya fazla kabul toleransını aşıyor.");
 
-            var policy = await qualityPolicy.ResolveAsync(task.BranchCode, taskLine.Line.StockId, null, token);
+            var stockGroupCode = await uow.Repository<StockEntity>().Query()
+                .Where(x => x.Id == taskLine.Line.StockId && x.BranchCode == task.BranchCode)
+                .Select(x => x.GroupCode)
+                .FirstOrDefaultAsync(token);
+            var policy = await qualityPolicy.ResolveAsync(
+                task.BranchCode,
+                taskLine.Line.StockId,
+                stockGroupCode,
+                token);
             var requiresQuality = taskLine.Line.RequireQualityControl
                 && policy.InspectionMode != QualityInspectionMode.NoCheck;
             var now = DateTimeOffset.UtcNow;

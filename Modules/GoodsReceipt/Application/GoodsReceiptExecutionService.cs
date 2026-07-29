@@ -126,9 +126,16 @@ public sealed class GoodsReceiptExecutionService(
                 taskLine.Line.OverReceiptTolerancePercent,
                 task.Header.OverReceiptTolerancePercent);
 
-            var policy = await qualityPolicy.ResolveAsync(task.BranchCode, taskLine.Line.StockId, null, token);
-            var requiresQuality = taskLine.Line.RequireQualityControl
-                && policy.InspectionMode != QualityInspectionMode.NoCheck;
+            var stockGroupCode = await uow.Repository<Modules.Stock.Domain.Stock>().Query()
+                .Where(x => x.Id == taskLine.Line.StockId && x.BranchCode == task.BranchCode)
+                .Select(x => x.GroupCode)
+                .FirstOrDefaultAsync(token);
+            var policy = await qualityPolicy.ResolveAsync(
+                task.BranchCode, taskLine.Line.StockId, stockGroupCode, token);
+            var requiresQuality = GoodsReceiptOperationsService.RequiresQualityForLine(
+                false,
+                policy);
+            taskLine.Line.RequireQualityControl = requiresQuality;
             var now = DateTimeOffset.UtcNow;
             QualityInspection? inspection = null;
             QualityInspectionLine? inspectionLine = null;
