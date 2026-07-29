@@ -225,7 +225,7 @@ public sealed class WarehouseInboundOperationsService(
             foreach (var stock in stocks.Values) resolved[stock.Id] = await qualityPolicyResolver.ResolveAsync(branch, stock.Id, stock.GroupCode, token);
             var trackingPolicies = new Dictionary<long, EffectiveStockTrackingPolicy>();
             foreach (var stock in stocks.Values) trackingPolicies[stock.Id] = await trackingPolicyResolver.ResolveAsync(branch, stock.Id, token);
-            var requiresQuality = policy.RequireQualityApproval || resolved.Values.Any(x => x.InspectionMode != QualityInspectionMode.NoCheck);
+            var requiresQuality = resolved.Values.Any(x => x.InspectionMode != QualityInspectionMode.NoCheck);
 
             ValidateTrackedLines(request, stocks, resolved, trackingPolicies);
             foreach (var input in request.Lines)
@@ -293,7 +293,7 @@ public sealed class WarehouseInboundOperationsService(
                 yaps.TryGetValue(input.YapCodeId ?? 0, out var yap); var qp = resolved[stock.Id];
                 var trackingPolicy = trackingPolicies[stock.Id];
                 var unit = StockUnitPolicy.Resolve(stock, input.UnitCode);
-                var qualityRequired = policy.RequireQualityApproval || qp.InspectionMode != QualityInspectionMode.NoCheck;
+                var qualityRequired = qp.InspectionMode != QualityInspectionMode.NoCheck;
                 var line = Stamp(new WarehouseInboundLine
                 {
                     BranchCode = branch, Header = header, LineNo = index + 1, StockId = stock.Id,

@@ -101,7 +101,7 @@ public sealed class WarehouseInboundService(
                 trackingPolicies[stock.Id] = await trackingPolicyResolver.ResolveAsync(branch, stock.Id, ct);
             sourceSelected = await ApplyAutomaticSerialsAsync(
                 sourceSelected, stockByCode, trackingPolicies, branch, request.IdempotencyKey, actorUserId, ct);
-            var requiresQuality = receiptPolicy.RequireQualityApproval || qualityPolicies.Values.Any(x => x.InspectionMode != QualityInspectionMode.NoCheck);
+            var requiresQuality = qualityPolicies.Values.Any(x => x.InspectionMode != QualityInspectionMode.NoCheck);
 
             var yapCodes = sourceSelected.Select(x => x.Source.YapCode).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             var yaps = await unitOfWork.Repository<YapCodeEntity>().Query().Where(x => x.BranchCode == branch && yapCodes.Contains(x.ConfigurationCode)).ToListAsync(ct);
@@ -179,7 +179,8 @@ public sealed class WarehouseInboundService(
                     RequireLot = trackingPolicy.RequireLot, RequireSerial = trackingPolicy.RequireSerial,
                     RequireExpirationDate = trackingPolicy.RequireExpirationDate,
                     AllowOverReceipt = request.AllowOverReceipt, OverReceiptTolerancePercent = request.OverReceiptTolerancePercent,
-                    AllowUnderReceipt = receiptPolicy.AllowUnderReceipt, RequireQualityControl = receiptPolicy.RequireQualityApproval || qualityPolicies[stock.Id].InspectionMode != QualityInspectionMode.NoCheck,
+                    AllowUnderReceipt = receiptPolicy.AllowUnderReceipt,
+                    RequireQualityControl = qualityPolicies[stock.Id].InspectionMode != QualityInspectionMode.NoCheck,
                     DefaultReceivingLocationId = item.Request.ReceivingLocationId, Status = WarehouseInboundLineStatus.Open }, actorUserId, now);
                 header.Lines.Add(line);
                 line.Sources.Add(Stamp(new WarehouseInboundLineSource { BranchCode = branch, Line = line, SourceDocument = documents[source.OrderNumber],

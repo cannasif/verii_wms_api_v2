@@ -304,7 +304,6 @@ public sealed class GoodsReceiptOperationsService(
             foreach (var stock in stocks.Values) trackingPolicies[stock.Id] = await trackingPolicyResolver.ResolveAsync(branch, stock.Id, token);
             var requiresQuality = RequiresQuality(
                 qualityAlreadyApproved,
-                policy.RequireQualityApproval,
                 resolved.Values.Any(x => x.InspectionMode != QualityInspectionMode.NoCheck));
             ValidateQualityReceivingLocations(
                 requiresQuality,
@@ -410,8 +409,7 @@ public sealed class GoodsReceiptOperationsService(
                 yaps.TryGetValue(input.YapCodeId ?? 0, out var yap); var qp = resolved[stock.Id];
                 var trackingPolicy = trackingPolicies[stock.Id];
                 var unit = StockUnitPolicy.Resolve(stock, input.UnitCode);
-                var qualityRequired = !qualityAlreadyApproved
-                    && (policy.RequireQualityApproval || qp.InspectionMode != QualityInspectionMode.NoCheck);
+                var qualityRequired = RequiresQualityForLine(qualityAlreadyApproved, qp);
                 var line = Stamp(new GoodsReceiptLine
                 {
                     BranchCode = branch, Header = header, LineNo = index + 1, StockId = stock.Id,
@@ -672,9 +670,16 @@ public sealed class GoodsReceiptOperationsService(
 
     internal static bool RequiresQuality(
         bool qualityAlreadyApproved,
-        bool receiptPolicyRequiresQuality,
         bool anyStockPolicyRequiresQuality) =>
-        !qualityAlreadyApproved && (receiptPolicyRequiresQuality || anyStockPolicyRequiresQuality);
+        !qualityAlreadyApproved && anyStockPolicyRequiresQuality;
+
+    internal static bool RequiresQualityForLine(
+        bool qualityAlreadyApproved,
+        ResolvedQualityPolicy qualityPolicy) =>
+        !qualityAlreadyApproved && qualityPolicy.InspectionMode != QualityInspectionMode.NoCheck;
+
+    internal static string ResolveNextAction(bool requiresQualityControl) =>
+        requiresQualityControl ? "SendToQuality" : "CreateWaybill";
 
     private static void ValidateTrackedLines(
         CreateManualGoodsReceiptRequest request,

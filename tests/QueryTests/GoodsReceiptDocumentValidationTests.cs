@@ -114,21 +114,18 @@ public sealed class GoodsReceiptDocumentValidationTests
     {
         Assert.False(GoodsReceiptOperationsService.RequiresQuality(
             qualityAlreadyApproved: true,
-            receiptPolicyRequiresQuality: true,
             anyStockPolicyRequiresQuality: true));
     }
 
-    [Theory]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    public void Uninspected_receipt_respects_quality_policies(
-        bool receiptPolicyRequiresQuality,
-        bool anyStockPolicyRequiresQuality)
+    [Fact]
+    public void Uninspected_receipt_requires_an_applicable_stock_or_group_rule()
     {
         Assert.True(GoodsReceiptOperationsService.RequiresQuality(
             qualityAlreadyApproved: false,
-            receiptPolicyRequiresQuality,
-            anyStockPolicyRequiresQuality));
+            anyStockPolicyRequiresQuality: true));
+        Assert.False(GoodsReceiptOperationsService.RequiresQuality(
+            qualityAlreadyApproved: false,
+            anyStockPolicyRequiresQuality: false));
     }
 
     [Fact]
