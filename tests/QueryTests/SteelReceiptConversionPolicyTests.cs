@@ -9,17 +9,15 @@ namespace verii_wms_api_v2.QueryTests;
 public sealed class SteelReceiptConversionPolicyTests
 {
     [Theory]
-    [InlineData("IRS202600000001", "IRS202600000001", null)]
-    [InlineData("GIB2026AB0000001", null, "GIB2026AB0000001")]
-    public void Source_waybill_type_is_inferred_from_document_length(
-        string source,
-        string? expectedWaybill,
-        string? expectedElectronicWaybill)
+    [InlineData("IRS202600000001")]
+    [InlineData("GIB2026AB000001")]
+    public void Source_waybill_is_always_treated_as_electronic(
+        string source)
     {
         var result = SteelReceiptService.ResolveConversionDocumentReference(null, null, source);
 
-        Assert.Equal(expectedWaybill, result.WaybillNo);
-        Assert.Equal(expectedElectronicWaybill, result.ElectronicWaybillNo);
+        Assert.Null(result.WaybillNo);
+        Assert.Equal(source, result.ElectronicWaybillNo);
     }
 
     [Fact]
@@ -27,11 +25,11 @@ public sealed class SteelReceiptConversionPolicyTests
     {
         var result = SteelReceiptService.ResolveConversionDocumentReference(
             null,
-            "NEW2026AB0000001",
+            "NEW2026AB000001",
             "IRS202600000001");
 
         Assert.Null(result.WaybillNo);
-        Assert.Equal("NEW2026AB0000001", result.ElectronicWaybillNo);
+        Assert.Equal("NEW2026AB000001", result.ElectronicWaybillNo);
     }
 
     [Theory]

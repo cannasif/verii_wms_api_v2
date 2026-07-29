@@ -14,7 +14,7 @@ public sealed class GoodsReceiptDocumentValidationTests
             GoodsReceiptService.NormalizeDocumentReference(null, null, new DateOnly(2026, 7, 28)));
         var both = Assert.Throws<AppException>(() =>
             GoodsReceiptService.NormalizeDocumentReference(
-                "000000000000001", "GIB2026000000001", new DateOnly(2026, 7, 28)));
+                "000000000000001", "GIB202600000001", new DateOnly(2026, 7, 28)));
 
         Assert.Contains("yalnızca biri", missing.Message);
         Assert.Contains("yalnızca biri", both.Message);
@@ -22,7 +22,7 @@ public sealed class GoodsReceiptDocumentValidationTests
 
     [Theory]
     [InlineData("irs202600000001", null)]
-    [InlineData(null, "gib2026ab0000001")]
+    [InlineData(null, "gib2026ab000001")]
     public void Order_based_receipt_accepts_and_normalizes_valid_waybill(
         string? waybillNo,
         string? electronicWaybillNo)
@@ -46,6 +46,20 @@ public sealed class GoodsReceiptDocumentValidationTests
 
         Assert.Contains("15 alfanümerik", invalid.Message);
         Assert.Contains("tarihi zorunludur", missingDate.Message);
+    }
+
+    [Fact]
+    public void Electronic_waybill_requires_exactly_fifteen_alphanumeric_characters()
+    {
+        var tooLong = Assert.Throws<AppException>(() =>
+            GoodsReceiptService.NormalizeDocumentReference(
+                null, "GIB2026AB0000001", new DateOnly(2026, 7, 28)));
+        var invalidCharacter = Assert.Throws<AppException>(() =>
+            GoodsReceiptService.NormalizeDocumentReference(
+                null, "GIB2026AB000-00", new DateOnly(2026, 7, 28)));
+
+        Assert.Contains("15 alfanümerik", tooLong.Message);
+        Assert.Contains("15 alfanümerik", invalidCharacter.Message);
     }
 
     [Fact]
