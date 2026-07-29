@@ -24,6 +24,13 @@ public sealed record QualityRuleUpsertRequest(string BranchCode, string ScopeTyp
 
 public sealed record QualityStockGroupOption(string Code, int StockCount);
 
+public sealed record QualityRuleImportRowResult(
+    int RowNumber, string Status, string ScopeType, string? ScopeCode, string Message);
+
+public sealed record QualityRuleImportResult(
+    int TotalRows, int CreatedCount, int SkippedCount, int FailedCount,
+    IReadOnlyList<QualityRuleImportRowResult> Rows);
+
 public sealed class QualityRuleGridRow
 {
     public long Id { get; init; } public string BranchCode { get; init; } = "0"; public string ScopeType { get; init; } = string.Empty;
@@ -77,6 +84,12 @@ public interface IQualityService
     Task<QualityInspectionDetail> GetInspectionAsync(long id, CancellationToken ct = default);
     Task DecideInspectionAsync(long id, DecideQualityInspectionRequest request, long actor,
         bool canReleaseQuarantine, CancellationToken ct = default);
+}
+
+public interface IQualityRuleImportService
+{
+    Task<byte[]> CreateTemplateAsync(string branchCode, CancellationToken ct = default);
+    Task<QualityRuleImportResult> ImportAsync(Stream workbookStream, string branchCode, long actor, CancellationToken ct = default);
 }
 
 public interface IQualityPolicyResolver
