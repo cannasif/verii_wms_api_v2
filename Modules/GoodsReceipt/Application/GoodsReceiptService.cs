@@ -1,7 +1,6 @@
 using System.Data;
 using System.Security.Cryptography;
 using System.Text;
-using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using verii_wms_api_v2.Modules.Audit.Application;
@@ -18,6 +17,7 @@ using verii_wms_api_v2.Modules.SerialNumberPolicy.Application;
 using verii_wms_api_v2.Modules.Stock.Application;
 using verii_wms_api_v2.Modules.StockTracking.Application;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
+using verii_wms_api_v2.Shared.Application.Validation;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 using CustomerEntity = verii_wms_api_v2.Modules.Customer.Domain.Customer;
@@ -278,23 +278,17 @@ public sealed class GoodsReceiptService(
         string? electronicWaybillNo,
         DateOnly? waybillDate)
     {
-        var normal = string.IsNullOrWhiteSpace(waybillNo)
-            ? null
-            : waybillNo.Trim().ToUpperInvariant();
-        var electronic = string.IsNullOrWhiteSpace(electronicWaybillNo)
-            ? null
-            : electronicWaybillNo.Trim().ToUpperInvariant();
+        var normal = PurchaseWaybillNumberPolicy.Normalize(waybillNo);
+        var electronic = PurchaseWaybillNumberPolicy.Normalize(electronicWaybillNo);
         if ((normal is null) == (electronic is null))
             throw AppException.BadRequest(
                 "Normal irsaliye veya e-irsaliye türlerinden yalnızca biri seçilmeli ve numarası girilmelidir.");
         if (!waybillDate.HasValue)
             throw AppException.BadRequest("İrsaliye tarihi zorunludur.");
-        if (normal is not null && !Regex.IsMatch(normal, "^[A-Z0-9]{15}$", RegexOptions.CultureInvariant))
+        if (normal is not null && !PurchaseWaybillNumberPolicy.IsValid(normal))
             throw AppException.BadRequest("Normal irsaliye numarası tam 15 alfanümerik karakter olmalıdır.");
-        if (electronic is not null
-            && !Regex.IsMatch(electronic, "^[A-Z0-9]{16}$", RegexOptions.CultureInvariant))
-            throw AppException.BadRequest(
-                "E-irsaliye numarası tam 16 alfanümerik karakter olmalıdır.");
+        if (electronic is not null && !PurchaseWaybillNumberPolicy.IsValid(electronic))
+            throw AppException.BadRequest("E-irsaliye / GİB numarası tam 15 alfanümerik karakter olmalıdır.");
         return (normal, electronic);
     }
 

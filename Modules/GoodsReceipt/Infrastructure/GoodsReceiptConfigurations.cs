@@ -60,6 +60,8 @@ public sealed class GoodsReceiptHeaderConfiguration : BaseEntityConfiguration<Go
         builder.Property(x => x.CancellationReason).HasMaxLength(500);
         builder.Property(x => x.WaybillNo).HasMaxLength(15).IsUnicode(false);
         builder.Property(x => x.WaybillDate).HasColumnType("date");
+        // Legacy 16-character records remain readable; new purchase e-waybill/GİB
+        // references are constrained to exactly 15 characters at the application boundary.
         builder.Property(x => x.ElectronicWaybillNo).HasMaxLength(16).IsUnicode(false);
         builder.Property(x => x.ShipmentReferenceNo).HasMaxLength(100);
         builder.Property(x => x.CarrierCode).HasMaxLength(50);

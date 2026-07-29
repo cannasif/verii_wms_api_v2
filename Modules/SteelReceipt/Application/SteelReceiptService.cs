@@ -15,6 +15,7 @@ using verii_wms_api_v2.Modules.StockMovement.Domain;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
+using verii_wms_api_v2.Shared.Application.Validation;
 using verii_wms_api_v2.Shared.Infrastructure.Files;
 using CustomerEntity=verii_wms_api_v2.Modules.Customer.Domain.Customer;
 using DocumentSeriesEntity=verii_wms_api_v2.Modules.DocumentSeries.Domain.DocumentSeries;
@@ -78,12 +79,13 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
                 ?await uow.Repository<VehicleCheckInHeader>().FindByIdAsync(import.VehicleCheckInId.Value,true,token):null;
             if(import.VehicleCheckInId.HasValue&&(vehicle is null||vehicle.BranchCode!=branch))
                 throw AppException.BadRequest("Seçilen araç giriş kaydı bu şubede bulunamadı.");
+            var sourceWaybillNo=PurchaseWaybillNumberPolicy.Normalize(import.WaybillNo);
             var receivingLocationId=await ResolveImportReceivingLocationAsync(import.TargetWarehouseId,import.ReceivingLocationId,token);
             var plan=Stamp(new SteelReceiptPlan{BranchCode=branch,CorrelationId=request.IdempotencyKey,
                 ImportReferenceNo=Clean(import.ImportReferenceNo,100,true)!,SourceFileName=Clean(import.SourceFileName,260,true)!,
                 ExportReferenceNo=Clean(import.ExportReferenceNo,100),VehicleCheckInId=vehicle?.Id,SupplierId=supplier.Id,SupplierCodeSnapshot=supplier.CustomerCode,
                 SupplierNameSnapshot=supplier.CustomerName,TargetWarehouseId=import.TargetWarehouseId,ReceivingLocationId=receivingLocationId,
-                DocumentSeriesId=import.DocumentSeriesId,WaybillNo=Clean(import.WaybillNo,50),WaybillDate=import.WaybillDate,
+                DocumentSeriesId=import.DocumentSeriesId,WaybillNo=sourceWaybillNo,WaybillDate=import.WaybillDate,
                 PlannedArrivalAtUtc=import.PlannedArrivalAtUtc?.ToUniversalTime(),Status=SteelReceiptPlanStatus.Imported,
                 TotalLineCount=normalized.Count,TotalExpectedQuantity=normalized.Sum(x=>x.Input.ExpectedQuantity),
                 ImportedAtUtc=DateTimeOffset.UtcNow,ImportedBy=actor},actor);
@@ -426,6 +428,11 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
     {
         if(string.IsNullOrWhiteSpace(request.BranchCode)||string.IsNullOrWhiteSpace(request.ImportReferenceNo)||string.IsNullOrWhiteSpace(request.SourceFileName)
             ||request.Lines.Count is<1 or>5000)throw AppException.BadRequest("Şube, aktarım referansı, dosya ve 1-5000 satır zorunludur.");
+        var waybillNo=PurchaseWaybillNumberPolicy.Normalize(request.WaybillNo);
+        if(!PurchaseWaybillNumberPolicy.IsValid(waybillNo))
+            throw AppException.BadRequest("E-irsaliye / GİB numarası tam 15 alfanümerik karakter olmalıdır.");
+        if(!request.WaybillDate.HasValue)
+            throw AppException.BadRequest("İrsaliye tarihi zorunludur.");
         var branch=request.BranchCode.Trim();var supplier=await uow.Repository<CustomerEntity>().FindByIdAsync(request.SupplierId,false,ct)
             ??throw AppException.BadRequest("Tedarikçi bulunamadı.");if(supplier.BranchCode!=branch)throw AppException.BadRequest("Tedarikçi şubesi uyuşmuyor.");
         var warehouse=await uow.Repository<WarehouseEntity>().FindByIdAsync(request.TargetWarehouseId,false,ct)
@@ -548,8 +555,8 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
         if(waybillNo is not null||electronicWaybillNo is not null)
             return(waybillNo,electronicWaybillNo);
 
-        var source=Clean(sourceWaybillNo,50);
-        return source?.Length==16?(null,source):(source,null);
+        var source=PurchaseWaybillNumberPolicy.Normalize(sourceWaybillNo);
+        return source is null?(null,null):(null,source);
     }
 
     private static string Key(long supplierId,SteelImportLineRequest x)=>Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(

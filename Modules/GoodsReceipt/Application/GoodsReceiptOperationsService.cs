@@ -2,7 +2,6 @@ using System.Data;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.Customer.Domain;
@@ -21,6 +20,7 @@ using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.StockTracking.Application;
 using verii_wms_api_v2.Modules.StockMovement.Application;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
+using verii_wms_api_v2.Shared.Application.Validation;
 using verii_wms_api_v2.Modules.Warehouse.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Shared;
@@ -650,10 +650,10 @@ public sealed class GoodsReceiptOperationsService(
         var waybillNo = NormalizeDocumentNumber(request.WaybillNo);
         var electronicWaybillNo = NormalizeDocumentNumber(request.ElectronicWaybillNo);
         ValidateDocumentReference(waybillNo, electronicWaybillNo, request.WaybillDate, request.ExecutionMode);
-        if (waybillNo is not null && !Regex.IsMatch(waybillNo, "^[A-Z0-9]{15}$", RegexOptions.CultureInvariant))
+        if (waybillNo is not null && !PurchaseWaybillNumberPolicy.IsValid(waybillNo))
             throw AppException.BadRequest("Normal irsaliye numarası tam 15 alfanümerik karakter olmalıdır.");
-        if (electronicWaybillNo is not null && !Regex.IsMatch(electronicWaybillNo, "^[A-Z0-9]{16}$", RegexOptions.CultureInvariant))
-            throw AppException.BadRequest("E-irsaliye numarası tam 16 alfanümerik karakter olmalıdır.");
+        if (electronicWaybillNo is not null && !PurchaseWaybillNumberPolicy.IsValid(electronicWaybillNo))
+            throw AppException.BadRequest("E-irsaliye / GİB numarası tam 15 alfanümerik karakter olmalıdır.");
     }
 
     internal static CreateManualGoodsReceiptRequest ApplyUnplannedDefaults(
