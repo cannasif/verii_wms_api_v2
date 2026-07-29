@@ -43,67 +43,37 @@ public sealed class IdentityService(
             throw AppException.Unauthorized("Oturum yenilenemedi.");
 
         var tokenHash = IdentitySecurity.HashToken(refreshToken);
-        var outcome = await unitOfWork.ExecuteInTransactionAsync(async ct =>
+        var current = await RefreshTokens.Query(tracking: true)
+            .Include(x => x.User)
+            .ThenInclude(x => x.Detail)
+            .FirstOrDefaultAsync(x => x.TokenHash == tokenHash, cancellationToken);
+        if (current is null || !current.User.IsActive || current.RevokedAt.HasValue)
+            throw AppException.Unauthorized("Oturum yenilenemedi.");
+
+        var now = DateTime.UtcNow;
+        if (current.ExpiresAt <= now)
         {
-            var current = await RefreshTokens.Query(tracking: true).Include(x => x.User).ThenInclude(x => x.Detail)
-                .FirstOrDefaultAsync(x => x.TokenHash == tokenHash, ct);
-            if (current is null || !current.User.IsActive)
-                return RefreshOutcome.Invalid();
+            Revoke(current, "Expired", client, now);
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+            throw AppException.Unauthorized("Oturum yenilenemedi.");
+        }
 
-            var now = DateTime.UtcNow;
-            if (current.RevokedAt.HasValue)
-            {
-                var replayGraceSeconds = Math.Clamp(
-                    configuration.GetValue("Identity:RefreshTokenReplayGraceSeconds", 15),
-                    0,
-                    60);
-                if (RefreshTokenReplayPolicy.IsAllowed(
-                        current,
-                        client,
-                        now,
-                        TimeSpan.FromSeconds(replayGraceSeconds)))
-                {
-                    var concurrentReplacement = await CreateSessionAsync(
-                        current.User,
-                        current.FamilyId,
-                        client,
-                        ct,
-                        current.ExpiresAt);
-                    await unitOfWork.SaveChangesAsync(ct);
-                    logger.LogInformation(
-                        "Concurrent refresh replay accepted within grace window. UserId={UserId} FamilyId={FamilyId}",
-                        current.UserId,
-                        current.FamilyId);
-                    return RefreshOutcome.Valid(ToAuthSession(current.User, concurrentReplacement));
-                }
+        // Access-token refresh must not create another database session row.
+        // The same HttpOnly session is reused and only occasionally receives a
+        // sliding expiry update near the end of its lifetime.
+        var refreshDays = Math.Clamp(configuration.GetValue("Identity:RefreshTokenDays", 90), 1, 365);
+        var renewalWindowDays = Math.Clamp(
+            configuration.GetValue("Identity:RefreshTokenRenewalWindowDays", 30),
+            1,
+            refreshDays);
+        if (current.ExpiresAt <= now.AddDays(renewalWindowDays))
+        {
+            current.ExpiresAt = now.AddDays(refreshDays);
+            current.UpdatedDate = now;
+            await unitOfWork.SaveChangesAsync(cancellationToken);
+        }
 
-                await RevokeFamilyAsync(current.User, current.FamilyId, "ReuseDetected", client, now, ct);
-                current.User.TokenVersion++;
-                await unitOfWork.SaveChangesAsync(ct);
-                sessionValidator.Invalidate(current.UserId);
-                return RefreshOutcome.Invalid();
-            }
-
-            if (current.ExpiresAt <= now)
-            {
-                Revoke(current, "Expired", client, now);
-                await unitOfWork.SaveChangesAsync(ct);
-                return RefreshOutcome.Invalid();
-            }
-
-            var replacement = await CreateSessionAsync(
-                current.User,
-                current.FamilyId,
-                client,
-                ct,
-                current.ExpiresAt);
-            current.ReplacedByTokenHash = replacement.Entity.TokenHash;
-            Revoke(current, "Rotated", client, now);
-            await unitOfWork.SaveChangesAsync(ct);
-            return RefreshOutcome.Valid(ToAuthSession(current.User, replacement));
-        }, cancellationToken, IsolationLevel.Serializable);
-
-        return outcome.Session ?? throw AppException.Unauthorized("Oturum yenilenemedi.");
+        return ToAuthSession(current.User, new IssuedRefreshSession(current, refreshToken));
     }
 
     public async Task RevokeAsync(string refreshToken, ClientContext client, CancellationToken cancellationToken = default)
@@ -314,9 +284,4 @@ public sealed class IdentityService(
         string.IsNullOrWhiteSpace(value) ? null : value.Trim()[..Math.Min(value.Trim().Length, maxLength)];
 
     private sealed record IssuedRefreshSession(RefreshTokenSession Entity, string RawToken);
-    private sealed record RefreshOutcome(AuthSessionResult? Session)
-    {
-        public static RefreshOutcome Valid(AuthSessionResult session) => new(session);
-        public static RefreshOutcome Invalid() => new((AuthSessionResult?)null);
-    }
 }

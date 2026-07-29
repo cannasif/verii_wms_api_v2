@@ -56,8 +56,9 @@ public sealed class AuthController(
                 exception,
                 "Refresh token processing failed. TraceId={TraceId}",
                 HttpContext.TraceIdentifier);
-            DeleteRefreshCookies();
-            throw AppException.Unauthorized("Oturum yenilenemedi. Lütfen yeniden giriş yapın.");
+            // A database/app restart is not proof that the session is invalid. Preserve the
+            // HttpOnly cookie so the browser can recover automatically when the API is ready.
+            throw AppException.ServiceUnavailable("Oturum servisine geçici olarak ulaşılamıyor.");
         }
     }
 
