@@ -9,8 +9,31 @@ using verii_wms_api_v2.Shared.Application.Exceptions;
 namespace verii_wms_api_v2.Modules.StockBalance.Api;
 
 [Authorize, ApiController, Route("api/stock-balances")]
-public sealed class StockBalancesController(IStockBalanceService service, IPermissionAuthorizationService permissions, IAuditLogWriter audit) : ControllerBase
+public sealed class StockBalancesController(IStockBalanceService service, IOpeningBalanceImportService openingImport,
+    IPermissionAuthorizationService permissions, IAuditLogWriter audit) : ControllerBase
 {
+    [HttpGet("opening-import/template")]
+    public async Task<IActionResult> DownloadOpeningTemplate([FromQuery] string branchCode = "0",
+        CancellationToken ct = default)
+    {
+        await RequireAsync("WMS.STOCK_MOVEMENTS.POST", ct);
+        var bytes = await openingImport.CreateTemplateAsync(branchCode, ct);
+        return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            $"wms-v2-ilk-raf-bakiyesi-{DateTime.UtcNow:yyyyMMdd}.xlsx");
+    }
+
+    [HttpPost("opening-import"), RequestSizeLimit(OpeningBalanceImportService.MaxFileSize)]
+    public async Task<IActionResult> ImportOpeningBalance([FromForm] IFormFile? file,
+        [FromQuery] string branchCode, [FromQuery] string idempotencyKey, CancellationToken ct)
+    {
+        await RequireAsync("WMS.STOCK_MOVEMENTS.POST", ct);
+        ValidateXlsx(file, OpeningBalanceImportService.MaxFileSize);
+        await using var stream = file!.OpenReadStream();
+        var result = await openingImport.ImportAsync(stream, branchCode, idempotencyKey, ct);
+        return Ok(ApiResponse<OpeningBalanceImportResult>.Ok(result,
+            result.IsReplay ? "İlk bakiye aktarımının önceki sonucu döndürüldü." : $"{result.TotalRows} ilk bakiye satırı kaydedildi."));
+    }
+
     [HttpPost("locations/paged")]
     public async Task<IActionResult> Locations(PagedRequest request, CancellationToken ct)
     {
@@ -73,5 +96,13 @@ public sealed class StockBalancesController(IStockBalanceService service, IPermi
     private async Task RequireAsync(string permission, CancellationToken ct)
     {
         if (!await permissions.HasPermissionAsync(User, permission, ct)) throw AppException.Forbidden();
+    }
+
+    private static void ValidateXlsx(IFormFile? file, int maxSize)
+    {
+        if (file is null || file.Length == 0) throw AppException.BadRequest("Yüklenecek XLSX dosyası zorunludur.");
+        if (file.Length > maxSize) throw AppException.BadRequest("XLSX dosyası en fazla 5 MB olabilir.");
+        if (!string.Equals(Path.GetExtension(file.FileName), ".xlsx", StringComparison.OrdinalIgnoreCase))
+            throw AppException.BadRequest("Yalnızca .xlsx dosyası yüklenebilir.");
     }
 }
