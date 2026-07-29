@@ -76,6 +76,23 @@ public sealed class QualityService(
         return await q.ApplyAdvancedFilters(request).ApplySort(request,nameof(QualityRuleGridRow.Id)).ToPagedResponseAsync(request,ct);
     }
 
+    public async Task<PagedResponse<QualityStockGroupOption>> GetStockGroupsPagedAsync(
+        string branchCode, PagedRequest request, CancellationToken ct = default)
+    {
+        var branch = NormalizeBranch(branchCode);
+        var groups = uow.Repository<StockEntity>().Query()
+            .Where(x => x.BranchCode == branch && x.GroupCode != null && x.GroupCode != "")
+            .GroupBy(x => x.GroupCode!.Trim().ToUpper())
+            .Select(x => new QualityStockGroupOption(x.Key, x.Count()));
+        var search = request.EffectiveSearch?.Trim();
+        if (!string.IsNullOrWhiteSpace(search))
+            groups = groups.Where(x => x.Code.Contains(search));
+        groups = request.SortDirection.Equals("desc", StringComparison.OrdinalIgnoreCase)
+            ? groups.OrderByDescending(x => x.Code)
+            : groups.OrderBy(x => x.Code);
+        return await groups.ToPagedResponseAsync(request, ct);
+    }
+
     public async Task<long> CreateRuleAsync(QualityRuleUpsertRequest request, long actor, CancellationToken ct = default)
     {
         var entity=new QualityRule(); await ApplyRule(entity,request,null,ct); entity.CreatedBy=actor; entity.CreatedDate=DateTime.UtcNow; await Rules.AddAsync(entity,ct); await uow.SaveChangesAsync(ct);

@@ -22,6 +22,8 @@ public sealed record QualityRuleUpsertRequest(string BranchCode, string ScopeTyp
     QualityFailAction FailAction, bool AutoQuarantine, bool RequireLot, bool RequireSerial,
     bool RequireExpiryDate, int? MinimumRemainingShelfLifeDays, bool IsActive, string? Description);
 
+public sealed record QualityStockGroupOption(string Code, int StockCount);
+
 public sealed class QualityRuleGridRow
 {
     public long Id { get; init; } public string BranchCode { get; init; } = "0"; public string ScopeType { get; init; } = string.Empty;
@@ -67,6 +69,7 @@ public interface IQualityService
     Task<QualityParameterDto> GetParametersAsync(string branchCode, CancellationToken ct = default);
     Task<QualityParameterDto> UpdateParametersAsync(UpdateQualityParameterRequest request, long actor, CancellationToken ct = default);
     Task<PagedResponse<QualityRuleGridRow>> GetRulesPagedAsync(PagedRequest request, CancellationToken ct = default);
+    Task<PagedResponse<QualityStockGroupOption>> GetStockGroupsPagedAsync(string branchCode, PagedRequest request, CancellationToken ct = default);
     Task<long> CreateRuleAsync(QualityRuleUpsertRequest request, long actor, CancellationToken ct = default);
     Task UpdateRuleAsync(long id, QualityRuleUpsertRequest request, long actor, CancellationToken ct = default);
     Task DeleteRuleAsync(long id, long actor, CancellationToken ct = default);
