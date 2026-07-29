@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Identity.Domain;
+using verii_wms_api_v2.Modules.Quality.Application;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
@@ -11,7 +12,10 @@ using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 
 namespace verii_wms_api_v2.Modules.GoodsReceipt.Application;
 
-public sealed class GoodsReceiptTaskService(IUnitOfWork unitOfWork, IAuditLogWriter audit) : IGoodsReceiptTaskService
+public sealed class GoodsReceiptTaskService(
+    IUnitOfWork unitOfWork,
+    IAuditLogWriter audit,
+    IQualityPolicyResolver qualityPolicyResolver) : IGoodsReceiptTaskService
 {
     private IGenericRepository<GoodsReceiptTask> Tasks => unitOfWork.Repository<GoodsReceiptTask>();
     private IGenericRepository<GoodsReceiptTaskAssignment> Assignments => unitOfWork.Repository<GoodsReceiptTaskAssignment>();
@@ -85,9 +89,25 @@ public sealed class GoodsReceiptTaskService(IUnitOfWork unitOfWork, IAuditLogWri
         var trackingByLine = trackingRows.GroupBy(x => x.GrTaskLineId).ToDictionary(x => x.Key, x => (IReadOnlyList<GoodsReceiptTaskLineTrackingDto>)x
             .Select(row => new GoodsReceiptTaskLineTrackingDto(row.Id, row.SequenceNo, row.PlannedQuantity, row.LotNo, row.SerialNo,
                 row.ManufacturingDate, row.ExpirationDate, row.TargetWarehouseId, row.ToLocationId, row.Description)).ToList());
+        var stockIds = taskLines.Select(x => x.Line.StockId).Distinct().ToArray();
+        var stockGroups = await unitOfWork.Repository<Modules.Stock.Domain.Stock>().Query()
+            .Where(x => stockIds.Contains(x.Id) && x.BranchCode == page.BranchCode)
+            .Select(x => new { x.Id, x.GroupCode })
+            .ToDictionaryAsync(x => x.Id, x => x.GroupCode, cancellationToken);
+        var qualityByStockId = new Dictionary<long, bool>();
+        foreach (var stockId in stockIds)
+        {
+            var policy = await qualityPolicyResolver.ResolveAsync(
+                page.BranchCode,
+                stockId,
+                stockGroups.GetValueOrDefault(stockId),
+                cancellationToken);
+            qualityByStockId[stockId] =
+                GoodsReceiptOperationsService.RequiresQualityForLine(false, policy);
+        }
         var lines = taskLines.Select(x => new GoodsReceiptTaskLineDto(x.Id, x.SequenceNo, x.GrLineId, x.Line.StockId, x.Line.StockCodeSnapshot, x.Line.StockNameSnapshot,
             x.Line.YapCodeSnapshot, x.PlannedQuantity, x.ProcessedQuantity, x.UnitCode, x.Status, x.Line.TargetWarehouseId, x.ToLocationId,
-            x.Line.TrackingType, trackingByLine.GetValueOrDefault(x.Id, []))).ToList();
+            x.Line.TrackingType, qualityByStockId.GetValueOrDefault(x.Line.StockId), trackingByLine.GetValueOrDefault(x.Id, []))).ToList();
         var assignmentRows = await Assignments.Query().Where(x => x.GrTaskId == id && x.Status != GoodsReceiptAssignmentStatus.Unassigned && x.Status != GoodsReceiptAssignmentStatus.Rejected)
             .OrderBy(x => x.AssignmentRole).ThenBy(x => x.AssignedAtUtc).ToListAsync(cancellationToken);
         var userIds = assignmentRows.Select(x => x.UserId).Distinct().ToArray();

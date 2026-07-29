@@ -29,7 +29,7 @@ public sealed record GoodsReceiptTaskLineDto(
     string StockCode, string? StockName, string? YapCode,
     decimal PlannedQuantity, decimal ProcessedQuantity, string UnitCode,
     GoodsReceiptTaskStatus Status, long TargetWarehouseId, long? ToLocationId,
-    StockTrackingType TrackingType,
+    StockTrackingType TrackingType, bool RequireQualityControl,
     IReadOnlyList<GoodsReceiptTaskLineTrackingDto> Trackings);
 
 public sealed record GoodsReceiptTaskLineTrackingDto(
