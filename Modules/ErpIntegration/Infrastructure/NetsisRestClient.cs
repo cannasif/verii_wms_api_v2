@@ -24,12 +24,14 @@ public sealed class NetsisRestClient(
         CancellationToken cancellationToken)
     {
         var payload = JsonSerializer.Serialize(request, JsonOptions);
+        var branchCode = request.FatUst.SubeKodu.ToString(
+            System.Globalization.CultureInfo.InvariantCulture);
         var watch = Stopwatch.StartNew();
         try
         {
-            var result = await SendAsync(payload, false, cancellationToken);
+            var result = await SendAsync(payload, branchCode, false, cancellationToken);
             if (result.HttpStatusCode == (int)HttpStatusCode.Unauthorized)
-                result = await SendAsync(payload, true, cancellationToken);
+                result = await SendAsync(payload, branchCode, true, cancellationToken);
             return result with { DurationMs = watch.ElapsedMilliseconds };
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -61,9 +63,11 @@ public sealed class NetsisRestClient(
         var watch = Stopwatch.StartNew();
         try
         {
-            var result = await SendDeleteAsync(providerId, false, cancellationToken);
+            var result = await SendDeleteAsync(
+                providerId, request.BranchCode, false, cancellationToken);
             if (result.HttpStatusCode == (int)HttpStatusCode.Unauthorized)
-                result = await SendDeleteAsync(providerId, true, cancellationToken);
+                result = await SendDeleteAsync(
+                    providerId, request.BranchCode, true, cancellationToken);
             return result with { DurationMs = watch.ElapsedMilliseconds };
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -88,10 +92,12 @@ public sealed class NetsisRestClient(
 
     private async Task<NetsisCallResult<NetsisItemSlipResponse>> SendAsync(
         string payload,
+        string branchCode,
         bool forceRefresh,
         CancellationToken cancellationToken)
     {
-        var token = await tokenService.GetAccessTokenAsync(forceRefresh, cancellationToken);
+        var token = await tokenService.GetAccessTokenAsync(
+            branchCode, forceRefresh, cancellationToken);
         var options = optionsAccessor.Value.Rest;
         using var message = new HttpRequestMessage(HttpMethod.Post, options.ItemSlipsPath)
         {
@@ -130,10 +136,12 @@ public sealed class NetsisRestClient(
 
     private async Task<NetsisCallResult<NetsisDeleteItemSlipResponse>> SendDeleteAsync(
         string providerId,
+        string? branchCode,
         bool forceRefresh,
         CancellationToken cancellationToken)
     {
-        var token = await tokenService.GetAccessTokenAsync(forceRefresh, cancellationToken);
+        var token = await tokenService.GetAccessTokenAsync(
+            branchCode, forceRefresh, cancellationToken);
         var basePath = optionsAccessor.Value.Rest.ItemSlipsPath.TrimEnd('/');
         using var message = new HttpRequestMessage(HttpMethod.Delete, $"{basePath}/{providerId}");
         message.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);

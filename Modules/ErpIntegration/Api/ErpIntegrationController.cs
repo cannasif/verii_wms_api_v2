@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using verii_wms_api_v2.Modules.AccessControl.Application;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.ErpIntegration.Domain;
+using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 
@@ -151,7 +152,10 @@ public sealed class ErpIntegrationController(
     public async Task<IActionResult> TestLogin(CancellationToken cancellationToken)
     {
         await Require("WMS.GOODS_RECEIPT.SETTINGS.MANAGE", cancellationToken);
-        await tokenService.GetAccessTokenAsync(true, cancellationToken);
+        await tokenService.GetAccessTokenAsync(
+            User.FindFirstValue(JwtTokenIssuer.BranchCodeClaim),
+            true,
+            cancellationToken);
         return Ok(ApiResponse<bool>.Ok(true, "Netsis REST oturumu başarıyla açıldı."));
     }
 

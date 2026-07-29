@@ -1,38 +1,46 @@
+using System.Security.Claims;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Options;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
+using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 
 namespace verii_wms_api_v2.Modules.ErpIntegration.Infrastructure;
 
 public sealed class NetsisTokenService(
     HttpClient httpClient,
+    IHttpContextAccessor httpContextAccessor,
     IMemoryCache cache,
     IOptions<NetsisOptions> optionsAccessor,
     ILogger<NetsisTokenService> logger) : INetsisTokenService
 {
-    private const string CacheKey = "netsis:rest:access-token";
+    private const string CacheKeyPrefix = "netsis:rest:access-token";
     private static readonly SemaphoreSlim TokenLock = new(1, 1);
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         PropertyNameCaseInsensitive = true
     };
 
-    public async Task<string> GetAccessTokenAsync(bool forceRefresh, CancellationToken cancellationToken)
+    public async Task<string> GetAccessTokenAsync(
+        string? requestedBranchCode,
+        bool forceRefresh,
+        CancellationToken cancellationToken)
     {
         var options = optionsAccessor.Value;
         Validate(options);
-        if (!forceRefresh && TryReadCached(options, out var cached)) return cached!;
+        var branchCode = ResolveBranchCode(options, requestedBranchCode);
+        var cacheKey = BuildCacheKey(options, branchCode);
+        if (!forceRefresh && TryReadCached(options, cacheKey, out var cached)) return cached!;
 
         await TokenLock.WaitAsync(cancellationToken);
         try
         {
-            if (!forceRefresh && TryReadCached(options, out cached)) return cached!;
+            if (!forceRefresh && TryReadCached(options, cacheKey, out cached)) return cached!;
 
             var failures = new List<string>();
-            foreach (var requestFactory in BuildLoginAttempts(options))
+            foreach (var requestFactory in BuildLoginAttempts(options, branchCode))
             {
                 try
                 {
@@ -54,7 +62,7 @@ public sealed class NetsisTokenService(
 
                     var lifetime = TimeSpan.FromSeconds(Math.Max(60,
                         token.ExpiresInSeconds - Math.Max(0, options.Rest.TokenExpirySkewSeconds)));
-                    cache.Set(CacheKey, token.AccessToken, lifetime);
+                    cache.Set(cacheKey, token.AccessToken, lifetime);
                     return token.AccessToken;
                 }
                 catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -63,7 +71,7 @@ public sealed class NetsisTokenService(
                 }
                 catch (HttpRequestException ex)
                 {
-                    failures.Add(Sanitize(ex.Message));
+                    failures.Add(DescribeTransportFailure(httpClient, ex));
                 }
                 catch (JsonException ex)
                 {
@@ -81,13 +89,15 @@ public sealed class NetsisTokenService(
         }
     }
 
-    private bool TryReadCached(NetsisOptions options, out string? token)
+    private bool TryReadCached(NetsisOptions options, string cacheKey, out string? token)
     {
-        token = cache.Get<string>(CacheKey);
+        token = cache.Get<string>(cacheKey);
         return options.Enabled && !string.IsNullOrWhiteSpace(token);
     }
 
-    private static IReadOnlyList<Func<HttpRequestMessage>> BuildLoginAttempts(NetsisOptions options)
+    private static IReadOnlyList<Func<HttpRequestMessage>> BuildLoginAttempts(
+        NetsisOptions options,
+        string branchCode)
     {
         var rest = options.Rest;
         var paths = new[] { rest.LoginPath, "/token", "/api/v2/token" }
@@ -99,27 +109,24 @@ public sealed class NetsisTokenService(
 
         foreach (var path in paths)
         {
-            attempts.Add(() =>
+            foreach (var dbType in new[]
+                     {
+                         NormalizeOAuthDbType(rest.DbType),
+                         NormalizeLegacyDbType(rest.DbType)
+                     }.Distinct(StringComparer.OrdinalIgnoreCase))
             {
-                var fields = new Dictionary<string, string>
+                attempts.Add(() =>
                 {
-                    ["grant_type"] = "password",
-                    ["branchcode"] = rest.BranchCode,
-                    ["username"] = rest.Username,
-                    ["password"] = rest.Password,
-                    ["dbname"] = rest.DbName,
-                    ["dbuser"] = rest.DbUser,
-                    ["dbpassword"] = rest.DbPassword,
-                    ["dbtype"] = NormalizeOAuthDbType(rest.DbType)
-                };
-                return NewRequest(path, new FormUrlEncodedContent(fields));
-            });
+                    var fields = BuildLoginFields(rest, branchCode, dbType);
+                    return NewRequest(path, new FormUrlEncodedContent(fields));
+                });
+            }
 
             attempts.Add(() =>
             {
                 var payload = new
                 {
-                    BranchCode = int.TryParse(rest.BranchCode, out var branch) ? branch : 0,
+                    BranchCode = int.TryParse(branchCode, out var branch) ? branch : 0,
                     NetsisUser = rest.Username,
                     NetsisPassword = rest.Password,
                     DbName = rest.DbName,
@@ -130,10 +137,40 @@ public sealed class NetsisTokenService(
                 return NewRequest(path,
                     new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json"));
             });
+
+            attempts.Add(() =>
+            {
+                var fields = new Dictionary<string, string>
+                {
+                    ["BranchCode"] = branchCode,
+                    ["NetsisUser"] = rest.Username,
+                    ["NetsisPassword"] = rest.Password,
+                    ["DbName"] = rest.DbName,
+                    ["DbUser"] = rest.DbUser,
+                    ["DbPassword"] = rest.DbPassword,
+                    ["DbType"] = NormalizeNetOpenXDbType(rest.DbType)
+                };
+                return NewRequest(path, new FormUrlEncodedContent(fields));
+            });
         }
 
         return attempts;
     }
+
+    private static Dictionary<string, string> BuildLoginFields(
+        NetsisRestOptions rest,
+        string branchCode,
+        string dbType) => new()
+        {
+            ["grant_type"] = "password",
+            ["branchcode"] = branchCode,
+            ["username"] = rest.Username,
+            ["password"] = rest.Password,
+            ["dbname"] = rest.DbName,
+            ["dbuser"] = rest.DbUser,
+            ["dbpassword"] = rest.DbPassword,
+            ["dbtype"] = dbType
+        };
 
     private static HttpRequestMessage NewRequest(string path, HttpContent content)
     {
@@ -183,6 +220,9 @@ public sealed class NetsisTokenService(
         value.Equals("MSSQL", StringComparison.OrdinalIgnoreCase)
         || value.Equals("vtMSSQL", StringComparison.OrdinalIgnoreCase) ? "0" : value;
 
+    private static string NormalizeLegacyDbType(string value) =>
+        string.IsNullOrWhiteSpace(value) ? "MSSQL" : value.Trim();
+
     private static string NormalizeNetOpenXDbType(string value) =>
         value.Equals("MSSQL", StringComparison.OrdinalIgnoreCase)
         || value == "0" ? "vtMSSQL" : value;
@@ -191,6 +231,42 @@ public sealed class NetsisTokenService(
     {
         if (string.IsNullOrWhiteSpace(value)) return string.Empty;
         return value.Length <= 500 ? value : value[..500];
+    }
+
+    private string ResolveBranchCode(NetsisOptions options, string? requestedBranchCode)
+    {
+        if (!string.IsNullOrWhiteSpace(requestedBranchCode))
+            return requestedBranchCode.Trim();
+
+        var authenticatedBranch = httpContextAccessor.HttpContext?.User
+            .FindFirstValue(JwtTokenIssuer.BranchCodeClaim)
+            ?.Trim();
+        if (!string.IsNullOrWhiteSpace(authenticatedBranch))
+            return authenticatedBranch;
+
+        var configuredBranch = options.Rest.BranchCode?.Trim();
+        if (!string.IsNullOrWhiteSpace(configuredBranch))
+            return configuredBranch;
+
+        throw AppException.BadRequest(
+            "Netsis REST oturumu için şube kodu bulunamadı. Oturum açarken seçilen şube bilgisi zorunludur.");
+    }
+
+    internal static string BuildCacheKey(NetsisOptions options, string branchCode)
+    {
+        var database = options.Rest.DbName.Trim().ToUpperInvariant();
+        var username = options.Rest.Username.Trim().ToUpperInvariant();
+        return $"{CacheKeyPrefix}:database:{database}:user:{username}:branch:{branchCode.Trim()}";
+    }
+
+    private static string DescribeTransportFailure(HttpClient client, HttpRequestException exception)
+    {
+        var endpoint = client.BaseAddress is null
+            ? "yapılandırılmış Netsis adresi"
+            : $"{client.BaseAddress.Scheme}://{client.BaseAddress.Host}:{client.BaseAddress.Port}";
+        var root = exception.GetBaseException();
+        var detail = ReferenceEquals(root, exception) ? exception.Message : $"{exception.Message} ({root.Message})";
+        return $"{endpoint} bağlantı hatası: {Sanitize(detail)}";
     }
 
     private static void Validate(NetsisOptions options)

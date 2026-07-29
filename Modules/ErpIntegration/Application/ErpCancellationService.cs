@@ -473,11 +473,13 @@ public sealed class ErpCancellationService(
                     posting.SourceEntityId,
                     cancellationToken: cancellationToken)
                     ?? throw AppException.NotFound("Mal kabul kaydı bulunamadı."))
-                .SupplierCodeSnapshot),
+                .SupplierCodeSnapshot,
+                posting.BranchCode),
             ErpPostingSourceType.WarehouseTransfer => new(
                 options.WarehouseTransferDocumentType,
                 documentNo,
-                null),
+                null,
+                posting.BranchCode),
             ErpPostingSourceType.Shipment => new(
                 options.ShipmentDocumentType,
                 documentNo,
@@ -485,7 +487,8 @@ public sealed class ErpCancellationService(
                     posting.SourceEntityId,
                     cancellationToken: cancellationToken)
                     ?? throw AppException.NotFound("Sevk kaydı bulunamadı."))
-                .CustomerCodeSnapshot),
+                .CustomerCodeSnapshot,
+                posting.BranchCode),
             _ => throw AppException.BadRequest("Desteklenmeyen ERP kaynak tipi.")
         };
     }

@@ -206,7 +206,10 @@ public static class OperationCancellationPolicy
 
 public interface INetsisTokenService
 {
-    Task<string> GetAccessTokenAsync(bool forceRefresh, CancellationToken cancellationToken);
+    Task<string> GetAccessTokenAsync(
+        string? branchCode,
+        bool forceRefresh,
+        CancellationToken cancellationToken);
 }
 
 public interface INetsisRestClient
@@ -252,7 +255,8 @@ public sealed class NetsisItemSlipRequest
 public sealed record NetsisItemSlipDeleteRequest(
     int DocumentType,
     string DocumentNo,
-    string? CustomerCode)
+    string? CustomerCode,
+    string? BranchCode = null)
 {
     public string ToProviderId()
     {

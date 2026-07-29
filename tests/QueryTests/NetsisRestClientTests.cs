@@ -24,6 +24,7 @@ public sealed class NetsisRestClientTests
         Assert.True(result.BusinessSucceeded);
         Assert.Equal("GR-1", result.Data?.Data?.FisNo);
         Assert.Equal([false, true], tokens.ForceRefreshCalls);
+        Assert.Equal(["7", "7"], tokens.BranchCalls);
         Assert.Equal(2, handler.CallCount);
     }
 
@@ -107,11 +108,12 @@ public sealed class NetsisRestClientTests
         var client = CreateClient(handler, tokens);
 
         var result = await client.DeleteItemSlipAsync(
-            new NetsisItemSlipDeleteRequest(2, "SIR00092", "MUS001"),
+            new NetsisItemSlipDeleteRequest(2, "SIR00092", "MUS001", "9"),
             CancellationToken.None);
 
         Assert.True(result.BusinessSucceeded);
         Assert.Equal([false, true], tokens.ForceRefreshCalls);
+        Assert.Equal(["9", "9"], tokens.BranchCalls);
         Assert.Equal(2, handler.CallCount);
     }
 
@@ -179,7 +181,8 @@ public sealed class NetsisRestClientTests
             BelgeNo = "IRS-1",
             Tarih = DateTime.UtcNow,
             FiiliTarih = DateTime.UtcNow,
-            Tip = 3
+            Tip = 3,
+            SubeKodu = 7
         },
         Kalems = [new NetsisItemSlipLine { StokKodu = "S-1", Miktar = 1, DepoKodu = 1 }]
     };
@@ -192,8 +195,13 @@ public sealed class NetsisRestClientTests
     private sealed class FakeTokenService : INetsisTokenService
     {
         public List<bool> ForceRefreshCalls { get; } = [];
-        public Task<string> GetAccessTokenAsync(bool forceRefresh, CancellationToken cancellationToken)
+        public List<string?> BranchCalls { get; } = [];
+        public Task<string> GetAccessTokenAsync(
+            string? branchCode,
+            bool forceRefresh,
+            CancellationToken cancellationToken)
         {
+            BranchCalls.Add(branchCode);
             ForceRefreshCalls.Add(forceRefresh);
             return Task.FromResult(forceRefresh ? "refreshed-token" : "cached-token");
         }
