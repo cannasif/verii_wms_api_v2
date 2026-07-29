@@ -5,6 +5,11 @@ namespace verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 public enum OverReceiptPolicy { NotAllowed = 1, WithinTolerance = 2, ApprovalRequired = 3 }
 public enum InventoryAvailabilityPolicy { Immediate = 1, AfterReceiptApproval = 2, AfterQualityApproval = 3, AfterAllApprovals = 4 }
 public enum GoodsReceiptErpPostingPolicy { AfterReceipt = 1, AfterReceiptApproval = 2, AfterQualityApproval = 3, AfterAllApprovals = 4 }
+public enum GoodsReceiptLocationSelectionPolicy
+{
+    ReceivingOrStagingOnly = 1,
+    AnyActiveWarehouseLocation = 2
+}
 
 public sealed class GoodsReceiptPolicy : BaseEntity
 {
@@ -23,5 +28,7 @@ public sealed class GoodsReceiptPolicy : BaseEntity
     public bool AllowOrderlessReceipt { get; set; } = true;
     public bool AllowUnplannedReceipt { get; set; } = true;
     public bool ShowAllocatedOpenOrderLines { get; set; }
+    public GoodsReceiptLocationSelectionPolicy LocationSelectionPolicy { get; set; } =
+        GoodsReceiptLocationSelectionPolicy.ReceivingOrStagingOnly;
     public byte[] RowVersion { get; set; } = [];
 }
