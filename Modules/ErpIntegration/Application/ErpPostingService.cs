@@ -44,11 +44,12 @@ public sealed class ErpPostingService(
 
         var targetWarehouse = await GetWarehouseAsync(header.TargetWarehouseId, cancellationToken);
         var request = await MapGoodsReceiptAsync(header, targetWarehouse, cancellationToken);
+        var externalDocumentNo = ResolveGoodsReceiptErpDocumentNo(header);
         return await PostAsync(
             ErpPostingSourceType.GoodsReceipt,
             header.Id,
-            header.DocumentNo,
-            header.BranchCode,
+            externalDocumentNo,
+            targetWarehouse.BranchCode,
             idempotencyKey,
             request,
             header.ErpIntegrationStatus,
@@ -408,8 +409,8 @@ public sealed class ErpPostingService(
         return NewRequest(
             options.GoodsReceiptDocumentType,
             options.GoodsReceiptSeries,
-            header.DocumentNo,
-            header.WaybillNo ?? header.ElectronicWaybillNo ?? header.DocumentNo,
+            ResolveGoodsReceiptErpDocumentNo(header),
+            ResolveGoodsReceiptErpDocumentNo(header),
             header.DocumentDate,
             header.ReceivedAtUtc,
             header.SupplierCodeSnapshot,
@@ -420,6 +421,15 @@ public sealed class ErpPostingService(
 
     internal static decimal GoodsReceiptQuantityForErp(GoodsReceiptLine line) =>
         line.ReceivedQuantity;
+
+    internal static string ResolveGoodsReceiptErpDocumentNo(GoodsReceiptHeader header)
+    {
+        var documentNo = Clean(header.ElectronicWaybillNo) ?? Clean(header.WaybillNo);
+        if (documentNo is null)
+            throw AppException.Conflict(
+                "ERP alış irsaliyesi için normal irsaliye veya e-irsaliye/GİB numarası zorunludur.");
+        return documentNo;
+    }
 
     private NetsisItemSlipRequest MapWarehouseTransfer(
         WarehouseTransferHeader header,

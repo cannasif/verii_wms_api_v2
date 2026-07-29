@@ -79,6 +79,42 @@ public sealed class GoodsReceiptErpPostingPolicyEvaluatorTests
         Assert.Equal(10, ErpPostingService.GoodsReceiptQuantityForErp(line));
     }
 
+    [Fact]
+    public void Normal_waybill_number_is_used_as_the_netsis_document_number()
+    {
+        var header = new GoodsReceiptHeader
+        {
+            DocumentNo = "GR1202600000044",
+            WaybillNo = "IRS20260000001"
+        };
+
+        Assert.Equal("IRS20260000001", ErpPostingService.ResolveGoodsReceiptErpDocumentNo(header));
+    }
+
+    [Fact]
+    public void Electronic_waybill_number_has_priority_for_the_netsis_document_number()
+    {
+        var header = new GoodsReceiptHeader
+        {
+            DocumentNo = "GR1202600000044",
+            WaybillNo = "IRS20260000001",
+            ElectronicWaybillNo = "GIB2026AB000001"
+        };
+
+        Assert.Equal("GIB2026AB000001", ErpPostingService.ResolveGoodsReceiptErpDocumentNo(header));
+    }
+
+    [Fact]
+    public void Internal_wms_document_number_is_never_a_goods_receipt_erp_fallback()
+    {
+        var header = new GoodsReceiptHeader { DocumentNo = "GR1202600000044" };
+
+        var exception = Assert.Throws<verii_wms_api_v2.Shared.Application.Exceptions.AppException>(
+            () => ErpPostingService.ResolveGoodsReceiptErpDocumentNo(header));
+
+        Assert.Contains("irsaliye", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData(WarehouseOperationStatus.Draft)]
     [InlineData(WarehouseOperationStatus.InProgress)]
