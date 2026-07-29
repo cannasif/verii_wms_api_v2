@@ -1,6 +1,7 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
+using verii_wms_api_v2.Modules.GoodsReceipt.Application;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.SteelReceipt.Domain;
 using verii_wms_api_v2.Modules.VehicleCheckIn.Application;
@@ -18,6 +19,7 @@ public sealed class SteelVehicleAcceptanceService(
     IVehicleCheckInService vehicleCheckIns,
     IVehicleCheckInImageStorage vehicleImageStorage,
     ISteelReceiptAttachmentStorage plateImageStorage,
+    IGoodsReceiptPolicyService receiptPolicyService,
     IAuditLogWriter audit) : ISteelVehicleAcceptanceService
 {
     private IGenericRepository<SteelVehicleAcceptance> Acceptances => uow.Repository<SteelVehicleAcceptance>();
@@ -135,6 +137,7 @@ public sealed class SteelVehicleAcceptanceService(
                 var branch = NormalizeBranch(request.Vehicle.BranchCode);
                 if (lines.Any(x => x.BranchCode != branch || x.Plan.BranchCode != branch))
                     throw AppException.BadRequest("Seçilen SAC levhaları araç girişinin şubesiyle uyuşmuyor.");
+                var receiptPolicy = await receiptPolicyService.GetAsync(branch, token);
                 if (HasSelectedPlateConflict(lines))
                     throw AppException.Conflict("Seçilen levhalardan biri daha önce kabul edilmiş, kontrol edilmiş veya mal kabule aktarılmış.");
 
@@ -171,11 +174,12 @@ public sealed class SteelVehicleAcceptanceService(
                 foreach (var line in lines)
                 {
                     var location = locations[plateRequests[line.Id].ReceivingLocationId];
-                    if (!location.IsActive
+                    if (!GoodsReceiptLocationPolicy.IsAllowed(
+                            receiptPolicy.LocationSelectionPolicy, location, line.TargetWarehouseId)
                         || location.IsQuarantine
-                        || location.WarehouseId != line.TargetWarehouseId
                         || location.LocationType is LocationTypes.Virtual or LocationTypes.Shipping)
-                        throw AppException.BadRequest($"{line.DCode} için seçilen kabul rafı uygun değil.");
+                        throw AppException.BadRequest(
+                            $"{line.DCode}: {GoodsReceiptOperationsService.LocationPolicyError(receiptPolicy.LocationSelectionPolicy)}");
                 }
 
                 var existingVehicleImageCount = await VehicleImages.CountAsync(x => x.HeaderId == vehicle.Id, token);

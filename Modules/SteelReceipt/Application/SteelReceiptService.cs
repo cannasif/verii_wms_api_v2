@@ -26,6 +26,7 @@ namespace verii_wms_api_v2.Modules.SteelReceipt.Application;
 
 public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsService grOperations,
     IGoodsReceiptErpPostingCoordinator erpPosting,
+    IGoodsReceiptPolicyService receiptPolicyService,
     IStockMovementService stockMovement,IAuditLogWriter audit,ISteelReceiptAttachmentStorage attachmentStorage):ISteelReceiptService
 {
     private IGenericRepository<SteelReceiptPlan> Plans=>uow.Repository<SteelReceiptPlan>();
@@ -80,7 +81,9 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             if(import.VehicleCheckInId.HasValue&&(vehicle is null||vehicle.BranchCode!=branch))
                 throw AppException.BadRequest("Seçilen araç giriş kaydı bu şubede bulunamadı.");
             var sourceWaybillNo=PurchaseWaybillNumberPolicy.Normalize(import.WaybillNo);
-            var receivingLocationId=await ResolveImportReceivingLocationAsync(import.TargetWarehouseId,import.ReceivingLocationId,token);
+            var receiptPolicy=await receiptPolicyService.GetAsync(branch,token);
+            var receivingLocationId=await ResolveImportReceivingLocationAsync(
+                import.TargetWarehouseId,import.ReceivingLocationId,receiptPolicy.LocationSelectionPolicy,token);
             var plan=Stamp(new SteelReceiptPlan{BranchCode=branch,CorrelationId=request.IdempotencyKey,
                 ImportReferenceNo=Clean(import.ImportReferenceNo,100,true)!,SourceFileName=Clean(import.SourceFileName,260,true)!,
                 ExportReferenceNo=Clean(import.ExportReferenceNo,100),VehicleCheckInId=vehicle?.Id,SupplierId=supplier.Id,SupplierCodeSnapshot=supplier.CustomerCode,
@@ -437,15 +440,18 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             ??throw AppException.BadRequest("Tedarikçi bulunamadı.");if(supplier.BranchCode!=branch)throw AppException.BadRequest("Tedarikçi şubesi uyuşmuyor.");
         var warehouse=await uow.Repository<WarehouseEntity>().FindByIdAsync(request.TargetWarehouseId,false,ct)
             ??throw AppException.BadRequest("Depo bulunamadı.");if(warehouse.BranchCode!=branch)throw AppException.BadRequest("Depo şubesi uyuşmuyor.");
-        var receivingLocationId=await ResolveImportReceivingLocationAsync(warehouse.Id,request.ReceivingLocationId,ct);
+        var receiptPolicy=await receiptPolicyService.GetAsync(branch,ct);
+        var receivingLocationId=await ResolveImportReceivingLocationAsync(
+            warehouse.Id,request.ReceivingLocationId,receiptPolicy.LocationSelectionPolicy,ct);
         var series=await uow.Repository<DocumentSeriesEntity>().FindByIdAsync(request.DocumentSeriesId,false,ct);
         if(series is null||!series.IsActive||series.DocumentType!=WmsDocumentType.GoodsReceipt)
             throw AppException.BadRequest("Seçilen belge serisi aktif bir Mal Kabul serisi olmalıdır.");
         var locIds=request.Lines.Select(x=>x.ReceivingLocationId??receivingLocationId).Append(receivingLocationId).Distinct().ToArray();
         var locations=await uow.Repository<WarehouseLocation>().Query().Where(x=>locIds.Contains(x.Id)).ToDictionaryAsync(x=>x.Id,ct);
-        if(locations.Count!=locIds.Length||locations.Values.Any(x=>!x.IsActive||x.WarehouseId!=warehouse.Id
-            ||x.LocationType is not (LocationTypes.Receiving or LocationTypes.Staging)))
-            throw AppException.BadRequest("Depoya bağlı aktif bir mal kabul alanı bulunamadı.");
+        if(locations.Count!=locIds.Length||locations.Values.Any(x=>
+               !GoodsReceiptLocationPolicy.IsAllowed(receiptPolicy.LocationSelectionPolicy,x,warehouse.Id)))
+            throw AppException.BadRequest(GoodsReceiptOperationsService.LocationPolicyError(
+                receiptPolicy.LocationSelectionPolicy));
         var stockIds=request.Lines.Where(x=>x.StockId.HasValue).Select(x=>x.StockId!.Value).Distinct().ToArray();
         var stockCodes=request.Lines.Select(x=>x.StockCode.Trim().ToUpperInvariant()).Where(x=>x.Length>0).Distinct().ToArray();
         var stockRows=await uow.Repository<StockEntity>().Query().Where(x=>stockIds.Contains(x.Id)||stockCodes.Contains(x.ErpStockCode)).ToListAsync(ct);
@@ -477,24 +483,33 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             :x).ToList();
     }
 
-    private async Task<long> ResolveImportReceivingLocationAsync(long warehouseId,long? requestedLocationId,CancellationToken ct)
+    private async Task<long> ResolveImportReceivingLocationAsync(
+        long warehouseId,
+        long? requestedLocationId,
+        GoodsReceiptLocationSelectionPolicy locationPolicy,
+        CancellationToken ct)
     {
         if(requestedLocationId is>0)
         {
             var requested=await uow.Repository<WarehouseLocation>().FindByIdAsync(requestedLocationId.Value,false,ct);
-            if(requested is not null&&requested.IsActive&&requested.WarehouseId==warehouseId
-                &&requested.LocationType is LocationTypes.Receiving or LocationTypes.Staging)
+            if(requested is not null
+                &&GoodsReceiptLocationPolicy.IsAllowed(locationPolicy,requested,warehouseId))
                 return requested.Id;
-            throw AppException.BadRequest("Seçilen mal kabul alanı geçersiz.");
+            throw AppException.BadRequest(GoodsReceiptOperationsService.LocationPolicyError(locationPolicy));
         }
-        var resolved=await uow.Repository<WarehouseLocation>().Query()
-            .Where(x=>x.WarehouseId==warehouseId&&x.IsActive
-                &&(x.LocationType==LocationTypes.Receiving||x.LocationType==LocationTypes.Staging))
+        var locations=uow.Repository<WarehouseLocation>().Query()
+            .Where(x=>x.WarehouseId==warehouseId&&x.IsActive);
+        if(locationPolicy==GoodsReceiptLocationSelectionPolicy.ReceivingOrStagingOnly)
+            locations=locations.Where(x=>
+                x.LocationType==LocationTypes.Receiving||x.LocationType==LocationTypes.Staging);
+        var resolved=await locations
             .OrderBy(x=>x.LocationType==LocationTypes.Receiving?0:1)
+            .ThenBy(x=>x.LocationType==LocationTypes.Staging?0:1)
             .ThenBy(x=>x.Id)
             .Select(x=>(long?)x.Id)
             .FirstOrDefaultAsync(ct);
-        return resolved??throw AppException.BadRequest("Seçilen depo için aktif bir mal kabul alanı tanımlanmalıdır.");
+        return resolved??throw AppException.BadRequest(
+            GoodsReceiptOperationsService.LocationPolicyError(locationPolicy));
     }
 
     private async Task RefreshPlanAsync(SteelReceiptPlan plan,CancellationToken ct)
