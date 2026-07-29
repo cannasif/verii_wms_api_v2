@@ -34,6 +34,10 @@ public sealed record ReconciliationSummary(int LedgerGroupCount, int ProjectionG
 public sealed record ReconciliationIssue(string IssueType, long WarehouseId, long LocationId, long StockId, long? YapCodeId,
     string UnitCode, string? LotNo, string? SerialNo, string StockStatus, decimal LedgerQuantity, decimal ProjectionQuantity,
     decimal Difference, long LedgerLastEntryId, long ProjectionLastEntryId);
+public sealed record OpeningBalanceImportRowResult(int RowNumber, string Status, string WarehouseCode, string LocationCode,
+    string StockCode, string Message);
+public sealed record OpeningBalanceImportResult(long OperationId, Guid OperationCode, bool IsReplay, int TotalRows,
+    decimal TotalQuantity, IReadOnlyList<OpeningBalanceImportRowResult> Rows);
 
 public sealed record StockReservationLineRequest(long ReferenceLineId, long WarehouseId, long LocationId, long StockId,
     long? YapCodeId, string UnitCode, string? LotNo, string? SerialNo, string StockStatus, decimal QuantityDelta);
@@ -58,4 +62,11 @@ public interface IStockBalanceService
 public interface IStockBalanceJobRunner
 {
     Task ReconcileAndRepairAsync(CancellationToken cancellationToken = default);
+}
+
+public interface IOpeningBalanceImportService
+{
+    Task<byte[]> CreateTemplateAsync(string branchCode, CancellationToken cancellationToken = default);
+    Task<OpeningBalanceImportResult> ImportAsync(Stream workbookStream, string branchCode, string idempotencyKey,
+        CancellationToken cancellationToken = default);
 }
