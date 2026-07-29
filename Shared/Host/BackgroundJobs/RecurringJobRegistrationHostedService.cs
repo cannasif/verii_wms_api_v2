@@ -1,6 +1,7 @@
 using Hangfire;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.ErpMirror.Application;
+using verii_wms_api_v2.Modules.Identity.Application;
 using verii_wms_api_v2.Modules.Packing.Application;
 using verii_wms_api_v2.Modules.StockBalance.Application;
 using verii_wms_api_v2.Modules.SystemManagement.Application;
@@ -73,6 +74,10 @@ public sealed class RecurringJobRegistrationHostedService(
             "packing-print-queue",
             service => service.DispatchPendingAsync(CancellationToken.None),
             Cron.Minutely);
+        recurringJobs.AddOrUpdate<IIdentitySessionMaintenance>(
+            "identity-session-cleanup",
+            service => service.DeleteObsoleteSessionsAsync(CancellationToken.None),
+            Cron.Daily(3, 15));
         recurringJobs.RemoveIfExists("goods-receipt-automatic-erp-posting");
     }
 }
