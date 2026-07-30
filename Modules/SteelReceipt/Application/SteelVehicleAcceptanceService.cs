@@ -189,6 +189,16 @@ public sealed class SteelVehicleAcceptanceService(
                             $"{line.DCode}: {GoodsReceiptOperationsService.LocationPolicyError(GoodsReceiptLocationSelectionPolicy.AnyActiveWarehouseLocation)}");
                 }
 
+                var imagesByLine = plateImages.GroupBy(x => x.PlanLineId)
+                    .ToDictionary(x => x.Key, x => x.ToList());
+                foreach (var line in lines)
+                {
+                    var existingImageCount = line.Attachments.Count(x => !x.IsDeleted);
+                    var newImageCount = imagesByLine.GetValueOrDefault(line.Id)?.Count ?? 0;
+                    if (existingImageCount + newImageCount == 0)
+                        throw AppException.BadRequest($"{line.DCode} levhası için en az bir görsel zorunludur.");
+                }
+
                 var existingVehicleImageCount = await VehicleImages.CountAsync(x => x.HeaderId == vehicle.Id, token);
                 if (existingVehicleImageCount + vehicleImages.Count == 0)
                     throw AppException.BadRequest("Araç kabulü için en az bir araç görseli zorunludur.");
@@ -277,6 +287,13 @@ public sealed class SteelVehicleAcceptanceService(
                 vehicle.Status = VehicleCheckInStatus.Completed;
                 vehicle.UpdatedBy = actor;
                 vehicle.UpdatedDate = DateTime.UtcNow;
+
+                foreach (var plan in plans)
+                {
+                    plan.VehicleCheckInId = vehicle.Id;
+                    plan.UpdatedBy = actor;
+                }
+
                 await uow.SaveChangesAsync(token);
 
                 foreach (var plan in plans)
@@ -348,15 +365,8 @@ public sealed class SteelVehicleAcceptanceService(
             .Where(x => x.PlanId == plan.Id)
             .Select(x => new { x.InspectionStatus, x.ConversionStatus })
             .ToListAsync(ct);
-        plan.Status = states.All(x => x.ConversionStatus == SteelReceiptConversionStatus.Created)
-            ? SteelReceiptPlanStatus.Converted
-            : states.Any(x => x.ConversionStatus == SteelReceiptConversionStatus.Created)
-                ? SteelReceiptPlanStatus.PartiallyConverted
-                : states.Any(x => x.InspectionStatus is SteelInspectionStatus.Approved or SteelInspectionStatus.PartiallyApproved)
-                    ? SteelReceiptPlanStatus.ReadyForReceipt
-                    : states.Any(x => x.InspectionStatus != SteelInspectionStatus.Pending)
-                        ? SteelReceiptPlanStatus.InspectionInProgress
-                        : SteelReceiptPlanStatus.Imported;
+        plan.Status = SteelReceiptPlanStatusRules.Resolve(
+            states.Select(x => new SteelReceiptPlanStatusRules.LineState(x.InspectionStatus, x.ConversionStatus)));
         plan.UpdatedDate = DateTime.UtcNow;
         await uow.SaveChangesAsync(ct);
     }
