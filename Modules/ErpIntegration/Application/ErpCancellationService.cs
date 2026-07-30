@@ -11,7 +11,11 @@ using verii_wms_api_v2.Modules.GoodsReceipt.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Shipping.Application;
 using verii_wms_api_v2.Modules.Shipping.Domain;
+using verii_wms_api_v2.Modules.WarehouseInbound.Application;
+using verii_wms_api_v2.Modules.WarehouseInbound.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
+using verii_wms_api_v2.Modules.WarehouseOutbound.Application;
+using verii_wms_api_v2.Modules.WarehouseOutbound.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
@@ -277,6 +281,28 @@ public sealed class ErpCancellationService(
                             posting.SourceEntityId,
                             new(cancellation.IdempotencyKey, cancellation.Reason),
                             userId,
+                        cancellationToken);
+                    break;
+                case ErpPostingSourceType.WarehouseInbound:
+                {
+                    var scopedUow = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
+                    var header = await scopedUow.Repository<WarehouseInboundHeader>().FindByIdAsync(
+                        posting.SourceEntityId, cancellationToken: cancellationToken)
+                        ?? throw AppException.NotFound("Ambar giriş kaydı bulunamadı.");
+                    await scope.ServiceProvider.GetRequiredService<IWarehouseInboundLifecycleService>()
+                        .CancelAsync(
+                            posting.SourceEntityId,
+                            new(cancellation.IdempotencyKey, cancellation.Reason, Convert.ToBase64String(header.RowVersion)),
+                            userId,
+                            cancellationToken);
+                    break;
+                }
+                case ErpPostingSourceType.WarehouseOutbound:
+                    await scope.ServiceProvider.GetRequiredService<IWarehouseOutboundOperationService>()
+                        .CancelAsync(
+                            posting.SourceEntityId,
+                            new(cancellation.IdempotencyKey, cancellation.Reason),
+                            userId,
                             cancellationToken);
                     break;
                 default:
@@ -381,6 +407,28 @@ public sealed class ErpCancellationService(
                     throw AppException.Conflict("Sevk ERP durumu silme işlemine uygun değil.");
                 break;
             }
+            case ErpPostingSourceType.WarehouseInbound:
+            {
+                var header = await unitOfWork.Repository<WarehouseInboundHeader>().FindByIdAsync(
+                    sourceEntityId, cancellationToken: cancellationToken)
+                    ?? throw AppException.NotFound("Ambar giriş kaydı bulunamadı.");
+                if (header.Status == WarehouseOperationStatus.Cancelled)
+                    throw AppException.Conflict("Ambar giriş zaten iptal edilmiş.");
+                if (header.ErpIntegrationStatus != ErpIntegrationStatus.Succeeded)
+                    throw AppException.Conflict("Ambar giriş ERP durumu silme işlemine uygun değil.");
+                break;
+            }
+            case ErpPostingSourceType.WarehouseOutbound:
+            {
+                var header = await unitOfWork.Repository<WarehouseOutboundHeader>().FindByIdAsync(
+                    sourceEntityId, cancellationToken: cancellationToken)
+                    ?? throw AppException.NotFound("Ambar çıkış kaydı bulunamadı.");
+                if (header.Status == WarehouseOutboundStatus.Cancelled)
+                    throw AppException.Conflict("Ambar çıkış zaten iptal edilmiş.");
+                if (header.ErpIntegrationStatus != ErpIntegrationStatus.Succeeded)
+                    throw AppException.Conflict("Ambar çıkış ERP durumu silme işlemine uygun değil.");
+                break;
+            }
             default:
                 throw AppException.BadRequest("Desteklenmeyen ERP kaynak tipi.");
         }
@@ -405,6 +453,16 @@ public sealed class ErpCancellationService(
                     .SetProperty(v => v.ErpIntegrationStatus, status)
                     .SetProperty(v => v.UpdatedDate, DateTime.UtcNow), cancellationToken),
             ErpPostingSourceType.Shipment => await unitOfWork.Repository<ShipmentHeader>().Query()
+                .Where(x => x.Id == sourceEntityId)
+                .ExecuteUpdateAsync(x => x
+                    .SetProperty(v => v.ErpIntegrationStatus, status)
+                    .SetProperty(v => v.UpdatedDate, DateTime.UtcNow), cancellationToken),
+            ErpPostingSourceType.WarehouseInbound => await unitOfWork.Repository<WarehouseInboundHeader>().Query()
+                .Where(x => x.Id == sourceEntityId)
+                .ExecuteUpdateAsync(x => x
+                    .SetProperty(v => v.ErpIntegrationStatus, status)
+                    .SetProperty(v => v.UpdatedDate, DateTime.UtcNow), cancellationToken),
+            ErpPostingSourceType.WarehouseOutbound => await unitOfWork.Repository<WarehouseOutboundHeader>().Query()
                 .Where(x => x.Id == sourceEntityId)
                 .ExecuteUpdateAsync(x => x
                     .SetProperty(v => v.ErpIntegrationStatus, status)
@@ -487,6 +545,24 @@ public sealed class ErpCancellationService(
                     posting.SourceEntityId,
                     cancellationToken: cancellationToken)
                     ?? throw AppException.NotFound("Sevk kaydı bulunamadı."))
+                .CustomerCodeSnapshot,
+                posting.BranchCode),
+            ErpPostingSourceType.WarehouseInbound => new(
+                options.GoodsReceiptDocumentType,
+                documentNo,
+                (await unitOfWork.Repository<WarehouseInboundHeader>().FindByIdAsync(
+                    posting.SourceEntityId,
+                    cancellationToken: cancellationToken)
+                    ?? throw AppException.NotFound("Ambar giriş kaydı bulunamadı."))
+                .SupplierCodeSnapshot,
+                posting.BranchCode),
+            ErpPostingSourceType.WarehouseOutbound => new(
+                options.ShipmentDocumentType,
+                documentNo,
+                (await unitOfWork.Repository<WarehouseOutboundHeader>().FindByIdAsync(
+                    posting.SourceEntityId,
+                    cancellationToken: cancellationToken)
+                    ?? throw AppException.NotFound("Ambar çıkış kaydı bulunamadı."))
                 .CustomerCodeSnapshot,
                 posting.BranchCode),
             _ => throw AppException.BadRequest("Desteklenmeyen ERP kaynak tipi.")

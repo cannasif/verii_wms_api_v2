@@ -10,7 +10,11 @@ using verii_wms_api_v2.Modules.GoodsReceipt.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.ProjectSettings.Domain;
 using verii_wms_api_v2.Modules.Shipping.Domain;
+using verii_wms_api_v2.Modules.NetsisRead.Application;
+using verii_wms_api_v2.Modules.NetsisRead.Application.Dtos;
+using verii_wms_api_v2.Modules.WarehouseInbound.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
+using verii_wms_api_v2.Modules.WarehouseOutbound.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -22,6 +26,7 @@ public sealed class ErpPostingService(
     IUnitOfWork unitOfWork,
     INetsisRestClient netsisClient,
     IGoodsReceiptOrderSource goodsReceiptOrderSource,
+    INetsisReadService netsisReadService,
     IOptions<NetsisOptions> optionsAccessor,
     IHttpContextAccessor httpContextAccessor,
     ILogger<ErpPostingService> logger) : IErpPostingService
@@ -86,8 +91,8 @@ public sealed class ErpPostingService(
 
         var sourceWarehouse = await GetWarehouseAsync(header.SourceWarehouseId, cancellationToken);
         var targetWarehouse = await GetWarehouseAsync(header.TargetWarehouseId, cancellationToken);
-        var request = MapWarehouseTransfer(
-            header, sourceWarehouse, targetWarehouse, await SendSerialsToErpAsync(cancellationToken));
+        var request = await MapWarehouseTransferAsync(
+            header, sourceWarehouse, targetWarehouse, await SendSerialsToErpAsync(cancellationToken), cancellationToken);
         return await PostAsync(
             ErpPostingSourceType.WarehouseTransfer,
             header.Id,
@@ -122,8 +127,8 @@ public sealed class ErpPostingService(
             throw AppException.Conflict("Sevk onay süreci tamamlanmadan ERP kaydı oluşturulamaz.");
 
         var sourceWarehouse = await GetWarehouseAsync(header.SourceWarehouseId, cancellationToken);
-        var request = MapShipment(
-            header, sourceWarehouse, await SendSerialsToErpAsync(cancellationToken));
+        var request = await MapShipmentAsync(
+            header, sourceWarehouse, await SendSerialsToErpAsync(cancellationToken), cancellationToken);
         return await PostAsync(
             ErpPostingSourceType.Shipment,
             header.Id,
@@ -134,6 +139,77 @@ public sealed class ErpPostingService(
             header.ErpIntegrationStatus,
             status => header.ErpIntegrationStatus = status,
             unitOfWork.Repository<ShipmentHeader>(),
+            header,
+            userId,
+            cancellationToken);
+    }
+
+    public async Task<ErpPostingResult> PostWarehouseInboundAsync(
+        long id,
+        Guid idempotencyKey,
+        long userId,
+        CancellationToken cancellationToken)
+    {
+        EnsureIdempotencyKey(idempotencyKey);
+        var header = await unitOfWork.Repository<WarehouseInboundHeader>().Query(true)
+            .Include(x => x.Lines).ThenInclude(x => x.Sources)
+            .Include(x => x.SourceDocuments)
+            .SingleOrDefaultAsync(x => x.Id == id, cancellationToken)
+            ?? throw AppException.NotFound("Ambar giriş kaydı bulunamadı.");
+        if (header.Status is not (WarehouseOperationStatus.Processed or WarehouseOperationStatus.Completed))
+            throw AppException.Conflict("ERP ambar giriş belgesi için fiziksel kabulün tamamlanmış olması gerekir.");
+        if (header.ApprovalStatus is OperationApprovalStatus.Pending or OperationApprovalStatus.Rejected)
+            throw AppException.Conflict("Ambar giriş onayı tamamlanmadan ERP kaydı oluşturulamaz.");
+
+        var warehouse = await GetWarehouseAsync(header.TargetWarehouseId, cancellationToken);
+        var request = await MapWarehouseInboundAsync(header, warehouse, cancellationToken);
+        var externalDocumentNo = ResolveWarehouseInboundErpDocumentNo(header);
+        return await PostAsync(
+            ErpPostingSourceType.WarehouseInbound,
+            header.Id,
+            externalDocumentNo,
+            warehouse.BranchCode,
+            idempotencyKey,
+            request,
+            header.ErpIntegrationStatus,
+            status => header.ErpIntegrationStatus = status,
+            unitOfWork.Repository<WarehouseInboundHeader>(),
+            header,
+            userId,
+            cancellationToken);
+    }
+
+    public async Task<ErpPostingResult> PostWarehouseOutboundAsync(
+        long id,
+        Guid idempotencyKey,
+        long userId,
+        CancellationToken cancellationToken)
+    {
+        EnsureIdempotencyKey(idempotencyKey);
+        var header = await unitOfWork.Repository<WarehouseOutboundHeader>().Query(true)
+            .Include(x => x.Lines).ThenInclude(x => x.Trackings)
+            .Include(x => x.Lines).ThenInclude(x => x.Sources)
+            .Include(x => x.SourceDocuments)
+            .SingleOrDefaultAsync(x => x.Id == id, cancellationToken)
+            ?? throw AppException.NotFound("Ambar çıkış kaydı bulunamadı.");
+        if (header.Status != WarehouseOutboundStatus.Shipped)
+            throw AppException.Conflict("ERP ambar çıkış belgesi için sevkin kesinleştirilmiş olması gerekir.");
+        if (header.ApprovalStatus is OperationApprovalStatus.Pending or OperationApprovalStatus.Rejected)
+            throw AppException.Conflict("Ambar çıkış onayı tamamlanmadan ERP kaydı oluşturulamaz.");
+
+        var warehouse = await GetWarehouseAsync(header.SourceWarehouseId, cancellationToken);
+        var request = await MapWarehouseOutboundAsync(
+            header, warehouse, await SendSerialsToErpAsync(cancellationToken), cancellationToken);
+        return await PostAsync(
+            ErpPostingSourceType.WarehouseOutbound,
+            header.Id,
+            header.DocumentNo,
+            header.BranchCode,
+            idempotencyKey,
+            request,
+            header.ErpIntegrationStatus,
+            status => header.ErpIntegrationStatus = status,
+            unitOfWork.Repository<WarehouseOutboundHeader>(),
             header,
             userId,
             cancellationToken);
@@ -497,53 +573,100 @@ public sealed class ErpPostingService(
         return documentNo;
     }
 
-    private NetsisItemSlipRequest MapWarehouseTransfer(
+    private async Task<NetsisItemSlipRequest> MapWarehouseTransferAsync(
         WarehouseTransferHeader header,
         WarehouseEntity sourceWarehouse,
         WarehouseEntity targetWarehouse,
-        bool sendSerials)
+        bool sendSerials,
+        CancellationToken cancellationToken)
     {
         var options = optionsAccessor.Value.Rest;
+        var orderContext = await BuildTransferOrderContextAsync(header, cancellationToken);
+        var orderDocumentIds = orderContext.DocumentIds;
         var lines = new List<NetsisItemSlipLine>();
+        var usedOrderRows = new List<ErpOrderRow>();
         foreach (var line in header.Lines.OrderBy(x => x.LineNo))
         {
             var quantity = line.ShippedQuantity;
             if (quantity <= 0) continue;
-            var orderNo = ResolveTransferOrderNo(header, line);
+            var allocations = AllocateOrderLinkedLine(
+                line.StockCodeSnapshot,
+                line.YapCodeSnapshot,
+                quantity,
+                line.Sources
+                    .Where(x => orderDocumentIds.Contains(x.WtSourceDocumentId))
+                    .Select(x => new ErpLineSourceRef(
+                    x.WtSourceDocumentId, x.ExternalLineId, x.ExternalStockCode, x.ExternalYapCode, x.AllocatedQuantity)),
+                orderContext);
+            usedOrderRows.AddRange(allocations.Select(x => x.OrderRow));
             var serials = line.Trackings.Where(x => !string.IsNullOrWhiteSpace(x.SerialNo) && x.ShippedQuantity > 0).ToList();
             if (sendSerials && line.RequireSerial)
             {
                 if (serials.Count == 0 || serials.Sum(x => x.ShippedQuantity) != quantity)
                     throw AppException.Conflict(
                         $"{line.StockCodeSnapshot} için sevk miktarıyla eşleşen seri kayıtları tamamlanmadan ERP transferi oluşturulamaz.");
-                lines.AddRange(serials.Select(serial => NewLine(line.StockCodeSnapshot, serial.ShippedQuantity,
-                    null, sourceWarehouse.WarehouseCode, targetWarehouse.WarehouseCode,
-                    line.YapCodeSnapshot, serial.SerialNo, orderNo, line.Description)));
+                AddSerialOrderLines(
+                    lines,
+                    line.StockCodeSnapshot,
+                    line.YapCodeSnapshot,
+                    line.Description,
+                    serials.Select(x => new ErpSerialPart(x.ShippedQuantity, x.SerialNo!)),
+                    allocations,
+                    null,
+                    sourceWarehouse.WarehouseCode,
+                    targetWarehouse.WarehouseCode);
             }
+            else if (allocations.Count > 0)
+                lines.AddRange(allocations.Select(x => NewOrderLinkedLine(
+                    line.StockCodeSnapshot, x.Quantity, null, sourceWarehouse.WarehouseCode,
+                    targetWarehouse.WarehouseCode, line.YapCodeSnapshot, null, line.Description, x.OrderRow)));
             else
-            {
                 lines.Add(NewLine(line.StockCodeSnapshot, quantity, null, sourceWarehouse.WarehouseCode,
-                    targetWarehouse.WarehouseCode, line.YapCodeSnapshot, null, orderNo, line.Description));
-            }
+                    targetWarehouse.WarehouseCode, line.YapCodeSnapshot, null, null, line.Description));
         }
 
         return NewRequest(options.WarehouseTransferDocumentType, options.WarehouseTransferSeries,
             header.DocumentNo, header.WaybillNo ?? header.DocumentNo, header.DocumentDate, header.ShippedAtUtc,
-            null, sourceWarehouse, header.Description, lines);
+            null, sourceWarehouse, header.Description, lines,
+            ResolveErpHeaderProjectCode(usedOrderRows), ResolveErpDeliveryDate(usedOrderRows, header.DocumentDate));
     }
 
-    private NetsisItemSlipRequest MapShipment(ShipmentHeader header, WarehouseEntity warehouse, bool sendSerials)
+    private async Task<NetsisItemSlipRequest> MapShipmentAsync(
+        ShipmentHeader header,
+        WarehouseEntity warehouse,
+        bool sendSerials,
+        CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(header.CustomerCodeSnapshot))
             throw AppException.Conflict("Sevk ERP irsaliyesi için müşteri kodu zorunludur.");
 
         var options = optionsAccessor.Value.Rest;
+        var orderDocuments = header.SourceDocuments
+            .Where(x => string.Equals(x.SourceDocumentType, "SalesOrder", StringComparison.OrdinalIgnoreCase))
+            .Select(x => new ErpSourceDocumentRef(x.Id, x.ExternalDocumentNo))
+            .ToList();
+        var orderContext = await BuildShipmentOrderContextAsync(
+            orderDocuments,
+            header.BranchCode,
+            header.CustomerCodeSnapshot,
+            cancellationToken);
+        var orderDocumentIds = orderContext.DocumentIds;
         var lines = new List<NetsisItemSlipLine>();
+        var usedOrderRows = new List<ErpOrderRow>();
         foreach (var line in header.Lines.OrderBy(x => x.LineNo))
         {
             var quantity = line.ShippedQuantity;
             if (quantity <= 0) continue;
-            var orderNo = ResolveShipmentOrderNo(header, line);
+            var allocations = AllocateOrderLinkedLine(
+                line.StockCodeSnapshot,
+                line.YapCodeSnapshot,
+                quantity,
+                line.Sources
+                    .Where(x => orderDocumentIds.Contains(x.ShipmentSourceDocumentId))
+                    .Select(x => new ErpLineSourceRef(
+                    x.ShipmentSourceDocumentId, x.ExternalLineId, x.ExternalStockCode, x.ExternalYapCode, x.AllocatedQuantity)),
+                orderContext);
+            usedOrderRows.AddRange(allocations.Select(x => x.OrderRow));
             var serials = line.Trackings.Where(x => !string.IsNullOrWhiteSpace(x.SerialNo) && x.ShippedQuantity > 0).ToList();
             var serialTracked = line.TrackingType is StockTrackingType.Serial or StockTrackingType.LotAndSerial;
             if (sendSerials && serialTracked)
@@ -551,19 +674,203 @@ public sealed class ErpPostingService(
                 if (serials.Count == 0 || serials.Sum(x => x.ShippedQuantity) != quantity)
                     throw AppException.Conflict(
                         $"{line.StockCodeSnapshot} için sevk miktarıyla eşleşen seri kayıtları tamamlanmadan ERP irsaliyesi oluşturulamaz.");
-                lines.AddRange(serials.Select(serial => NewLine(line.StockCodeSnapshot, serial.ShippedQuantity,
-                    warehouse.WarehouseCode, null, null, line.YapCodeSnapshot, serial.SerialNo, orderNo, line.Description)));
+                AddSerialOrderLines(
+                    lines,
+                    line.StockCodeSnapshot,
+                    line.YapCodeSnapshot,
+                    line.Description,
+                    serials.Select(x => new ErpSerialPart(x.ShippedQuantity, x.SerialNo!)),
+                    allocations,
+                    warehouse.WarehouseCode,
+                    null,
+                    null);
             }
+            else if (allocations.Count > 0)
+                lines.AddRange(allocations.Select(x => NewOrderLinkedLine(
+                    line.StockCodeSnapshot, x.Quantity, warehouse.WarehouseCode, null,
+                    null, line.YapCodeSnapshot, null, line.Description, x.OrderRow)));
             else
-            {
                 lines.Add(NewLine(line.StockCodeSnapshot, quantity, warehouse.WarehouseCode,
-                    null, null, line.YapCodeSnapshot, null, orderNo, line.Description));
-            }
+                    null, null, line.YapCodeSnapshot, null, null, line.Description));
         }
 
         return NewRequest(options.ShipmentDocumentType, options.ShipmentSeries,
             header.DocumentNo, header.WaybillNo ?? header.DocumentNo, header.DocumentDate, header.ShippedAtUtc,
-            header.CustomerCodeSnapshot, warehouse, header.Description, lines);
+            header.CustomerCodeSnapshot, warehouse, header.Description, lines,
+            ResolveErpHeaderProjectCode(usedOrderRows), ResolveErpDeliveryDate(usedOrderRows, header.DocumentDate));
+    }
+
+    private async Task<NetsisItemSlipRequest> MapWarehouseInboundAsync(
+        WarehouseInboundHeader header,
+        WarehouseEntity warehouse,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(header.SupplierCodeSnapshot))
+            throw AppException.Conflict("Ambar giriş ERP irsaliyesi için tedarikçi kodu zorunludur.");
+
+        var purchaseOrderDocuments = header.SourceDocuments
+            .Where(x => x.SourceSystem == WarehouseOperationSourceSystem.Netsis
+                && x.SourceDocumentType == WarehouseInboundSourceDocumentType.PurchaseOrder)
+            .Select(x => new ErpSourceDocumentRef(x.Id, x.ExternalDocumentNo))
+            .ToList();
+        var context = await BuildPurchaseOrderContextAsync(
+            purchaseOrderDocuments, header.SupplierCodeSnapshot, header.BranchCode, cancellationToken);
+        var orderDocumentIds = context.DocumentIds;
+        var sendSerials = await SendSerialsToErpAsync(cancellationToken);
+        var serials = sendSerials
+            ? await unitOfWork.Repository<WarehouseInboundExecutionLine>().Query()
+                .Where(x => x.Execution.GrHeaderId == header.Id
+                    && x.Execution.Status == WarehouseInboundExecutionStatus.Posted
+                    && x.SerialNo != null)
+                .Select(x => new { x.GrLineId, x.Quantity, x.SerialNo })
+                .ToListAsync(cancellationToken)
+            : [];
+        var lines = new List<NetsisItemSlipLine>();
+        var usedOrderRows = new List<ErpOrderRow>();
+        foreach (var line in header.Lines.OrderBy(x => x.LineNo))
+        {
+            var quantity = line.ReceivedQuantity;
+            if (quantity <= 0) continue;
+            var allocations = AllocateOrderLinkedLine(
+                line.StockCodeSnapshot,
+                line.YapCodeSnapshot,
+                quantity,
+                line.Sources
+                    .Where(x => orderDocumentIds.Contains(x.GrSourceDocumentId))
+                    .Select(x => new ErpLineSourceRef(
+                    x.GrSourceDocumentId, x.ExternalLineId, x.ExternalStockCode, x.ExternalYapCode, x.AllocatedQuantity)),
+                context);
+            usedOrderRows.AddRange(allocations.Select(x => x.OrderRow));
+            var lineSerials = serials.Where(x => x.GrLineId == line.Id).ToList();
+            if (sendSerials && line.RequireSerial)
+            {
+                if (lineSerials.Count == 0 || lineSerials.Sum(x => x.Quantity) != quantity)
+                    throw AppException.Conflict(
+                        $"{line.StockCodeSnapshot} için kabul miktarıyla eşleşen seri kayıtları tamamlanmadan ERP belgesi oluşturulamaz.");
+                AddSerialOrderLines(
+                    lines,
+                    line.StockCodeSnapshot,
+                    line.YapCodeSnapshot,
+                    line.Description,
+                    lineSerials.Select(x => new ErpSerialPart(x.Quantity, x.SerialNo!)),
+                    allocations,
+                    warehouse.WarehouseCode,
+                    null,
+                    null);
+            }
+            else if (allocations.Count > 0)
+                lines.AddRange(allocations.Select(x => NewOrderLinkedLine(
+                    line.StockCodeSnapshot, x.Quantity, warehouse.WarehouseCode, null,
+                    null, line.YapCodeSnapshot, null, line.Description, x.OrderRow)));
+            else
+                lines.Add(NewLine(line.StockCodeSnapshot, quantity, warehouse.WarehouseCode,
+                    null, null, line.YapCodeSnapshot, null, null, line.Description));
+        }
+
+        var options = optionsAccessor.Value.Rest;
+        var documentNo = ResolveWarehouseInboundErpDocumentNo(header);
+        return NewRequest(
+            options.GoodsReceiptDocumentType,
+            options.GoodsReceiptSeries,
+            documentNo,
+            documentNo,
+            header.DocumentDate,
+            header.ReceivedAtUtc,
+            header.SupplierCodeSnapshot,
+            warehouse,
+            header.Description,
+            lines,
+            ResolveErpHeaderProjectCode(usedOrderRows),
+            ResolveErpDeliveryDate(usedOrderRows, header.DocumentDate));
+    }
+
+    private async Task<NetsisItemSlipRequest> MapWarehouseOutboundAsync(
+        WarehouseOutboundHeader header,
+        WarehouseEntity warehouse,
+        bool sendSerials,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(header.CustomerCodeSnapshot))
+            throw AppException.Conflict("Ambar çıkış ERP irsaliyesi için müşteri kodu zorunludur.");
+
+        var orderDocuments = header.SourceDocuments
+            .Where(x => string.Equals(x.SourceDocumentType, "SalesOrder", StringComparison.OrdinalIgnoreCase))
+            .Select(x => new ErpSourceDocumentRef(x.Id, x.ExternalDocumentNo))
+            .ToList();
+        var context = await BuildShipmentOrderContextAsync(
+            orderDocuments,
+            header.BranchCode,
+            header.CustomerCodeSnapshot,
+            cancellationToken);
+        var orderDocumentIds = context.DocumentIds;
+        var lines = new List<NetsisItemSlipLine>();
+        var usedOrderRows = new List<ErpOrderRow>();
+        foreach (var line in header.Lines.OrderBy(x => x.LineNo))
+        {
+            var quantity = line.ShippedQuantity;
+            if (quantity <= 0) continue;
+            var allocations = AllocateOrderLinkedLine(
+                line.StockCodeSnapshot,
+                line.YapCodeSnapshot,
+                quantity,
+                line.Sources
+                    .Where(x => orderDocumentIds.Contains(x.WarehouseOutboundSourceDocumentId))
+                    .Select(x => new ErpLineSourceRef(
+                    x.WarehouseOutboundSourceDocumentId, x.ExternalLineId, x.ExternalStockCode, x.ExternalYapCode, x.AllocatedQuantity)),
+                context);
+            usedOrderRows.AddRange(allocations.Select(x => x.OrderRow));
+            var trackingRows = line.Trackings
+                .Where(x => !string.IsNullOrWhiteSpace(x.SerialNo) && x.ShippedQuantity > 0)
+                .ToList();
+            var serialTracked = line.TrackingType is StockTrackingType.Serial or StockTrackingType.LotAndSerial;
+            if (sendSerials && serialTracked)
+            {
+                if (trackingRows.Count == 0 || trackingRows.Sum(x => x.ShippedQuantity) != quantity)
+                    throw AppException.Conflict(
+                        $"{line.StockCodeSnapshot} için sevk miktarıyla eşleşen seri kayıtları tamamlanmadan ERP belgesi oluşturulamaz.");
+                AddSerialOrderLines(
+                    lines,
+                    line.StockCodeSnapshot,
+                    line.YapCodeSnapshot,
+                    line.Description,
+                    trackingRows.Select(x => new ErpSerialPart(x.ShippedQuantity, x.SerialNo!)),
+                    allocations,
+                    warehouse.WarehouseCode,
+                    null,
+                    null);
+            }
+            else if (allocations.Count > 0)
+                lines.AddRange(allocations.Select(x => NewOrderLinkedLine(
+                    line.StockCodeSnapshot, x.Quantity, warehouse.WarehouseCode, null,
+                    null, line.YapCodeSnapshot, null, line.Description, x.OrderRow)));
+            else
+                lines.Add(NewLine(line.StockCodeSnapshot, quantity, warehouse.WarehouseCode,
+                    null, null, line.YapCodeSnapshot, null, null, line.Description));
+        }
+
+        var options = optionsAccessor.Value.Rest;
+        return NewRequest(
+            options.ShipmentDocumentType,
+            options.ShipmentSeries,
+            header.DocumentNo,
+            header.WaybillNo ?? header.DocumentNo,
+            header.DocumentDate,
+            header.ShippedAtUtc,
+            header.CustomerCodeSnapshot,
+            warehouse,
+            header.Description,
+            lines,
+            ResolveErpHeaderProjectCode(usedOrderRows),
+            ResolveErpDeliveryDate(usedOrderRows, header.DocumentDate));
+    }
+
+    internal static string ResolveWarehouseInboundErpDocumentNo(WarehouseInboundHeader header)
+    {
+        var documentNo = Clean(header.ElectronicWaybillNo) ?? Clean(header.WaybillNo);
+        if (documentNo is null)
+            throw AppException.Conflict(
+                "ERP ambar giriş belgesi için normal irsaliye veya e-irsaliye/GİB numarası zorunludur.");
+        return documentNo;
     }
 
     private NetsisItemSlipRequest NewRequest(
@@ -689,6 +996,24 @@ public sealed class ErpPostingService(
                     ?? throw AppException.NotFound("Sevk kaydı bulunamadı.");
                 entity.ErpIntegrationStatus = status;
                 unitOfWork.Repository<ShipmentHeader>().Update(entity);
+                break;
+            }
+            case ErpPostingSourceType.WarehouseInbound:
+            {
+                var entity = await unitOfWork.Repository<WarehouseInboundHeader>()
+                    .FindByIdAsync(sourceEntityId, true, cancellationToken)
+                    ?? throw AppException.NotFound("Ambar giriş kaydı bulunamadı.");
+                entity.ErpIntegrationStatus = status;
+                unitOfWork.Repository<WarehouseInboundHeader>().Update(entity);
+                break;
+            }
+            case ErpPostingSourceType.WarehouseOutbound:
+            {
+                var entity = await unitOfWork.Repository<WarehouseOutboundHeader>()
+                    .FindByIdAsync(sourceEntityId, true, cancellationToken)
+                    ?? throw AppException.NotFound("Ambar çıkış kaydı bulunamadı.");
+                entity.ErpIntegrationStatus = status;
+                unitOfWork.Repository<WarehouseOutboundHeader>().Update(entity);
                 break;
             }
             default:
@@ -884,18 +1209,306 @@ public sealed class ErpPostingService(
 
     private sealed record GoodsReceiptSerialPart(decimal Quantity, string SerialNo);
 
-    private static string? ResolveTransferOrderNo(WarehouseTransferHeader header, WarehouseTransferLine line)
+    private async Task<ErpOrderContext> BuildPurchaseOrderContextAsync(
+        IEnumerable<ErpSourceDocumentRef> sourceDocuments,
+        string customerCode,
+        string branchCode,
+        CancellationToken cancellationToken)
     {
-        var sourceId = line.Sources.OrderBy(x => x.Id).Select(x => x.WtSourceDocumentId).FirstOrDefault();
-        return header.SourceDocuments.FirstOrDefault(x => x.Id == sourceId)?.ExternalDocumentNo
-            ?? header.SourceDocuments.OrderBy(x => x.Id).Select(x => x.ExternalDocumentNo).FirstOrDefault();
+        var documents = sourceDocuments
+            .Where(x => !string.IsNullOrWhiteSpace(x.ExternalDocumentNo))
+            .ToDictionary(x => x.Id);
+        if (documents.Count == 0) return ErpOrderContext.Empty;
+        var rows = await goodsReceiptOrderSource.GetOpenLinesAsync(
+            string.Join(',', documents.Values.Select(x => x.ExternalDocumentNo).Distinct(StringComparer.OrdinalIgnoreCase)),
+            customerCode,
+            branchCode,
+            cancellationToken);
+        return new ErpOrderContext(
+            documents,
+            rows.Select(x => new ErpOrderRow(
+                x.OrderNumber,
+                x.OrderId.ToString(),
+                x.OrderLineSequence,
+                x.StockCode ?? string.Empty,
+                x.YapCode,
+                x.CustomerCode,
+                x.ProjectCode,
+                x.OrderDate,
+                x.DeliveryDate,
+                x.NetUnitPrice,
+                x.GrossUnitPrice,
+                x.RemainingQuantity)));
     }
 
-    private static string? ResolveShipmentOrderNo(ShipmentHeader header, ShipmentLine line)
+    private async Task<ErpOrderContext> BuildTransferOrderContextAsync(
+        WarehouseTransferHeader header,
+        CancellationToken cancellationToken)
     {
-        var sourceId = line.Sources.OrderBy(x => x.Id).Select(x => x.ShipmentSourceDocumentId).FirstOrDefault();
-        return header.SourceDocuments.FirstOrDefault(x => x.Id == sourceId)?.ExternalDocumentNo
-            ?? header.SourceDocuments.OrderBy(x => x.Id).Select(x => x.ExternalDocumentNo).FirstOrDefault();
+        var documents = header.SourceDocuments
+            .Where(x => x.SourceSystem == WarehouseOperationSourceSystem.Netsis)
+            .Select(x => new ErpSourceDocumentRef(x.Id, x.ExternalDocumentNo))
+            .Where(x => !string.IsNullOrWhiteSpace(x.ExternalDocumentNo))
+            .ToDictionary(x => x.Id);
+        if (documents.Count == 0) return ErpOrderContext.Empty;
+        var rows = await netsisReadService.GetWarehouseTransferOpenOrderLinesAsync(
+            string.Join(',', documents.Values.Select(x => x.ExternalDocumentNo).Distinct(StringComparer.OrdinalIgnoreCase)),
+            header.BranchCode,
+            cancellationToken);
+        return new ErpOrderContext(
+            documents,
+            rows.Select(x => new ErpOrderRow(
+                x.OrderNumber,
+                x.OrderId.ToString(),
+                x.OrderLineSequence,
+                x.StockCode ?? string.Empty,
+                x.YapCode,
+                x.CustomerCode,
+                x.ProjectCode,
+                x.OrderDate,
+                x.DeliveryDate,
+                x.NetUnitPrice ?? 0,
+                x.GrossUnitPrice ?? 0,
+                x.RemainingQuantity ?? 0)));
+    }
+
+    private async Task<ErpOrderContext> BuildShipmentOrderContextAsync(
+        IEnumerable<ErpSourceDocumentRef> sourceDocuments,
+        string branchCode,
+        string customerCode,
+        CancellationToken cancellationToken)
+    {
+        var documents = sourceDocuments
+            .Where(x => !string.IsNullOrWhiteSpace(x.ExternalDocumentNo))
+            .ToDictionary(x => x.Id);
+        if (documents.Count == 0) return ErpOrderContext.Empty;
+        var rows = await netsisReadService.GetShipmentOpenOrderLinesAsync(
+            string.Join(',', documents.Values.Select(x => x.ExternalDocumentNo).Distinct(StringComparer.OrdinalIgnoreCase)),
+            branchCode,
+            cancellationToken);
+        var invalidCustomer = rows.FirstOrDefault(x =>
+            !string.Equals(Clean(x.CustomerCode), Clean(customerCode), StringComparison.OrdinalIgnoreCase));
+        if (invalidCustomer is not null)
+            throw AppException.Conflict(
+                $"{invalidCustomer.OrderNumber} numaralı sipariş ERP belgesindeki {customerCode} carisine ait değildir.");
+        return new ErpOrderContext(
+            documents,
+            rows.Select(x => new ErpOrderRow(
+                x.OrderNumber,
+                x.OrderId.ToString(),
+                x.OrderLineSequence,
+                x.StockCode ?? string.Empty,
+                x.YapCode,
+                x.CustomerCode,
+                x.ProjectCode,
+                x.OrderDate,
+                x.DeliveryDate,
+                x.NetUnitPrice ?? 0,
+                x.GrossUnitPrice ?? 0,
+                x.RemainingQuantity ?? 0)));
+    }
+
+    private static IReadOnlyList<ErpOrderAllocation> AllocateOrderLinkedLine(
+        string stockCode,
+        string? yapCode,
+        decimal quantity,
+        IEnumerable<ErpLineSourceRef> sourceRows,
+        ErpOrderContext context)
+    {
+        var sources = sourceRows.Where(x => x.AllocatedQuantity > 0).ToList();
+        if (sources.Count == 0) return [];
+        if (context.Documents.Count == 0)
+            throw AppException.Conflict(
+                $"{stockCode} için Netsis sipariş kaynağı kayıtlı ancak canlı sipariş bağlamı kurulamadı.");
+
+        var candidates = sources.Select(source =>
+        {
+            if (!context.Documents.TryGetValue(source.SourceDocumentId, out var document))
+                throw AppException.Conflict($"{stockCode} sipariş kaynak belgesi bulunamadı.");
+            var row = context.Resolve(document.ExternalDocumentNo, source.ExternalLineId);
+            if (!string.Equals(
+                    OrderAllocationKey(stockCode, yapCode),
+                    OrderAllocationKey(row.StockCode, row.YapCode),
+                    StringComparison.OrdinalIgnoreCase))
+                throw AppException.Conflict(
+                    $"{document.ExternalDocumentNo}/{source.ExternalLineId} Netsis sipariş satırı stok veya yapı koduyla eşleşmiyor.");
+            return new ErpAllocationCandidate(row, source.AllocatedQuantity);
+        })
+        .OrderBy(x => x.Row.OrderDate ?? DateTime.MaxValue)
+        .ThenBy(x => x.Row.OrderNumber, StringComparer.OrdinalIgnoreCase)
+        .ThenBy(x => x.Row.OrderLineSequence)
+        .ThenBy(x => x.Row.DeliveryDate ?? DateTime.MaxValue)
+        .ToList();
+
+        var remaining = quantity;
+        var allocations = new List<ErpOrderAllocation>();
+        foreach (var candidate in candidates)
+        {
+            if (remaining <= 0) break;
+            var liveRemaining = context.RemainingByRow.GetValueOrDefault(candidate.Row.Key);
+            var available = Math.Min(candidate.AllocatedQuantity, liveRemaining);
+            if (available <= 0) continue;
+            var allocated = Math.Min(remaining, available);
+            allocations.Add(new ErpOrderAllocation(candidate.Row, allocated));
+            context.RemainingByRow[candidate.Row.Key] = liveRemaining - allocated;
+            remaining -= allocated;
+        }
+
+        if (remaining > 0)
+            throw AppException.Conflict(
+                $"{stockCode} için işlenen {quantity} miktarın {remaining} kadarı güncel Netsis sipariş satırlarına bağlanamadı. " +
+                "Bağlantısız ERP belgesi gönderilmedi.");
+        return allocations;
+    }
+
+    private static NetsisItemSlipLine NewOrderLinkedLine(
+        string stockCode,
+        decimal quantity,
+        int? warehouseCode,
+        int? sourceWarehouseCode,
+        int? targetWarehouseCode,
+        string? yapCode,
+        string? serialNo,
+        string? description,
+        ErpOrderRow orderRow) =>
+        NewLine(
+            stockCode,
+            quantity,
+            warehouseCode,
+            sourceWarehouseCode,
+            targetWarehouseCode,
+            yapCode,
+            serialNo,
+            orderRow.OrderNumber,
+            description,
+            orderRow.NetUnitPrice,
+            orderRow.GrossUnitPrice,
+            orderRow.ProjectCode,
+            orderRow.OrderLineSequence);
+
+    private static void AddSerialOrderLines(
+        ICollection<NetsisItemSlipLine> target,
+        string stockCode,
+        string? yapCode,
+        string? description,
+        IEnumerable<ErpSerialPart> serialParts,
+        IReadOnlyList<ErpOrderAllocation> allocations,
+        int? warehouseCode,
+        int? sourceWarehouseCode,
+        int? targetWarehouseCode)
+    {
+        if (allocations.Count == 0)
+        {
+            foreach (var serial in serialParts)
+                target.Add(NewLine(
+                    stockCode, serial.Quantity, warehouseCode, sourceWarehouseCode, targetWarehouseCode,
+                    yapCode, serial.SerialNo, null, description));
+            return;
+        }
+
+        var allocationIndex = 0;
+        var allocationRemaining = allocations[0].Quantity;
+        foreach (var serial in serialParts)
+        {
+            var serialRemaining = serial.Quantity;
+            while (serialRemaining > 0)
+            {
+                var allocation = allocations[allocationIndex];
+                var part = Math.Min(serialRemaining, allocationRemaining);
+                target.Add(NewOrderLinkedLine(
+                    stockCode, part, warehouseCode, sourceWarehouseCode, targetWarehouseCode,
+                    yapCode, serial.SerialNo, description, allocation.OrderRow));
+                serialRemaining -= part;
+                allocationRemaining -= part;
+                if (allocationRemaining == 0 && allocationIndex + 1 < allocations.Count)
+                {
+                    allocationIndex++;
+                    allocationRemaining = allocations[allocationIndex].Quantity;
+                }
+            }
+        }
+    }
+
+    private static string ResolveErpHeaderProjectCode(IEnumerable<ErpOrderRow> rows)
+    {
+        var values = rows.Select(x => Clean(x.ProjectCode))
+            .Where(x => x is not null)
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return values.Count == 1 ? values[0] : NetsisItemSlipDefaults.DefaultProjectCode;
+    }
+
+    private static DateTime? ResolveErpDeliveryDate(IEnumerable<ErpOrderRow> rows, DateOnly fallback)
+    {
+        var list = rows.ToList();
+        if (list.Count == 0) return null;
+        return list.Where(x => x.DeliveryDate.HasValue)
+            .Select(x => x.DeliveryDate!.Value)
+            .OrderBy(x => x)
+            .Cast<DateTime?>()
+            .FirstOrDefault()
+            ?? (fallback == default ? DateTime.Now : fallback.ToDateTime(TimeOnly.MinValue));
+    }
+
+    private sealed record ErpSourceDocumentRef(long Id, string ExternalDocumentNo);
+    private sealed record ErpLineSourceRef(
+        long SourceDocumentId,
+        string ExternalLineId,
+        string ExternalStockCode,
+        string? ExternalYapCode,
+        decimal AllocatedQuantity);
+    private sealed record ErpSerialPart(decimal Quantity, string SerialNo);
+    private sealed record ErpOrderAllocation(ErpOrderRow OrderRow, decimal Quantity);
+    private sealed record ErpAllocationCandidate(ErpOrderRow Row, decimal AllocatedQuantity);
+    private sealed record ErpOrderRow(
+        string OrderNumber,
+        string ExternalLineId,
+        int OrderLineSequence,
+        string StockCode,
+        string? YapCode,
+        string? CustomerCode,
+        string? ProjectCode,
+        DateTime? OrderDate,
+        DateTime? DeliveryDate,
+        decimal NetUnitPrice,
+        decimal GrossUnitPrice,
+        decimal RemainingQuantity)
+    {
+        public string Key => $"{OrderNumber.Trim().ToUpperInvariant()}\u001F{ExternalLineId.Trim().ToUpperInvariant()}";
+    }
+
+    private sealed class ErpOrderContext
+    {
+        public static ErpOrderContext Empty { get; } =
+            new(new Dictionary<long, ErpSourceDocumentRef>(), []);
+        public IReadOnlyDictionary<long, ErpSourceDocumentRef> Documents { get; }
+        public IReadOnlySet<long> DocumentIds { get; }
+        private IReadOnlyDictionary<string, ErpOrderRow> RowsByKey { get; }
+        public Dictionary<string, decimal> RemainingByRow { get; }
+
+        public ErpOrderContext(
+            IReadOnlyDictionary<long, ErpSourceDocumentRef> documents,
+            IEnumerable<ErpOrderRow> rows)
+        {
+            var materializedRows = rows.ToList();
+            Documents = documents;
+            DocumentIds = documents.Keys.ToHashSet();
+            RowsByKey = materializedRows.ToDictionary(x => x.Key, StringComparer.OrdinalIgnoreCase);
+            RemainingByRow = materializedRows.ToDictionary(
+                x => x.Key,
+                x => x.RemainingQuantity,
+                StringComparer.OrdinalIgnoreCase);
+        }
+
+        public ErpOrderRow Resolve(string orderNumber, string externalLineId)
+        {
+            var key = $"{orderNumber.Trim().ToUpperInvariant()}\u001F{externalLineId.Trim().ToUpperInvariant()}";
+            if (RowsByKey.TryGetValue(key, out var row) && row.OrderLineSequence > 0)
+                return row;
+            throw AppException.Conflict(
+                $"{orderNumber}/{externalLineId} sipariş satırı Netsis'te açık ve geçerli bir SIPKONT satırı olarak doğrulanamadı.");
+        }
     }
 
     private static int ParseBranchCode(string value) =>

@@ -75,7 +75,9 @@ public sealed record ErpCancellationResult(
 public interface IErpPostingService
 {
     Task<ErpPostingResult> PostGoodsReceiptAsync(long id, Guid idempotencyKey, long userId, CancellationToken cancellationToken);
+    Task<ErpPostingResult> PostWarehouseInboundAsync(long id, Guid idempotencyKey, long userId, CancellationToken cancellationToken);
     Task<ErpPostingResult> PostWarehouseTransferAsync(long id, Guid idempotencyKey, long userId, CancellationToken cancellationToken);
+    Task<ErpPostingResult> PostWarehouseOutboundAsync(long id, Guid idempotencyKey, long userId, CancellationToken cancellationToken);
     Task<ErpPostingResult> PostShipmentAsync(long id, Guid idempotencyKey, long userId, CancellationToken cancellationToken);
     Task<ErpPostingResult> GetAsync(ErpPostingSourceType sourceType, long sourceEntityId, CancellationToken cancellationToken);
     Task<ErpPostingResult> ReconcileAsync(

@@ -68,6 +68,32 @@ public sealed class ErpIntegrationController(
             "Sevk ERP iptal süreci işlendi."));
     }
 
+    [HttpPost("api/warehouse-inbounds/{id:long}/erp/cancel")]
+    public async Task<IActionResult> CancelWarehouseInbound(
+        long id,
+        CancelErpDocumentRequest request,
+        CancellationToken cancellationToken)
+    {
+        await Require("WMS.WAREHOUSE_INBOUND.CANCEL", cancellationToken);
+        return Ok(ApiResponse<ErpCancellationResult>.Ok(
+            await cancellationService.CancelAsync(
+                ErpPostingSourceType.WarehouseInbound, id, request, CurrentUserId(), cancellationToken),
+            "Ambar giriş ERP iptal süreci işlendi."));
+    }
+
+    [HttpPost("api/warehouse-outbounds/{id:long}/erp/cancel")]
+    public async Task<IActionResult> CancelWarehouseOutbound(
+        long id,
+        CancelErpDocumentRequest request,
+        CancellationToken cancellationToken)
+    {
+        await Require("WMS.WAREHOUSE_OUTBOUND.CANCEL", cancellationToken);
+        return Ok(ApiResponse<ErpCancellationResult>.Ok(
+            await cancellationService.CancelAsync(
+                ErpPostingSourceType.WarehouseOutbound, id, request, CurrentUserId(), cancellationToken),
+            "Ambar çıkış ERP iptal süreci işlendi."));
+    }
+
     [HttpGet("api/erp-cancellations/{sourceType}/{sourceEntityId:long}")]
     public async Task<IActionResult> GetCancellation(
         ErpPostingSourceType sourceType,
@@ -120,6 +146,30 @@ public sealed class ErpIntegrationController(
         return Ok(ApiResponse<ErpPostingResult>.Ok(result, ResolveMessage(result)));
     }
 
+    [HttpPost("api/warehouse-inbounds/{id:long}/erp/post")]
+    public async Task<IActionResult> PostWarehouseInbound(
+        long id,
+        ErpPostRequest request,
+        CancellationToken cancellationToken)
+    {
+        await Require("WMS.WAREHOUSE_INBOUND.COMPLETE", cancellationToken);
+        var result = await postingService.PostWarehouseInboundAsync(
+            id, request.IdempotencyKey, CurrentUserId(), cancellationToken);
+        return Ok(ApiResponse<ErpPostingResult>.Ok(result, ResolveMessage(result)));
+    }
+
+    [HttpPost("api/warehouse-outbounds/{id:long}/erp/post")]
+    public async Task<IActionResult> PostWarehouseOutbound(
+        long id,
+        ErpPostRequest request,
+        CancellationToken cancellationToken)
+    {
+        await Require("WMS.WAREHOUSE_OUTBOUND.OPERATE", cancellationToken);
+        var result = await postingService.PostWarehouseOutboundAsync(
+            id, request.IdempotencyKey, CurrentUserId(), cancellationToken);
+        return Ok(ApiResponse<ErpPostingResult>.Ok(result, ResolveMessage(result)));
+    }
+
     [HttpGet("api/erp-postings/{sourceType}/{sourceEntityId:long}")]
     public async Task<IActionResult> Get(
         ErpPostingSourceType sourceType,
@@ -168,6 +218,8 @@ public sealed class ErpIntegrationController(
             ErpPostingSourceType.GoodsReceipt => "WMS.GOODS_RECEIPT.VIEW",
             ErpPostingSourceType.WarehouseTransfer => "WMS.WAREHOUSE_TRANSFER.VIEW",
             ErpPostingSourceType.Shipment => "WMS.SHIPPING.VIEW",
+            ErpPostingSourceType.WarehouseInbound => "WMS.WAREHOUSE_INBOUND.VIEW",
+            ErpPostingSourceType.WarehouseOutbound => "WMS.WAREHOUSE_OUTBOUND.VIEW",
             _ => throw AppException.BadRequest("Desteklenmeyen ERP kaynak tipi.")
         };
         await Require(code, cancellationToken);
@@ -182,6 +234,8 @@ public sealed class ErpIntegrationController(
             ErpPostingSourceType.GoodsReceipt => "WMS.GOODS_RECEIPT.ERP_RETRY",
             ErpPostingSourceType.WarehouseTransfer => "WMS.WAREHOUSE_TRANSFER.APPROVE",
             ErpPostingSourceType.Shipment => "WMS.SHIPPING.APPROVE",
+            ErpPostingSourceType.WarehouseInbound => "WMS.WAREHOUSE_INBOUND.COMPLETE",
+            ErpPostingSourceType.WarehouseOutbound => "WMS.WAREHOUSE_OUTBOUND.APPROVE",
             _ => throw AppException.BadRequest("Desteklenmeyen ERP kaynak tipi.")
         };
         await Require(code, cancellationToken);

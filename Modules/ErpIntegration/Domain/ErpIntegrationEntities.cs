@@ -6,7 +6,9 @@ public enum ErpPostingSourceType
 {
     GoodsReceipt = 1,
     WarehouseTransfer = 2,
-    Shipment = 3
+    Shipment = 3,
+    WarehouseInbound = 4,
+    WarehouseOutbound = 5
 }
 
 public enum ErpPostingStatus

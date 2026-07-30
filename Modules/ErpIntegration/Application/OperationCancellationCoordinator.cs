@@ -73,12 +73,20 @@ public sealed class OperationCancellationCoordinator(
         var route = OperationCancellationPolicy.Decide(
             header.ErpIntegrationStatus,
             header.Status == WarehouseOperationStatus.Cancelled,
-            erpCancellationSupported: false);
+            erpCancellationSupported: true);
 
         if (route == OperationCancellationRoute.AlreadyCancelled)
             return Already("WarehouseInbound", header.Id, header.DocumentNo, header.ErpIntegrationStatus);
         if (route == OperationCancellationRoute.ManualReconciliationRequired)
-            throw ReconciliationRequired("ambar giriş", header.ErpIntegrationStatus, erpCancellationSupported: false);
+            throw ReconciliationRequired("ambar giriş", header.ErpIntegrationStatus, erpCancellationSupported: true);
+        if (route == OperationCancellationRoute.ErpCompensation)
+            return await CancelErpAsync(
+                ErpPostingSourceType.WarehouseInbound,
+                header.Id,
+                request.IdempotencyKey,
+                request.Reason!,
+                userId,
+                cancellationToken);
 
         var result = await warehouseInbounds.CancelAsync(id, request, userId, cancellationToken);
         return Local("WarehouseInbound", result.Id, result.DocumentNo, result.Status.ToString(),
@@ -129,12 +137,20 @@ public sealed class OperationCancellationCoordinator(
         var route = OperationCancellationPolicy.Decide(
             header.ErpIntegrationStatus,
             header.Status == WarehouseOutboundStatus.Cancelled,
-            erpCancellationSupported: false);
+            erpCancellationSupported: true);
 
         if (route == OperationCancellationRoute.AlreadyCancelled)
             return Already("WarehouseOutbound", header.Id, header.DocumentNo, header.ErpIntegrationStatus);
         if (route == OperationCancellationRoute.ManualReconciliationRequired)
-            throw ReconciliationRequired("ambar çıkış", header.ErpIntegrationStatus, erpCancellationSupported: false);
+            throw ReconciliationRequired("ambar çıkış", header.ErpIntegrationStatus, erpCancellationSupported: true);
+        if (route == OperationCancellationRoute.ErpCompensation)
+            return await CancelErpAsync(
+                ErpPostingSourceType.WarehouseOutbound,
+                header.Id,
+                request.IdempotencyKey,
+                request.Reason!,
+                userId,
+                cancellationToken);
 
         var result = await warehouseOutbounds.CancelAsync(id, request, userId, cancellationToken);
         return Local("WarehouseOutbound", result.WarehouseOutboundId, result.DocumentNo, result.Status,
