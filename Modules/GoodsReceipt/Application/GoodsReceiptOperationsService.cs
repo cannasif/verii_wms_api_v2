@@ -346,14 +346,16 @@ public sealed class GoodsReceiptOperationsService(
                 var lineRequiresQuality = RequiresQualityForLine(
                     qualityAlreadyApproved, resolved[input.StockId]);
                 var lineLocationId = input.ReceivingLocationId ?? request.ReceivingLocationId;
+                var locationPolicy = GoodsReceiptLocationPolicy.ResolveSelectionPolicy(
+                    policy.BlockPutawayUntilQualityDecision);
                 if (!GoodsReceiptLocationPolicy.IsAllowedForReceiptLine(
-                        policy.LocationSelectionPolicy,
+                        locationPolicy,
                         lineLocations[lineLocationId],
                         warehouse.Id,
                         lineRequiresQuality,
                         policy.BlockPutawayUntilQualityDecision))
                     throw AppException.BadRequest(
-                        $"{stocks[input.StockId].ErpStockCode}: {LocationPolicyError(policy.LocationSelectionPolicy)}");
+                        $"{stocks[input.StockId].ErpStockCode}: {LocationPolicyError(locationPolicy)}");
             }
             ValidateQualityReceivingLocations(
                 requiresQuality,

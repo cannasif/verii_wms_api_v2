@@ -120,14 +120,16 @@ public sealed class GoodsReceiptService(
             foreach (var item in sourceSelected)
             {
                 var stock = stockByCode[item.Source.StockCode!];
+                var locationPolicy = GoodsReceiptLocationPolicy.ResolveSelectionPolicy(
+                    receiptPolicy.BlockPutawayUntilQualityDecision);
                 if (!GoodsReceiptLocationPolicy.IsAllowedForReceiptLine(
-                        receiptPolicy.LocationSelectionPolicy,
+                        locationPolicy,
                         receivingLocations[item.Request.ReceivingLocationId],
                         item.Request.TargetWarehouseId,
                         qualityPolicies[stock.Id].InspectionMode != QualityInspectionMode.NoCheck,
                         receiptPolicy.BlockPutawayUntilQualityDecision))
                     throw AppException.BadRequest(
-                        $"{stock.ErpStockCode}: {GoodsReceiptOperationsService.LocationPolicyError(receiptPolicy.LocationSelectionPolicy)}");
+                        $"{stock.ErpStockCode}: {GoodsReceiptOperationsService.LocationPolicyError(locationPolicy)}");
             }
             GoodsReceiptOperationsService.ValidateQualityReceivingLocations(
                 requiresQuality,

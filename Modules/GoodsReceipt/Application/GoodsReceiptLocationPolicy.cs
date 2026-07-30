@@ -5,6 +5,12 @@ namespace verii_wms_api_v2.Modules.GoodsReceipt.Application;
 
 internal static class GoodsReceiptLocationPolicy
 {
+    internal static GoodsReceiptLocationSelectionPolicy ResolveSelectionPolicy(
+        bool blockPutawayUntilQualityDecision) =>
+        blockPutawayUntilQualityDecision
+            ? GoodsReceiptLocationSelectionPolicy.ReceivingOrStagingOnly
+            : GoodsReceiptLocationSelectionPolicy.AnyActiveWarehouseLocation;
+
     internal static bool IsAllowed(
         GoodsReceiptLocationSelectionPolicy policy,
         WarehouseLocation location,

@@ -175,8 +175,10 @@ public sealed class SteelVehicleAcceptanceService(
                 foreach (var line in lines)
                 {
                     var location = locations[plateRequests[line.Id].ReceivingLocationId];
+                    var locationPolicy = GoodsReceiptLocationPolicy.ResolveSelectionPolicy(
+                        receiptPolicy.BlockPutawayUntilQualityDecision);
                     if (!GoodsReceiptLocationPolicy.IsAllowedForReceiptLine(
-                            receiptPolicy.LocationSelectionPolicy,
+                            locationPolicy,
                             location,
                             line.TargetWarehouseId,
                             requiresQuality: false,

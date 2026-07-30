@@ -9,6 +9,19 @@ namespace verii_wms_api_v2.QueryTests;
 public sealed class GoodsReceiptDocumentValidationTests
 {
     [Theory]
+    [InlineData(true, GoodsReceiptLocationSelectionPolicy.ReceivingOrStagingOnly)]
+    [InlineData(false, GoodsReceiptLocationSelectionPolicy.AnyActiveWarehouseLocation)]
+    public void Putaway_block_is_the_single_source_for_location_selection(
+        bool blockPutawayUntilQualityDecision,
+        GoodsReceiptLocationSelectionPolicy expected)
+    {
+        Assert.Equal(
+            expected,
+            GoodsReceiptLocationPolicy.ResolveSelectionPolicy(
+                blockPutawayUntilQualityDecision));
+    }
+
+    [Theory]
     [InlineData(LocationTypes.Receiving, true)]
     [InlineData(LocationTypes.Staging, true)]
     [InlineData(LocationTypes.Rack, false)]
