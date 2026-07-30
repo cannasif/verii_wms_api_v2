@@ -98,6 +98,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<GoodsReceiptTaskAssignment> GoodsReceiptTaskAssignments => Set<GoodsReceiptTaskAssignment>();
     public DbSet<GoodsReceiptLabelBatch> GoodsReceiptLabelBatches => Set<GoodsReceiptLabelBatch>();
     public DbSet<GoodsReceiptLabel> GoodsReceiptLabels => Set<GoodsReceiptLabel>();
+    public DbSet<SupplierStockMapping> SupplierStockMappings => Set<SupplierStockMapping>();
     public DbSet<ELogoConnection> ELogoConnections => Set<ELogoConnection>();
     public DbSet<IncomingInvoiceHeader> IncomingInvoiceHeaders => Set<IncomingInvoiceHeader>();
     public DbSet<IncomingInvoiceLine> IncomingInvoiceLines => Set<IncomingInvoiceLine>();
@@ -262,6 +263,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new GoodsReceiptTaskAssignmentConfiguration());
         modelBuilder.ApplyConfiguration(new GoodsReceiptLabelBatchConfiguration());
         modelBuilder.ApplyConfiguration(new GoodsReceiptLabelConfiguration());
+        modelBuilder.ApplyConfiguration(new SupplierStockMappingConfiguration());
         modelBuilder.ApplyConfiguration(new ELogoConnectionConfiguration());
         modelBuilder.ApplyConfiguration(new IncomingInvoiceHeaderConfiguration());
         modelBuilder.ApplyConfiguration(new IncomingInvoiceLineConfiguration());
@@ -503,7 +505,10 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             new PermissionDefinition { Id=2300, BranchCode="0", Code="WMS.INCOMING_INVOICE.VIEW", Name="Gelen e-Fatura/e-Arşiv kayıtlarını görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2301, BranchCode="0", Code="WMS.INCOMING_INVOICE.IMPORT", Name="Gelen e-Fatura/e-Arşiv belgesi arşivle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2302, BranchCode="0", Code="WMS.INCOMING_INVOICE.CONNECTIONS.MANAGE", Name="eLogo bağlantılarını yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
-            new PermissionDefinition { Id=2303, BranchCode="0", Code="WMS.INCOMING_INVOICE.CREATE_GOODS_RECEIPT", Name="Faturadan mal kabul taslağı oluştur", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
+            new PermissionDefinition { Id=2303, BranchCode="0", Code="WMS.INCOMING_INVOICE.CREATE_GOODS_RECEIPT", Name="Faturadan mal kabul taslağı oluştur", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2304, BranchCode="0", Code="WMS.GOODS_RECEIPT.SUPPLIER_STOCK_MAPPING.VIEW", Name="Tedarikçi stok eşlemelerini görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2305, BranchCode="0", Code="WMS.GOODS_RECEIPT.SUPPLIER_STOCK_MAPPING.MANAGE", Name="Tedarikçi stok eşlemelerini yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2306, BranchCode="0", Code="WMS.INCOMING_INVOICE.OCR_IMPORT", Name="Fatura belgesini OCR ile ön incelemeye al", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionDefinition>().HasData(
             new PermissionDefinition { Id=2400, BranchCode="0", Code="WMS.PRODUCTION_TRANSFER.VIEW", Name="Üretim transferlerini görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2401, BranchCode="0", Code="WMS.PRODUCTION_TRANSFER.CREATE", Name="Üretim transferi oluştur", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
@@ -548,7 +553,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2100,9).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2110,9).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2200,8).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
-        modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2300,4).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
+        modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2300,7).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2400,9).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2410,9).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2420,5).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));

@@ -54,6 +54,52 @@ public sealed class IncomingInvoicesController(
         return File(file.Content, file.ContentType, file.FileName, enableRangeProcessing: true);
     }
 
+    [HttpPost("{id:long}/match")]
+    public async Task<IActionResult> Match(
+        long id,
+        MatchIncomingInvoiceRequest request,
+        CancellationToken ct)
+    {
+        await Require("WMS.INCOMING_INVOICE.IMPORT", ct);
+        var result = await service.MatchAsync(id, request, CurrentUserId(), ct);
+        return Ok(ApiResponse<IncomingInvoiceMatchResult>.Ok(
+            result,
+            result.UnmatchedLineCount == 0
+                ? "ERP tedarikçisi ve tüm fatura kalemleri doğrulandı."
+                : $"{result.UnmatchedLineCount} kalem için stok eşlemesi gerekiyor."));
+    }
+
+    [HttpGet("ocr/status")]
+    public async Task<IActionResult> GetOcrStatus(CancellationToken ct)
+    {
+        await Require("WMS.INCOMING_INVOICE.VIEW", ct);
+        return Ok(ApiResponse<IncomingInvoiceOcrStatus>.Ok(
+            await service.GetOcrStatusAsync(ct)));
+    }
+
+    [HttpPost("ocr/import")]
+    [RequestSizeLimit(25 * 1024 * 1024)]
+    public async Task<IActionResult> ImportOcr(
+        [FromForm] string branchCode,
+        [FromForm] long supplierId,
+        [FromForm] IFormFile file,
+        CancellationToken ct)
+    {
+        await Require("WMS.INCOMING_INVOICE.OCR_IMPORT", ct);
+        if (file is null || file.Length == 0)
+            throw AppException.BadRequest("OCR belge dosyası zorunludur.");
+        await using var stream = file.OpenReadStream();
+        using var memory = new MemoryStream();
+        await stream.CopyToAsync(memory, ct);
+        var result = await service.ImportOcrAsync(new OcrInvoiceUpload(
+            branchCode, supplierId, file.FileName,
+            file.ContentType, memory.ToArray()), CurrentUserId(), ct);
+        return Ok(ApiResponse<IncomingInvoiceImportResult>.Ok(
+            result, result.Replayed
+                ? "Belge daha önce OCR arşivine alınmış."
+                : "OCR sonucu ön incelemeye alındı; mal kabul henüz oluşturulmadı."));
+    }
+
     [HttpPost("{id:long}/goods-receipts")]
     public async Task<IActionResult> CreateGoodsReceipt(
         long id,

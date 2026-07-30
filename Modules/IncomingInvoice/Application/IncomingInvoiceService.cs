@@ -12,6 +12,7 @@ using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
+using CustomerEntity = verii_wms_api_v2.Modules.Customer.Domain.Customer;
 
 namespace verii_wms_api_v2.Modules.IncomingInvoice.Application;
 
@@ -20,6 +21,8 @@ public sealed class IncomingInvoiceService(
     IELogoPostboxClient postboxClient,
     IIncomingInvoiceDocumentStorage documentStorage,
     IGoodsReceiptOperationsService goodsReceiptOperations,
+    ISupplierStockMappingService supplierStockMappings,
+    IIncomingInvoiceOcrClient ocrClient,
     IAuditLogWriter audit) : IIncomingInvoiceService
 {
     private IGenericRepository<IncomingInvoiceHeader> Headers =>
@@ -56,19 +59,35 @@ public sealed class IncomingInvoiceService(
                         && x.OwnerVkn == fetched.OwnerVkn && x.Uuid == fetched.Uuid, token);
                 if (raceWinner is not null) return ImportResult(raceWinner, replayed: true);
 
-                var stockCodes = fetched.Invoice.Lines
-                    .SelectMany(x => new[] { x.StockCode, x.BuyerStockCode })
+                var supplierTaxId = fetched.Invoice.Supplier.VknOrTckn?.Trim();
+                var inferredSupplierIds = string.IsNullOrWhiteSpace(supplierTaxId)
+                    ? []
+                    : await Headers.Query()
+                        .Where(x => x.BranchCode == branch
+                            && x.SupplierVknOrTckn == supplierTaxId
+                            && x.SupplierCustomerId != null)
+                        .Select(x => x.SupplierCustomerId!.Value)
+                        .Distinct()
+                        .Take(2)
+                        .ToListAsync(token);
+                var inferredSupplierId = inferredSupplierIds.Count == 1
+                    ? inferredSupplierIds[0]
+                    : (long?)null;
+                var buyerStockCodes = fetched.Invoice.Lines
+                    .Select(x => x.BuyerStockCode)
                     .Where(x => !string.IsNullOrWhiteSpace(x))
                     .Select(NormalizeCode).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
                 var stocks = await unitOfWork.Repository<StockEntity>().Query()
-                    .Where(x => x.BranchCode == branch && stockCodes.Contains(x.ErpStockCode))
+                    .Where(x => x.BranchCode == branch && buyerStockCodes.Contains(x.ErpStockCode))
                     .ToListAsync(token);
                 var stockMap = stocks.GroupBy(x => NormalizeCode(x.ErpStockCode))
-                    .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
+                    .Where(x => x.Count() == 1)
+                    .ToDictionary(x => x.Key, x => x.Single(), StringComparer.OrdinalIgnoreCase);
                 var now = DateTimeOffset.UtcNow;
                 var warnings = new List<string>();
                 if (!string.IsNullOrWhiteSpace(fetched.Warning)) warnings.Add(fetched.Warning);
                 var header = BuildHeader(branch, fetched, sourceHash, now);
+                header.SupplierCustomerId = inferredSupplierId;
                 await Headers.AddAsync(header, token);
                 await unitOfWork.SaveChangesAsync(token);
 
@@ -76,21 +95,27 @@ public sealed class IncomingInvoiceService(
                 for (var index = 0; index < fetched.Invoice.Lines.Count; index++)
                 {
                     var source = fetched.Invoice.Lines[index];
-                    var effectiveCode = FirstNonEmpty(source.StockCode, source.BuyerStockCode);
-                    stockMap.TryGetValue(NormalizeCode(effectiveCode), out var stock);
-                    var matchMessage = stock is null
-                        ? string.IsNullOrWhiteSpace(effectiveCode)
-                            ? "UBL kaleminde satıcı/alıcı stok kodu bulunmuyor."
-                            : $"{effectiveCode} stok kodu WMS stok aynasında bulunamadı."
-                        : null;
-                    if (matchMessage is not null) warnings.Add($"{index + 1}. kalem: {matchMessage}");
+                    SupplierStockResolution? resolution = null;
+                    if (inferredSupplierId.HasValue && !string.IsNullOrWhiteSpace(source.StockCode))
+                        resolution = await supplierStockMappings.ResolveAsync(
+                            branch, inferredSupplierId.Value, source.StockCode, token);
+                    stockMap.TryGetValue(NormalizeCode(source.BuyerStockCode), out var buyerStock);
+                    var stockId = resolution?.StockId ?? buyerStock?.Id;
+                    var matchMessage = stockId.HasValue
+                        ? resolution is not null
+                            ? "Tedarikçi stok eşlemesi uygulandı."
+                            : "UBL alıcı stok kodu WMS stok kartıyla eşleşti."
+                        : inferredSupplierId.HasValue
+                            ? $"{FirstNonEmpty(source.StockCode, source.BuyerStockCode)} için aktif tedarikçi stok eşlemesi bulunamadı."
+                            : "ERP tedarikçisi doğrulanmalı ve fatura kalemleri eşleştirilmelidir.";
+                    if (!stockId.HasValue) warnings.Add($"{index + 1}. kalem: {matchMessage}");
                     lineEntities.Add(new IncomingInvoiceLine
                     {
                         BranchCode = branch,
                         IncomingInvoiceId = header.Id,
                         LineNo = index + 1,
                         ExternalLineId = Limit(source.ExternalLineId, 50) ?? (index + 1).ToString(),
-                        StockCode = Limit(effectiveCode, 100) ?? string.Empty,
+                        StockCode = Limit(source.StockCode, 100) ?? string.Empty,
                         BuyerStockCode = Limit(source.BuyerStockCode, 100),
                         StockName = Limit(source.StockName, 500) ?? string.Empty,
                         Description = Limit(source.Description, 2000),
@@ -100,15 +125,23 @@ public sealed class IncomingInvoiceService(
                         LineExtensionAmount = source.LineExtensionAmount,
                         TaxRate = source.TaxRate,
                         TaxAmount = source.TaxAmount,
-                        StockId = stock?.Id,
-                        MatchStatus = stock is null
+                        StockId = stockId,
+                        SupplierStockMappingId = resolution?.MappingId,
+                        ConversionFactor = resolution?.ConversionFactor ?? 1m,
+                        MatchStatus = stockId is null
                             ? IncomingInvoiceLineMatchStatus.Unmatched
-                            : IncomingInvoiceLineMatchStatus.StockMatched,
+                            : IncomingInvoiceLineMatchStatus.Ready,
                         MatchMessage = matchMessage
                     });
                 }
                 await unitOfWork.Repository<IncomingInvoiceLine>().AddRangeAsync(lineEntities, token);
-                header.ArchiveStatus = IncomingInvoiceArchiveStatus.NeedsReview;
+                var readyForReceipt = inferredSupplierId.HasValue
+                    && lineEntities.All(x => x.StockId.HasValue);
+                header.ArchiveStatus = readyForReceipt
+                    ? IncomingInvoiceArchiveStatus.ReadyForReceipt
+                    : IncomingInvoiceArchiveStatus.NeedsReview;
+                if (!inferredSupplierId.HasValue)
+                    warnings.Add("ERP tedarikçisi kullanıcı tarafından doğrulanmalıdır.");
                 header.ValidationStatus = warnings.Count == 0
                     ? IncomingInvoiceValidationStatus.Parsed
                     : IncomingInvoiceValidationStatus.Warning;
@@ -183,7 +216,7 @@ public sealed class IncomingInvoiceService(
                     || (x.OrderReferenceNo != null && x.OrderReferenceNo.Contains(search))
                     || (x.DespatchReferenceNo != null && x.DespatchReferenceNo.Contains(search))))
             .Select(x => new IncomingInvoiceGridRow(
-                x.Id, x.BranchCode, x.Uuid, x.DocumentKind, x.InvoiceNo, x.IssueDate,
+                x.Id, x.BranchCode, x.Uuid, x.DocumentKind, x.CaptureSource, x.InvoiceNo, x.IssueDate,
                 x.SupplierVknOrTckn, x.SupplierName, x.CurrencyCode, x.PayableAmount,
                 lines.Count(line => line.IncomingInvoiceId == x.Id),
                 lines.Count(line => line.IncomingInvoiceId == x.Id && line.StockId != null),
@@ -208,12 +241,18 @@ public sealed class IncomingInvoiceService(
             ?? throw AppException.NotFound("Gelen fatura arşiv kaydı bulunamadı.");
         var invoiceLineLinks = unitOfWork
             .Repository<IncomingInvoiceGoodsReceiptLineLink>().Query();
+        var stocks = unitOfWork.Repository<StockEntity>().Query();
         var lines = await unitOfWork.Repository<IncomingInvoiceLine>().Query()
             .Where(x => x.IncomingInvoiceId == id).OrderBy(x => x.LineNo)
             .Select(x => new IncomingInvoiceLineRow(
                 x.Id, x.LineNo, x.ExternalLineId, x.StockCode, x.BuyerStockCode,
                 x.StockName, x.Description, x.Quantity, x.UnitCode, x.UnitPrice,
                 x.LineExtensionAmount, x.TaxRate, x.TaxAmount, x.StockId,
+                x.SupplierStockMappingId, x.ConversionFactor, x.Quantity * x.ConversionFactor,
+                stocks.Where(stock => stock.Id == x.StockId).Select(stock => stock.ErpStockCode).FirstOrDefault(),
+                stocks.Where(stock => stock.Id == x.StockId).Select(stock => stock.StockName).FirstOrDefault(),
+                stocks.Where(stock => stock.Id == x.StockId).Select(stock => stock.BaseUnitCode).FirstOrDefault(),
+                x.RecognitionConfidence,
                 x.MatchStatus, x.MatchMessage,
                 invoiceLineLinks
                     .Where(link => link.IncomingInvoiceLineId == x.Id)
@@ -237,8 +276,14 @@ public sealed class IncomingInvoiceService(
                 link.Id, link.GoodsReceiptId, receipt.DocumentNo, link.LinkedQuantity,
                 link.LinkedAtUtc, link.LinkedBy))
             .ToListAsync(ct);
+        var supplierCustomer = header.SupplierCustomerId.HasValue
+            ? await unitOfWork.Repository<CustomerEntity>().Query()
+                .Where(x => x.Id == header.SupplierCustomerId.Value && x.BranchCode == branch)
+                .Select(x => new { x.CustomerCode, x.CustomerName })
+                .FirstOrDefaultAsync(ct)
+            : null;
         var grid = new IncomingInvoiceGridRow(
-            header.Id, header.BranchCode, header.Uuid, header.DocumentKind,
+            header.Id, header.BranchCode, header.Uuid, header.DocumentKind, header.CaptureSource,
             header.InvoiceNo, header.IssueDate, header.SupplierVknOrTckn, header.SupplierName,
             header.CurrencyCode, header.PayableAmount, lines.Count,
             lines.Count(x => x.StockId.HasValue), header.ArchiveStatus, header.ValidationStatus,
@@ -250,8 +295,10 @@ public sealed class IncomingInvoiceService(
             grid, header.ProfileId, header.InvoiceTypeCode, header.IssueTime,
             header.OrderReferenceNo, header.DespatchReferenceNo, header.CustomerVknOrTckn,
             header.CustomerName, header.SupplierTaxOffice, header.SupplierCustomerId,
+            supplierCustomer?.CustomerCode, supplierCustomer?.CustomerName,
             header.LineExtensionAmount, header.TaxExclusiveAmount, header.TaxAmount,
             header.TaxInclusiveAmount, header.AllowanceTotalAmount, header.ValidationMessage,
+            header.RecognitionConfidence,
             header.SourceHash, header.LastSynchronizedAtUtc, lines, documents, goodsReceipts);
     }
 
@@ -272,6 +319,203 @@ public sealed class IncomingInvoiceService(
                 : "Faturanın UBL/XML belgesi arşivde bulunmuyor.");
         var stream = await documentStorage.OpenReadAsync(document.StoragePath, ct);
         return new IncomingInvoiceFile(stream, document.ContentType, document.FileName);
+    }
+
+    public async Task<IncomingInvoiceMatchResult> MatchAsync(
+        long id,
+        MatchIncomingInvoiceRequest request,
+        long actor,
+        CancellationToken ct = default)
+    {
+        var branch = ELogoConnectionService.NormalizeBranch(request.BranchCode);
+        if (request.SupplierId <= 0)
+            throw AppException.BadRequest("ERP tedarikçisi seçilmelidir.");
+        if (!await unitOfWork.Repository<CustomerEntity>().AnyAsync(
+                x => x.Id == request.SupplierId && x.BranchCode == branch, ct))
+            throw AppException.BadRequest("Seçilen tedarikçi giriş yapılan şubede bulunamadı.");
+
+        return await unitOfWork.ExecuteInTransactionAsync(async token =>
+        {
+            var header = await Headers.Query(tracking: true)
+                .Include(x => x.Lines)
+                .FirstOrDefaultAsync(x => x.Id == id && x.BranchCode == branch, token)
+                ?? throw AppException.NotFound("Gelen fatura arşiv kaydı bulunamadı.");
+            var linkedLineIds = await unitOfWork.Repository<IncomingInvoiceGoodsReceiptLineLink>()
+                .Query().Where(x => x.IncomingInvoiceLine.Header.Id == id)
+                .Select(x => x.IncomingInvoiceLineId).Distinct().ToListAsync(token);
+            if (linkedLineIds.Count > 0 && header.SupplierCustomerId != request.SupplierId)
+                throw AppException.Conflict(
+                    "Mal kabule bağlanmış faturanın ERP tedarikçisi değiştirilemez.");
+
+            var buyerCodes = header.Lines
+                .Where(x => !linkedLineIds.Contains(x.Id) && x.BuyerStockCode != null)
+                .Select(x => NormalizeCode(x.BuyerStockCode)).Distinct().ToArray();
+            var buyerStockRows = request.AllowBuyerStockCodeFallback
+                ? await unitOfWork.Repository<StockEntity>().Query()
+                    .Where(x => x.BranchCode == branch && buyerCodes.Contains(x.ErpStockCode))
+                    .ToListAsync(token)
+                : [];
+            var buyerStocks = buyerStockRows
+                .GroupBy(x => NormalizeCode(x.ErpStockCode))
+                .Where(x => x.Count() == 1)
+                .ToDictionary(x => x.Key, x => x.Single(), StringComparer.OrdinalIgnoreCase);
+
+            foreach (var line in header.Lines.Where(x => !linkedLineIds.Contains(x.Id)))
+            {
+                var resolution = await supplierStockMappings.ResolveAsync(
+                    branch, request.SupplierId, line.StockCode, token);
+                buyerStocks.TryGetValue(NormalizeCode(line.BuyerStockCode), out var buyerStock);
+                line.SupplierStockMappingId = resolution?.MappingId;
+                line.StockId = resolution?.StockId ?? buyerStock?.Id;
+                line.ConversionFactor = resolution?.ConversionFactor ?? 1m;
+                line.MatchStatus = line.StockId.HasValue
+                    ? IncomingInvoiceLineMatchStatus.Ready
+                    : IncomingInvoiceLineMatchStatus.Unmatched;
+                line.MatchMessage = resolution is not null
+                    ? "Tedarikçi stok eşlemesi uygulandı."
+                    : buyerStock is not null
+                        ? "UBL alıcı stok kodu WMS stok kartıyla eşleşti."
+                        : "Aktif tedarikçi stok eşlemesi bulunamadı.";
+            }
+
+            header.SupplierCustomerId = request.SupplierId;
+            var matched = header.Lines.Count(x => x.StockId.HasValue);
+            header.ArchiveStatus = matched == header.Lines.Count
+                ? IncomingInvoiceArchiveStatus.ReadyForReceipt
+                : IncomingInvoiceArchiveStatus.NeedsReview;
+            header.ValidationStatus = matched == header.Lines.Count
+                ? IncomingInvoiceValidationStatus.Parsed
+                : IncomingInvoiceValidationStatus.Warning;
+            header.ValidationMessage = matched == header.Lines.Count
+                ? "ERP tedarikçisi ve tüm fatura kalemleri doğrulandı."
+                : $"{header.Lines.Count - matched} kalem için tedarikçi stok eşlemesi gerekiyor.";
+            header.UpdatedBy = actor;
+            header.UpdatedDate = DateTime.UtcNow;
+            await unitOfWork.SaveChangesAsync(token);
+            await audit.WriteAsync(new AuditLogWriteEntry(
+                "incoming-invoice.match", nameof(IncomingInvoiceHeader), header.Id.ToString(),
+                "Succeeded", "incoming-invoice",
+                NewValues: new { request.SupplierId, MatchedLineCount = matched, header.ArchiveStatus },
+                ChangedFields:
+                [
+                    "SupplierCustomerId", "Lines.StockId", "Lines.SupplierStockMappingId",
+                    "Lines.ConversionFactor", "ArchiveStatus", "ValidationStatus"
+                ]), token);
+            return new IncomingInvoiceMatchResult(
+                header.Id, request.SupplierId, header.Lines.Count, matched,
+                header.Lines.Count - matched, header.ArchiveStatus);
+        }, ct, IsolationLevel.Serializable);
+    }
+
+    public Task<IncomingInvoiceOcrStatus> GetOcrStatusAsync(
+        CancellationToken ct = default) => Task.FromResult(ocrClient.Status);
+
+    public async Task<IncomingInvoiceImportResult> ImportOcrAsync(
+        OcrInvoiceUpload upload,
+        long actor,
+        CancellationToken ct = default)
+    {
+        var branch = ELogoConnectionService.NormalizeBranch(upload.BranchCode);
+        if (!ocrClient.Status.IsConfigured)
+            throw AppException.Conflict(ocrClient.Status.Message);
+        if (upload.SupplierId <= 0 || upload.Content.Length == 0)
+            throw AppException.BadRequest("ERP tedarikçisi ve belge dosyası zorunludur.");
+        if (upload.Content.LongLength > ocrClient.Status.MaximumFileSizeBytes)
+            throw AppException.BadRequest("Belge OCR dosya boyutu sınırını aşıyor.");
+        var contentType = upload.ContentType.Split(';', 2)[0].Trim().ToLowerInvariant();
+        if (!ocrClient.Status.SupportedContentTypes.Contains(
+                contentType, StringComparer.OrdinalIgnoreCase))
+            throw AppException.BadRequest("OCR için PDF, PNG, JPEG veya TIFF dosyası yükleyin.");
+        ValidateOcrFileSignature(upload.Content, contentType);
+        if (!await unitOfWork.Repository<CustomerEntity>().AnyAsync(
+                x => x.Id == upload.SupplierId && x.BranchCode == branch, ct))
+            throw AppException.BadRequest("Seçilen tedarikçi giriş yapılan şubede bulunamadı.");
+
+        var sourceHash = Sha256(upload.Content);
+        var hashBytes = SHA256.HashData(upload.Content);
+        var uuid = new Guid(hashBytes[..16]);
+        var existing = await Headers.Query().Include(x => x.Lines).Include(x => x.Documents)
+            .FirstOrDefaultAsync(x => x.BranchCode == branch
+                && x.CaptureSource == IncomingInvoiceCaptureSource.Ocr
+                && x.SourceHash == sourceHash, ct);
+        if (existing is not null) return ImportResult(existing, true);
+
+        var analyzed = await ocrClient.AnalyzeAsync(upload.Content, contentType, ct);
+        if (analyzed.Invoice.Lines.Count == 0)
+            throw AppException.Conflict("Belgede fatura kalemi algılanamadı.");
+        if (analyzed.Invoice.Lines.Count > 500)
+            throw AppException.BadRequest("Tek OCR belgesinde en fazla 500 kalem desteklenir.");
+
+        var savedPaths = new List<string>();
+        try
+        {
+            return await unitOfWork.ExecuteInTransactionAsync(async token =>
+            {
+                var now = DateTimeOffset.UtcNow;
+                var invoice = analyzed.Invoice;
+                var header = BuildOcrHeader(
+                    branch, upload.SupplierId, uuid, invoice, sourceHash,
+                    analyzed.Confidence, now);
+                await Headers.AddAsync(header, token);
+                await unitOfWork.SaveChangesAsync(token);
+                var lines = new List<IncomingInvoiceLine>(invoice.Lines.Count);
+                for (var index = 0; index < invoice.Lines.Count; index++)
+                {
+                    var source = invoice.Lines[index];
+                    var resolution = await supplierStockMappings.ResolveAsync(
+                        branch, upload.SupplierId, source.StockCode, token);
+                    lines.Add(NewOcrLine(
+                        header, source, resolution,
+                        analyzed.LineConfidences.ElementAtOrDefault(index)));
+                }
+                await unitOfWork.Repository<IncomingInvoiceLine>().AddRangeAsync(lines, token);
+                var matched = lines.Count(x => x.StockId.HasValue);
+                header.ArchiveStatus = matched == lines.Count
+                    ? IncomingInvoiceArchiveStatus.ReadyForReceipt
+                    : IncomingInvoiceArchiveStatus.NeedsReview;
+                header.ValidationStatus = matched == lines.Count
+                    ? IncomingInvoiceValidationStatus.Parsed
+                    : IncomingInvoiceValidationStatus.Warning;
+                header.ValidationMessage = matched == lines.Count
+                    ? "OCR sonucu ve tedarikçi stok eşlemeleri kullanıcı onayına hazır."
+                    : $"{lines.Count - matched} OCR kalemi için tedarikçi stok eşlemesi gerekiyor.";
+
+                var path = await documentStorage.SaveAsync(header.Id, upload.Content, contentType, token);
+                savedPaths.Add(path);
+                var format = contentType == "application/pdf"
+                    ? IncomingInvoiceDocumentFormat.Pdf
+                    : IncomingInvoiceDocumentFormat.SourceImage;
+                var document = NewDocument(
+                    header, format, upload.FileName, contentType, path, upload.Content, now);
+                await unitOfWork.Repository<IncomingInvoiceDocument>().AddAsync(document, token);
+                await unitOfWork.SaveChangesAsync(token);
+                await audit.WriteAsync(new AuditLogWriteEntry(
+                    "incoming-invoice.ocr-import", nameof(IncomingInvoiceHeader),
+                    header.Id.ToString(), "Succeeded", "incoming-invoice",
+                    NewValues: new
+                    {
+                        header.InvoiceNo, upload.SupplierId, analyzed.ProviderOperationId,
+                        header.RecognitionConfidence, LineCount = lines.Count,
+                        MatchedLineCount = matched, header.SourceHash
+                    },
+                    ChangedFields:
+                    [
+                        "CaptureSource", "SupplierCustomerId", "RecognitionConfidence",
+                        "Lines", "Documents", "ArchiveStatus"
+                    ]), token);
+                header.Lines = lines;
+                header.Documents = [document];
+                return ImportResult(header, false);
+            }, ct);
+        }
+        catch
+        {
+            foreach (var path in savedPaths)
+            {
+                try { documentStorage.Delete(path); } catch { }
+            }
+            throw;
+        }
     }
 
     public Task<IncomingInvoiceGoodsReceiptResult> CreateGoodsReceiptAsync(
@@ -327,6 +571,16 @@ public sealed class IncomingInvoiceService(
             if (selectedLines.Any(x => !x.StockId.HasValue))
                 throw AppException.Conflict(
                     "ERP stok kartıyla eşleşmeyen fatura kalemi mal kabul emrine aktarılamaz.");
+            if (selectedLines.Any(x => x.ConversionFactor <= 0))
+                throw AppException.Conflict(
+                    "Fatura kalemlerinden birinin birim dönüşüm katsayısı geçersiz.");
+            var selectedStockIds = selectedLines.Select(x => x.StockId!.Value).Distinct().ToArray();
+            var systemStocks = await unitOfWork.Repository<StockEntity>().Query()
+                .Where(x => selectedStockIds.Contains(x.Id) && x.BranchCode == branch)
+                .ToDictionaryAsync(x => x.Id, token);
+            if (systemStocks.Count != selectedStockIds.Length)
+                throw AppException.Conflict(
+                    "Fatura kalemlerinden birinin WMS stok kartı artık aktif değil.");
 
             var selectedIds = selectedLines.Select(x => x.Id).ToArray();
             var alreadyLinked = await unitOfWork
@@ -376,8 +630,9 @@ public sealed class IncomingInvoiceService(
                 selectedLines.Select(line => new ManualGoodsReceiptLineRequest(
                     line.StockId!.Value,
                     line.YapCodeId,
-                    requestedById[line.Id].Quantity,
-                    string.IsNullOrWhiteSpace(line.UnitCode) ? "ADET" : line.UnitCode,
+                    ConvertToSystemQuantity(
+                        requestedById[line.Id].Quantity, line.ConversionFactor),
+                    systemStocks[line.StockId.Value].BaseUnitCode,
                     null,
                     null,
                     null,
@@ -522,6 +777,82 @@ public sealed class IncomingInvoiceService(
         };
     }
 
+    private static IncomingInvoiceHeader BuildOcrHeader(
+        string branch,
+        long supplierId,
+        Guid uuid,
+        ParsedIncomingInvoice invoice,
+        string sourceHash,
+        decimal? confidence,
+        DateTimeOffset now) => new()
+    {
+        BranchCode = branch,
+        CaptureSource = IncomingInvoiceCaptureSource.Ocr,
+        OwnerVkn = "OCR",
+        Uuid = uuid,
+        DocumentKind = IncomingInvoiceKind.EArchive,
+        ProfileId = Limit(invoice.ProfileId, 50),
+        InvoiceNo = Limit(
+            FirstNonEmpty(invoice.InvoiceNo, $"OCR-{uuid:N}"[..20]), 50)
+            ?? $"OCR-{uuid:N}"[..20],
+        InvoiceTypeCode = Limit(invoice.InvoiceTypeCode, 50) ?? "SATIS",
+        IssueDate = invoice.IssueDate,
+        IssueTime = invoice.IssueTime,
+        CurrencyCode = Limit(invoice.CurrencyCode, 3) ?? "TRY",
+        OrderReferenceNo = Limit(invoice.OrderReferenceNo, 100),
+        DespatchReferenceNo = Limit(invoice.DespatchReferenceNo, 100),
+        SupplierVknOrTckn = Limit(invoice.Supplier.VknOrTckn, 20) ?? string.Empty,
+        SupplierName = Limit(invoice.Supplier.Name, 300) ?? string.Empty,
+        SupplierTaxOffice = Limit(invoice.Supplier.TaxOffice, 100),
+        SupplierCustomerId = supplierId,
+        CustomerVknOrTckn = Limit(invoice.Customer.VknOrTckn, 20) ?? string.Empty,
+        CustomerName = Limit(invoice.Customer.Name, 300) ?? string.Empty,
+        LineExtensionAmount = invoice.LineExtensionAmount,
+        TaxExclusiveAmount = invoice.TaxExclusiveAmount,
+        TaxAmount = invoice.TaxAmount,
+        TaxInclusiveAmount = invoice.TaxInclusiveAmount,
+        AllowanceTotalAmount = invoice.AllowanceTotalAmount,
+        PayableAmount = invoice.PayableAmount,
+        ArchiveStatus = IncomingInvoiceArchiveStatus.NeedsReview,
+        ValidationStatus = IncomingInvoiceValidationStatus.Warning,
+        RecognitionConfidence = confidence,
+        SourceHash = sourceHash,
+        ImportedAtUtc = now,
+        LastSynchronizedAtUtc = now
+    };
+
+    private static IncomingInvoiceLine NewOcrLine(
+        IncomingInvoiceHeader header,
+        ParsedIncomingInvoiceLine source,
+        SupplierStockResolution? resolution,
+        decimal? confidence) => new()
+    {
+        BranchCode = header.BranchCode,
+        IncomingInvoiceId = header.Id,
+        LineNo = source.LineNo,
+        ExternalLineId = Limit(source.ExternalLineId, 50) ?? source.LineNo.ToString(),
+        StockCode = Limit(source.StockCode, 100) ?? string.Empty,
+        BuyerStockCode = Limit(source.BuyerStockCode, 100),
+        StockName = Limit(source.StockName, 500) ?? string.Empty,
+        Description = Limit(source.Description, 2000),
+        Quantity = source.Quantity,
+        UnitCode = Limit(source.UnitCode, 20) ?? string.Empty,
+        UnitPrice = source.UnitPrice,
+        LineExtensionAmount = source.LineExtensionAmount,
+        TaxRate = source.TaxRate,
+        TaxAmount = source.TaxAmount,
+        StockId = resolution?.StockId,
+        SupplierStockMappingId = resolution?.MappingId,
+        ConversionFactor = resolution?.ConversionFactor ?? 1m,
+        RecognitionConfidence = confidence,
+        MatchStatus = resolution is null
+            ? IncomingInvoiceLineMatchStatus.Unmatched
+            : IncomingInvoiceLineMatchStatus.Ready,
+        MatchMessage = resolution is null
+            ? "OCR stok kodu için aktif tedarikçi stok eşlemesi bulunamadı."
+            : "OCR stok koduna tedarikçi stok eşlemesi uygulandı."
+    };
+
     private static IncomingInvoiceDocument NewDocument(
         IncomingInvoiceHeader header,
         IncomingInvoiceDocumentFormat format,
@@ -553,6 +884,30 @@ public sealed class IncomingInvoiceService(
         : !string.IsNullOrWhiteSpace(second) ? second.Trim() : string.Empty;
     private static string NormalizeCode(string? value) =>
         string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim().ToUpperInvariant();
+    internal static decimal ConvertToSystemQuantity(
+        decimal supplierQuantity, decimal conversionFactor)
+    {
+        if (supplierQuantity <= 0 || conversionFactor <= 0)
+            throw AppException.BadRequest(
+                "Fatura miktarı ve dönüşüm katsayısı sıfırdan büyük olmalıdır.");
+        return supplierQuantity * conversionFactor;
+    }
+    internal static void ValidateOcrFileSignature(byte[] content, string contentType)
+    {
+        var valid = contentType.ToLowerInvariant() switch
+        {
+            "application/pdf" => content.AsSpan().StartsWith("%PDF-"u8),
+            "image/png" => content.AsSpan().StartsWith(
+                new byte[] { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A }),
+            "image/jpeg" => content.AsSpan().StartsWith(new byte[] { 0xFF, 0xD8, 0xFF }),
+            "image/tiff" => content.AsSpan().StartsWith(new byte[] { 0x49, 0x49, 0x2A, 0x00 })
+                || content.AsSpan().StartsWith(new byte[] { 0x4D, 0x4D, 0x00, 0x2A }),
+            _ => false
+        };
+        if (!valid)
+            throw AppException.BadRequest(
+                "Dosya içeriği bildirilen PDF/görsel türüyle uyuşmuyor.");
+    }
     private static string Sha256(byte[] value) =>
         Convert.ToHexString(SHA256.HashData(value));
     private static string HashRequest(CreateIncomingInvoiceGoodsReceiptRequest value) =>

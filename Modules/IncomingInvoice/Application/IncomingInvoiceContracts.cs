@@ -29,6 +29,7 @@ public sealed record ImportIncomingInvoiceRequest(
 
 public sealed record IncomingInvoiceGridRow(
     long Id, string BranchCode, Guid Uuid, IncomingInvoiceKind DocumentKind,
+    IncomingInvoiceCaptureSource CaptureSource,
     string InvoiceNo, DateOnly IssueDate, string SupplierVknOrTckn, string SupplierName,
     string CurrencyCode, decimal PayableAmount, int LineCount, int MatchedLineCount,
     IncomingInvoiceArchiveStatus ArchiveStatus, IncomingInvoiceValidationStatus ValidationStatus,
@@ -39,6 +40,9 @@ public sealed record IncomingInvoiceLineRow(
     long Id, int LineNo, string ExternalLineId, string StockCode, string? BuyerStockCode,
     string StockName, string? Description, decimal Quantity, string UnitCode, decimal UnitPrice,
     decimal LineExtensionAmount, decimal TaxRate, decimal TaxAmount, long? StockId,
+    long? SupplierStockMappingId, decimal ConversionFactor, decimal SystemQuantity,
+    string? SystemStockCode, string? SystemStockName, string? SystemUnitCode,
+    decimal? RecognitionConfidence,
     IncomingInvoiceLineMatchStatus MatchStatus, string? MatchMessage,
     decimal LinkedQuantity, decimal RemainingQuantity);
 
@@ -54,9 +58,11 @@ public sealed record IncomingInvoiceDetail(
     IncomingInvoiceGridRow Header, string? ProfileId, string InvoiceTypeCode,
     TimeOnly? IssueTime, string? OrderReferenceNo, string? DespatchReferenceNo,
     string CustomerVknOrTckn, string CustomerName, string? SupplierTaxOffice,
-    long? SupplierCustomerId, decimal LineExtensionAmount, decimal TaxExclusiveAmount,
+    long? SupplierCustomerId, string? SupplierCustomerCode, string? SupplierCustomerName,
+    decimal LineExtensionAmount, decimal TaxExclusiveAmount,
     decimal TaxAmount, decimal TaxInclusiveAmount, decimal AllowanceTotalAmount,
-    string? ValidationMessage, string SourceHash, DateTimeOffset LastSynchronizedAtUtc,
+    string? ValidationMessage, decimal? RecognitionConfidence,
+    string SourceHash, DateTimeOffset LastSynchronizedAtUtc,
     IReadOnlyList<IncomingInvoiceLineRow> Lines,
     IReadOnlyList<IncomingInvoiceDocumentRow> Documents,
     IReadOnlyList<IncomingInvoiceGoodsReceiptLinkRow> GoodsReceipts);
@@ -65,6 +71,33 @@ public sealed record IncomingInvoiceImportResult(
     long Id, Guid Uuid, string InvoiceNo, IncomingInvoiceKind DocumentKind,
     IncomingInvoiceArchiveStatus ArchiveStatus, int LineCount, int MatchedLineCount,
     bool HasPdf, bool Replayed);
+
+public sealed record MatchIncomingInvoiceRequest(
+    string BranchCode,
+    long SupplierId,
+    bool AllowBuyerStockCodeFallback = true);
+
+public sealed record IncomingInvoiceMatchResult(
+    long IncomingInvoiceId,
+    long SupplierId,
+    int LineCount,
+    int MatchedLineCount,
+    int UnmatchedLineCount,
+    IncomingInvoiceArchiveStatus ArchiveStatus);
+
+public sealed record IncomingInvoiceOcrStatus(
+    bool IsConfigured,
+    string Provider,
+    string Message,
+    IReadOnlyList<string> SupportedContentTypes,
+    long MaximumFileSizeBytes);
+
+public sealed record OcrInvoiceUpload(
+    string BranchCode,
+    long SupplierId,
+    string FileName,
+    string ContentType,
+    byte[] Content);
 
 public sealed record IncomingInvoiceGoodsReceiptLineRequest(
     long IncomingInvoiceLineId, decimal Quantity);
@@ -115,6 +148,12 @@ public interface IIncomingInvoiceService
     Task<PagedResponse<IncomingInvoiceGridRow>> GetPagedAsync(string branchCode, PagedRequest request, CancellationToken ct = default);
     Task<IncomingInvoiceDetail> GetAsync(long id, string branchCode, CancellationToken ct = default);
     Task<IncomingInvoiceFile> OpenDocumentAsync(long id, IncomingInvoiceDocumentFormat format, string branchCode, CancellationToken ct = default);
+    Task<IncomingInvoiceMatchResult> MatchAsync(
+        long id, MatchIncomingInvoiceRequest request, long actor,
+        CancellationToken ct = default);
+    Task<IncomingInvoiceOcrStatus> GetOcrStatusAsync(CancellationToken ct = default);
+    Task<IncomingInvoiceImportResult> ImportOcrAsync(
+        OcrInvoiceUpload upload, long actor, CancellationToken ct = default);
     Task<IncomingInvoiceGoodsReceiptResult> CreateGoodsReceiptAsync(
         long id, CreateIncomingInvoiceGoodsReceiptRequest request, long actor,
         CancellationToken ct = default);
@@ -154,4 +193,17 @@ public interface IIncomingInvoiceDocumentStorage
     Task<string> SaveAsync(long invoiceId, byte[] content, string contentType, CancellationToken ct = default);
     Task<Stream> OpenReadAsync(string storagePath, CancellationToken ct = default);
     void Delete(string storagePath);
+}
+
+public sealed record OcrAnalyzedInvoice(
+    ParsedIncomingInvoice Invoice,
+    decimal? Confidence,
+    IReadOnlyList<decimal?> LineConfidences,
+    string ProviderOperationId);
+
+public interface IIncomingInvoiceOcrClient
+{
+    IncomingInvoiceOcrStatus Status { get; }
+    Task<OcrAnalyzedInvoice> AnalyzeAsync(
+        byte[] content, string contentType, CancellationToken ct = default);
 }

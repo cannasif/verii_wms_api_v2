@@ -11,6 +11,8 @@ public static class IncomingInvoiceModule
     {
         services.Configure<ELogoPostboxOptions>(
             configuration.GetSection(ELogoPostboxOptions.SectionName));
+        services.Configure<IncomingInvoiceOcrOptions>(
+            configuration.GetSection(IncomingInvoiceOcrOptions.SectionName));
         services.AddPrivateUploadStorage();
         services.AddScoped<IELogoConnectionService, ELogoConnectionService>();
         services.AddScoped<IIncomingInvoiceService, IncomingInvoiceService>();
@@ -20,6 +22,12 @@ public static class IncomingInvoiceModule
             client.Timeout = Timeout.InfiniteTimeSpan;
             client.DefaultRequestHeaders.UserAgent.ParseAdd("V3RII-WMS/2.0");
         });
+        services.AddHttpClient<IIncomingInvoiceOcrClient, AzureDocumentIntelligenceOcrClient>(
+            client =>
+            {
+                client.Timeout = Timeout.InfiniteTimeSpan;
+                client.DefaultRequestHeaders.UserAgent.ParseAdd("V3RII-WMS/2.0");
+            });
         return services;
     }
 }

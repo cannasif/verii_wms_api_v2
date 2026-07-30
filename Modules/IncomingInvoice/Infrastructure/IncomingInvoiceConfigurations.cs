@@ -52,6 +52,9 @@ public sealed class IncomingInvoiceHeaderConfiguration : BaseEntityConfiguration
         b.Property(x => x.AllowanceTotalAmount).HasPrecision(28, 8);
         b.Property(x => x.PayableAmount).HasPrecision(28, 8);
         b.Property(x => x.ValidationMessage).HasMaxLength(1000);
+        b.Property(x => x.RecognitionConfidence).HasPrecision(9, 6);
+        b.Property(x => x.CaptureSource)
+            .HasDefaultValue(IncomingInvoiceCaptureSource.ELogo);
         b.Property(x => x.SourceHash).HasMaxLength(64).IsRequired();
         b.Property(x => x.RowVersion).IsRowVersion();
         b.HasOne(x => x.ELogoConnection).WithMany().HasForeignKey(x => x.ELogoConnectionId).OnDelete(DeleteBehavior.Restrict);
@@ -80,12 +83,16 @@ public sealed class IncomingInvoiceLineConfiguration : BaseEntityConfiguration<I
         b.Property(x => x.LineExtensionAmount).HasPrecision(28, 8);
         b.Property(x => x.TaxRate).HasPrecision(18, 6);
         b.Property(x => x.TaxAmount).HasPrecision(28, 8);
+        b.Property(x => x.ConversionFactor).HasPrecision(28, 8).HasDefaultValue(1m);
+        b.Property(x => x.RecognitionConfidence).HasPrecision(9, 6);
         b.Property(x => x.YapCode).HasMaxLength(100);
         b.Property(x => x.MatchMessage).HasMaxLength(500);
         b.Property(x => x.RowVersion).IsRowVersion();
         b.HasOne(x => x.Header).WithMany(x => x.Lines).HasForeignKey(x => x.IncomingInvoiceId).OnDelete(DeleteBehavior.Cascade);
         b.HasOne<Modules.Stock.Domain.Stock>().WithMany()
             .HasForeignKey(x => x.StockId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.SupplierStockMapping).WithMany()
+            .HasForeignKey(x => x.SupplierStockMappingId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne<Modules.YapCode.Domain.YapCode>().WithMany()
             .HasForeignKey(x => x.YapCodeId).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(x => new { x.IncomingInvoiceId, x.LineNo }).IsUnique()

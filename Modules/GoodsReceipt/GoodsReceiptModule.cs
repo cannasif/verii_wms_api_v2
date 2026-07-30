@@ -15,5 +15,6 @@ public static class GoodsReceiptModule
         .AddScoped<IGoodsReceiptLifecycleService, GoodsReceiptLifecycleService>()
         .AddScoped<IGoodsReceiptRoutingService, GoodsReceiptRoutingService>()
         .AddScoped<IGoodsReceiptPolicyService, GoodsReceiptPolicyService>()
+        .AddScoped<ISupplierStockMappingService, SupplierStockMappingService>()
         .AddScoped<IGoodsReceiptOrderSource, SqlGoodsReceiptOrderSource>();
 }

@@ -9,6 +9,12 @@ public enum IncomingInvoiceKind
     EArchive = 2
 }
 
+public enum IncomingInvoiceCaptureSource
+{
+    ELogo = 1,
+    Ocr = 2
+}
+
 public enum IncomingInvoiceArchiveStatus
 {
     Imported = 1,
@@ -30,7 +36,8 @@ public enum IncomingInvoiceLineMatchStatus
 public enum IncomingInvoiceDocumentFormat
 {
     UblXml = 1,
-    Pdf = 2
+    Pdf = 2,
+    SourceImage = 3
 }
 
 public enum IncomingInvoiceValidationStatus
@@ -60,8 +67,10 @@ public sealed class ELogoConnection : BaseEntity
 
 public sealed class IncomingInvoiceHeader : BaseEntity
 {
-    public long ELogoConnectionId { get; set; }
-    public ELogoConnection ELogoConnection { get; set; } = null!;
+    public long? ELogoConnectionId { get; set; }
+    public ELogoConnection? ELogoConnection { get; set; }
+    public IncomingInvoiceCaptureSource CaptureSource { get; set; } =
+        IncomingInvoiceCaptureSource.ELogo;
     public string OwnerVkn { get; set; } = string.Empty;
     public Guid Uuid { get; set; }
     public IncomingInvoiceKind DocumentKind { get; set; }
@@ -91,6 +100,7 @@ public sealed class IncomingInvoiceHeader : BaseEntity
     public IncomingInvoiceArchiveStatus ArchiveStatus { get; set; } = IncomingInvoiceArchiveStatus.Imported;
     public IncomingInvoiceValidationStatus ValidationStatus { get; set; } = IncomingInvoiceValidationStatus.Parsed;
     public string? ValidationMessage { get; set; }
+    public decimal? RecognitionConfidence { get; set; }
     public string SourceHash { get; set; } = string.Empty;
     public DateTimeOffset ImportedAtUtc { get; set; }
     public DateTimeOffset LastSynchronizedAtUtc { get; set; }
@@ -118,6 +128,10 @@ public sealed class IncomingInvoiceLine : BaseEntity
     public decimal TaxRate { get; set; }
     public decimal TaxAmount { get; set; }
     public long? StockId { get; set; }
+    public long? SupplierStockMappingId { get; set; }
+    public SupplierStockMapping? SupplierStockMapping { get; set; }
+    public decimal ConversionFactor { get; set; } = 1m;
+    public decimal? RecognitionConfidence { get; set; }
     public long? YapCodeId { get; set; }
     public string? YapCode { get; set; }
     public IncomingInvoiceLineMatchStatus MatchStatus { get; set; } = IncomingInvoiceLineMatchStatus.Unmatched;

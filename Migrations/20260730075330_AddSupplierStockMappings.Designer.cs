@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 
@@ -11,9 +12,11 @@ using verii_wms_api_v2.Modules.Identity.Infrastructure;
 namespace verii_wms_api_v2.Migrations
 {
     [DbContext(typeof(WmsDbContext))]
-    partial class WmsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260730075330_AddSupplierStockMappings")]
+    partial class AddSupplierStockMappings
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1329,18 +1332,6 @@ namespace verii_wms_api_v2.Migrations
                             IsActive = true,
                             IsDeleted = false,
                             Name = "Tedarikçi stok eşlemelerini yönet"
-                        },
-                        new
-                        {
-                            Id = 2306L,
-                            AvailableOnMobile = false,
-                            AvailableOnWeb = true,
-                            BranchCode = "0",
-                            Code = "WMS.INCOMING_INVOICE.OCR_IMPORT",
-                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
-                            IsActive = true,
-                            IsDeleted = false,
-                            Name = "Fatura belgesini OCR ile ön incelemeye al"
                         },
                         new
                         {
@@ -2661,15 +2652,6 @@ namespace verii_wms_api_v2.Migrations
                             CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
                             IsDeleted = false,
                             PermissionDefinitionId = 2305L,
-                            PermissionGroupId = 1001L
-                        },
-                        new
-                        {
-                            Id = 2306L,
-                            BranchCode = "0",
-                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
-                            IsDeleted = false,
-                            PermissionDefinitionId = 2306L,
                             PermissionGroupId = 1001L
                         },
                         new
@@ -7517,11 +7499,6 @@ namespace verii_wms_api_v2.Migrations
                         .HasColumnType("nvarchar(10)")
                         .HasDefaultValue("0");
 
-                    b.Property<int>("CaptureSource")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("int")
-                        .HasDefaultValue(1);
-
                     b.Property<long?>("CreatedBy")
                         .HasColumnType("bigint");
 
@@ -7556,7 +7533,7 @@ namespace verii_wms_api_v2.Migrations
                     b.Property<int>("DocumentKind")
                         .HasColumnType("int");
 
-                    b.Property<long?>("ELogoConnectionId")
+                    b.Property<long>("ELogoConnectionId")
                         .HasColumnType("bigint");
 
                     b.Property<DateTimeOffset>("ImportedAtUtc")
@@ -7606,10 +7583,6 @@ namespace verii_wms_api_v2.Migrations
                     b.Property<string>("ProfileId")
                         .HasMaxLength(50)
                         .HasColumnType("nvarchar(50)");
-
-                    b.Property<decimal?>("RecognitionConfidence")
-                        .HasPrecision(9, 6)
-                        .HasColumnType("decimal(9,6)");
 
                     b.Property<byte[]>("RowVersion")
                         .IsConcurrencyToken()
@@ -7706,12 +7679,6 @@ namespace verii_wms_api_v2.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
-                    b.Property<decimal>("ConversionFactor")
-                        .ValueGeneratedOnAdd()
-                        .HasPrecision(28, 8)
-                        .HasColumnType("decimal(28,8)")
-                        .HasDefaultValue(1m);
-
                     b.Property<long?>("CreatedBy")
                         .HasColumnType("bigint");
 
@@ -7759,10 +7726,6 @@ namespace verii_wms_api_v2.Migrations
                         .HasPrecision(28, 8)
                         .HasColumnType("decimal(28,8)");
 
-                    b.Property<decimal?>("RecognitionConfidence")
-                        .HasPrecision(9, 6)
-                        .HasColumnType("decimal(9,6)");
-
                     b.Property<byte[]>("RowVersion")
                         .IsConcurrencyToken()
                         .IsRequired()
@@ -7781,9 +7744,6 @@ namespace verii_wms_api_v2.Migrations
                         .IsRequired()
                         .HasMaxLength(500)
                         .HasColumnType("nvarchar(500)");
-
-                    b.Property<long?>("SupplierStockMappingId")
-                        .HasColumnType("bigint");
 
                     b.Property<decimal>("TaxAmount")
                         .HasPrecision(28, 8)
@@ -7820,8 +7780,6 @@ namespace verii_wms_api_v2.Migrations
                     b.HasIndex("IsDeleted");
 
                     b.HasIndex("StockId");
-
-                    b.HasIndex("SupplierStockMappingId");
 
                     b.HasIndex("YapCodeId");
 
@@ -19014,7 +18972,8 @@ namespace verii_wms_api_v2.Migrations
                     b.HasOne("verii_wms_api_v2.Modules.IncomingInvoice.Domain.ELogoConnection", "ELogoConnection")
                         .WithMany()
                         .HasForeignKey("ELogoConnectionId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.Navigation("ELogoConnection");
                 });
@@ -19032,19 +18991,12 @@ namespace verii_wms_api_v2.Migrations
                         .HasForeignKey("StockId")
                         .OnDelete(DeleteBehavior.Restrict);
 
-                    b.HasOne("verii_wms_api_v2.Modules.GoodsReceipt.Domain.SupplierStockMapping", "SupplierStockMapping")
-                        .WithMany()
-                        .HasForeignKey("SupplierStockMappingId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
                     b.HasOne("verii_wms_api_v2.Modules.YapCode.Domain.YapCode", null)
                         .WithMany()
                         .HasForeignKey("YapCodeId")
                         .OnDelete(DeleteBehavior.Restrict);
 
                     b.Navigation("Header");
-
-                    b.Navigation("SupplierStockMapping");
                 });
 
             modelBuilder.Entity("verii_wms_api_v2.Modules.Location.Domain.WarehouseLocation", b =>
