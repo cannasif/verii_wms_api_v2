@@ -432,7 +432,7 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             ||request.Lines.Count is<1 or>5000)throw AppException.BadRequest("Şube, aktarım referansı, dosya ve 1-5000 satır zorunludur.");
         var waybillNo=PurchaseWaybillNumberPolicy.Normalize(request.WaybillNo);
         if(!PurchaseWaybillNumberPolicy.IsValid(waybillNo))
-            throw AppException.BadRequest("E-irsaliye / GİB numarası tam 15 alfanümerik karakter olmalıdır.");
+            throw AppException.BadRequest("E-irsaliye / GİB numarası semboller dahil tam 15 karakter olmalıdır.");
         if(!request.WaybillDate.HasValue)
             throw AppException.BadRequest("İrsaliye tarihi zorunludur.");
         var branch=request.BranchCode.Trim();var supplier=await uow.Repository<CustomerEntity>().FindByIdAsync(request.SupplierId,false,ct)

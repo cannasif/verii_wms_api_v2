@@ -2,6 +2,7 @@ using verii_wms_api_v2.Modules.GoodsReceipt.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Shared.Application.Exceptions;
+using verii_wms_api_v2.Shared.Application.Validation;
 using Xunit;
 
 namespace verii_wms_api_v2.QueryTests;
@@ -143,6 +144,10 @@ public sealed class GoodsReceiptDocumentValidationTests
     [Theory]
     [InlineData("irs202600000001", null)]
     [InlineData(null, "gib2026ab000001")]
+    [InlineData("AB2", null)]
+    [InlineData(null, "ERS202600029")]
+    [InlineData(null, "GIB*2026/AB0001")]
+    [InlineData("AB-2", null)]
     public void Order_based_receipt_accepts_and_normalizes_valid_waybill(
         string? waybillNo,
         string? electronicWaybillNo)
@@ -150,8 +155,8 @@ public sealed class GoodsReceiptDocumentValidationTests
         var result = GoodsReceiptService.NormalizeDocumentReference(
             waybillNo, electronicWaybillNo, new DateOnly(2026, 7, 28));
 
-        Assert.Equal(waybillNo?.ToUpperInvariant(), result.WaybillNo);
-        Assert.Equal(electronicWaybillNo?.ToUpperInvariant(), result.ElectronicWaybillNo);
+        Assert.Equal(PurchaseWaybillNumberPolicy.Normalize(waybillNo), result.WaybillNo);
+        Assert.Equal(PurchaseWaybillNumberPolicy.Normalize(electronicWaybillNo), result.ElectronicWaybillNo);
     }
 
     [Fact]
@@ -159,27 +164,27 @@ public sealed class GoodsReceiptDocumentValidationTests
     {
         var invalid = Assert.Throws<AppException>(() =>
             GoodsReceiptService.NormalizeDocumentReference(
-                "123", null, new DateOnly(2026, 7, 28)));
+                "ABC", null, new DateOnly(2026, 7, 28)));
         var missingDate = Assert.Throws<AppException>(() =>
             GoodsReceiptService.NormalizeDocumentReference(
                 "000000000000001", null, null));
 
-        Assert.Contains("15 alfanümerik", invalid.Message);
+        Assert.Contains("15 karakter", invalid.Message);
         Assert.Contains("tarihi zorunludur", missingDate.Message);
     }
 
     [Fact]
-    public void Electronic_waybill_requires_exactly_fifteen_alphanumeric_characters()
+    public void Electronic_waybill_requires_exactly_fifteen_printable_characters()
     {
         var tooLong = Assert.Throws<AppException>(() =>
             GoodsReceiptService.NormalizeDocumentReference(
                 null, "GIB2026AB0000001", new DateOnly(2026, 7, 28)));
         var invalidCharacter = Assert.Throws<AppException>(() =>
             GoodsReceiptService.NormalizeDocumentReference(
-                null, "GIB2026AB000-00", new DateOnly(2026, 7, 28)));
+                null, "GIB2026AB000\t00", new DateOnly(2026, 7, 28)));
 
-        Assert.Contains("15 alfanümerik", tooLong.Message);
-        Assert.Contains("15 alfanümerik", invalidCharacter.Message);
+        Assert.Contains("15 karakter", tooLong.Message);
+        Assert.Contains("15 karakter", invalidCharacter.Message);
     }
 
     [Fact]

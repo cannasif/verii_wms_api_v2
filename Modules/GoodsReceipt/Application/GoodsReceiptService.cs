@@ -311,9 +311,9 @@ public sealed class GoodsReceiptService(
         if (!waybillDate.HasValue)
             throw AppException.BadRequest("İrsaliye tarihi zorunludur.");
         if (normal is not null && !PurchaseWaybillNumberPolicy.IsValid(normal))
-            throw AppException.BadRequest("Normal irsaliye numarası tam 15 alfanümerik karakter olmalıdır.");
+            throw AppException.BadRequest("Normal irsaliye numarası semboller dahil tam 15 karakter olmalıdır.");
         if (electronic is not null && !PurchaseWaybillNumberPolicy.IsValid(electronic))
-            throw AppException.BadRequest("E-irsaliye / GİB numarası tam 15 alfanümerik karakter olmalıdır.");
+            throw AppException.BadRequest("E-irsaliye / GİB numarası semboller dahil tam 15 karakter olmalıdır.");
         return (normal, electronic);
     }
 

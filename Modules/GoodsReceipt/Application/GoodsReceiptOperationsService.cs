@@ -671,9 +671,9 @@ public sealed class GoodsReceiptOperationsService(
         var electronicWaybillNo = NormalizeDocumentNumber(request.ElectronicWaybillNo);
         ValidateDocumentReference(waybillNo, electronicWaybillNo, request.WaybillDate, request.ExecutionMode);
         if (waybillNo is not null && !PurchaseWaybillNumberPolicy.IsValid(waybillNo))
-            throw AppException.BadRequest("Normal irsaliye numarası tam 15 alfanümerik karakter olmalıdır.");
+            throw AppException.BadRequest("Normal irsaliye numarası semboller dahil tam 15 karakter olmalıdır.");
         if (electronicWaybillNo is not null && !PurchaseWaybillNumberPolicy.IsValid(electronicWaybillNo))
-            throw AppException.BadRequest("E-irsaliye / GİB numarası tam 15 alfanümerik karakter olmalıdır.");
+            throw AppException.BadRequest("E-irsaliye / GİB numarası semboller dahil tam 15 karakter olmalıdır.");
     }
 
     internal static CreateManualGoodsReceiptRequest ApplyUnplannedDefaults(
@@ -806,7 +806,7 @@ public sealed class GoodsReceiptOperationsService(
     }
     private static string? Clean(string? value, int max) { var text = string.IsNullOrWhiteSpace(value) ? null : value.Trim(); return text?.Length > max ? text[..max] : text; }
     private static string? NormalizeDocumentNumber(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();
+        PurchaseWaybillNumberPolicy.Normalize(value);
     private static string Hash(object value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value))));
     private static bool HashesMatch(string left, string right)
     {

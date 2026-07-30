@@ -443,9 +443,9 @@ public sealed class WarehouseInboundOperationsService(
         if ((waybillNo is null) == (electronicWaybillNo is null))
             throw AppException.BadRequest("Tek bir mal kabul numarası girilmeli ve normal/e-irsaliye türü seçilmelidir.");
         if (waybillNo is not null && !PurchaseWaybillNumberPolicy.IsValid(waybillNo))
-            throw AppException.BadRequest("Normal irsaliye numarası tam 15 alfanümerik karakter olmalıdır.");
+            throw AppException.BadRequest("Normal irsaliye numarası semboller dahil tam 15 karakter olmalıdır.");
         if (electronicWaybillNo is not null && !PurchaseWaybillNumberPolicy.IsValid(electronicWaybillNo))
-            throw AppException.BadRequest("E-irsaliye / GİB numarası tam 15 alfanümerik karakter olmalıdır.");
+            throw AppException.BadRequest("E-irsaliye / GİB numarası semboller dahil tam 15 karakter olmalıdır.");
         if (!request.WaybillDate.HasValue)
             throw AppException.BadRequest("İrsaliye tarihi zorunludur.");
     }
@@ -509,7 +509,7 @@ public sealed class WarehouseInboundOperationsService(
     }
     private static string? Clean(string? value, int max) { var text = string.IsNullOrWhiteSpace(value) ? null : value.Trim(); return text?.Length > max ? text[..max] : text; }
     private static string? NormalizeDocumentNumber(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();
+        PurchaseWaybillNumberPolicy.Normalize(value);
     private static string Hash(object value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value))));
     private static bool HashesMatch(string left, string right)
     {

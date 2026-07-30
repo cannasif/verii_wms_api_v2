@@ -7,6 +7,7 @@ using verii_wms_api_v2.Modules.StockMovement.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
+using verii_wms_api_v2.Shared.Application.Validation;
 
 namespace verii_wms_api_v2.Modules.WarehouseOutbound.Application;
 
@@ -369,7 +370,7 @@ public sealed class WarehouseOutboundOperationService(
         if (phase != WarehouseOutboundPhase.Ship) return;
         header.VehiclePlate = Clean(request.VehiclePlate, 20) ?? header.VehiclePlate;
         header.DriverName = Clean(request.DriverName, 200) ?? header.DriverName;
-        header.WaybillNo = Clean(request.WaybillNo, 50) ?? header.WaybillNo;
+        header.WaybillNo = PurchaseWaybillNumberPolicy.Normalize(request.WaybillNo) ?? header.WaybillNo;
         header.TrackingNo = Clean(request.TrackingNo, 100) ?? header.TrackingNo;
         if (header.RequireWarehouseOutboundInformation
             && string.IsNullOrWhiteSpace(header.VehiclePlate)
