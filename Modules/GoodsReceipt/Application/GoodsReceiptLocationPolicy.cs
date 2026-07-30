@@ -16,4 +16,20 @@ internal static class GoodsReceiptLocationPolicy
         return policy == GoodsReceiptLocationSelectionPolicy.AnyActiveWarehouseLocation
             || location.LocationType is LocationTypes.Receiving or LocationTypes.Staging;
     }
+
+    internal static bool IsAllowedForReceiptLine(
+        GoodsReceiptLocationSelectionPolicy policy,
+        WarehouseLocation location,
+        long warehouseId,
+        bool requiresQuality,
+        bool blockPutawayUntilQualityDecision)
+    {
+        if (!location.IsActive || location.WarehouseId != warehouseId)
+            return false;
+
+        if (!requiresQuality || !blockPutawayUntilQualityDecision)
+            return true;
+
+        return IsAllowed(policy, location, warehouseId);
+    }
 }

@@ -2,6 +2,7 @@ using System.Data;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Application;
+using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.SteelReceipt.Domain;
 using verii_wms_api_v2.Modules.VehicleCheckIn.Application;
@@ -174,12 +175,16 @@ public sealed class SteelVehicleAcceptanceService(
                 foreach (var line in lines)
                 {
                     var location = locations[plateRequests[line.Id].ReceivingLocationId];
-                    if (!GoodsReceiptLocationPolicy.IsAllowed(
-                            receiptPolicy.LocationSelectionPolicy, location, line.TargetWarehouseId)
+                    if (!GoodsReceiptLocationPolicy.IsAllowedForReceiptLine(
+                            receiptPolicy.LocationSelectionPolicy,
+                            location,
+                            line.TargetWarehouseId,
+                            requiresQuality: false,
+                            receiptPolicy.BlockPutawayUntilQualityDecision)
                         || location.IsQuarantine
                         || location.LocationType is LocationTypes.Virtual or LocationTypes.Shipping)
                         throw AppException.BadRequest(
-                            $"{line.DCode}: {GoodsReceiptOperationsService.LocationPolicyError(receiptPolicy.LocationSelectionPolicy)}");
+                            $"{line.DCode}: {GoodsReceiptOperationsService.LocationPolicyError(GoodsReceiptLocationSelectionPolicy.AnyActiveWarehouseLocation)}");
                 }
 
                 var existingVehicleImageCount = await VehicleImages.CountAsync(x => x.HeaderId == vehicle.Id, token);

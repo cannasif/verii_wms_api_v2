@@ -289,8 +289,9 @@ public sealed class GoodsReceiptOperationsService(
             }
             var location = await unitOfWork.Repository<WarehouseLocation>().FindByIdAsync(request.ReceivingLocationId, false, token)
                 ?? throw AppException.BadRequest("Mal kabul alanı bulunamadı.");
-            if (!GoodsReceiptLocationPolicy.IsAllowed(policy.LocationSelectionPolicy, location, warehouse.Id))
-                throw AppException.BadRequest(LocationPolicyError(policy.LocationSelectionPolicy));
+            if (!location.IsActive || location.WarehouseId != warehouse.Id)
+                throw AppException.BadRequest(LocationPolicyError(
+                    GoodsReceiptLocationSelectionPolicy.AnyActiveWarehouseLocation));
 
             var requestedLineWarehouseIds = request.Lines
                 .Select(x => x.TargetWarehouseId ?? request.TargetWarehouseId)
@@ -308,9 +309,9 @@ public sealed class GoodsReceiptOperationsService(
                 .Where(x => requestedLineLocationIds.Contains(x.Id))
                 .ToDictionaryAsync(x => x.Id, token);
             if (lineLocations.Count != requestedLineLocationIds.Length
-                || lineLocations.Values.Any(x =>
-                    !GoodsReceiptLocationPolicy.IsAllowed(policy.LocationSelectionPolicy, x, warehouse.Id)))
-                throw AppException.BadRequest(LocationPolicyError(policy.LocationSelectionPolicy));
+                || lineLocations.Values.Any(x => !x.IsActive || x.WarehouseId != warehouse.Id))
+                throw AppException.BadRequest(LocationPolicyError(
+                    GoodsReceiptLocationSelectionPolicy.AnyActiveWarehouseLocation));
 
             var stockIds = request.Lines.Select(x => x.StockId).Distinct().ToList();
             var stocks = await unitOfWork.Repository<StockEntity>().Query().Where(x => x.BranchCode == branch && stockIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, token);
@@ -340,10 +341,28 @@ public sealed class GoodsReceiptOperationsService(
             var requiresQuality = RequiresQuality(
                 qualityAlreadyApproved,
                 resolved.Values.Any(x => x.InspectionMode != QualityInspectionMode.NoCheck));
+            foreach (var input in request.Lines)
+            {
+                var lineRequiresQuality = RequiresQualityForLine(
+                    qualityAlreadyApproved, resolved[input.StockId]);
+                var lineLocationId = input.ReceivingLocationId ?? request.ReceivingLocationId;
+                if (!GoodsReceiptLocationPolicy.IsAllowedForReceiptLine(
+                        policy.LocationSelectionPolicy,
+                        lineLocations[lineLocationId],
+                        warehouse.Id,
+                        lineRequiresQuality,
+                        policy.BlockPutawayUntilQualityDecision))
+                    throw AppException.BadRequest(
+                        $"{stocks[input.StockId].ErpStockCode}: {LocationPolicyError(policy.LocationSelectionPolicy)}");
+            }
             ValidateQualityReceivingLocations(
                 requiresQuality,
                 policy.BlockPutawayUntilQualityDecision,
-                requestedLineLocationIds.Select(id => lineLocations[id].IsPutaway));
+                request.Lines
+                    .Where(input => RequiresQualityForLine(
+                        qualityAlreadyApproved, resolved[input.StockId]))
+                    .Select(input => lineLocations[
+                        input.ReceivingLocationId ?? request.ReceivingLocationId].IsPutaway));
 
             ValidateTrackedLines(
                 request, stocks, resolved, trackingPolicies,

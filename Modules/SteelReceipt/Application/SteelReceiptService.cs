@@ -26,7 +26,6 @@ namespace verii_wms_api_v2.Modules.SteelReceipt.Application;
 
 public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsService grOperations,
     IGoodsReceiptErpPostingCoordinator erpPosting,
-    IGoodsReceiptPolicyService receiptPolicyService,
     IStockMovementService stockMovement,IAuditLogWriter audit,ISteelReceiptAttachmentStorage attachmentStorage):ISteelReceiptService
 {
     private IGenericRepository<SteelReceiptPlan> Plans=>uow.Repository<SteelReceiptPlan>();
@@ -81,9 +80,9 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             if(import.VehicleCheckInId.HasValue&&(vehicle is null||vehicle.BranchCode!=branch))
                 throw AppException.BadRequest("Seçilen araç giriş kaydı bu şubede bulunamadı.");
             var sourceWaybillNo=PurchaseWaybillNumberPolicy.Normalize(import.WaybillNo);
-            var receiptPolicy=await receiptPolicyService.GetAsync(branch,token);
             var receivingLocationId=await ResolveImportReceivingLocationAsync(
-                import.TargetWarehouseId,import.ReceivingLocationId,receiptPolicy.LocationSelectionPolicy,token);
+                import.TargetWarehouseId,import.ReceivingLocationId,
+                GoodsReceiptLocationSelectionPolicy.AnyActiveWarehouseLocation,token);
             var plan=Stamp(new SteelReceiptPlan{BranchCode=branch,CorrelationId=request.IdempotencyKey,
                 ImportReferenceNo=Clean(import.ImportReferenceNo,100,true)!,SourceFileName=Clean(import.SourceFileName,260,true)!,
                 ExportReferenceNo=Clean(import.ExportReferenceNo,100),VehicleCheckInId=vehicle?.Id,SupplierId=supplier.Id,SupplierCodeSnapshot=supplier.CustomerCode,
@@ -440,18 +439,19 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             ??throw AppException.BadRequest("Tedarikçi bulunamadı.");if(supplier.BranchCode!=branch)throw AppException.BadRequest("Tedarikçi şubesi uyuşmuyor.");
         var warehouse=await uow.Repository<WarehouseEntity>().FindByIdAsync(request.TargetWarehouseId,false,ct)
             ??throw AppException.BadRequest("Depo bulunamadı.");if(warehouse.BranchCode!=branch)throw AppException.BadRequest("Depo şubesi uyuşmuyor.");
-        var receiptPolicy=await receiptPolicyService.GetAsync(branch,ct);
         var receivingLocationId=await ResolveImportReceivingLocationAsync(
-            warehouse.Id,request.ReceivingLocationId,receiptPolicy.LocationSelectionPolicy,ct);
+            warehouse.Id,request.ReceivingLocationId,
+            GoodsReceiptLocationSelectionPolicy.AnyActiveWarehouseLocation,ct);
         var series=await uow.Repository<DocumentSeriesEntity>().FindByIdAsync(request.DocumentSeriesId,false,ct);
         if(series is null||!series.IsActive||series.DocumentType!=WmsDocumentType.GoodsReceipt)
             throw AppException.BadRequest("Seçilen belge serisi aktif bir Mal Kabul serisi olmalıdır.");
         var locIds=request.Lines.Select(x=>x.ReceivingLocationId??receivingLocationId).Append(receivingLocationId).Distinct().ToArray();
         var locations=await uow.Repository<WarehouseLocation>().Query().Where(x=>locIds.Contains(x.Id)).ToDictionaryAsync(x=>x.Id,ct);
         if(locations.Count!=locIds.Length||locations.Values.Any(x=>
-               !GoodsReceiptLocationPolicy.IsAllowed(receiptPolicy.LocationSelectionPolicy,x,warehouse.Id)))
+               !GoodsReceiptLocationPolicy.IsAllowed(
+                   GoodsReceiptLocationSelectionPolicy.AnyActiveWarehouseLocation,x,warehouse.Id)))
             throw AppException.BadRequest(GoodsReceiptOperationsService.LocationPolicyError(
-                receiptPolicy.LocationSelectionPolicy));
+                GoodsReceiptLocationSelectionPolicy.AnyActiveWarehouseLocation));
         var stockIds=request.Lines.Where(x=>x.StockId.HasValue).Select(x=>x.StockId!.Value).Distinct().ToArray();
         var stockCodes=request.Lines.Select(x=>x.StockCode.Trim().ToUpperInvariant()).Where(x=>x.Length>0).Distinct().ToArray();
         var stockRows=await uow.Repository<StockEntity>().Query().Where(x=>stockIds.Contains(x.Id)||stockCodes.Contains(x.ErpStockCode)).ToListAsync(ct);

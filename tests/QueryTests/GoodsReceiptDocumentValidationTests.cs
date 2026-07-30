@@ -74,6 +74,46 @@ public sealed class GoodsReceiptDocumentValidationTests
             warehouseId: 10));
     }
 
+    [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public void Non_quality_or_non_blocking_receipt_line_can_use_any_active_warehouse_location(
+        bool requiresQuality,
+        bool blockPutawayUntilQualityDecision)
+    {
+        var rack = new WarehouseLocation
+        {
+            WarehouseId = 10,
+            LocationType = LocationTypes.Rack,
+            IsActive = true
+        };
+
+        Assert.True(GoodsReceiptLocationPolicy.IsAllowedForReceiptLine(
+            GoodsReceiptLocationSelectionPolicy.ReceivingOrStagingOnly,
+            rack,
+            warehouseId: 10,
+            requiresQuality,
+            blockPutawayUntilQualityDecision));
+    }
+
+    [Fact]
+    public void Quality_gated_receipt_line_still_obeys_strict_receiving_policy()
+    {
+        var rack = new WarehouseLocation
+        {
+            WarehouseId = 10,
+            LocationType = LocationTypes.Rack,
+            IsActive = true
+        };
+
+        Assert.False(GoodsReceiptLocationPolicy.IsAllowedForReceiptLine(
+            GoodsReceiptLocationSelectionPolicy.ReceivingOrStagingOnly,
+            rack,
+            warehouseId: 10,
+            requiresQuality: true,
+            blockPutawayUntilQualityDecision: true));
+    }
+
     [Fact]
     public void Order_based_receipt_requires_exactly_one_waybill_type()
     {
