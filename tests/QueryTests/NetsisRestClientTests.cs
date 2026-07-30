@@ -75,6 +75,35 @@ public sealed class NetsisRestClientTests
     }
 
     [Fact]
+    public async Task Create_applies_project_and_date_defaults_before_serialization()
+    {
+        string? payload = null;
+        var handler = new QueueHandler(request =>
+        {
+            payload = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return Json(HttpStatusCode.OK, """{"isSuccessful":true}""");
+        });
+        var request = SampleRequest();
+        request.FatUst.ProjeKodu = " ";
+        request.FatUst.Tarih = default;
+        request.FatUst.FiiliTarih = default;
+        request.Kalems[0].ProjeKodu = null!;
+
+        var before = DateTime.Now;
+        var result = await CreateClient(handler, new FakeTokenService())
+            .CreateItemSlipAsync(request, CancellationToken.None);
+        var after = DateTime.Now;
+
+        Assert.True(result.BusinessSucceeded);
+        Assert.Equal("0", request.FatUst.ProjeKodu);
+        Assert.Equal("0", request.Kalems[0].ProjeKodu);
+        Assert.InRange(request.FatUst.Tarih, before, after);
+        Assert.InRange(request.FatUst.FiiliTarih, before, after);
+        Assert.Contains("\"Proje_Kodu\":\"0\"", payload);
+        Assert.Contains("\"ProjeKodu\":\"0\"", payload);
+    }
+
+    [Fact]
     public async Task Delete_uses_composite_item_slip_endpoint_and_accepts_empty_no_content()
     {
         HttpMethod? method = null;

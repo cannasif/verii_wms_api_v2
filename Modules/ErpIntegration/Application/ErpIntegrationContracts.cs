@@ -315,6 +315,9 @@ public sealed class NetsisItemSlipHeader
     [JsonPropertyName("FiiliTarih")]
     public DateTime FiiliTarih { get; set; }
 
+    [JsonPropertyName("Proje_Kodu")]
+    public string ProjeKodu { get; set; } = "0";
+
     [JsonPropertyName("TIP")]
     public int Tip { get; set; }
 
@@ -365,6 +368,9 @@ public sealed class NetsisItemSlipLine
 
     [JsonPropertyName("SiparisNo")]
     public string? SiparisNo { get; set; }
+
+    [JsonPropertyName("ProjeKodu")]
+    public string ProjeKodu { get; set; } = "0";
 }
 
 public sealed class NetsisItemSlipResponse

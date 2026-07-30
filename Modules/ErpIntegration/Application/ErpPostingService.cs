@@ -513,7 +513,13 @@ public sealed class ErpPostingService(
         List<NetsisItemSlipLine> lines)
     {
         if (lines.Count == 0) throw AppException.Conflict("ERP belgesi için pozitif miktarlı en az bir kalem gerekir.");
-        var actual = actualAtUtc?.UtcDateTime ?? documentDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Utc);
+        var now = DateTime.Now;
+        var resolvedDocumentDate = documentDate == default
+            ? now
+            : documentDate.ToDateTime(TimeOnly.MinValue);
+        var actual = actualAtUtc is null || actualAtUtc == default
+            ? now
+            : actualAtUtc.Value.LocalDateTime;
         return new NetsisItemSlipRequest
         {
             FaturaTip = documentType,
@@ -524,8 +530,9 @@ public sealed class ErpPostingService(
                 CariKod = customerCode,
                 FisNo = documentNo,
                 BelgeNo = waybillNo,
-                Tarih = documentDate.ToDateTime(TimeOnly.MinValue),
+                Tarih = resolvedDocumentDate,
                 FiiliTarih = actual,
+                ProjeKodu = NetsisItemSlipDefaults.DefaultProjectCode,
                 Tip = documentType,
                 SubeKodu = ParseBranchCode(warehouse.BranchCode),
                 Aciklama = description,
@@ -556,7 +563,8 @@ public sealed class ErpPostingService(
             ConfigurationCode = yapCode,
             SeriNo = serialNo,
             SiparisNo = orderNo,
-            Aciklama = description
+            Aciklama = description,
+            ProjeKodu = NetsisItemSlipDefaults.DefaultProjectCode
         };
 
     private async Task<WarehouseEntity> GetWarehouseAsync(long id, CancellationToken cancellationToken) =>

@@ -23,6 +23,7 @@ public sealed class NetsisRestClient(
         NetsisItemSlipRequest request,
         CancellationToken cancellationToken)
     {
+        NetsisItemSlipDefaults.Apply(request, DateTime.Now);
         var payload = JsonSerializer.Serialize(request, JsonOptions);
         var branchCode = request.FatUst.SubeKodu.ToString(
             System.Globalization.CultureInfo.InvariantCulture);
@@ -231,4 +232,28 @@ public sealed class NetsisRestClient(
                 return value.Trim();
         return null;
     }
+}
+
+internal static class NetsisItemSlipDefaults
+{
+    internal const string DefaultProjectCode = "0";
+
+    internal static void Apply(NetsisItemSlipRequest request, DateTime now)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(request.FatUst);
+
+        request.FatUst.ProjeKodu = NormalizeProjectCode(request.FatUst.ProjeKodu);
+        if (request.FatUst.Tarih == default)
+            request.FatUst.Tarih = now;
+        if (request.FatUst.FiiliTarih == default)
+            request.FatUst.FiiliTarih = now;
+
+        request.Kalems ??= [];
+        foreach (var line in request.Kalems)
+            line.ProjeKodu = NormalizeProjectCode(line.ProjeKodu);
+    }
+
+    internal static string NormalizeProjectCode(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? DefaultProjectCode : value.Trim();
 }

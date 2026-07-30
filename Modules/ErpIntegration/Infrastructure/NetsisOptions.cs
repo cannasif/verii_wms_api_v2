@@ -22,7 +22,7 @@ public sealed class NetsisRestOptions
     public string DbName { get; set; } = string.Empty;
     public string DbUser { get; set; } = string.Empty;
     public string DbPassword { get; set; } = string.Empty;
-    public string DbType { get; set; } = "MSSQL";
+    public string DbType { get; set; } = "0";
     public int GoodsReceiptDocumentType { get; set; } = 3;
     public int WarehouseTransferDocumentType { get; set; } = 9;
     public int ShipmentDocumentType { get; set; } = 2;

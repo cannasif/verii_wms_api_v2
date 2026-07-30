@@ -6,6 +6,12 @@ namespace verii_wms_api_v2.QueryTests;
 public sealed class NetsisTokenCacheKeyTests
 {
     [Fact]
+    public void Netsis_login_defaults_to_numeric_mssql_provider_code()
+    {
+        Assert.Equal("0", new NetsisRestOptions().DbType);
+    }
+
+    [Fact]
     public void Token_cache_is_isolated_by_authenticated_branch()
     {
         var options = new NetsisOptions
