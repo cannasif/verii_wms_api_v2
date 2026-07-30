@@ -53,9 +53,10 @@ public sealed record WarehouseTransferOpenOrderHeaderDto(
     decimal? PlannedQuantity,decimal? AvailableQuantity);
 
 public sealed record WarehouseTransferOpenOrderLineDto(
-    string Mode,string OrderNumber,int OrderId,string? StockCode,string? StockName,
-    string? YapCode,string? YapDescription,string? CustomerCode,string? CustomerName,
-    int? BranchCode,int? TargetWarehouseCode,string? ProjectCode,DateTime? OrderDate,
+    string Mode,string OrderNumber,int OrderId,int OrderLineSequence,string? StockCode,string? StockName,
+    string? UnitCode,string? YapCode,string? YapDescription,string? CustomerCode,string? CustomerName,
+    int? BranchCode,int? TargetWarehouseCode,string? ProjectCode,DateTime? OrderDate,DateTime? DeliveryDate,
+    decimal? NetUnitPrice,decimal? GrossUnitPrice,
     decimal? OrderedQuantity,decimal? DeliveredQuantity,decimal? RemainingQuantity,
     decimal? PlannedQuantity,decimal? AvailableQuantity);
 
@@ -65,8 +66,9 @@ public sealed record ShipmentOpenOrderHeaderDto(
     decimal? OrderedQuantity,decimal? DeliveredQuantity,decimal? RemainingQuantity,
     decimal? PlannedQuantity,decimal? AvailableQuantity);
 public sealed record ShipmentOpenOrderLineDto(
-    string Mode,string OrderNumber,long OrderId,string? StockCode,string? StockName,
-    string? YapCode,string? YapDescription,string? CustomerCode,string? CustomerName,
-    int? BranchCode,int? TargetWarehouseCode,string? ProjectCode,DateTime? OrderDate,
+    string Mode,string OrderNumber,long OrderId,int OrderLineSequence,string? StockCode,string? StockName,
+    string? UnitCode,string? YapCode,string? YapDescription,string? CustomerCode,string? CustomerName,
+    int? BranchCode,int? TargetWarehouseCode,string? ProjectCode,DateTime? OrderDate,DateTime? DeliveryDate,
+    decimal? NetUnitPrice,decimal? GrossUnitPrice,
     decimal? OrderedQuantity,decimal? DeliveredQuantity,decimal? RemainingQuantity,
     decimal? PlannedQuantity,decimal? AvailableQuantity);

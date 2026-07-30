@@ -120,10 +120,11 @@ public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INet
         return await queryExecutor.QueryAsync<WarehouseTransferOpenOrderLineDto>(
             "RII_FN_WT_LINE","SELECT * FROM dbo.RII_FN_WT_LINE(@orderNumbersCsv,@branchCode)",
             r=>new WarehouseTransferOpenOrderLineDto(
-                String(r,"Mode"),String(r,"SiparisNo"),Get<int>(r,"OrderID"),NullableString(r,"StockCode"),
-                NullableString(r,"StockName"),NullableString(r,"YapKod"),NullableString(r,"YapAcik"),
+                String(r,"Mode"),String(r,"SiparisNo"),Get<int>(r,"OrderID"),Get<int>(r,"OrderLineSequence"),NullableString(r,"StockCode"),
+                NullableString(r,"StockName"),NullableString(r,"UnitCode"),NullableString(r,"YapKod"),NullableString(r,"YapAcik"),
                 NullableString(r,"CustomerCode"),NullableString(r,"CustomerName"),Nullable<int>(r,"BranchCode"),
-                Nullable<int>(r,"TargetWh"),NullableString(r,"ProjectCode"),Nullable<DateTime>(r,"OrderDate"),
+                Nullable<int>(r,"TargetWh"),NullableString(r,"ProjectCode"),Nullable<DateTime>(r,"OrderDate"),Nullable<DateTime>(r,"DeliveryDate"),
+                Nullable<decimal>(r,"NetUnitPrice"),Nullable<decimal>(r,"GrossUnitPrice"),
                 Nullable<decimal>(r,"OrderedQty"),Nullable<decimal>(r,"DeliveredQty"),Nullable<decimal>(r,"RemainingHamax"),
                 Nullable<decimal>(r,"PlannedQtyAllocated"),Nullable<decimal>(r,"RemainingForImport")),
             ct,Parameter("@orderNumbersCsv",orderNumbersCsv),Parameter("@branchCode",Normalize(branchCode)));
@@ -141,7 +142,7 @@ public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INet
     {
         orderNumbersCsv=Normalize(orderNumbersCsv)??throw new ArgumentException("Sipariş numarası zorunludur.",nameof(orderNumbersCsv));
         return await queryExecutor.QueryAsync<ShipmentOpenOrderLineDto>("RII_FN_SH_LINE","SELECT * FROM dbo.RII_FN_SH_LINE(@orderNumbersCsv,@branchCode)",
-            r=>new ShipmentOpenOrderLineDto(String(r,"Mode"),String(r,"SiparisNo"),Get<long>(r,"OrderID"),NullableString(r,"StockCode"),NullableString(r,"StockName"),NullableString(r,"YapKod"),NullableString(r,"YapAcik"),NullableString(r,"CustomerCode"),NullableString(r,"CustomerName"),Nullable<int>(r,"BranchCode"),Nullable<int>(r,"TargetWh"),NullableString(r,"ProjectCode"),Nullable<DateTime>(r,"OrderDate"),Nullable<decimal>(r,"OrderedQty"),Nullable<decimal>(r,"DeliveredQty"),Nullable<decimal>(r,"RemainingHamax"),Nullable<decimal>(r,"PlannedQtyAllocated"),Nullable<decimal>(r,"RemainingForImport")),
+            r=>new ShipmentOpenOrderLineDto(String(r,"Mode"),String(r,"SiparisNo"),Get<long>(r,"OrderID"),Get<int>(r,"OrderLineSequence"),NullableString(r,"StockCode"),NullableString(r,"StockName"),NullableString(r,"UnitCode"),NullableString(r,"YapKod"),NullableString(r,"YapAcik"),NullableString(r,"CustomerCode"),NullableString(r,"CustomerName"),Nullable<int>(r,"BranchCode"),Nullable<int>(r,"TargetWh"),NullableString(r,"ProjectCode"),Nullable<DateTime>(r,"OrderDate"),Nullable<DateTime>(r,"DeliveryDate"),Nullable<decimal>(r,"NetUnitPrice"),Nullable<decimal>(r,"GrossUnitPrice"),Nullable<decimal>(r,"OrderedQty"),Nullable<decimal>(r,"DeliveredQty"),Nullable<decimal>(r,"RemainingHamax"),Nullable<decimal>(r,"PlannedQtyAllocated"),Nullable<decimal>(r,"RemainingForImport")),
             ct,Parameter("@orderNumbersCsv",orderNumbersCsv),Parameter("@branchCode",Normalize(branchCode)));
     }
 
