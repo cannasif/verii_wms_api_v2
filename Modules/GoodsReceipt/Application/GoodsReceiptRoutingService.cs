@@ -158,12 +158,21 @@ public sealed class GoodsReceiptRoutingService(
         var header = await uow.Repository<GoodsReceiptHeader>().Query()
             .FirstOrDefaultAsync(x => x.Id == goodsReceiptId, ct)
             ?? throw AppException.NotFound("Mal kabul kaydı bulunamadı.");
-        if (header.Status == WarehouseOperationStatus.Cancelled)
-            throw AppException.Conflict("İptal edilmiş mal kabul yönlendirilemez.");
-        if (header.ApprovalStatus is not (OperationApprovalStatus.NotRequired or OperationApprovalStatus.Approved))
-            throw AppException.Conflict("Mal kabul onayı tamamlanmadan yönlendirme yapılamaz.");
-        if (!CanRouteAfterQuality(header.QualityStatus))
-            throw AppException.Conflict("Kalite/GKK kararı tamamlanmadan ürünler yönlendirilemez.");
+        if (!CanRouteAfterErpReceipt(
+                header.Status,
+                header.ApprovalStatus,
+                header.QualityStatus,
+                header.ErpIntegrationStatus))
+        {
+            if (header.Status != WarehouseOperationStatus.Completed)
+                throw AppException.Conflict("Mal kabul tamamlanmadan DAT veya ambar çıkış oluşturulamaz.");
+            if (header.ApprovalStatus is not (OperationApprovalStatus.NotRequired or OperationApprovalStatus.Approved))
+                throw AppException.Conflict("Mal kabul onayı tamamlanmadan yönlendirme yapılamaz.");
+            if (!CanRouteAfterQuality(header.QualityStatus))
+                throw AppException.Conflict("Kalite/GKK kararı tamamlanmadan ürünler yönlendirilemez.");
+            throw AppException.Conflict(
+                "Mal kabul ERP irsaliyesi başarıyla oluşturulmadan DAT veya ambar çıkış oluşturulamaz.");
+        }
 
         var ids = requests.Select(x => x.GoodsReceiptLineId).ToArray();
         var lines = await uow.Repository<GoodsReceiptLine>().Query()
@@ -193,6 +202,16 @@ public sealed class GoodsReceiptRoutingService(
         status is OperationQualityStatus.NotRequired
             or OperationQualityStatus.Passed
             or OperationQualityStatus.Failed;
+
+    internal static bool CanRouteAfterErpReceipt(
+        WarehouseOperationStatus operationStatus,
+        OperationApprovalStatus approvalStatus,
+        OperationQualityStatus qualityStatus,
+        ErpIntegrationStatus erpStatus) =>
+        operationStatus == WarehouseOperationStatus.Completed
+        && approvalStatus is OperationApprovalStatus.NotRequired or OperationApprovalStatus.Approved
+        && CanRouteAfterQuality(qualityStatus)
+        && erpStatus == ErpIntegrationStatus.Succeeded;
 
     private async Task<Dictionary<long, decimal>> GetActiveAllocatedQuantitiesCoreAsync(long[] lineIds, CancellationToken ct)
     {
