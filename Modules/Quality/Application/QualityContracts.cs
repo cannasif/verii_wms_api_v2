@@ -1,4 +1,5 @@
 using verii_wms_api_v2.Modules.Quality.Domain;
+using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Shared;
 
 namespace verii_wms_api_v2.Modules.Quality.Application;
@@ -68,6 +69,16 @@ public sealed record DecideQualityInspectionRequest(Guid IdempotencyKey, Quality
     string? ReasonCode, string? Note, IReadOnlyList<long>? LineIds, string? RowVersion,
     IReadOnlyList<QualityInspectionQuantityDecisionRequest>? QuantityDecisions = null);
 
+public sealed record QualityDecisionResult(
+    long GoodsReceiptId,
+    string GoodsReceiptDocumentNo,
+    WarehouseOperationStatus GoodsReceiptStatus,
+    OperationQualityStatus QualityStatus,
+    OperationApprovalStatus ApprovalStatus,
+    ErpIntegrationStatus ErpIntegrationStatus,
+    bool ErpDocumentCreatedNow,
+    string Message);
+
 public sealed record QualityInspectionLineDto(long Id, long? GoodsReceiptLineId, long StockId,
     string StockCode, string? StockName, string? YapCode, string? LotNo, string? SerialNo,
     DateOnly? ExpiryDate, decimal Quantity, decimal SampleQuantity, decimal AcceptedQuantity,
@@ -89,7 +100,7 @@ public interface IQualityService
     Task DeleteRuleAsync(long id, long actor, CancellationToken ct = default);
     Task<PagedResponse<QualityInspectionGridRow>> GetInspectionsPagedAsync(PagedRequest request, CancellationToken ct = default);
     Task<QualityInspectionDetail> GetInspectionAsync(long id, CancellationToken ct = default);
-    Task DecideInspectionAsync(long id, DecideQualityInspectionRequest request, long actor,
+    Task<QualityDecisionResult> DecideInspectionAsync(long id, DecideQualityInspectionRequest request, long actor,
         bool canReleaseQuarantine, CancellationToken ct = default);
 }
 

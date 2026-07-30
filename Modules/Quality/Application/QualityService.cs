@@ -4,6 +4,7 @@ using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.DocumentSeries.Application;
 using verii_wms_api_v2.Modules.DocumentSeries.Domain;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
+using verii_wms_api_v2.Modules.GoodsReceipt.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
@@ -175,7 +176,7 @@ public sealed class QualityService(
             parameter.AllowPartialDecision, parameter.RequireManagerApprovalForRelease);
     }
 
-    public async Task DecideInspectionAsync(long id, DecideQualityInspectionRequest request, long actor,
+    public async Task<QualityDecisionResult> DecideInspectionAsync(long id, DecideQualityInspectionRequest request, long actor,
         bool canReleaseQuarantine, CancellationToken ct = default)
     {
         var hasQuantityDecisions = request.QuantityDecisions is { Count: > 0 };
@@ -191,7 +192,10 @@ public sealed class QualityService(
             if (!string.Equals(inspection.SourceDocumentType, "GoodsReceipt", StringComparison.OrdinalIgnoreCase))
                 throw AppException.Conflict("Bu kaynak türü için fiziksel kalite kararı henüz desteklenmiyor.");
 
-            var gr = await uow.Repository<GoodsReceiptHeader>().Query(true).FirstOrDefaultAsync(x => x.Id == inspection.SourceDocumentId, token)
+            var gr = await uow.Repository<GoodsReceiptHeader>().Query(true)
+                .Include(x => x.Lines)
+                .Include(x => x.Tasks)
+                .FirstOrDefaultAsync(x => x.Id == inspection.SourceDocumentId, token)
                 ?? throw AppException.NotFound("Mal kabul kaydı bulunamadı.");
             var parameter = await Parameters.FirstOrDefaultAsync(x => x.BranchCode == inspection.BranchCode && x.ParameterKey == "DEFAULT", false, token)
                 ?? Default(inspection.BranchCode);
@@ -216,7 +220,7 @@ public sealed class QualityService(
             if (releasesQuarantine && parameter.RequireManagerApprovalForRelease && !canReleaseQuarantine)
                 throw AppException.Forbidden("Karantinadan serbest bırakma için yönetici izni gerekir.");
             var grLineIds = selected.Where(x => x.GoodsReceiptLineId.HasValue).Select(x => x.GoodsReceiptLineId!.Value).Distinct().ToArray();
-            var grLines = await uow.Repository<GoodsReceiptLine>().Query(true).Where(x => grLineIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, token);
+            var grLines = gr.Lines.Where(x => grLineIds.Contains(x.Id)).ToDictionary(x => x.Id);
             if (grLines.Count != grLineIds.Length) throw AppException.Conflict("Kalite satırının mal kabul bağlantısı eksik.");
             foreach (var line in selected.Where(x =>
                          !string.IsNullOrWhiteSpace(x.SerialNo)
@@ -356,6 +360,16 @@ public sealed class QualityService(
                 var receiptLine = grLines[line.GoodsReceiptLineId!.Value];
                 var parts = decisionParts.Where(x => x.Line.Id == line.Id).ToList();
                 ApplyDecisionParts(line, receiptLine, parts, actor, now, request.ReasonCode, request.Note);
+                var receiptLocationId = receiptLine.DefaultReceivingLocationId ?? gr.ReceivingLocationId;
+                if (movementLocations[receiptLocationId].IsPutaway)
+                {
+                    var accepted = parts
+                        .Where(x => x.Decision == QualityDecision.Accepted)
+                        .Sum(x => x.Quantity);
+                    receiptLine.PutawayQuantity = Math.Min(
+                        receiptLine.AcceptedQuantity,
+                        receiptLine.PutawayQuantity + accepted);
+                }
             }
             var decisionState = ResolveDecisionState(
                 inspection.Lines,
@@ -365,6 +379,7 @@ public sealed class QualityService(
             inspection.InspectorUserId = actor; inspection.Note = Clean(request.Note, 1000);
             inspection.UpdatedBy = actor; inspection.UpdatedDate = DateTime.UtcNow;
             gr.QualityStatus = decisionState.ReceiptStatus;
+            SynchronizeGoodsReceiptStatus(gr, actor);
             await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("quality.inspection.decide", nameof(QualityInspection), id.ToString(), "Succeeded", "quality",
                 NewValues: new { request.IdempotencyKey, request.Decision, request.LineIds, request.ReasonCode,
@@ -372,7 +387,11 @@ public sealed class QualityService(
                 ChangedFields: ["Status", "Lines", "InventoryStatus"]), token);
             return gr.Id;
         }, ct);
-        await erpPosting.PostIfEligibleAsync(goodsReceiptId, actor, ct);
+        var posting = await erpPosting.PostIfEligibleAsync(goodsReceiptId, actor, ct);
+        var receipt = await uow.Repository<GoodsReceiptHeader>().Query()
+            .AsNoTracking()
+            .SingleAsync(x => x.Id == goodsReceiptId, ct);
+        return BuildDecisionResult(receipt, posting);
     }
 
     private Task DecideInspectionLegacyAsync(long id, DecideQualityInspectionRequest request,long actor,CancellationToken ct=default)
@@ -608,6 +627,41 @@ public sealed class QualityService(
                     ? QualityDecision.Rejected
                     : QualityDecision.Accepted;
     internal static bool RequiresDat(long sourceWarehouseId,long targetWarehouseId)=>sourceWarehouseId!=targetWarehouseId;
+    internal static void SynchronizeGoodsReceiptStatus(GoodsReceiptHeader receipt, long actor) =>
+        GoodsReceiptExecutionService.RefreshHeaderStatus(receipt, actor);
+
+    internal static QualityDecisionResult BuildDecisionResult(
+        GoodsReceiptHeader receipt,
+        ErpPostingResult? posting)
+    {
+        var createdNow = posting?.Status == Modules.ErpIntegration.Domain.ErpPostingStatus.Succeeded;
+        var message = createdNow
+            ? "Kalite kararı uygulandı ve Netsis alış irsaliyesi oluşturuldu."
+            : receipt.ErpIntegrationStatus == ErpIntegrationStatus.Succeeded
+                ? "Kalite kararı uygulandı. Bu mal kabulün Netsis alış irsaliyesi daha önce oluşturulmuş."
+                : receipt.QualityStatus is OperationQualityStatus.Pending
+                    or OperationQualityStatus.InProgress
+                    or OperationQualityStatus.PartiallyCompleted
+                    ? "Kalite kararı kısmen uygulandı. Kalan kalite kararları tamamlandığında ERP gönderimi yeniden değerlendirilecek."
+                    : receipt.ApprovalStatus == OperationApprovalStatus.Pending
+                      && receipt.ErpPostingPolicy is GoodsReceiptErpPostingPolicy.AfterReceiptApproval
+                          or GoodsReceiptErpPostingPolicy.AfterAllApprovals
+                        ? "Kalite kararı uygulandı. Netsis alış irsaliyesi için mal kabul onayı bekleniyor."
+                        : receipt.Status is not (WarehouseOperationStatus.Processed or WarehouseOperationStatus.Completed)
+                            ? "Kalite kararı uygulandı. Netsis alış irsaliyesi için mal kabul operasyonunun tamamlanması bekleniyor."
+                            : receipt.ErpIntegrationStatus == ErpIntegrationStatus.Cancelled
+                                ? "Kalite kararı uygulandı; ancak bu mal kabulün ERP kaydı iptal durumunda."
+                                : "Kalite kararı uygulandı. Seçili ERP gönderim politikası nedeniyle Netsis alış irsaliyesi henüz oluşturulmadı.";
+        return new(
+            receipt.Id,
+            receipt.DocumentNo,
+            receipt.Status,
+            receipt.QualityStatus,
+            receipt.ApprovalStatus,
+            receipt.ErpIntegrationStatus,
+            createdNow,
+            message);
+    }
     private static Guid CreateDatIdempotencyKey(Guid decisionKey,long sourceWarehouseId,long targetWarehouseId)
     {
         var input=$"{decisionKey:N}:{sourceWarehouseId}:{targetWarehouseId}";
