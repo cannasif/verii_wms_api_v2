@@ -1,4 +1,5 @@
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
+using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 using verii_wms_api_v2.Modules.Quality.Application;
 using verii_wms_api_v2.Modules.Quality.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
@@ -9,6 +10,73 @@ namespace verii_wms_api_v2.QueryTests;
 
 public sealed class QualityQuantityDecisionTests
 {
+    [Fact]
+    public void Terminal_quality_decision_synchronizes_goods_receipt_operation_status()
+    {
+        var receipt = new GoodsReceiptHeader
+        {
+            Status = WarehouseOperationStatus.Processed,
+            QualityStatus = OperationQualityStatus.Passed,
+            RequirePutaway = false,
+            Lines =
+            [
+                new GoodsReceiptLine
+                {
+                    ExpectedQuantity = 10,
+                    ReceivedQuantity = 10,
+                    AcceptedQuantity = 10
+                }
+            ]
+        };
+
+        QualityService.SynchronizeGoodsReceiptStatus(receipt, 42);
+
+        Assert.Equal(WarehouseOperationStatus.Completed, receipt.Status);
+        Assert.NotNull(receipt.CompletedAtUtc);
+        Assert.Equal(42, receipt.CompletedBy);
+    }
+
+    [Fact]
+    public void Decision_result_explains_when_receipt_approval_blocks_erp_posting()
+    {
+        var receipt = new GoodsReceiptHeader
+        {
+            Id = 15,
+            DocumentNo = "GR1202600000015",
+            Status = WarehouseOperationStatus.Completed,
+            QualityStatus = OperationQualityStatus.Passed,
+            ApprovalStatus = OperationApprovalStatus.Pending,
+            ErpIntegrationStatus = ErpIntegrationStatus.Pending,
+            ErpPostingPolicy = GoodsReceiptErpPostingPolicy.AfterAllApprovals
+        };
+
+        var result = QualityService.BuildDecisionResult(receipt, null);
+
+        Assert.False(result.ErpDocumentCreatedNow);
+        Assert.Contains("mal kabul onayı bekleniyor", result.Message);
+    }
+
+    [Fact]
+    public void Decision_result_reports_persisted_erp_success_status()
+    {
+        var receipt = new GoodsReceiptHeader
+        {
+            Id = 16,
+            DocumentNo = "GR1202600000016",
+            Status = WarehouseOperationStatus.Completed,
+            QualityStatus = OperationQualityStatus.Passed,
+            ApprovalStatus = OperationApprovalStatus.Approved,
+            ErpIntegrationStatus = ErpIntegrationStatus.Succeeded,
+            ErpPostingPolicy = GoodsReceiptErpPostingPolicy.AfterAllApprovals
+        };
+
+        var result = QualityService.BuildDecisionResult(receipt, null);
+
+        Assert.Equal(ErpIntegrationStatus.Succeeded, result.ErpIntegrationStatus);
+        Assert.False(result.ErpDocumentCreatedNow);
+        Assert.Contains("daha önce oluşturulmuş", result.Message);
+    }
+
     [Fact]
     public void Ten_units_can_be_split_into_five_accepted_and_five_quarantined()
     {
