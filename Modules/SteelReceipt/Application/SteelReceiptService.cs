@@ -56,7 +56,7 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
         if(request.IdempotencyKey==Guid.Empty)throw AppException.BadRequest("Idempotency anahtarı zorunludur.");
         return uow.ExecuteInTransactionAsync<long>(async token=>{
             var import=request.Import;var normalized=await ValidateImportAsync(import,token);
-            var errors=normalized.SelectMany(x=>x.Errors.Select(e=>$"Satır {x.Input.RowNumber}: {e}")).ToList();
+            var errors=normalized.OrderBy(x=>x.Input.RowNumber).SelectMany((x,index)=>x.Errors.Select(e=>$"Satır {index+1}: {e}")).ToList();
             if(errors.Count>0)throw AppException.BadRequest(string.Join(" ",errors.Take(10)));
             var keys=normalized.Select(x=>x.Key).ToArray();
             var stockIds=normalized.Select(x=>x.Stock!.Id).Distinct().ToArray();
@@ -97,8 +97,9 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             var last=await Lines.Query(ignoreQueryFilters:true).Where(x=>x.DCode.StartsWith($"SAC-{year}-"))
                 .OrderByDescending(x=>x.DCode).Select(x=>x.DCode).FirstOrDefaultAsync(token);
             var seq=int.TryParse(last?.Split('-').Last(),out var parsed)?parsed:0;
+            var lineNo=0;
             foreach(var row in normalized.OrderBy(x=>x.Input.RowNumber)){var i=row.Input;
-                plan.Lines.Add(Stamp(new SteelReceiptPlanLine{BranchCode=branch,Plan=plan,LineNo=i.RowNumber,DCode=$"SAC-{year}-{++seq:000000}",
+                plan.Lines.Add(Stamp(new SteelReceiptPlanLine{BranchCode=branch,Plan=plan,LineNo=++lineNo,DCode=$"SAC-{year}-{++seq:000000}",
                     ExternalLineKey=row.Key,NetsisOrderNo=Clean(i.NetsisOrderNo,50),NetsisOrderLineNo=Clean(i.NetsisOrderLineNo,50),
                     StockId=row.Stock!.Id,StockCodeSnapshot=row.Stock.ErpStockCode,StockNameSnapshot=row.Stock.StockName,
                     YapCodeId=row.YapCodeId,YapCodeSnapshot=row.YapCode,UnitCode=Clean(i.UnitCode,20,true)!.ToUpperInvariant(),
@@ -115,19 +116,64 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
 
     public async Task<PagedResponse<SteelReceiptPlanGridRow>> GetPlansPagedAsync(PagedRequest request,CancellationToken ct=default)
     {
+        var vehicleHeaders=uow.Repository<VehicleCheckInHeader>().Query();
+        var acceptances=uow.Repository<SteelVehicleAcceptance>().Query();
+        var planLines=Lines.Query();
         var joined=from p in Plans.Query() join w in uow.Repository<WarehouseEntity>().Query() on p.TargetWarehouseId equals w.Id
-                   join v in uow.Repository<VehicleCheckInHeader>().Query() on p.VehicleCheckInId equals v.Id into vehicles
+                   join v in vehicleHeaders on p.VehicleCheckInId equals v.Id into vehicles
                    from v in vehicles.DefaultIfEmpty()
-                   select new { Plan=p, Warehouse=w, Vehicle=v };
+                   let linkedVehicle=v??(
+                       from line in planLines
+                       join acc in acceptances on line.VehicleAcceptanceId equals acc.Id
+                       join av in vehicleHeaders on acc.VehicleCheckInId equals av.Id
+                       where line.PlanId==p.Id&&line.VehicleAcceptanceId!=null
+                       orderby acc.AcceptedAtUtc descending
+                       select av).FirstOrDefault()
+                   select new {Plan=p,Warehouse=w,Vehicle=linkedVehicle};
         var q=joined.Select(x=>new SteelReceiptPlanGridRow(x.Plan.Id,x.Plan.BranchCode,x.Plan.ImportReferenceNo,x.Plan.SourceFileName,
-            x.Plan.ExportReferenceNo,x.Plan.VehicleCheckInId,x.Vehicle==null?null:x.Vehicle.PlateNo,
+            x.Plan.ExportReferenceNo,x.Vehicle==null?null:x.Vehicle.Id,x.Vehicle==null?null:x.Vehicle.PlateNo,
             x.Vehicle==null?null:((x.Vehicle.DriverFirstName??"")+" "+(x.Vehicle.DriverLastName??"")).Trim(),x.Plan.SupplierId,
             x.Plan.SupplierCodeSnapshot,x.Plan.SupplierNameSnapshot,x.Plan.TargetWarehouseId,x.Warehouse.WarehouseCode,
             x.Warehouse.WarehouseName,x.Plan.Status,x.Plan.TotalLineCount,x.Plan.TotalExpectedQuantity,x.Plan.ImportedAtUtc,
             x.Plan.CreatedBy,x.Plan.CreatedDate,x.Plan.UpdatedBy,x.Plan.UpdatedDate));
         var s=request.Search?.Trim();q=q.Where(x=>string.IsNullOrWhiteSpace(s)||x.ImportReferenceNo.Contains(s)||x.SupplierCode.Contains(s)
             ||x.SupplierName.Contains(s)||(x.ExportReferenceNo!=null&&x.ExportReferenceNo.Contains(s)));
-        return await q.ApplyAdvancedFilters(request).ApplySort(request,nameof(SteelReceiptPlanGridRow.ImportedAtUtc)).ToPagedResponseAsync(request,ct);
+        var response=await q.ApplyAdvancedFilters(request).ApplySort(request,nameof(SteelReceiptPlanGridRow.ImportedAtUtc)).ToPagedResponseAsync(request,ct);
+        return await ApplyResolvedPlanStatusesAsync(response,ct);
+    }
+
+    private async Task<PagedResponse<SteelReceiptPlanGridRow>> ApplyResolvedPlanStatusesAsync(
+        PagedResponse<SteelReceiptPlanGridRow> response,
+        CancellationToken ct)
+    {
+        if (response.Items.Count == 0)
+            return response;
+
+        var planIds=response.Items.Select(x=>x.Id).ToArray();
+        var lineStates=await Lines.Query()
+            .Where(x=>planIds.Contains(x.PlanId))
+            .Select(x=>new {x.PlanId,x.InspectionStatus,x.ConversionStatus})
+            .ToListAsync(ct);
+        var statesByPlan=lineStates
+            .GroupBy(x=>x.PlanId)
+            .ToDictionary(
+                x=>x.Key,
+                x=>x.Select(line=>new SteelReceiptPlanStatusRules.LineState(line.InspectionStatus,line.ConversionStatus)));
+
+        var items=response.Items.Select(row=>{
+            if(!statesByPlan.TryGetValue(row.Id,out var states))
+                return row;
+            var resolved=SteelReceiptPlanStatusRules.Resolve(states);
+            return resolved==row.Status?row:row with {Status=resolved};
+        }).ToList();
+
+        return new PagedResponse<SteelReceiptPlanGridRow>
+        {
+            Items=items,
+            TotalCount=response.TotalCount,
+            PageNumber=response.PageNumber,
+            PageSize=response.PageSize
+        };
     }
 
     public async Task<PagedResponse<SteelReceiptLineGridRow>> GetLinesPagedAsync(PagedRequest request,CancellationToken ct=default)
@@ -358,10 +404,16 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
 
     private IQueryable<SteelReceiptLineGridRow> GridQuery(IQueryable<SteelReceiptPlanLine> lines)
     {
+        var vehicleHeaders=uow.Repository<VehicleCheckInHeader>().Query();
+        var acceptances=uow.Repository<SteelVehicleAcceptance>().Query();
         var joined=from l in lines join p in Plans.Query() on l.PlanId equals p.Id
                    join g in uow.Repository<GoodsReceiptHeader>().Query() on l.GoodsReceiptId equals g.Id into gs
                    from g in gs.DefaultIfEmpty()
-                   select new { Line=l, Plan=p, Receipt=g };
+                   join acc in acceptances on l.VehicleAcceptanceId equals acc.Id into acceptanceRows
+                   from acc in acceptanceRows.DefaultIfEmpty()
+                   join v in vehicleHeaders on acc.VehicleCheckInId equals v.Id into vehicles
+                   from v in vehicles.DefaultIfEmpty()
+                   select new {Line=l,Plan=p,Receipt=g,Vehicle=v};
         return joined.Select(x=>new SteelReceiptLineGridRow(x.Line.Id,x.Line.PlanId,x.Plan.ImportReferenceNo,x.Line.LineNo,
             x.Line.DCode,x.Line.NetsisOrderNo,x.Line.StockCodeSnapshot,x.Line.StockNameSnapshot,x.Line.SupplierSerialNo,
             x.Line.SecondarySerialNo,x.Line.CombinedSize,x.Line.MaterialGrade,x.Line.HeatNumber,x.Line.CertificateNumber,
@@ -370,6 +422,8 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             x.Receipt==null?null:x.Receipt.DocumentNo,x.Line.GoodsReceiptId,
             x.Receipt==null?null:x.Receipt.ErpIntegrationStatus.ToString(),x.Line.TargetWarehouseId,x.Line.ReceivingLocationId,
             x.Line.GoodsReceiptLineId,x.Line.CreatedBy,x.Line.CreatedDate,x.Line.UpdatedBy,x.Line.UpdatedDate,
+            x.Vehicle==null?null:x.Vehicle.PlateNo,
+            x.Vehicle==null?null:((x.Vehicle.DriverFirstName??"")+" "+(x.Vehicle.DriverLastName??"")).Trim(),
             Convert.ToBase64String(x.Line.RowVersion)));
     }
 
@@ -515,10 +569,7 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
     private async Task RefreshPlanAsync(SteelReceiptPlan plan,CancellationToken ct)
     {
         var s=await Lines.Query().Where(x=>x.PlanId==plan.Id).Select(x=>new{x.InspectionStatus,x.ConversionStatus}).ToListAsync(ct);
-        plan.Status=s.All(x=>x.ConversionStatus==SteelReceiptConversionStatus.Created)?SteelReceiptPlanStatus.Converted:
-            s.Any(x=>x.ConversionStatus==SteelReceiptConversionStatus.Created)?SteelReceiptPlanStatus.PartiallyConverted:
-            s.Any(x=>x.InspectionStatus is SteelInspectionStatus.Approved or SteelInspectionStatus.PartiallyApproved)?SteelReceiptPlanStatus.ReadyForReceipt:
-            s.Any(x=>x.InspectionStatus!=SteelInspectionStatus.Pending)?SteelReceiptPlanStatus.InspectionInProgress:SteelReceiptPlanStatus.Imported;
+        plan.Status=SteelReceiptPlanStatusRules.Resolve(s.Select(x=>new SteelReceiptPlanStatusRules.LineState(x.InspectionStatus,x.ConversionStatus)));
         plan.UpdatedDate=DateTime.UtcNow;await uow.SaveChangesAsync(ct);
     }
     internal static ManualGoodsReceiptLineRequest BuildManualGoodsReceiptLineForConvert(SteelReceiptPlanLine line)

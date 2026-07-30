@@ -2,7 +2,7 @@ using verii_wms_api_v2.Shared.Domain;
 
 namespace verii_wms_api_v2.Modules.SteelReceipt.Domain;
 
-public enum SteelReceiptPlanStatus { Imported=1, InspectionInProgress=2, ReadyForReceipt=3, PartiallyConverted=4, Converted=5, Cancelled=6 }
+public enum SteelReceiptPlanStatus { Imported=1, InspectionInProgress=2, ReadyForReceipt=3, PartiallyConverted=4, Converted=5, Cancelled=6, PartiallyReadyForReceipt=7 }
 public enum SteelArrivalStatus { Expected=1, Arrived=2, Missing=3 }
 public enum SteelInspectionStatus { Pending=1, Inspected=2, Approved=3, PartiallyApproved=4, Rejected=5 }
 public enum SteelReceiptConversionStatus { NotCreated=1, Created=2 }
