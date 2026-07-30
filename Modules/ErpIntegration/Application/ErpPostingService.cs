@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 using verii_wms_api_v2.Modules.ErpIntegration.Infrastructure;
+using verii_wms_api_v2.Modules.GoodsReceipt.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.ProjectSettings.Domain;
 using verii_wms_api_v2.Modules.Shipping.Domain;
@@ -20,6 +21,7 @@ namespace verii_wms_api_v2.Modules.ErpIntegration.Application;
 public sealed class ErpPostingService(
     IUnitOfWork unitOfWork,
     INetsisRestClient netsisClient,
+    IGoodsReceiptOrderSource goodsReceiptOrderSource,
     IOptions<NetsisOptions> optionsAccessor,
     IHttpContextAccessor httpContextAccessor,
     ILogger<ErpPostingService> logger) : IErpPostingService
@@ -382,30 +384,92 @@ public sealed class ErpPostingService(
                 .Select(x => new { x.GrLineId, x.Quantity, x.SerialNo })
                 .ToListAsync(cancellationToken)
             : [];
+        var purchaseOrderDocuments = header.SourceDocuments
+            .Where(x => x.SourceSystem == WarehouseOperationSourceSystem.Netsis
+                && x.SourceDocumentType == GoodsReceiptSourceDocumentType.PurchaseOrder)
+            .ToDictionary(x => x.Id);
+        var orderRows = new Dictionary<(string OrderNumber, int OrderId), GoodsReceiptOrderSourceLine>();
+        if (purchaseOrderDocuments.Count > 0)
+        {
+            var orderNumbers = string.Join(
+                ',',
+                purchaseOrderDocuments.Values
+                    .Select(x => x.ExternalDocumentNo)
+                    .Where(x => !string.IsNullOrWhiteSpace(x))
+                    .Distinct(StringComparer.OrdinalIgnoreCase));
+            var sourceRows = await goodsReceiptOrderSource.GetOpenLinesAsync(
+                orderNumbers,
+                header.SupplierCodeSnapshot,
+                header.BranchCode,
+                cancellationToken);
+            orderRows = sourceRows.ToDictionary(
+                x => (x.OrderNumber.Trim().ToUpperInvariant(), x.OrderId));
+        }
         var lines = new List<NetsisItemSlipLine>();
+        var usedOrderRows = new List<GoodsReceiptOrderSourceLine>();
+        var orderAllocationQueues = BuildGoodsReceiptOrderAllocationQueues(
+            header,
+            purchaseOrderDocuments,
+            orderRows);
 
         foreach (var line in header.Lines.OrderBy(x => x.LineNo))
         {
             var receiptQuantity = GoodsReceiptQuantityForErp(line);
             if (receiptQuantity <= 0) continue;
-            var orderNo = ResolveGoodsReceiptOrderNo(header, line);
+            var allocationKey = OrderAllocationKey(line.StockCodeSnapshot, line.YapCodeSnapshot);
+            var hasOrderSource = line.Sources.Any(x => purchaseOrderDocuments.ContainsKey(x.GrSourceDocumentId));
+            var allocations = hasOrderSource
+                ? orderAllocationQueues.TryGetValue(allocationKey, out var allocationQueue)
+                    ? AllocateOrderQuantity(allocationQueue, receiptQuantity, line.StockCodeSnapshot)
+                    : throw AppException.Conflict(
+                        $"{line.StockCodeSnapshot} için seçilen Netsis sipariş kaynakları ERP satır dağıtımına hazırlanamadı.")
+                : [];
+            usedOrderRows.AddRange(allocations.Select(x => x.OrderRow));
             var lineSerials = serials.Where(x => x.GrLineId == line.Id).ToList();
             if (sendSerials && line.RequireSerial)
             {
                 if (lineSerials.Count == 0 || lineSerials.Sum(x => x.Quantity) != receiptQuantity)
                     throw AppException.Conflict(
                         $"{line.StockCodeSnapshot} için teslim alınan miktarla eşleşen seri kayıtları tamamlanmadan ERP irsaliyesi oluşturulamaz.");
-                lines.AddRange(lineSerials.Select(serial => NewLine(
-                    line.StockCodeSnapshot, serial.Quantity, warehouse.WarehouseCode, null, null,
-                    line.YapCodeSnapshot, serial.SerialNo, orderNo, line.Description)));
+                AddSerialGoodsReceiptLines(
+                    lines,
+                    line,
+                    lineSerials.Select(x => new GoodsReceiptSerialPart(x.Quantity, x.SerialNo!)),
+                    allocations,
+                    warehouse.WarehouseCode);
             }
+            else if (allocations.Count > 0)
+                lines.AddRange(allocations.Select(allocation => NewLine(
+                    line.StockCodeSnapshot,
+                    allocation.Quantity,
+                    warehouse.WarehouseCode,
+                    null,
+                    null,
+                    line.YapCodeSnapshot,
+                    null,
+                    allocation.OrderRow.OrderNumber,
+                    line.Description,
+                    allocation.OrderRow.NetUnitPrice,
+                    allocation.OrderRow.GrossUnitPrice,
+                    allocation.OrderRow.ProjectCode,
+                    allocation.OrderRow.OrderLineSequence)));
             else
             {
                 lines.Add(NewLine(line.StockCodeSnapshot, receiptQuantity, warehouse.WarehouseCode,
-                    null, null, line.YapCodeSnapshot, null, orderNo, line.Description));
+                    null, null, line.YapCodeSnapshot, null, null, line.Description));
             }
         }
 
+        var headerProjectCode = ResolveHeaderProjectCode(usedOrderRows);
+        var orderDeliveryDate = usedOrderRows
+            .Where(x => x.DeliveryDate.HasValue)
+            .Select(x => x.DeliveryDate!.Value)
+            .OrderBy(x => x)
+            .FirstOrDefault();
+        if (usedOrderRows.Count > 0 && orderDeliveryDate == default)
+            orderDeliveryDate = header.DocumentDate == default
+                ? DateTime.Now
+                : header.DocumentDate.ToDateTime(TimeOnly.MinValue);
         return NewRequest(
             options.GoodsReceiptDocumentType,
             options.GoodsReceiptSeries,
@@ -416,7 +480,9 @@ public sealed class ErpPostingService(
             header.SupplierCodeSnapshot,
             warehouse,
             header.Description,
-            lines);
+            lines,
+            headerProjectCode,
+            orderDeliveryDate == default ? null : orderDeliveryDate);
     }
 
     internal static decimal GoodsReceiptQuantityForErp(GoodsReceiptLine line) =>
@@ -510,7 +576,9 @@ public sealed class ErpPostingService(
         string? customerCode,
         WarehouseEntity warehouse,
         string? description,
-        List<NetsisItemSlipLine> lines)
+        List<NetsisItemSlipLine> lines,
+        string? projectCode = null,
+        DateTime? orderDeliveryDate = null)
     {
         if (lines.Count == 0) throw AppException.Conflict("ERP belgesi için pozitif miktarlı en az bir kalem gerekir.");
         var now = DateTime.Now;
@@ -531,8 +599,10 @@ public sealed class ErpPostingService(
                 FisNo = documentNo,
                 BelgeNo = waybillNo,
                 Tarih = resolvedDocumentDate,
+                FiyatTarihi = resolvedDocumentDate.ToString("dd.MM.yyyy"),
+                SiparisTeslimTarihi = orderDeliveryDate?.ToString("dd.MM.yyyy"),
                 FiiliTarih = actual,
-                ProjeKodu = NetsisItemSlipDefaults.DefaultProjectCode,
+                ProjeKodu = NetsisItemSlipDefaults.NormalizeProjectCode(projectCode),
                 Tip = documentType,
                 SubeKodu = ParseBranchCode(warehouse.BranchCode),
                 Aciklama = description,
@@ -553,7 +623,11 @@ public sealed class ErpPostingService(
         string? yapCode,
         string? serialNo,
         string? orderNo,
-        string? description) => new()
+        string? description,
+        decimal netUnitPrice = 0,
+        decimal grossUnitPrice = 0,
+        string? projectCode = null,
+        int orderLineSequence = 0) => new()
         {
             StokKodu = stockCode,
             Miktar = quantity,
@@ -562,9 +636,12 @@ public sealed class ErpPostingService(
             GirisDepoKodu = targetWarehouseCode,
             ConfigurationCode = yapCode,
             SeriNo = serialNo,
-            SiparisNo = orderNo,
+            NetFiyat = netUnitPrice,
+            BrutFiyat = grossUnitPrice,
+            SiparisNumarasi = Clean(orderNo) ?? string.Empty,
+            SiparisKontrol = Clean(orderNo) is null ? 0 : orderLineSequence,
             Aciklama = description,
-            ProjeKodu = NetsisItemSlipDefaults.DefaultProjectCode
+            ProjeKodu = NetsisItemSlipDefaults.NormalizeProjectCode(projectCode)
         };
 
     private async Task<WarehouseEntity> GetWarehouseAsync(long id, CancellationToken cancellationToken) =>
@@ -635,12 +712,177 @@ public sealed class ErpPostingService(
             throw AppException.Conflict("Kalite kararı tamamlanmadan ERP irsaliyesi oluşturulamaz.");
     }
 
-    private static string? ResolveGoodsReceiptOrderNo(GoodsReceiptHeader header, GoodsReceiptLine line)
+    private static GoodsReceiptOrderSourceLine ResolveGoodsReceiptOrderRow(
+        GoodsReceiptLineSource source,
+        IReadOnlyDictionary<long, GoodsReceiptSourceDocument> purchaseOrderDocuments,
+        IReadOnlyDictionary<(string OrderNumber, int OrderId), GoodsReceiptOrderSourceLine> orderRows)
     {
-        var sourceId = line.Sources.OrderBy(x => x.Id).Select(x => x.GrSourceDocumentId).FirstOrDefault();
-        return header.SourceDocuments.FirstOrDefault(x => x.Id == sourceId)?.ExternalDocumentNo
-            ?? header.SourceDocuments.OrderBy(x => x.Id).Select(x => x.ExternalDocumentNo).FirstOrDefault();
+        var document = purchaseOrderDocuments[source.GrSourceDocumentId];
+        if (!int.TryParse(source.ExternalLineId, out var orderId))
+            throw AppException.Conflict(
+                $"{source.ExternalStockCode} sipariş satırı kimliği Netsis bağlantısı için geçersizdir.");
+
+        var key = (document.ExternalDocumentNo.Trim().ToUpperInvariant(), orderId);
+        if (orderRows.TryGetValue(key, out var orderRow))
+        {
+            if (orderRow.OrderLineSequence <= 0)
+                throw AppException.Conflict(
+                    $"{document.ExternalDocumentNo} / {source.ExternalStockCode} Netsis sipariş satırının SIRA bilgisi geçersizdir.");
+            return orderRow;
+        }
+
+        throw AppException.Conflict(
+            $"{document.ExternalDocumentNo} / {source.ExternalStockCode} sipariş satırı Netsis'te doğrulanamadı. " +
+            "İrsaliye sipariş bağlantısı kopuk gönderilmedi.");
     }
+
+    private static Dictionary<string, List<GoodsReceiptOrderAllocationState>> BuildGoodsReceiptOrderAllocationQueues(
+        GoodsReceiptHeader header,
+        IReadOnlyDictionary<long, GoodsReceiptSourceDocument> purchaseOrderDocuments,
+        IReadOnlyDictionary<(string OrderNumber, int OrderId), GoodsReceiptOrderSourceLine> orderRows)
+    {
+        return header.Lines
+            .SelectMany(line => line.Sources)
+            .Where(source => purchaseOrderDocuments.ContainsKey(source.GrSourceDocumentId)
+                && source.AllocatedQuantity > 0)
+            .Select(source => new
+            {
+                Source = source,
+                OrderRow = ResolveGoodsReceiptOrderRow(source, purchaseOrderDocuments, orderRows)
+            })
+            .GroupBy(
+                x => new
+                {
+                    Key = OrderAllocationKey(x.Source.ExternalStockCode, x.Source.ExternalYapCode),
+                    x.OrderRow.OrderNumber,
+                    x.OrderRow.OrderId
+                })
+            .Select(group => new GoodsReceiptOrderAllocationState(
+                group.Key.Key,
+                group.First().OrderRow,
+                Math.Min(
+                    group.Sum(x => x.Source.AllocatedQuantity),
+                    group.First().OrderRow.RemainingQuantity)))
+            .GroupBy(x => x.Key)
+            .ToDictionary(
+                group => group.Key,
+                group => group
+                    .OrderBy(x => x.OrderRow.OrderDate ?? DateTime.MaxValue)
+                    .ThenBy(x => x.OrderRow.OrderNumber, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(x => x.OrderRow.OrderLineSequence)
+                    .ThenBy(x => x.OrderRow.DeliveryDate ?? DateTime.MaxValue)
+                    .ThenBy(x => x.OrderRow.OrderId)
+                    .ToList(),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    internal static IReadOnlyList<GoodsReceiptOrderAllocation> AllocateOrderQuantity(
+        IList<GoodsReceiptOrderAllocationState> queue,
+        decimal quantity,
+        string stockCode)
+    {
+        var remaining = quantity;
+        var result = new List<GoodsReceiptOrderAllocation>();
+        foreach (var state in queue)
+        {
+            if (remaining <= 0)
+                break;
+            if (state.RemainingQuantity <= 0)
+                continue;
+
+            var allocated = Math.Min(remaining, state.RemainingQuantity);
+            result.Add(new GoodsReceiptOrderAllocation(state.OrderRow, allocated));
+            state.RemainingQuantity -= allocated;
+            remaining -= allocated;
+        }
+
+        if (remaining > 0)
+            throw AppException.Conflict(
+                $"{stockCode} için kabul edilen {quantity} miktarın {remaining} kadarı seçili Netsis sipariş satırlarına bağlanamadı.");
+        return result;
+    }
+
+    private static void AddSerialGoodsReceiptLines(
+        ICollection<NetsisItemSlipLine> lines,
+        GoodsReceiptLine line,
+        IEnumerable<GoodsReceiptSerialPart> serialParts,
+        IReadOnlyList<GoodsReceiptOrderAllocation> allocations,
+        int warehouseCode)
+    {
+        if (allocations.Count == 0)
+        {
+            foreach (var serial in serialParts)
+                lines.Add(NewLine(
+                    line.StockCodeSnapshot, serial.Quantity, warehouseCode, null, null,
+                    line.YapCodeSnapshot, serial.SerialNo, null, line.Description));
+            return;
+        }
+
+        var allocationIndex = 0;
+        var allocationRemaining = allocations[0].Quantity;
+        foreach (var serial in serialParts)
+        {
+            var serialRemaining = serial.Quantity;
+            while (serialRemaining > 0)
+            {
+                var allocation = allocations[allocationIndex];
+                var quantity = Math.Min(serialRemaining, allocationRemaining);
+                lines.Add(NewLine(
+                    line.StockCodeSnapshot,
+                    quantity,
+                    warehouseCode,
+                    null,
+                    null,
+                    line.YapCodeSnapshot,
+                    serial.SerialNo,
+                    allocation.OrderRow.OrderNumber,
+                    line.Description,
+                    allocation.OrderRow.NetUnitPrice,
+                    allocation.OrderRow.GrossUnitPrice,
+                    allocation.OrderRow.ProjectCode,
+                    allocation.OrderRow.OrderLineSequence));
+                serialRemaining -= quantity;
+                allocationRemaining -= quantity;
+                if (allocationRemaining == 0 && allocationIndex + 1 < allocations.Count)
+                {
+                    allocationIndex++;
+                    allocationRemaining = allocations[allocationIndex].Quantity;
+                }
+            }
+        }
+    }
+
+    private static string OrderAllocationKey(string stockCode, string? yapCode) =>
+        $"{stockCode.Trim().ToUpperInvariant()}\u001F{Clean(yapCode)?.ToUpperInvariant() ?? string.Empty}";
+
+    internal static string ResolveHeaderProjectCode(IEnumerable<GoodsReceiptOrderSourceLine> orderRows)
+    {
+        var projectCodes = orderRows
+            .Select(x => Clean(x.ProjectCode))
+            .Where(x => x is not null)
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return projectCodes.Count == 1
+            ? projectCodes[0]
+            : NetsisItemSlipDefaults.DefaultProjectCode;
+    }
+
+    internal sealed record GoodsReceiptOrderAllocation(
+        GoodsReceiptOrderSourceLine OrderRow,
+        decimal Quantity);
+
+    internal sealed class GoodsReceiptOrderAllocationState(
+        string key,
+        GoodsReceiptOrderSourceLine orderRow,
+        decimal remainingQuantity)
+    {
+        public string Key { get; } = key;
+        public GoodsReceiptOrderSourceLine OrderRow { get; } = orderRow;
+        public decimal RemainingQuantity { get; set; } = remainingQuantity;
+    }
+
+    private sealed record GoodsReceiptSerialPart(decimal Quantity, string SerialNo);
 
     private static string? ResolveTransferOrderNo(WarehouseTransferHeader header, WarehouseTransferLine line)
     {
