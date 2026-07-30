@@ -312,6 +312,12 @@ public sealed class NetsisItemSlipHeader
     [JsonPropertyName("Tarih")]
     public DateTime Tarih { get; set; }
 
+    [JsonPropertyName("FIYATTARIHI")]
+    public string? FiyatTarihi { get; set; }
+
+    [JsonPropertyName("SIPARIS_TEST")]
+    public string? SiparisTeslimTarihi { get; set; }
+
     [JsonPropertyName("FiiliTarih")]
     public DateTime FiiliTarih { get; set; }
 
@@ -366,8 +372,17 @@ public sealed class NetsisItemSlipLine
     [JsonPropertyName("Aciklama")]
     public string? Aciklama { get; set; }
 
-    [JsonPropertyName("SiparisNo")]
-    public string? SiparisNo { get; set; }
+    [JsonPropertyName("STra_NF")]
+    public decimal NetFiyat { get; set; }
+
+    [JsonPropertyName("STra_BF")]
+    public decimal BrutFiyat { get; set; }
+
+    [JsonPropertyName("STra_SIPNUM")]
+    public string SiparisNumarasi { get; set; } = string.Empty;
+
+    [JsonPropertyName("STra_SIPKONT")]
+    public int SiparisKontrol { get; set; }
 
     [JsonPropertyName("ProjeKodu")]
     public string ProjeKodu { get; set; } = "0";

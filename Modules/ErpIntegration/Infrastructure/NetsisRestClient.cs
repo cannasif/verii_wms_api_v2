@@ -251,7 +251,12 @@ internal static class NetsisItemSlipDefaults
 
         request.Kalems ??= [];
         foreach (var line in request.Kalems)
+        {
             line.ProjeKodu = NormalizeProjectCode(line.ProjeKodu);
+            line.SiparisNumarasi = line.SiparisNumarasi?.Trim() ?? string.Empty;
+            if (line.SiparisNumarasi.Length == 0)
+                line.SiparisKontrol = 0;
+        }
     }
 
     internal static string NormalizeProjectCode(string? value) =>

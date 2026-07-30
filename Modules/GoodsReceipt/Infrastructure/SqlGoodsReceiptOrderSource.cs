@@ -25,9 +25,14 @@ public sealed class SqlGoodsReceiptOrderSource(WmsDbContext dbContext) : IGoodsR
             while (await reader.ReadAsync(cancellationToken))
             {
                 result.Add(new GoodsReceiptOrderSourceLine(
-                    Text(reader, "SiparisNo")!, Convert.ToInt32(Value(reader, "OrderID")), Text(reader, "StockCode"), Text(reader, "StockName"),
+                    Text(reader, "SiparisNo")!, Convert.ToInt32(Value(reader, "OrderID")),
+                    Number<int>(reader, "OrderLineSequence") ?? 0,
+                    Text(reader, "StockCode"), Text(reader, "StockName"),
                     Text(reader, "UnitCode"), Text(reader, "YapKod"), Text(reader, "YapAcik"), Text(reader, "CustomerCode"), Text(reader, "CustomerName"),
-                    Number<int>(reader, "BranchCode"), Number<int>(reader, "TargetWh"), Number<DateTime>(reader, "OrderDate"),
+                    Number<int>(reader, "BranchCode"), Number<int>(reader, "TargetWh"), Text(reader, "ProjectCode"),
+                    Number<DateTime>(reader, "OrderDate"), Number<DateTime>(reader, "DeliveryDate"),
+                    Number<decimal>(reader, "NetUnitPrice") ?? 0,
+                    Number<decimal>(reader, "GrossUnitPrice") ?? 0,
                     Number<decimal>(reader, "OrderedQty") ?? 0, Number<decimal>(reader, "DeliveredQty") ?? 0,
                     Number<decimal>(reader, "RemainingHamax") ?? 0, Number<decimal>(reader, "PlannedQtyAllocated") ?? 0,
                     Number<decimal>(reader, "RemainingForImport") ?? 0));
