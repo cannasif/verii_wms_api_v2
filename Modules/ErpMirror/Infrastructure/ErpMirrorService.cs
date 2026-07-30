@@ -137,7 +137,8 @@ public sealed class ErpMirrorService(IUnitOfWork unitOfWork, INetsisReadService 
         var search = request.Search?.Trim();
         var query = Warehouses.Query()
             .Where(x => string.IsNullOrWhiteSpace(search) || x.BranchCode.Contains(search) || x.WarehouseName.Contains(search) || x.WarehouseCode.ToString().Contains(search))
-            .Select(x => new WarehouseMirrorDto(x.Id, x.BranchCode, x.WarehouseCode, x.WarehouseName, x.LastSyncDate, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate))
+            .Select(x => new WarehouseMirrorDto(x.Id, x.BranchCode, x.WarehouseCode, x.WarehouseName,
+                x.DefaultGoodsReceiptLocationId, x.LastSyncDate, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate))
             .ApplyAdvancedFilters(request).ApplySort(request, nameof(WarehouseMirrorDto.WarehouseCode));
         return PageAsync(query, request, ct);
     }
