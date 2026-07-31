@@ -10,7 +10,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Security.Claims;
 using System.Text;
-using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
 using verii_wms_api_v2.Modules.Audit;
 using verii_wms_api_v2.Modules.AccessControl;
@@ -54,6 +53,7 @@ using verii_wms_api_v2.Shared.Host.Filters;
 using verii_wms_api_v2.Shared.Host.Middleware;
 using verii_wms_api_v2.Shared.Host.Localization;
 using verii_wms_api_v2.Shared.Host.Routing;
+using verii_wms_api_v2.Shared.Host.Serialization;
 using verii_wms_api_v2.Shared.Host.Startup;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -65,7 +65,9 @@ builder.Services.AddControllers(options =>
         options.Conventions.Add(new IisSafeHttpMethodConvention());
         options.Filters.Add<AuthenticatedBranchScopeFilter>();
     })
-    .AddJsonOptions(options => options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter()));
+    .AddJsonOptions(options => WmsJsonSerialization.Configure(options.JsonSerializerOptions));
+builder.Services.ConfigureHttpJsonOptions(options =>
+    WmsJsonSerialization.Configure(options.SerializerOptions));
 builder.Services.AddWmsLocalization();
 var databaseConnection = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("ConnectionStrings:DefaultConnection is missing. Configure it through user-secrets or environment variables.");
