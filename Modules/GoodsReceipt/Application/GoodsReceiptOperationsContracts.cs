@@ -53,7 +53,7 @@ public sealed record GoodsReceiptGridRow(
     ErpIntegrationStatus ErpIntegrationStatus,
     long? SupplierId, string? SupplierCode, string? SupplierName,
     long TargetWarehouseId, int WarehouseCode, string WarehouseName,
-    string? WaybillNo, DateOnly? WaybillDate, int LineCount,
+    string? WaybillNo, string? ElectronicWaybillNo, DateOnly? WaybillDate, int LineCount,
     decimal ExpectedQuantity, decimal ReceivedQuantity, byte Priority,
     DateTimeOffset? PlannedArrivalAtUtc, DateTimeOffset? ReceivedAtUtc,
     long? CreatedBy, DateTime? CreatedDate, long? UpdatedBy, DateTime? UpdatedDate,

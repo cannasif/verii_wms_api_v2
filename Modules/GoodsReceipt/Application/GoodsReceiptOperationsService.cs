@@ -117,12 +117,13 @@ public sealed class GoodsReceiptOperationsService(
                          || (h.SupplierCodeSnapshot != null && h.SupplierCodeSnapshot.Contains(search))
                          || (h.SupplierNameSnapshot != null && h.SupplierNameSnapshot.Contains(search))
                          || (h.WaybillNo != null && h.WaybillNo.Contains(search))
+                         || (h.ElectronicWaybillNo != null && h.ElectronicWaybillNo.Contains(search))
                      select new { Header = h, Warehouse = w };
         var query = joined.Select(x => new GoodsReceiptGridRow(x.Header.Id, x.Header.BranchCode, x.Header.DocumentNo, x.Header.DocumentDate,
             x.Header.ReceiptType, x.Header.InitiationMode, x.Header.ProcessType, x.Header.Status, x.Header.ApprovalStatus,
             x.Header.QualityStatus, x.Header.PutawayStatus, x.Header.ErpIntegrationStatus, x.Header.SupplierId, x.Header.SupplierCodeSnapshot,
             x.Header.SupplierNameSnapshot, x.Header.TargetWarehouseId, x.Warehouse.WarehouseCode, x.Warehouse.WarehouseName,
-            x.Header.WaybillNo, x.Header.WaybillDate, lines.Count(line => line.GrHeaderId == x.Header.Id),
+            x.Header.WaybillNo, x.Header.ElectronicWaybillNo, x.Header.WaybillDate, lines.Count(line => line.GrHeaderId == x.Header.Id),
             lines.Where(line => line.GrHeaderId == x.Header.Id).Sum(line => (decimal?)line.ExpectedQuantity) ?? 0,
             lines.Where(line => line.GrHeaderId == x.Header.Id).Sum(line => (decimal?)line.ReceivedQuantity) ?? 0,
             x.Header.Priority, x.Header.PlannedArrivalAtUtc, x.Header.ReceivedAtUtc,
@@ -215,7 +216,7 @@ public sealed class GoodsReceiptOperationsService(
             header.ReceiptType, header.InitiationMode, header.ProcessType, header.Status, header.ApprovalStatus,
             header.QualityStatus, header.PutawayStatus, header.ErpIntegrationStatus,
             header.SupplierId, header.SupplierCodeSnapshot, header.SupplierNameSnapshot, header.TargetWarehouseId,
-            warehouse.WarehouseCode, warehouse.WarehouseName, header.WaybillNo, header.WaybillDate, detailLines.Count,
+            warehouse.WarehouseCode, warehouse.WarehouseName, header.WaybillNo, header.ElectronicWaybillNo, header.WaybillDate, detailLines.Count,
             detailLines.Sum(x => x.ExpectedQuantity), detailLines.Sum(x => x.ReceivedQuantity), header.Priority,
             header.PlannedArrivalAtUtc, header.ReceivedAtUtc, header.CreatedBy, header.CreatedDate,
             header.UpdatedBy, header.UpdatedDate, header.RowVersion);
