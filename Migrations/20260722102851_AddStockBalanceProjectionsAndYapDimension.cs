@@ -178,15 +178,11 @@ namespace verii_wms_api_v2.Migrations
                     { 1017L, "0", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, 1017L, 1001L, null, null }
                 });
 
-            migrationBuilder.CreateIndex(
-                name: "IX_RII_STOCK_MOVEMENT_BALANCE_STREAM",
-                table: "RII_STOCK_MOVEMENT",
-                columns: new[] { "StockId", "YapCodeId", "WarehouseId", "LocationId", "UnitCode", "OccurredAt" });
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
+                "CREATE INDEX [IX_RII_STOCK_MOVEMENT_BALANCE_STREAM] ON [RII_STOCK_MOVEMENT] ([StockId], [YapCodeId], [WarehouseId], [LocationId], [UnitCode], [OccurredAt]);"));
 
-            migrationBuilder.CreateIndex(
-                name: "IX_RII_STOCK_MOVEMENT_YapCodeId",
-                table: "RII_STOCK_MOVEMENT",
-                column: "YapCodeId");
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
+                "CREATE INDEX [IX_RII_STOCK_MOVEMENT_YapCodeId] ON [RII_STOCK_MOVEMENT] ([YapCodeId]);"));
 
             migrationBuilder.CreateIndex(
                 name: "IX_RII_LOCATION_STOCK_BALANCE_DIMENSIONS",

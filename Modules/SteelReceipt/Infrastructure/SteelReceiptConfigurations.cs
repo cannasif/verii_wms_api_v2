@@ -80,7 +80,7 @@ public sealed class SteelVehicleAcceptanceConfiguration : BaseEntityConfiguratio
     {
         b.ToTable("RII_STEEL_VEHICLE_ACCEPTANCE", t => {
             t.HasCheckConstraint("CK_RII_STEEL_VEHICLE_ACCEPTANCE_COUNT", "[PlateCount] > 0");
-            t.HasCheckConstraint("CK_RII_STEEL_VEHICLE_ACCEPTANCE_QTY", "[TotalAcceptedQuantity] > 0");
+            t.HasCheckConstraint("CK_RII_STEEL_VEHICLE_ACCEPTANCE_QTY", "[TotalAcceptedQuantity] >= 0");
         });
         b.Property(x=>x.TotalAcceptedQuantity).HasPrecision(18,6);
         b.Property(x=>x.Status).HasConversion<string>().HasMaxLength(30);
@@ -89,6 +89,27 @@ public sealed class SteelVehicleAcceptanceConfiguration : BaseEntityConfiguratio
         b.HasIndex(x=>new{x.VehicleCheckInId,x.AcceptedAtUtc});
         b.HasOne<verii_wms_api_v2.Modules.VehicleCheckIn.Domain.VehicleCheckInHeader>()
             .WithMany().HasForeignKey(x=>x.VehicleCheckInId).OnDelete(DeleteBehavior.Restrict);
+    }
+}
+
+public sealed class SteelVehicleAcceptedPlateConfiguration : BaseEntityConfiguration<SteelVehicleAcceptedPlate>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<SteelVehicleAcceptedPlate> b)
+    {
+        b.ToTable("RII_STEEL_VEHICLE_ACCEPTED_PLATE", t =>
+            t.HasCheckConstraint("CK_RII_STEEL_ACCEPTED_PLATE_SEQUENCE", "[SequenceNo] > 0"));
+        b.Property(x => x.IdentityStatus).HasConversion<string>().HasMaxLength(30);
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasIndex(x => x.PlanLineId).IsUnique().HasFilter("[PlanLineId] IS NOT NULL AND [IsDeleted] = 0");
+        b.HasIndex(x => x.VehicleAcceptanceId);
+        b.HasIndex(x => x.VehicleCheckInId);
+        b.HasIndex(x => new { x.VehicleAcceptanceId, x.SequenceNo }).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasOne(x => x.VehicleAcceptance).WithMany(x => x.AcceptedPlates)
+            .HasForeignKey(x => x.VehicleAcceptanceId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.PlanLine).WithMany()
+            .HasForeignKey(x => x.PlanLineId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<verii_wms_api_v2.Modules.VehicleCheckIn.Domain.VehicleCheckInHeader>().WithMany()
+            .HasForeignKey(x => x.VehicleCheckInId).OnDelete(DeleteBehavior.Restrict);
     }
 }
 

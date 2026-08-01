@@ -4,6 +4,9 @@
 **/artifacts/
 **/publish/
 **/TestResults/
+/.test-check/
+/.build-test-out/
+/.build-check/
 **/BenchmarkDotNet.Artifacts/
 
 # IDE and developer-specific files
@@ -53,6 +56,9 @@ efbundle.exe
 wwwroot/uploads/**
 !wwwroot/uploads/**/
 !wwwroot/uploads/**/.gitkeep
+Upload/**
+!Upload/**/
+!Upload/**/.gitkeep
 App_Data/DataProtection-Keys/**
 
 # Operating system files

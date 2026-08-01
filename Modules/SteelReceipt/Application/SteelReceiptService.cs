@@ -55,6 +55,9 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
     {
         if(request.IdempotencyKey==Guid.Empty)throw AppException.BadRequest("Idempotency anahtarı zorunludur.");
         return uow.ExecuteInTransactionAsync<long>(async token=>{
+            var replay=await Plans.Query().FirstOrDefaultAsync(
+                x=>x.CorrelationId==request.IdempotencyKey,token);
+            if(replay is not null)return replay.Id;
             var import=request.Import;var normalized=await ValidateImportAsync(import,token);
             var errors=normalized.OrderBy(x=>x.Input.RowNumber).SelectMany((x,index)=>x.Errors.Select(e=>$"Satır {index+1}: {e}")).ToList();
             if(errors.Count>0)throw AppException.BadRequest(string.Join(" ",errors.Take(10)));
@@ -69,8 +72,6 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
                     &&string.Equals(row.Serial,x.SupplierSerialNo,StringComparison.OrdinalIgnoreCase)));
             if(duplicate is not null)throw AppException.Conflict($"Levha daha önce {duplicate.DCode} olarak içe aktarılmış.");
             var branch=import.BranchCode.Trim();
-            var replay=await Plans.Query().FirstOrDefaultAsync(x=>x.CorrelationId==request.IdempotencyKey,token);
-            if(replay is not null)return replay.Id;
             if(await Plans.AnyAsync(x=>x.BranchCode==branch&&x.ImportReferenceNo==import.ImportReferenceNo.Trim(),token))
                 throw AppException.Conflict("Bu aktarım referansı daha önce kullanılmış.");
             var supplier=await uow.Repository<CustomerEntity>().FindByIdAsync(import.SupplierId,false,token)
@@ -286,6 +287,20 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             var plan=await Plans.Query(true).Include(x=>x.Lines).FirstOrDefaultAsync(x=>x.Id==planId,token)??throw AppException.NotFound("SAC planı bulunamadı.");
             var ids=request.LineIds.Where(x=>x>0).Distinct().ToArray();var selected=plan.Lines.Where(x=>ids.Contains(x.Id)).OrderBy(x=>x.LineNo).ToList();
             if(selected.Count==0||selected.Count!=ids.Length)throw AppException.BadRequest("Seçilen SAC satırlarından biri bulunamadı.");
+            var vehicleAcceptanceIds=selected.Where(x=>x.VehicleAcceptanceId.HasValue)
+                .Select(x=>x.VehicleAcceptanceId!.Value).Distinct().ToArray();
+            if(vehicleAcceptanceIds.Length>0)
+            {
+                var affectedVehicleIds=await uow.Repository<SteelVehicleAcceptance>().Query()
+                    .Where(x=>vehicleAcceptanceIds.Contains(x.Id))
+                    .Select(x=>x.VehicleCheckInId)
+                    .Distinct()
+                    .ToArrayAsync(token);
+                var unknownCount=await uow.Repository<SteelVehicleAcceptedPlate>().Query()
+                    .CountAsync(x=>affectedVehicleIds.Contains(x.VehicleCheckInId)
+                        &&x.IdentityStatus==SteelPlateIdentityStatus.Unknown,token);
+                EnsureVehicleHasNoUnknownPlates(unknownCount);
+            }
             var (waybillNo,electronicWaybillNo)=ResolveConversionDocumentReference(
                 request.WaybillNo,request.ElectronicWaybillNo,plan.WaybillNo);
             var waybillDate=request.WaybillDate??plan.WaybillDate;
@@ -358,6 +373,12 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
         return converted;
     }
 
+    internal static void EnsureVehicleHasNoUnknownPlates(int unknownCount)
+    {
+        if(unknownCount>0)
+            throw AppException.Conflict($"Bu araçta {unknownCount} adet bilinmeyen levha var; irsaliye oluşturmak için önce eşleştirin.");
+    }
+
     public Task<PlaceSteelReceiptLineResult> PlaceAsync(long lineId,PlaceSteelReceiptLineRequest request,long actor,CancellationToken ct=default)
     {
         if(request.IdempotencyKey==Guid.Empty)throw AppException.BadRequest("Idempotency anahtarı zorunludur.");
@@ -424,6 +445,8 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             x.Line.GoodsReceiptLineId,x.Line.CreatedBy,x.Line.CreatedDate,x.Line.UpdatedBy,x.Line.UpdatedDate,
             x.Vehicle==null?null:x.Vehicle.PlateNo,
             x.Vehicle==null?null:((x.Vehicle.DriverFirstName??"")+" "+(x.Vehicle.DriverLastName??"")).Trim(),
+            x.Receipt==null?null:(x.Receipt.ElectronicWaybillNo??x.Receipt.WaybillNo),
+            x.Receipt==null?null:(x.Receipt.ReceivedAtUtc??(x.Receipt.CreatedDate.HasValue?new DateTimeOffset(DateTime.SpecifyKind(x.Receipt.CreatedDate.Value,DateTimeKind.Utc)):(DateTimeOffset?)null)),
             Convert.ToBase64String(x.Line.RowVersion)));
     }
 
@@ -550,6 +573,17 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
                 &&GoodsReceiptLocationPolicy.IsAllowed(locationPolicy,requested,warehouseId))
                 return requested.Id;
             throw AppException.BadRequest(GoodsReceiptOperationsService.LocationPolicyError(locationPolicy));
+        }
+        var defaultLocationId=await uow.Repository<WarehouseEntity>().Query()
+            .Where(x=>x.Id==warehouseId)
+            .Select(x=>x.DefaultGoodsReceiptLocationId)
+            .FirstOrDefaultAsync(ct);
+        if(defaultLocationId is>0)
+        {
+            var defaultLocation=await uow.Repository<WarehouseLocation>().FindByIdAsync(defaultLocationId.Value,false,ct);
+            if(defaultLocation is not null
+                &&GoodsReceiptLocationPolicy.IsAllowed(locationPolicy,defaultLocation,warehouseId))
+                return defaultLocation.Id;
         }
         var locations=uow.Repository<WarehouseLocation>().Query()
             .Where(x=>x.WarehouseId==warehouseId&&x.IsActive);

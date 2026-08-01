@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
@@ -21,24 +21,69 @@ FROM dbo.RII_WAREHOUSE AS W
 WHERE W.IsDeleted = 0
   AND NOT EXISTS (SELECT 1 FROM dbo.RII_LOCATION AS L WHERE L.WarehouseId = W.Id AND L.Code = N'KABUL' AND L.IsDeleted = 0);
 
-INSERT INTO dbo.RII_DOCUMENT_SERIES
-    (WarehouseId, Code, Name, DocumentType, Prefix, Separator, YearFormat, NumberLength, StartNumber, NextNumber,
-     IncrementBy, IsDefault, IsActive, HasIssuedNumbers, Description, BranchCode, CreatedDate, IsDeleted)
-SELECT W.Id,
-       LEFT(CONCAT(N'GR-', W.WarehouseCode), 20),
-       CONCAT(N'Mal Kabul ', W.WarehouseName),
-       N'GoodsReceipt',
-       LEFT(CONCAT(N'GR', W.WarehouseCode), 10),
-       N'-', N'FourDigit', 8, 1, 1, 1, 1, 1, 0,
-       N'SYSTEM:GOODS_RECEIPT_DEFAULT', W.BranchCode, SYSUTCDATETIME(), 0
-FROM dbo.RII_WAREHOUSE AS W
-WHERE W.IsDeleted = 0
-  AND NOT EXISTS (SELECT 1 FROM dbo.RII_DOCUMENT_SERIES AS S WHERE S.WarehouseId = W.Id AND S.DocumentType = N'GoodsReceipt' AND S.IsDeleted = 0);
+IF COL_LENGTH(N'dbo.RII_DOCUMENT_SERIES', N'WarehouseId') IS NOT NULL
+   AND COL_LENGTH(N'dbo.RII_DOCUMENT_SERIES', N'Separator') IS NOT NULL
+BEGIN
+    EXEC sys.sp_executesql N'
+        INSERT INTO dbo.RII_DOCUMENT_SERIES
+            (WarehouseId, Code, Name, DocumentType, Prefix, Separator, YearFormat, NumberLength, StartNumber, NextNumber,
+             IncrementBy, IsDefault, IsActive, HasIssuedNumbers, Description, BranchCode, CreatedDate, IsDeleted)
+        SELECT W.Id,
+               LEFT(CONCAT(N''GR-'', W.WarehouseCode), 20),
+               CONCAT(N''Mal Kabul '', W.WarehouseName),
+               N''GoodsReceipt'',
+               LEFT(CONCAT(N''GR'', W.WarehouseCode), 10),
+               N''-'', N''FourDigit'', 8, 1, 1, 1, 1, 1, 0,
+               N''SYSTEM:GOODS_RECEIPT_DEFAULT'', W.BranchCode, SYSUTCDATETIME(), 0
+        FROM dbo.RII_WAREHOUSE AS W
+        WHERE W.IsDeleted = 0
+          AND NOT EXISTS
+          (
+              SELECT 1
+              FROM dbo.RII_DOCUMENT_SERIES AS S
+              WHERE S.WarehouseId = W.Id
+                AND S.DocumentType = N''GoodsReceipt''
+                AND S.IsDeleted = 0
+          );';
+END
+ELSE
+BEGIN
+    EXEC sys.sp_executesql N'
+        INSERT INTO dbo.RII_DOCUMENT_SERIES
+            (Code, Name, DocumentType, Prefix, YearFormat, NumberLength, StartNumber, NextNumber,
+             IncrementBy, IsDefault, IsActive, HasIssuedNumbers, Description, BranchCode, CreatedDate, IsDeleted)
+        SELECT LEFT(CONCAT(N''GR-'', W.WarehouseCode), 20),
+               CONCAT(N''Mal Kabul '', W.WarehouseName),
+               N''GoodsReceipt'',
+               LEFT(CONCAT(N''GR'', W.WarehouseCode), 10),
+               N''FourDigit'', 8, 1, 1, 1, 1, 1, 0,
+               N''SYSTEM:GOODS_RECEIPT_DEFAULT'', W.BranchCode, SYSUTCDATETIME(), 0
+        FROM dbo.RII_WAREHOUSE AS W
+        WHERE W.IsDeleted = 0
+          AND W.Id =
+          (
+              SELECT MIN(candidate.Id)
+              FROM dbo.RII_WAREHOUSE AS candidate
+              WHERE candidate.BranchCode = W.BranchCode
+                AND candidate.IsDeleted = 0
+          )
+          AND NOT EXISTS
+          (
+              SELECT 1
+              FROM dbo.RII_DOCUMENT_SERIES AS S
+              WHERE S.BranchCode = W.BranchCode
+                AND S.DocumentType = N''GoodsReceipt''
+                AND S.IsDeleted = 0
+          );';
+END;
 """);
 
             migrationBuilder.Sql("""
 DECLARE @definition nvarchar(max) = OBJECT_DEFINITION(OBJECT_ID(N'dbo.RII_FN_GR_OPENORDERS_LINE'));
-IF @definition IS NULL THROW 50001, 'RII_FN_GR_OPENORDERS_LINE not found.', 1;
+IF @definition IS NULL
+BEGIN
+    ;THROW 50001, 'RII_FN_GR_OPENORDERS_LINE not found.', 1;
+END;
 IF @definition NOT LIKE N'%AS UnitCode%'
 BEGIN
     SET @definition = N'ALTER ' + SUBSTRING(@definition, CHARINDEX(N'FUNCTION', UPPER(@definition)), LEN(@definition));

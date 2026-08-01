@@ -19,19 +19,17 @@ namespace verii_wms_api_v2.Migrations
                 defaultValue: "OrderBasedTask");
 
             // Geçmiş kayıtları teknik başlangıç biçiminden deterministik olarak iş senaryosuna taşır.
-            migrationBuilder.Sql("""
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute("""
                 UPDATE [RII_GR_HEADER]
                 SET [ProcessType] = CASE [InitiationMode]
                     WHEN N'UnplannedTask' THEN N'OrderlessTask'
                     WHEN N'DirectReceipt' THEN N'OrderlessDirectReceipt'
                     ELSE N'OrderBasedTask'
                 END;
-                """);
+                """));
 
-            migrationBuilder.CreateIndex(
-                name: "IX_RII_GR_HEADER_PROCESS_REPORTING",
-                table: "RII_GR_HEADER",
-                columns: new[] { "BranchCode", "ProcessType", "Status", "DocumentDate" });
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
+                "CREATE INDEX [IX_RII_GR_HEADER_PROCESS_REPORTING] ON [RII_GR_HEADER] ([BranchCode], [ProcessType], [Status], [DocumentDate]);"));
         }
 
         /// <inheritdoc />

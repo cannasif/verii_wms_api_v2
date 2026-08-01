@@ -1,4 +1,5 @@
 using verii_wms_api_v2.Modules.VehicleCheckIn.Application;
+using verii_wms_api_v2.Modules.SteelReceipt.Domain;
 using verii_wms_api_v2.Shared;
 
 namespace verii_wms_api_v2.Modules.SteelReceipt.Application;
@@ -30,16 +31,17 @@ public sealed record SteelVehicleAcceptanceCandidateRow(
     int AttachmentCount,
     string RowVersion);
 
-public sealed record AcceptSteelPlateRequest(
-    long PlanLineId,
-    long ReceivingLocationId,
-    string RowVersion,
+public sealed record AcceptSteelPlateSlot(
+    SteelPlateIdentityStatus IdentityStatus,
+    long? PlanLineId,
+    long? ReceivingLocationId,
+    string? RowVersion,
     string? Note);
 
 public sealed record CompleteSteelVehicleAcceptanceRequest(
     Guid IdempotencyKey,
     SaveVehicleCheckInRequest Vehicle,
-    IReadOnlyList<AcceptSteelPlateRequest> Plates,
+    IReadOnlyList<AcceptSteelPlateSlot> Slots,
     string? Note);
 
 public sealed record SteelPlateImageUpload(
@@ -50,22 +52,37 @@ public sealed record SteelPlateImageUpload(
     long Length);
 
 public sealed record AcceptedSteelPlateRow(
+    long Id,
+    int SequenceNo,
+    string IdentityStatus,
+    long? PlanLineId,
+    long? PlanId,
+    string? ImportReferenceNo,
+    string? DCode,
+    string? StockCode,
+    string? SupplierSerialNo,
+    decimal? AcceptedQuantity,
+    string? UnitCode,
+    long? ReceivingLocationId,
+    DateTimeOffset AcceptedAtUtc,
+    string RowVersion,
+    bool CanResolve);
+
+public sealed record ResolveUnknownPlateRequest(
     long PlanLineId,
-    long PlanId,
-    string ImportReferenceNo,
-    string DCode,
-    string StockCode,
-    string SupplierSerialNo,
-    decimal AcceptedQuantity,
-    string UnitCode,
-    long ReceivingLocationId,
-    DateTimeOffset AcceptedAtUtc);
+    long? ReceivingLocationId,
+    string RowVersion,
+    string PlanLineRowVersion,
+    string? Note);
 
 public sealed record CompleteSteelVehicleAcceptanceResult(
     long AcceptanceId,
     bool Replayed,
     VehicleCheckInDetail Vehicle,
-    IReadOnlyList<AcceptedSteelPlateRow> Plates);
+    IReadOnlyList<AcceptedSteelPlateRow> Plates,
+    int UnknownCount,
+    bool ContainsUnknownPlates,
+    bool CanResolveUnknownPlates);
 
 public interface ISteelVehicleAcceptanceService
 {
@@ -76,11 +93,19 @@ public interface ISteelVehicleAcceptanceService
 
     Task<CompleteSteelVehicleAcceptanceResult?> GetLatestByVehicleAsync(
         long vehicleCheckInId,
+        bool canManageVehicleAcceptance,
         CancellationToken ct = default);
 
     Task<CompleteSteelVehicleAcceptanceResult> CompleteAsync(
         CompleteSteelVehicleAcceptanceRequest request,
         IReadOnlyList<VehicleImageUpload> vehicleImages,
+        IReadOnlyList<SteelPlateImageUpload> plateImages,
+        long actor,
+        CancellationToken ct = default);
+
+    Task<AcceptedSteelPlateRow> ResolveUnknownPlateAsync(
+        long acceptedPlateId,
+        ResolveUnknownPlateRequest request,
         IReadOnlyList<SteelPlateImageUpload> plateImages,
         long actor,
         CancellationToken ct = default);

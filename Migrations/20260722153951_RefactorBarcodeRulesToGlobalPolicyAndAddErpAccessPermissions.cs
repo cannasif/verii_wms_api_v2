@@ -244,7 +244,7 @@ namespace verii_wms_api_v2.Migrations
 
             // Preserve generated barcode history from the former single-rule model.
             // All legacy rows belonged to the stock/serial rule, which maps to profile 1.
-            migrationBuilder.Sql("""
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute("""
                 UPDATE [RII_GENERATED_BARCODE]
                 SET [BarcodePolicyId] = 1,
                     [BarcodePolicyProfileId] = 1,
@@ -260,18 +260,13 @@ namespace verii_wms_api_v2.Migrations
                         ELSE [NextSequence]
                     END
                 WHERE [Id] = 1;
-                """);
+                """));
 
-            migrationBuilder.CreateIndex(
-                name: "IX_RII_GENERATED_BARCODE_BarcodePolicyProfileId",
-                table: "RII_GENERATED_BARCODE",
-                column: "BarcodePolicyProfileId");
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
+                "CREATE INDEX [IX_RII_GENERATED_BARCODE_BarcodePolicyProfileId] ON [RII_GENERATED_BARCODE] ([BarcodePolicyProfileId]);"));
 
-            migrationBuilder.CreateIndex(
-                name: "UX_RII_GENERATED_BARCODE_IDEMPOTENCY",
-                table: "RII_GENERATED_BARCODE",
-                columns: new[] { "BarcodePolicyId", "Scope", "IdempotencyHash" },
-                unique: true);
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
+                "CREATE UNIQUE INDEX [UX_RII_GENERATED_BARCODE_IDEMPOTENCY] ON [RII_GENERATED_BARCODE] ([BarcodePolicyId], [Scope], [IdempotencyHash]);"));
 
             migrationBuilder.CreateIndex(
                 name: "IX_RII_BARCODE_POLICY_IsDeleted",

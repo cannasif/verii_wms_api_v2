@@ -19,13 +19,13 @@ namespace verii_wms_api_v2.Migrations
                 defaultValue: 0L);
 
             // Existing receipt lines inherit their header destination before the FK is created.
-            migrationBuilder.Sql("""
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute("""
                 UPDATE [line]
                 SET [line].[TargetWarehouseId] = [header].[TargetWarehouseId]
                 FROM [RII_GR_LINE] AS [line]
                 INNER JOIN [RII_GR_HEADER] AS [header] ON [header].[Id] = [line].[GrHeaderId]
                 WHERE [line].[TargetWarehouseId] = 0;
-                """);
+                """));
 
             migrationBuilder.CreateTable(
                 name: "RII_GR_TASK_LINE_TRACKING",
@@ -85,10 +85,8 @@ namespace verii_wms_api_v2.Migrations
                         onDelete: ReferentialAction.Restrict);
                 });
 
-            migrationBuilder.CreateIndex(
-                name: "IX_RII_GR_LINE_TARGET_WAREHOUSE_STATUS_STOCK",
-                table: "RII_GR_LINE",
-                columns: new[] { "TargetWarehouseId", "Status", "StockId" });
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
+                "CREATE INDEX [IX_RII_GR_LINE_TARGET_WAREHOUSE_STATUS_STOCK] ON [RII_GR_LINE] ([TargetWarehouseId], [Status], [StockId]);"));
 
             migrationBuilder.CreateIndex(
                 name: "IX_RII_GR_TASK_LINE_TRACKING_IsDeleted",

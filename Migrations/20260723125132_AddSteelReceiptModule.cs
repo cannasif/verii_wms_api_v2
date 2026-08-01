@@ -359,10 +359,8 @@ namespace verii_wms_api_v2.Migrations
                     { 1059L, "0", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, 1059L, 1001L, null, null }
                 });
 
-            migrationBuilder.CreateIndex(
-                name: "IX_RII_GR_EXECUTION_LINE_SerialNumberRuleId",
-                table: "RII_GR_EXECUTION_LINE",
-                column: "SerialNumberRuleId");
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
+                "CREATE INDEX [IX_RII_GR_EXECUTION_LINE_SerialNumberRuleId] ON [RII_GR_EXECUTION_LINE] ([SerialNumberRuleId]);"));
 
             migrationBuilder.CreateIndex(
                 name: "IX_RII_SERIAL_NUMBER_RULES_IsDeleted",

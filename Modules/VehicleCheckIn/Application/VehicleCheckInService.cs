@@ -43,7 +43,8 @@ public sealed class VehicleCheckInService(IUnitOfWork uow,IProjectSettingsServic
             }
             if(await Headers.AnyAsync(x=>x.Id!=(entity==null?0:entity.Id)&&x.BranchCode==branch&&x.PlateNoNormalized==plate&&x.BusinessDate==(entity==null?day:entity.BusinessDate),token))
                 throw AppException.Conflict("Bu plaka için aynı iş gününde başka bir araç giriş kaydı bulunuyor.");
-            var customer=request.CustomerId.HasValue?await uow.Repository<verii_wms_api_v2.Modules.Customer.Domain.Customer>().FindByIdAsync(request.CustomerId.Value,false,token):null;
+            var effectiveCustomerId=ResolveCustomerId(request.CustomerId,entity?.CustomerId);
+            var customer=effectiveCustomerId.HasValue?await uow.Repository<verii_wms_api_v2.Modules.Customer.Domain.Customer>().FindByIdAsync(effectiveCustomerId.Value,false,token):null;
             if(request.CustomerId.HasValue&&(customer is null||customer.BranchCode!=branch))throw AppException.BadRequest("Seçilen cari bu şubede bulunamadı.");
             var created=entity is null;
             if(entity is null)
@@ -55,14 +56,23 @@ public sealed class VehicleCheckInService(IUnitOfWork uow,IProjectSettingsServic
             entity.PlateNo=DisplayPlate(request.PlateNo);entity.TrailerPlateNo=Clean(request.TrailerPlateNo,25)?.ToUpperInvariant();
             entity.TrailerPlateNoNormalized=NormalizeNullablePlate(request.TrailerPlateNo);entity.DriverFirstName=Clean(request.DriverFirstName,100);
             entity.DriverLastName=Clean(request.DriverLastName,100);entity.DriverPhone=Clean(request.DriverPhone,40);
-            entity.CarrierName=Clean(request.CarrierName,200);entity.SteelSheetCount=request.SteelSheetCount;entity.CustomerId=customer?.Id;
-            entity.CustomerCodeSnapshot=customer?.CustomerCode;entity.CustomerNameSnapshot=customer?.CustomerName;
+            entity.CarrierName=Clean(request.CarrierName,200);entity.SteelSheetCount=request.SteelSheetCount;
+            // Null müşteri mevcut kaydı temizleme komutu değildir; açık bir temizleme sözleşmesi tanımlanana kadar tedarikçiyi koru.
+            if(created||customer is not null)
+            {
+                entity.CustomerId=customer?.Id;
+                entity.CustomerCodeSnapshot=customer?.CustomerCode;
+                entity.CustomerNameSnapshot=customer?.CustomerName;
+            }
             entity.Note=Clean(request.Note,1000);if(created)entity.Status=VehicleCheckInStatus.CheckedIn;
             await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new(created?"vehicle-check-in.create":"vehicle-check-in.update",nameof(VehicleCheckInHeader),entity.Id.ToString(),"Succeeded","vehicle-check-in",
                 NewValues:new{entity.PlateNo,entity.TrailerPlateNo,entity.DriverFirstName,entity.DriverLastName,entity.SteelSheetCount,entity.CustomerId,entity.BusinessDate},ChangedFields:["Vehicle","Driver","SteelSheetCount","Customer"]),token);
             return await DetailAsync(entity,token);
         },ct,IsolationLevel.Serializable);
+
+    internal static long? ResolveCustomerId(long? requestedCustomerId,long? existingCustomerId)=>
+        requestedCustomerId??existingCustomerId;
 
     public async Task<VehicleCheckInDetail> GetAsync(long id,CancellationToken ct=default)
     {

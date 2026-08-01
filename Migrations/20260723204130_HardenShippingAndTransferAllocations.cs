@@ -32,10 +32,8 @@ namespace verii_wms_api_v2.Migrations
                 columns: new[] { "WtLineId", "WtSourceDocumentId", "ExternalLineId" },
                 unique: true);
 
-            migrationBuilder.CreateIndex(
-                name: "IX_RII_WT_LINE_SOURCE_WtSourceDocumentId_ExternalLineId",
-                table: "RII_WT_LINE_SOURCE",
-                columns: new[] { "WtSourceDocumentId", "ExternalLineId" });
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
+                "CREATE INDEX [IX_RII_WT_LINE_SOURCE_WtSourceDocumentId_ExternalLineId] ON [RII_WT_LINE_SOURCE] ([WtSourceDocumentId], [ExternalLineId]);"));
 
             migrationBuilder.CreateIndex(
                 name: "IX_RII_SH_LINE_SOURCE_ShipmentLineId_ShipmentSourceDocumentId_ExternalLineId",
@@ -43,10 +41,8 @@ namespace verii_wms_api_v2.Migrations
                 columns: new[] { "ShipmentLineId", "ShipmentSourceDocumentId", "ExternalLineId" },
                 unique: true);
 
-            migrationBuilder.CreateIndex(
-                name: "IX_RII_SH_LINE_SOURCE_ShipmentSourceDocumentId_ExternalLineId",
-                table: "RII_SH_LINE_SOURCE",
-                columns: new[] { "ShipmentSourceDocumentId", "ExternalLineId" });
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
+                "CREATE INDEX [IX_RII_SH_LINE_SOURCE_ShipmentSourceDocumentId_ExternalLineId] ON [RII_SH_LINE_SOURCE] ([ShipmentSourceDocumentId], [ExternalLineId]);"));
 
             migrationBuilder.Sql(SqlServerMigrationSql.CreateOrAlterFunction("dbo.RII_FN_SH_HEADER", """
 CREATE OR ALTER FUNCTION dbo.RII_FN_SH_HEADER

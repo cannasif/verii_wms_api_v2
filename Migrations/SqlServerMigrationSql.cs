@@ -6,6 +6,11 @@ internal static class SqlServerMigrationSql
 {
     private const string CreateOrAlterFunctionToken = "CREATE OR ALTER FUNCTION";
 
+    public static string Execute(string command)
+    {
+        return $"EXEC sys.sp_executesql N'{EscapeSqlLiteral(command)}';";
+    }
+
     public static string CreateOrAlterFunction(string qualifiedName, string definition)
     {
         var tokenIndex = definition.IndexOf(

@@ -17,13 +17,13 @@ namespace verii_wms_api_v2.Migrations
                 type: "bigint",
                 nullable: true);
 
-            migrationBuilder.Sql(
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
                 """
                 UPDATE [RII_ERP_POSTING_RECORDS]
                 SET [ErpRecordId] = TRY_CONVERT(bigint, [ErpRecordNo])
                 WHERE [ErpRecordId] IS NULL
                   AND NULLIF(LTRIM(RTRIM([ErpRecordNo])), '') IS NOT NULL;
-                """);
+                """));
 
             migrationBuilder.CreateTable(
                 name: "RII_ERP_CANCELLATION_RECORDS",

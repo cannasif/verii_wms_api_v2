@@ -16,7 +16,7 @@ namespace verii_wms_api_v2.Migrations
                 type: "bigint",
                 nullable: true);
 
-            migrationBuilder.Sql(
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
                 """
                 UPDATE warehouse
                 SET warehouse.DefaultGoodsReceiptLocationId = defaultLocation.Id
@@ -33,12 +33,10 @@ namespace verii_wms_api_v2.Migrations
                 ) AS defaultLocation
                 WHERE warehouse.IsDeleted = 0
                   AND warehouse.DefaultGoodsReceiptLocationId IS NULL;
-                """);
+                """));
 
-            migrationBuilder.CreateIndex(
-                name: "IX_RII_WAREHOUSE_DEFAULT_GR_LOCATION",
-                table: "RII_WAREHOUSE",
-                column: "DefaultGoodsReceiptLocationId");
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
+                "CREATE INDEX [IX_RII_WAREHOUSE_DEFAULT_GR_LOCATION] ON [RII_WAREHOUSE] ([DefaultGoodsReceiptLocationId]);"));
 
             migrationBuilder.AddForeignKey(
                 name: "FK_RII_WAREHOUSE_RII_LOCATION_DefaultGoodsReceiptLocationId",

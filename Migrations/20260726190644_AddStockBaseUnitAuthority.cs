@@ -18,7 +18,7 @@ namespace verii_wms_api_v2.Migrations
                 nullable: false,
                 defaultValue: "ADET");
 
-            migrationBuilder.Sql(
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
                 """
                 IF OBJECT_ID(N'dbo.RII_FN_STOK', N'IF') IS NOT NULL
                 BEGIN
@@ -30,7 +30,7 @@ namespace verii_wms_api_v2.Migrations
                        AND UPPER(LTRIM(RTRIM(target.ErpStockCode))) = UPPER(LTRIM(RTRIM(source.STOK_KODU)))
                     WHERE NULLIF(LTRIM(RTRIM(source.OLCU_BR1)), N'') IS NOT NULL;
                 END
-                """);
+                """));
         }
 
         /// <inheritdoc />

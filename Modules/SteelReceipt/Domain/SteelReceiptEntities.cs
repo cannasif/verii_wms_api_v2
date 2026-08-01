@@ -9,7 +9,8 @@ public enum SteelReceiptConversionStatus { NotCreated=1, Created=2 }
 public enum SteelReceiptConversionMode { Task=1, Direct=2 }
 public enum SteelPutawayStatus { Pending=1, Placed=2 }
 public enum SteelPlacementType { SideBySide=1, Stacked=2 }
-public enum SteelVehicleAcceptanceStatus { Completed=1, Cancelled=2 }
+public enum SteelVehicleAcceptanceStatus { Completed=1, Cancelled=2, PartiallyIdentified=3 }
+public enum SteelPlateIdentityStatus { Known=1, Unknown=2, Resolved=3 }
 
 public sealed class SteelReceiptPlan : BaseEntity
 {
@@ -92,6 +93,21 @@ public sealed class SteelVehicleAcceptance : BaseEntity
     public long AcceptedBy { get; set; }
     public string? Note { get; set; }
     public ICollection<SteelReceiptPlanLine> Lines { get; set; } = [];
+    public ICollection<SteelVehicleAcceptedPlate> AcceptedPlates { get; set; } = [];
+}
+
+public sealed class SteelVehicleAcceptedPlate : BaseEntity
+{
+    public long VehicleCheckInId { get; set; }
+    public long VehicleAcceptanceId { get; set; }
+    public SteelVehicleAcceptance VehicleAcceptance { get; set; } = null!;
+    public int SequenceNo { get; set; }
+    public SteelPlateIdentityStatus IdentityStatus { get; set; } = SteelPlateIdentityStatus.Known;
+    public long? PlanLineId { get; set; }
+    public SteelReceiptPlanLine? PlanLine { get; set; }
+    public DateTimeOffset? ResolvedAtUtc { get; set; }
+    public long? ResolvedBy { get; set; }
+    public byte[] RowVersion { get; set; } = [];
 }
 
 public sealed class SteelReceiptInspectionAttachment : BaseEntity

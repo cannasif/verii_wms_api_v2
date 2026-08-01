@@ -8,6 +8,7 @@ using verii_wms_api_v2.Modules.SteelReceipt.Domain;
 using verii_wms_api_v2.Modules.VehicleCheckIn.Application;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Exceptions;
+using verii_wms_api_v2.Shared.Host.Serialization;
 
 namespace verii_wms_api_v2.Modules.SteelReceipt.Api;
 
@@ -41,8 +42,10 @@ public sealed class SteelReceiptsController(
     {
         await Require("WMS.STEEL_RECEIPT.VIEW",ct);
         await Require("WMS.STEEL_RECEIPT.VEHICLE.VIEW",ct);
+        var canManage=await permissions.HasPermissionAsync(
+            User,"WMS.STEEL_RECEIPT.VEHICLE.MANAGE",ct);
         return Ok(ApiResponse<CompleteSteelVehicleAcceptanceResult?>.Ok(
-            await vehicleAcceptance.GetLatestByVehicleAsync(vehicleCheckInId,ct)));
+            await vehicleAcceptance.GetLatestByVehicleAsync(vehicleCheckInId,canManage,ct)));
     }
     [HttpPost("vehicle-acceptance/complete"),RequestSizeLimit(130_000_000)] public async Task<IActionResult> CompleteVehicleAcceptance(
         [FromForm]SteelVehicleAcceptanceForm form,
@@ -54,10 +57,7 @@ public sealed class SteelReceiptsController(
         CompleteSteelVehicleAcceptanceRequest request;
         try
         {
-            request=JsonSerializer.Deserialize<CompleteSteelVehicleAcceptanceRequest>(
-                form.RequestJson,
-                new JsonSerializerOptions(JsonSerializerDefaults.Web))
-                ??throw new JsonException();
+            request=DeserializeVehicleAcceptanceRequest(form.RequestJson);
         }
         catch(JsonException)
         {
@@ -82,6 +82,39 @@ public sealed class SteelReceiptsController(
         {
             foreach(var upload in vehicleUploads)await upload.Content.DisposeAsync();
             foreach(var upload in plateUploads)await upload.Content.DisposeAsync();
+        }
+    }
+    [HttpPost("vehicle-acceptance/accepted-plates/{id:long}/resolve")]
+    public async Task<IActionResult> ResolveUnknownPlate(
+        long id,
+        [FromForm]ResolveUnknownPlateForm form,
+        CancellationToken ct)
+    {
+        await Require("WMS.STEEL_RECEIPT.VEHICLE.MANAGE",ct);
+        if(string.IsNullOrWhiteSpace(form.RequestJson))
+            throw AppException.BadRequest("Bilinmeyen levha eşleştirme isteği eksik.");
+        ResolveUnknownPlateRequest request;
+        try
+        {
+            request=DeserializeResolveUnknownPlateRequest(form.RequestJson);
+        }
+        catch(JsonException)
+        {
+            throw AppException.BadRequest("Bilinmeyen levha eşleştirme isteği geçersiz.");
+        }
+        var uploads=form.PlateImages.Select(file=>
+            new SteelPlateImageUpload(
+                request.PlanLineId,file.OpenReadStream(),file.FileName,file.ContentType,file.Length)).ToList();
+        try
+        {
+            var result=await vehicleAcceptance.ResolveUnknownPlateAsync(
+                id,request,uploads,UserId(),ct);
+            return Ok(ApiResponse<AcceptedSteelPlateRow>.Ok(
+                result,"Bilinmeyen levha SAC satırıyla eşleştirildi."));
+        }
+        finally
+        {
+            foreach(var upload in uploads)await upload.Content.DisposeAsync();
         }
     }
     [HttpPost("receipt/candidates/paged")] public async Task<IActionResult> ReceiptCandidates(PagedRequest request,CancellationToken ct)
@@ -123,6 +156,20 @@ public sealed class SteelReceiptsController(
     {await Require("WMS.STEEL_RECEIPT.INSPECT",ct);await service.RemoveAttachmentAsync(id,UserId(),ct);return Ok(ApiResponse<bool>.Ok(true,"Kontrol kanıtı silindi."));}
     [HttpGet("attachments/{id:long}/file")] public async Task<IActionResult> DownloadAttachment(long id,CancellationToken ct)
     {await Require("WMS.STEEL_RECEIPT.VIEW",ct);var file=await service.DownloadAttachmentAsync(id,ct);return File(file.Content,file.ContentType,file.FileName);}
+    internal static CompleteSteelVehicleAcceptanceRequest DeserializeVehicleAcceptanceRequest(string json)
+    {
+        var options=new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        WmsJsonSerialization.Configure(options);
+        return JsonSerializer.Deserialize<CompleteSteelVehicleAcceptanceRequest>(json,options)
+            ??throw new JsonException();
+    }
+    internal static ResolveUnknownPlateRequest DeserializeResolveUnknownPlateRequest(string json)
+    {
+        var options=new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        WmsJsonSerialization.Configure(options);
+        return JsonSerializer.Deserialize<ResolveUnknownPlateRequest>(json,options)
+            ??throw new JsonException();
+    }
     private long UserId()=>long.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier),out var id)?id:throw AppException.Unauthorized("Geçersiz kullanıcı oturumu.");
     private async Task Require(string code,CancellationToken ct){if(!await permissions.HasPermissionAsync(User,code,ct))throw AppException.Forbidden();}
 }
@@ -133,4 +180,10 @@ public sealed class SteelVehicleAcceptanceForm
     public List<IFormFile> VehicleImages { get; set; } = [];
     public List<IFormFile> PlateImages { get; set; } = [];
     public List<long> PlateImageLineIds { get; set; } = [];
+}
+
+public sealed class ResolveUnknownPlateForm
+{
+    public string RequestJson { get; set; } = string.Empty;
+    public List<IFormFile> PlateImages { get; set; } = [];
 }

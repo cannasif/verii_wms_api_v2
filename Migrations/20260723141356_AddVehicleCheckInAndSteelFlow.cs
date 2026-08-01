@@ -111,10 +111,8 @@ namespace verii_wms_api_v2.Migrations
                     { 1061L, "0", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, 1061L, 1001L, null, null }
                 });
 
-            migrationBuilder.CreateIndex(
-                name: "IX_RII_STEEL_RECEIPT_PLAN_VehicleCheckInId",
-                table: "RII_STEEL_RECEIPT_PLAN",
-                column: "VehicleCheckInId");
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
+                "CREATE INDEX [IX_RII_STEEL_RECEIPT_PLAN_VehicleCheckInId] ON [RII_STEEL_RECEIPT_PLAN] ([VehicleCheckInId]);"));
 
             migrationBuilder.CreateIndex(
                 name: "IX_RII_VEHICLE_CHECKIN_HEADER_BranchCode_CheckedInAtUtc",

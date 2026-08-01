@@ -67,10 +67,8 @@ namespace verii_wms_api_v2.Migrations
                 columns: new[] { "Id", "BranchCode", "CreatedBy", "CreatedDate", "DeletedBy", "DeletedDate", "PermissionDefinitionId", "PermissionGroupId", "UpdatedBy", "UpdatedDate" },
                 values: new object[] { 2306L, "0", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, 2306L, 1001L, null, null });
 
-            migrationBuilder.CreateIndex(
-                name: "IX_RII_INCOMING_INVOICE_LINE_SupplierStockMappingId",
-                table: "RII_INCOMING_INVOICE_LINE",
-                column: "SupplierStockMappingId");
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
+                "CREATE INDEX [IX_RII_INCOMING_INVOICE_LINE_SupplierStockMappingId] ON [RII_INCOMING_INVOICE_LINE] ([SupplierStockMappingId]);"));
 
             migrationBuilder.AddForeignKey(
                 name: "FK_RII_INCOMING_INVOICE_LINE_RII_SUPPLIER_STOCK_MAPPING_SupplierStockMappingId",

@@ -2,7 +2,7 @@ using verii_wms_api_v2.Shared.Domain;
 
 namespace verii_wms_api_v2.Modules.VehicleCheckIn.Domain;
 
-public enum VehicleCheckInStatus { CheckedIn=1, LinkedToReceipt=2, Completed=3, Cancelled=4 }
+public enum VehicleCheckInStatus { CheckedIn=1, LinkedToReceipt=2, Completed=3, Cancelled=4, ContainsUnknownPlates=5 }
 
 public sealed class VehicleCheckInHeader : BaseEntity
 {

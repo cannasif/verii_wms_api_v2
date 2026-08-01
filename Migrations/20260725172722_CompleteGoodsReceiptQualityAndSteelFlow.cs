@@ -30,12 +30,12 @@ namespace verii_wms_api_v2.Migrations
                 type: "bigint",
                 nullable: true);
 
-            migrationBuilder.Sql("""
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute("""
                 UPDATE [RII_QUALITY_INSPECTIONS]
                 SET [QueuedAtUtc] = [CreatedAtUtc],
                     [QueuedBy] = [CreatedBy]
                 WHERE [QueuedAtUtc] IS NULL;
-                """);
+                """));
 
             migrationBuilder.Sql("""
                 ;WITH [OrderedPlacements] AS
@@ -63,10 +63,8 @@ namespace verii_wms_api_v2.Migrations
                 table: "RII_VEHICLE_CHECKIN_HEADER",
                 sql: "[SteelSheetCount] >= 0");
 
-            migrationBuilder.CreateIndex(
-                name: "IX_RII_QUALITY_INSPECTIONS_BranchCode_QueuedAtUtc_Status",
-                table: "RII_QUALITY_INSPECTIONS",
-                columns: new[] { "BranchCode", "QueuedAtUtc", "Status" });
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
+                "CREATE INDEX [IX_RII_QUALITY_INSPECTIONS_BranchCode_QueuedAtUtc_Status] ON [RII_QUALITY_INSPECTIONS] ([BranchCode], [QueuedAtUtc], [Status]);"));
         }
 
         /// <inheritdoc />

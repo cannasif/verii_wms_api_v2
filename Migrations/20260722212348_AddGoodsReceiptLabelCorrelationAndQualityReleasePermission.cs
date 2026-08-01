@@ -17,16 +17,11 @@ namespace verii_wms_api_v2.Migrations
                 type: "uniqueidentifier",
                 nullable: true);
 
-            migrationBuilder.Sql("UPDATE [RII_GR_LABEL_BATCH] SET [CorrelationId] = NEWID() WHERE [CorrelationId] IS NULL;");
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
+                "UPDATE [RII_GR_LABEL_BATCH] SET [CorrelationId] = NEWID() WHERE [CorrelationId] IS NULL;"));
 
-            migrationBuilder.AlterColumn<Guid>(
-                name: "CorrelationId",
-                table: "RII_GR_LABEL_BATCH",
-                type: "uniqueidentifier",
-                nullable: false,
-                oldClrType: typeof(Guid),
-                oldType: "uniqueidentifier",
-                oldNullable: true);
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
+                "ALTER TABLE [RII_GR_LABEL_BATCH] ALTER COLUMN [CorrelationId] uniqueidentifier NOT NULL;"));
 
             migrationBuilder.InsertData(
                 table: "RII_PERMISSION_DEFINITIONS",
@@ -38,11 +33,8 @@ namespace verii_wms_api_v2.Migrations
                 columns: new[] { "Id", "BranchCode", "CreatedBy", "CreatedDate", "DeletedBy", "DeletedDate", "PermissionDefinitionId", "PermissionGroupId", "UpdatedBy", "UpdatedDate" },
                 values: new object[] { 1052L, "0", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, 1052L, 1001L, null, null });
 
-            migrationBuilder.CreateIndex(
-                name: "UX_RII_GR_LABEL_BATCH_CORRELATION",
-                table: "RII_GR_LABEL_BATCH",
-                column: "CorrelationId",
-                unique: true);
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
+                "CREATE UNIQUE INDEX [UX_RII_GR_LABEL_BATCH_CORRELATION] ON [RII_GR_LABEL_BATCH] ([CorrelationId]);"));
         }
 
         /// <inheritdoc />

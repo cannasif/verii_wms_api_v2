@@ -1336,10 +1336,8 @@ namespace verii_wms_api_v2.Migrations
                     { 2118L, "0", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, 2118L, 1001L, null, null }
                 });
 
-            migrationBuilder.CreateIndex(
-                name: "IX_RII_QUALITY_INSPECTION_LINES_WarehouseInboundLineId",
-                table: "RII_QUALITY_INSPECTION_LINES",
-                column: "WarehouseInboundLineId");
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute(
+                "CREATE INDEX [IX_RII_QUALITY_INSPECTION_LINES_WarehouseInboundLineId] ON [RII_QUALITY_INSPECTION_LINES] ([WarehouseInboundLineId]);"));
 
             migrationBuilder.CreateIndex(
                 name: "IX_RII_WI_EXECUTION_GrTaskId",

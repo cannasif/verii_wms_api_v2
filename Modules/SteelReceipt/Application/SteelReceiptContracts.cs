@@ -23,7 +23,7 @@ public sealed record SteelReceiptLineGridRow(long Id,long PlanId,string ImportRe
     decimal RejectedQuantity,string UnitCode,SteelArrivalStatus ArrivalStatus,SteelInspectionStatus InspectionStatus,
     SteelReceiptConversionStatus ConversionStatus,SteelPutawayStatus PutawayStatus,string? GoodsReceiptNo,long? GoodsReceiptId,
     string? ErpIntegrationStatus,long TargetWarehouseId,long ReceivingLocationId,long? GoodsReceiptLineId,long? CreatedBy,DateTime? CreatedDate,long? UpdatedBy,DateTime? UpdatedDate,
-    string? VehiclePlateNo,string? DriverName,string RowVersion);
+    string? VehiclePlateNo,string? DriverName,string? ConversionWaybillNo,DateTimeOffset? ConvertedAtUtc,string RowVersion);
 public sealed record SteelReceiptSourceRow(long PlanId,string ImportReferenceNo,string SourceFileName,string? WaybillNo,DateOnly? WaybillDate,
     long SupplierId,string SupplierCode,string SupplierName,SteelReceiptPlanStatus Status,int TotalLineCount,decimal TotalExpectedQuantity,
     IReadOnlyList<SteelReceiptLineGridRow> Lines);
