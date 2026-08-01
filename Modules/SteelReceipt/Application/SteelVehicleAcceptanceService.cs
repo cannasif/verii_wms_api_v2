@@ -563,7 +563,21 @@ public sealed class SteelVehicleAcceptanceService(
                     token);
 
                 acceptedPlate.PlanLine = line;
-                return ToRow(acceptedPlate, acceptance.AcceptedAtUtc, canResolve: false);
+                var attachmentRows = await PlateImages.Query()
+                    .Where(x => x.PlanLineId == line.Id)
+                    .OrderByDescending(x => x.CreatedDate)
+                    .Select(x => new SteelReceiptAttachmentRow(
+                        x.Id,
+                        x.PlanLineId,
+                        x.FileName,
+                        x.ContentType,
+                        $"/api/steel-receipts/attachments/{x.Id}/file",
+                        x.Caption,
+                        x.FileSize,
+                        x.CreatedBy,
+                        x.CreatedDate))
+                    .ToListAsync(token);
+                return ToRow(acceptedPlate, acceptance.AcceptedAtUtc, canResolve: false, attachmentRows);
             }, ct, IsolationLevel.Serializable);
         }
         catch (DbUpdateConcurrencyException)
@@ -603,6 +617,8 @@ public sealed class SteelVehicleAcceptanceService(
             .Include(x => x.VehicleAcceptance)
             .Include(x => x.PlanLine)
             .ThenInclude(x => x!.Plan)
+            .Include(x => x.PlanLine)
+            .ThenInclude(x => x!.Attachments)
             .Where(x => x.VehicleCheckInId == acceptance.VehicleCheckInId)
             .OrderBy(x => x.VehicleAcceptance.AcceptedAtUtc)
             .ThenBy(x => x.VehicleAcceptanceId)
@@ -616,6 +632,7 @@ public sealed class SteelVehicleAcceptanceService(
                 entity,
                 entity.VehicleAcceptance.AcceptedAtUtc,
                 canResolve,
+                MapAttachments(entity.PlanLine),
                 sequenceNo: index + 1);
         }).ToList();
         var unknownCount = plates.Count(x => x.IdentityStatus == nameof(SteelPlateIdentityStatus.Unknown));
@@ -638,6 +655,7 @@ public sealed class SteelVehicleAcceptanceService(
         SteelVehicleAcceptedPlate acceptedPlate,
         DateTimeOffset acceptedAtUtc,
         bool canResolve,
+        IReadOnlyList<SteelReceiptAttachmentRow> attachments,
         int? sequenceNo = null)
     {
         var line = acceptedPlate.PlanLine;
@@ -656,8 +674,35 @@ public sealed class SteelVehicleAcceptanceService(
             line?.ReceivingLocationId,
             line?.InspectedAtUtc ?? acceptedAtUtc,
             Convert.ToBase64String(acceptedPlate.RowVersion),
-            canResolve);
+            canResolve,
+            line is null
+                ? null
+                : new AcceptedSteelPlatePlanLineSummary(
+                    line.Id,
+                    line.PlanId,
+                    line.StockCodeSnapshot,
+                    line.StockNameSnapshot),
+            attachments);
     }
+
+    private static IReadOnlyList<SteelReceiptAttachmentRow> MapAttachments(SteelReceiptPlanLine? line) =>
+        line?.Attachments
+            .OrderByDescending(x => x.CreatedDate)
+            .Select(ToAttachmentRow)
+            .ToList()
+        ?? [];
+
+    private static SteelReceiptAttachmentRow ToAttachmentRow(SteelReceiptInspectionAttachment attachment) =>
+        new(
+            attachment.Id,
+            attachment.PlanLineId,
+            attachment.FileName,
+            attachment.ContentType,
+            $"/api/steel-receipts/attachments/{attachment.Id}/file",
+            attachment.Caption,
+            attachment.FileSize,
+            attachment.CreatedBy,
+            attachment.CreatedDate);
 
     private async Task RefreshPlanAsync(SteelReceiptPlan plan, CancellationToken ct)
     {

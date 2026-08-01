@@ -354,6 +354,24 @@ public sealed class SteelVehicleUnknownPlateIntegrationTests
         Assert.NotNull(persisted);
         Assert.Equal(5, persisted.Plates.Count);
         Assert.Equal(2, persisted.UnknownCount);
+        var knownPlates = persisted.Plates
+            .Where(x => x.IdentityStatus == nameof(SteelPlateIdentityStatus.Known))
+            .ToArray();
+        Assert.Equal(3, knownPlates.Length);
+        Assert.All(knownPlates, plate =>
+        {
+            Assert.NotNull(plate.PlanLineSummary);
+            Assert.Equal(plate.PlanLineId, plate.PlanLineSummary!.Id);
+            Assert.NotEmpty(plate.PlanLineSummary.StockCode);
+            Assert.Single(plate.Attachments);
+        });
+        Assert.All(
+            persisted.Plates.Where(x => x.IdentityStatus == nameof(SteelPlateIdentityStatus.Unknown)),
+            plate =>
+            {
+                Assert.Null(plate.PlanLineSummary);
+                Assert.Empty(plate.Attachments);
+            });
         Assert.Equal(
             VehicleCheckInStatus.ContainsUnknownPlates.ToString(),
             persisted.Vehicle.Header.Status);
@@ -390,7 +408,7 @@ public sealed class SteelVehicleUnknownPlateIntegrationTests
             .ToArray();
         var resolveLine4 = fixture.ResolveRequest(unknowns[0], fixture.Lines[3]);
 
-        Assert.False(await fixture.Permissions.HasPermissionAsync(
+        Assert.True(await fixture.Permissions.HasPermissionAsync(
             fixture.Principal(fixture.SameRole), ResolvePermission));
         Assert.True(await fixture.Permissions.HasPermissionAsync(
             fixture.Principal(fixture.SameRole), VehicleManagePermission));
@@ -847,6 +865,11 @@ public sealed class SteelVehicleUnknownPlateIntegrationTests
             {
                 BranchCode = "0",
                 PermissionDefinitionId = vehicleManagePermission.Id
+            });
+            group.GroupPermissions.Add(new PermissionGroupPermission
+            {
+                BranchCode = "0",
+                PermissionDefinitionId = legacyResolvePermission.Id
             });
             Context.Add(group);
             await Context.SaveChangesAsync();

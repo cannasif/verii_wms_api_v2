@@ -18,6 +18,9 @@ public sealed class SteelReceiptsController(
     ISteelVehicleAcceptanceService vehicleAcceptance,
     IPermissionAuthorizationService permissions):ControllerBase
 {
+    private const string UnknownPlateResolvePermission = "WMS.VEHICLECHECKIN.UNKNOWN_PLATE_RESOLVE";
+    private const string VehicleManagePermission = "WMS.STEEL_RECEIPT.VEHICLE.MANAGE";
+
     [HttpPost("import/preview")] public async Task<IActionResult> Preview(PreviewSteelReceiptImportRequest request,CancellationToken ct)
     {await Require("WMS.STEEL_RECEIPT.IMPORT",ct);return Ok(ApiResponse<SteelImportPreview>.Ok(await service.PreviewAsync(request,ct)));}
     [HttpPost("import/commit")] public async Task<IActionResult> Commit(CommitSteelReceiptImportRequest request,CancellationToken ct)
@@ -42,16 +45,16 @@ public sealed class SteelReceiptsController(
     {
         await Require("WMS.STEEL_RECEIPT.VIEW",ct);
         await Require("WMS.STEEL_RECEIPT.VEHICLE.VIEW",ct);
-        var canManage=await permissions.HasPermissionAsync(
-            User,"WMS.STEEL_RECEIPT.VEHICLE.MANAGE",ct);
+        var canResolveUnknownPlates=await permissions.HasPermissionAsync(
+            User,UnknownPlateResolvePermission,ct);
         return Ok(ApiResponse<CompleteSteelVehicleAcceptanceResult?>.Ok(
-            await vehicleAcceptance.GetLatestByVehicleAsync(vehicleCheckInId,canManage,ct)));
+            await vehicleAcceptance.GetLatestByVehicleAsync(vehicleCheckInId,canResolveUnknownPlates,ct)));
     }
     [HttpPost("vehicle-acceptance/complete"),RequestSizeLimit(130_000_000)] public async Task<IActionResult> CompleteVehicleAcceptance(
         [FromForm]SteelVehicleAcceptanceForm form,
         CancellationToken ct)
     {
-        await Require("WMS.STEEL_RECEIPT.VEHICLE.MANAGE",ct);
+        await Require(VehicleManagePermission,ct);
         await Require("WMS.STEEL_RECEIPT.INSPECT",ct);
         if(string.IsNullOrWhiteSpace(form.RequestJson))throw AppException.BadRequest("Araç kabul isteği eksik.");
         CompleteSteelVehicleAcceptanceRequest request;
@@ -90,7 +93,7 @@ public sealed class SteelReceiptsController(
         [FromForm]ResolveUnknownPlateForm form,
         CancellationToken ct)
     {
-        await Require("WMS.STEEL_RECEIPT.VEHICLE.MANAGE",ct);
+        await Require(UnknownPlateResolvePermission,ct);
         if(string.IsNullOrWhiteSpace(form.RequestJson))
             throw AppException.BadRequest("Bilinmeyen levha eşleştirme isteği eksik.");
         ResolveUnknownPlateRequest request;

@@ -51,6 +51,12 @@ public sealed record SteelPlateImageUpload(
     string ContentType,
     long Length);
 
+public sealed record AcceptedSteelPlatePlanLineSummary(
+    long Id,
+    long PlanId,
+    string StockCode,
+    string? StockName);
+
 public sealed record AcceptedSteelPlateRow(
     long Id,
     int SequenceNo,
@@ -66,7 +72,9 @@ public sealed record AcceptedSteelPlateRow(
     long? ReceivingLocationId,
     DateTimeOffset AcceptedAtUtc,
     string RowVersion,
-    bool CanResolve);
+    bool CanResolve,
+    AcceptedSteelPlatePlanLineSummary? PlanLineSummary,
+    IReadOnlyList<SteelReceiptAttachmentRow> Attachments);
 
 public sealed record ResolveUnknownPlateRequest(
     long PlanLineId,

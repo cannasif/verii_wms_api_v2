@@ -127,6 +127,26 @@ namespace verii_wms_api_v2.Migrations
                     WHERE [Code] = N'WMS.VEHICLECHECKIN.UNKNOWN_PLATE_RESOLVE'
                       AND [IsDeleted] = CAST(0 AS bit)
                 );
+
+                INSERT INTO [RII_PERMISSION_GROUP_PERMISSIONS]
+                    ([BranchCode], [CreatedDate], [IsDeleted], [PermissionDefinitionId], [PermissionGroupId])
+                SELECT
+                    N'0',
+                    SYSUTCDATETIME(),
+                    CAST(0 AS bit),
+                    permission.[Id],
+                    CAST(1001 AS bigint)
+                FROM [RII_PERMISSION_DEFINITIONS] AS permission
+                WHERE permission.[Code] = N'WMS.VEHICLECHECKIN.UNKNOWN_PLATE_RESOLVE'
+                  AND permission.[IsDeleted] = CAST(0 AS bit)
+                  AND NOT EXISTS
+                  (
+                      SELECT 1
+                      FROM [RII_PERMISSION_GROUP_PERMISSIONS] AS existing
+                      WHERE existing.[PermissionGroupId] = CAST(1001 AS bigint)
+                        AND existing.[PermissionDefinitionId] = permission.[Id]
+                        AND existing.[IsDeleted] = CAST(0 AS bit)
+                  );
                 """));
 
             migrationBuilder.Sql(SqlServerMigrationSql.Execute(
@@ -229,12 +249,10 @@ namespace verii_wms_api_v2.Migrations
                 FROM [RII_PERMISSION_GROUP_PERMISSIONS] AS groupPermission
                 INNER JOIN [RII_PERMISSION_DEFINITIONS] AS permission
                     ON permission.[Id] = groupPermission.[PermissionDefinitionId]
-                WHERE permission.[Code] = N'WMS.VEHICLECHECKIN.UNKNOWN_PLATE_RESOLVE'
-                  AND permission.[Description] = N'Created by migration 20260801043004_AddSteelVehicleAcceptedPlate';
+                WHERE permission.[Code] = N'WMS.VEHICLECHECKIN.UNKNOWN_PLATE_RESOLVE';
 
                 DELETE FROM [RII_PERMISSION_DEFINITIONS]
-                WHERE [Code] = N'WMS.VEHICLECHECKIN.UNKNOWN_PLATE_RESOLVE'
-                  AND [Description] = N'Created by migration 20260801043004_AddSteelVehicleAcceptedPlate';
+                WHERE [Code] = N'WMS.VEHICLECHECKIN.UNKNOWN_PLATE_RESOLVE';
                 """));
 
             migrationBuilder.DropTable(

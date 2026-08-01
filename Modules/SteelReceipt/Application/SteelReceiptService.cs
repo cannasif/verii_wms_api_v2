@@ -59,7 +59,7 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
                 x=>x.CorrelationId==request.IdempotencyKey,token);
             if(replay is not null)return replay.Id;
             var import=request.Import;var normalized=await ValidateImportAsync(import,token);
-            var errors=normalized.OrderBy(x=>x.Input.RowNumber).SelectMany((x,index)=>x.Errors.Select(e=>$"Satır {index+1}: {e}")).ToList();
+            var errors=normalized.OrderBy(x=>x.Input.RowNumber).SelectMany(x=>x.Errors.Select(e=>$"Satır {x.Input.RowNumber}: {e}")).ToList();
             if(errors.Count>0)throw AppException.BadRequest(string.Join(" ",errors.Take(10)));
             var keys=normalized.Select(x=>x.Key).ToArray();
             var stockIds=normalized.Select(x=>x.Stock!.Id).Distinct().ToArray();
@@ -120,54 +120,78 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
         var vehicleHeaders=uow.Repository<VehicleCheckInHeader>().Query();
         var acceptances=uow.Repository<SteelVehicleAcceptance>().Query();
         var planLines=Lines.Query();
+        var lineAggregates=from line in planLines
+            group line by line.PlanId into grouped
+            select new
+            {
+                PlanId=grouped.Key,
+                AllConverted=!grouped.Any(x=>x.ConversionStatus!=SteelReceiptConversionStatus.Created),
+                AnyConverted=grouped.Any(x=>x.ConversionStatus==SteelReceiptConversionStatus.Created),
+                HasApproved=grouped.Any(x=>x.InspectionStatus==SteelInspectionStatus.Approved
+                    ||x.InspectionStatus==SteelInspectionStatus.PartiallyApproved),
+                HasPending=grouped.Any(x=>x.InspectionStatus==SteelInspectionStatus.Pending),
+                AnyNonPendingInspection=grouped.Any(x=>x.InspectionStatus!=SteelInspectionStatus.Pending)
+            };
         var joined=from p in Plans.Query() join w in uow.Repository<WarehouseEntity>().Query() on p.TargetWarehouseId equals w.Id
+                   join agg in lineAggregates on p.Id equals agg.PlanId into aggregates
+                   from agg in aggregates.DefaultIfEmpty()
                    join v in vehicleHeaders on p.VehicleCheckInId equals v.Id into vehicles
                    from v in vehicles.DefaultIfEmpty()
-                   let linkedVehicle=v??(
-                       from line in planLines
-                       join acc in acceptances on line.VehicleAcceptanceId equals acc.Id
-                       join av in vehicleHeaders on acc.VehicleCheckInId equals av.Id
-                       where line.PlanId==p.Id&&line.VehicleAcceptanceId!=null
-                       orderby acc.AcceptedAtUtc descending
-                       select av).FirstOrDefault()
-                   select new {Plan=p,Warehouse=w,Vehicle=linkedVehicle};
+                   let resolvedStatus=p.Status==SteelReceiptPlanStatus.Cancelled?SteelReceiptPlanStatus.Cancelled:
+                       agg==null?SteelReceiptPlanStatus.Imported:
+                       agg.AllConverted?SteelReceiptPlanStatus.Converted:
+                       agg.AnyConverted?SteelReceiptPlanStatus.PartiallyConverted:
+                       agg.HasApproved&&agg.HasPending?SteelReceiptPlanStatus.PartiallyReadyForReceipt:
+                       agg.HasApproved?SteelReceiptPlanStatus.ReadyForReceipt:
+                       agg.AnyNonPendingInspection?SteelReceiptPlanStatus.InspectionInProgress:
+                       SteelReceiptPlanStatus.Imported
+                   select new {Plan=p,Warehouse=w,Vehicle=v,Status=resolvedStatus};
         var q=joined.Select(x=>new SteelReceiptPlanGridRow(x.Plan.Id,x.Plan.BranchCode,x.Plan.ImportReferenceNo,x.Plan.SourceFileName,
             x.Plan.ExportReferenceNo,x.Vehicle==null?null:x.Vehicle.Id,x.Vehicle==null?null:x.Vehicle.PlateNo,
             x.Vehicle==null?null:((x.Vehicle.DriverFirstName??"")+" "+(x.Vehicle.DriverLastName??"")).Trim(),x.Plan.SupplierId,
             x.Plan.SupplierCodeSnapshot,x.Plan.SupplierNameSnapshot,x.Plan.TargetWarehouseId,x.Warehouse.WarehouseCode,
-            x.Warehouse.WarehouseName,x.Plan.Status,x.Plan.TotalLineCount,x.Plan.TotalExpectedQuantity,x.Plan.ImportedAtUtc,
+            x.Warehouse.WarehouseName,x.Status,x.Plan.TotalLineCount,x.Plan.TotalExpectedQuantity,x.Plan.ImportedAtUtc,
             x.Plan.CreatedBy,x.Plan.CreatedDate,x.Plan.UpdatedBy,x.Plan.UpdatedDate));
         var s=request.Search?.Trim();q=q.Where(x=>string.IsNullOrWhiteSpace(s)||x.ImportReferenceNo.Contains(s)||x.SupplierCode.Contains(s)
             ||x.SupplierName.Contains(s)||(x.ExportReferenceNo!=null&&x.ExportReferenceNo.Contains(s)));
         var response=await q.ApplyAdvancedFilters(request).ApplySort(request,nameof(SteelReceiptPlanGridRow.ImportedAtUtc)).ToPagedResponseAsync(request,ct);
-        return await ApplyResolvedPlanStatusesAsync(response,ct);
+        return await EnrichLinkedPlanVehiclesAsync(response,vehicleHeaders,acceptances,planLines,ct);
     }
 
-    private async Task<PagedResponse<SteelReceiptPlanGridRow>> ApplyResolvedPlanStatusesAsync(
+    private async Task<PagedResponse<SteelReceiptPlanGridRow>> EnrichLinkedPlanVehiclesAsync(
         PagedResponse<SteelReceiptPlanGridRow> response,
+        IQueryable<VehicleCheckInHeader> vehicleHeaders,
+        IQueryable<SteelVehicleAcceptance> acceptances,
+        IQueryable<SteelReceiptPlanLine> planLines,
         CancellationToken ct)
     {
-        if (response.Items.Count == 0)
+        var planIds=response.Items
+            .Where(x=>!x.VehicleCheckInId.HasValue)
+            .Select(x=>x.Id)
+            .ToArray();
+        if(planIds.Length==0)
             return response;
 
-        var planIds=response.Items.Select(x=>x.Id).ToArray();
-        var lineStates=await Lines.Query()
-            .Where(x=>planIds.Contains(x.PlanId))
-            .Select(x=>new {x.PlanId,x.InspectionStatus,x.ConversionStatus})
-            .ToListAsync(ct);
-        var statesByPlan=lineStates
+        var links=await(from line in planLines
+            where planIds.Contains(line.PlanId)&&line.VehicleAcceptanceId!=null
+            join acc in acceptances on line.VehicleAcceptanceId equals acc.Id
+            join vehicle in vehicleHeaders on acc.VehicleCheckInId equals vehicle.Id
+            select new{line.PlanId,acc.AcceptedAtUtc,vehicle}).ToListAsync(ct);
+        var vehiclesByPlan=links
             .GroupBy(x=>x.PlanId)
             .ToDictionary(
                 x=>x.Key,
-                x=>x.Select(line=>new SteelReceiptPlanStatusRules.LineState(line.InspectionStatus,line.ConversionStatus)));
-
+                x=>x.OrderByDescending(link=>link.AcceptedAtUtc).First().vehicle);
         var items=response.Items.Select(row=>{
-            if(!statesByPlan.TryGetValue(row.Id,out var states))
+            if(row.VehicleCheckInId.HasValue||!vehiclesByPlan.TryGetValue(row.Id,out var vehicle))
                 return row;
-            var resolved=SteelReceiptPlanStatusRules.Resolve(states);
-            return resolved==row.Status?row:row with {Status=resolved};
+            return row with
+            {
+                VehicleCheckInId=vehicle.Id,
+                VehiclePlateNo=vehicle.PlateNo,
+                DriverName=((vehicle.DriverFirstName??"")+" "+(vehicle.DriverLastName??"")).Trim()
+            };
         }).ToList();
-
         return new PagedResponse<SteelReceiptPlanGridRow>
         {
             Items=items,

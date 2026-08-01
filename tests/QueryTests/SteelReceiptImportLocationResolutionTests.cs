@@ -16,6 +16,7 @@ using verii_wms_api_v2.Modules.StockMovement.Application;
 using verii_wms_api_v2.Modules.Warehouse.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
 using verii_wms_api_v2.Shared;
+using verii_wms_api_v2.Shared.Application.Exceptions;
 using verii_wms_api_v2.Shared.Infrastructure.Persistence;
 using Xunit;
 
@@ -76,6 +77,89 @@ public sealed class SteelReceiptImportLocationResolutionTests
             .SingleAsync(x => x.PlanId == planId);
 
         Assert.Equal(fixture.FirstEligibleLocation.Id, line.ReceivingLocationId);
+    }
+
+    [Fact]
+    public async Task GetPlansPagedAsync_filters_and_sorts_by_resolved_status_not_persisted_status()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var readyPlanId = await fixture.Service.CommitAsync(
+            fixture.BuildImportRequest(receivingLocationId: null, importReferenceNo: "READY-FILTER"),
+            actor: 1);
+        var stalePlanId = await fixture.Service.CommitAsync(
+            fixture.BuildImportRequest(receivingLocationId: null, importReferenceNo: "STALE-FILTER"),
+            actor: 1);
+
+        var readyLine = await fixture.Context.Set<SteelReceiptPlanLine>()
+            .SingleAsync(x => x.PlanId == readyPlanId);
+        readyLine.InspectionStatus = SteelInspectionStatus.Approved;
+
+        var stalePlan = await fixture.Context.Set<SteelReceiptPlan>()
+            .SingleAsync(x => x.Id == stalePlanId);
+        stalePlan.Status = SteelReceiptPlanStatus.ReadyForReceipt;
+        var staleLine = await fixture.Context.Set<SteelReceiptPlanLine>()
+            .SingleAsync(x => x.PlanId == stalePlanId);
+        staleLine.InspectionStatus = SteelInspectionStatus.Pending;
+        await fixture.Context.SaveChangesAsync();
+
+        var filtered = await fixture.Service.GetPlansPagedAsync(new PagedRequest
+        {
+            PageNumber = 1,
+            PageSize = 10,
+            Filters =
+            [
+                new AdvancedFilterRequest(
+                    nameof(SteelReceiptPlanGridRow.Status),
+                    "eq",
+                    SteelReceiptPlanStatus.ReadyForReceipt.ToString())
+            ]
+        });
+
+        Assert.Equal(1, filtered.TotalCount);
+        Assert.Single(filtered.Items);
+        Assert.Equal(readyPlanId, filtered.Items[0].Id);
+        Assert.Equal(SteelReceiptPlanStatus.ReadyForReceipt, filtered.Items[0].Status);
+
+        var sorted = await fixture.Service.GetPlansPagedAsync(new PagedRequest
+        {
+            PageNumber = 1,
+            PageSize = 10,
+            SortBy = nameof(SteelReceiptPlanGridRow.Status),
+            SortDirection = "asc"
+        });
+
+        Assert.Equal(2, sorted.TotalCount);
+        Assert.Equal(stalePlanId, sorted.Items[0].Id);
+        Assert.Equal(SteelReceiptPlanStatus.Imported, sorted.Items[0].Status);
+        Assert.Equal(readyPlanId, sorted.Items[1].Id);
+        Assert.Equal(SteelReceiptPlanStatus.ReadyForReceipt, sorted.Items[1].Status);
+    }
+
+    [Fact]
+    public async Task CommitAsync_validation_errors_use_excel_row_number_not_sorted_index()
+    {
+        await using var fixture = await Fixture.CreateAsync();
+        var preview = fixture.BuildImportRequest(receivingLocationId: null, importReferenceNo: "ROW-NO-TEST").Import with
+        {
+            Lines =
+            [
+                new SteelImportLineRequest(
+                    10, null, null, fixture.Stock.Id, fixture.Stock.ErpStockCode,
+                    null, null, "SER-VALID", null, 1, "ADET",
+                    null, null, null, null, null, null),
+                new SteelImportLineRequest(
+                    2, null, null, 999_999, "MISSING-STOCK",
+                    null, null, "", null, 1, "ADET",
+                    null, null, null, null, null, null)
+            ]
+        };
+        var request = new CommitSteelReceiptImportRequest(Guid.NewGuid(), preview);
+
+        var exception = await Assert.ThrowsAsync<AppException>(() =>
+            fixture.Service.CommitAsync(request, actor: 1));
+
+        Assert.Contains("Satır 2:", exception.Message);
+        Assert.DoesNotContain("Satır 1:", exception.Message);
     }
 
     private sealed class Fixture : IAsyncDisposable
