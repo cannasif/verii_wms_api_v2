@@ -10,7 +10,11 @@ public sealed class UserProfileService(IUnitOfWork unitOfWork, IProfileImageStor
     {
         "rack-scanner",
         "conveyor-flow",
-        "forklift-route"
+        "forklift-route",
+        "pick-to-light",
+        "agv-shuttle",
+        "dock-inbound",
+        "barcode-scan",
     };
 
     private IGenericRepository<UserDetail> Details => unitOfWork.Repository<UserDetail>();
