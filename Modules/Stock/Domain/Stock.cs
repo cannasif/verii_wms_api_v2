@@ -4,6 +4,7 @@ namespace verii_wms_api_v2.Modules.Stock.Domain;
 
 public sealed class Stock : BaseEntity
 {
+    public ICollection<StockImage> Images { get; set; } = [];
     public short BusinessUnitCode { get; set; }
     public string ErpStockCode { get; set; } = string.Empty;
     public string StockName { get; set; } = string.Empty;
