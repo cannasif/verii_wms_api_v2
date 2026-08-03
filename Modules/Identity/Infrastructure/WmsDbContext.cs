@@ -15,6 +15,8 @@ using verii_wms_api_v2.Modules.GoodsReceipt.Infrastructure;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.IncomingInvoice.Domain;
 using verii_wms_api_v2.Modules.IncomingInvoice.Infrastructure;
+using verii_wms_api_v2.Modules.Kkd.Domain;
+using verii_wms_api_v2.Modules.Kkd.Infrastructure;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Location.Infrastructure;
 using verii_wms_api_v2.Modules.Packing.Domain;
@@ -105,6 +107,19 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<IncomingInvoiceDocument> IncomingInvoiceDocuments => Set<IncomingInvoiceDocument>();
     public DbSet<IncomingInvoiceGoodsReceiptLink> IncomingInvoiceGoodsReceiptLinks => Set<IncomingInvoiceGoodsReceiptLink>();
     public DbSet<IncomingInvoiceGoodsReceiptLineLink> IncomingInvoiceGoodsReceiptLineLinks => Set<IncomingInvoiceGoodsReceiptLineLink>();
+    public DbSet<KkdPolicy> KkdPolicies => Set<KkdPolicy>();
+    public DbSet<KkdDepartment> KkdDepartments => Set<KkdDepartment>();
+    public DbSet<KkdRole> KkdRoles => Set<KkdRole>();
+    public DbSet<KkdEmployee> KkdEmployees => Set<KkdEmployee>();
+    public DbSet<KkdEntitlementMatrix> KkdEntitlementMatrices => Set<KkdEntitlementMatrix>();
+    public DbSet<KkdEntitlementRule> KkdEntitlementRules => Set<KkdEntitlementRule>();
+    public DbSet<KkdEntitlementPhase> KkdEntitlementPhases => Set<KkdEntitlementPhase>();
+    public DbSet<KkdEmployeeEntitlementOverride> KkdEmployeeEntitlementOverrides => Set<KkdEmployeeEntitlementOverride>();
+    public DbSet<KkdDistribution> KkdDistributions => Set<KkdDistribution>();
+    public DbSet<KkdDistributionLine> KkdDistributionLines => Set<KkdDistributionLine>();
+    public DbSet<KkdEntitlementConsumption> KkdEntitlementConsumptions => Set<KkdEntitlementConsumption>();
+    public DbSet<KkdDistributionEntitlementAllocation> KkdDistributionEntitlementAllocations => Set<KkdDistributionEntitlementAllocation>();
+    public DbSet<KkdValidationLog> KkdValidationLogs => Set<KkdValidationLog>();
     public DbSet<GoodsReceiptPolicy> GoodsReceiptPolicies => Set<GoodsReceiptPolicy>();
     public DbSet<GoodsReceiptExecution> GoodsReceiptExecutions => Set<GoodsReceiptExecution>();
     public DbSet<GoodsReceiptExecutionLine> GoodsReceiptExecutionLines => Set<GoodsReceiptExecutionLine>();
@@ -270,6 +285,19 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new IncomingInvoiceDocumentConfiguration());
         modelBuilder.ApplyConfiguration(new IncomingInvoiceGoodsReceiptLinkConfiguration());
         modelBuilder.ApplyConfiguration(new IncomingInvoiceGoodsReceiptLineLinkConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdPolicyConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdDepartmentConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdRoleConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdEmployeeConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdEntitlementMatrixConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdEntitlementRuleConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdEntitlementPhaseConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdEmployeeEntitlementOverrideConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdDistributionConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdDistributionLineConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdEntitlementConsumptionConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdDistributionEntitlementAllocationConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdValidationLogConfiguration());
         modelBuilder.ApplyConfiguration(new GoodsReceiptPolicyConfiguration());
         modelBuilder.ApplyConfiguration(new GoodsReceiptExecutionConfiguration());
         modelBuilder.ApplyConfiguration(new GoodsReceiptExecutionLineConfiguration());
@@ -536,6 +564,19 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             new PermissionDefinition { Id=2422, BranchCode="0", Code="WMS.PRODUCTION.RELEASE", Name="Üretim planını serbest bırak", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2423, BranchCode="0", Code="WMS.PRODUCTION.DELETE", Name="Taslak üretim planını sil", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2424, BranchCode="0", Code="WMS.PRODUCTION.OPERATE", Name="Üretim operasyonunu yürüt", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
+        modelBuilder.Entity<PermissionDefinition>().HasData(
+            new PermissionDefinition { Id=2500, BranchCode="0", Code="WMS.KKD.DEFINITIONS.VIEW", Name="KKD departman ve rol tanımlarını görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2501, BranchCode="0", Code="WMS.KKD.DEFINITIONS.MANAGE", Name="KKD departman ve rol tanımlarını yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2502, BranchCode="0", Code="WMS.KKD.EMPLOYEES.VIEW", Name="KKD personellerini görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2503, BranchCode="0", Code="WMS.KKD.EMPLOYEES.MANAGE", Name="KKD personellerini yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2504, BranchCode="0", Code="WMS.KKD.MATRICES.VIEW", Name="KKD hak matrislerini görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2505, BranchCode="0", Code="WMS.KKD.MATRICES.MANAGE", Name="KKD hak matrislerini yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2506, BranchCode="0", Code="WMS.KKD.OVERRIDES.MANAGE", Name="KKD personel ek haklarını yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2507, BranchCode="0", Code="WMS.KKD.ENTITLEMENT.CHECK", Name="KKD hak sorgulaması yap", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2508, BranchCode="0", Code="WMS.KKD.DISTRIBUTION.OPERATE", Name="KKD dağıtım ve ambar çıkış işlemini yürüt", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2509, BranchCode="0", Code="WMS.KKD.REPORTS.VIEW", Name="KKD raporlarını görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2510, BranchCode="0", Code="WMS.KKD.POLICY.VIEW", Name="KKD süreç politikasını görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2511, BranchCode="0", Code="WMS.KKD.POLICY.MANAGE", Name="KKD süreç politikasını yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionGroup>().HasData(new PermissionGroup { Id=1001, BranchCode="0", Name="System Administrators", Description="Tam sistem yönetimi", IsSystemAdmin=true, IsActive=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(1,8).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(9,7).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
@@ -558,6 +599,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2400,9).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2410,9).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2420,5).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
+        modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2500,12).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<UserPermissionGroup>().HasData(new UserPermissionGroup { Id=1001, BranchCode="0", UserId=1, PermissionGroupId=1001, CreatedDate=seedDate });
     }
 
@@ -593,6 +635,10 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             throw new InvalidOperationException("Ambar çıkış durum geçmişi değiştirilemez veya silinemez.");
         if (ChangeTracker.Entries<WarehouseTransferStatusHistory>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Depolar arası transfer durum geçmişi immutable yapıdadır; kayıtlar güncellenemez veya silinemez.");
+        if (ChangeTracker.Entries<KkdEntitlementConsumption>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("KKD hak tüketim kayıtları değiştirilemez veya silinemez; ters tüketim kaydı kullanın.");
+        if (ChangeTracker.Entries<KkdDistributionEntitlementAllocation>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("KKD hak rezervasyon kayıtları değiştirilemez veya silinemez; dağıtım iptaliyle serbest bırakın.");
     }
 
     private static BarcodePolicyProfileSegment Segment(long id,long profileId,int order,BarcodePolicyField field,bool required)=>new(){Id=id,BranchCode="0",BarcodePolicyProfileId=profileId,Order=order,SegmentType=BarcodePolicySegmentType.Field,SourceField=field,IsRequired=required,Transform=BarcodeValueTransform.Upper,SequenceLength=8,DateFormat="yyyyMMdd",CreatedDate=new DateTime(2026,7,21,0,0,0,DateTimeKind.Utc)};
