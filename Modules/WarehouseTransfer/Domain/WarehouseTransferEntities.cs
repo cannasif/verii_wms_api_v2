@@ -13,6 +13,12 @@ public enum WarehouseTransferInitiationMode
 
 public enum WarehouseTransferReservationPolicy { None = 1, OnCreate = 2, OnRelease = 3 }
 public enum WarehouseTransferDirectPostingPolicy { OneStep = 1, TwoStepTransit = 2 }
+public enum WarehouseTransferCancellationReturnPolicy
+{
+    OriginalSourceLocation = 1,
+    WarehouseDefaultReturnLocation = 2,
+    ManagerSelectionRequired = 3
+}
 
 public enum WarehouseTransferBusinessContext
 {
@@ -68,7 +74,8 @@ public enum WarehouseTransferTaskType
     Pick = 1,
     Dispatch = 2,
     Receive = 3,
-    Putaway = 4
+    Putaway = 4,
+    CancellationReturn = 5
 }
 
 public enum WarehouseTransferTaskStatus
@@ -149,6 +156,8 @@ public sealed class WarehouseTransferHeader : BaseEntity
     public DateTimeOffset? CancelledAtUtc { get; set; }
     public long? CancelledBy { get; set; }
     public string? CancellationReason { get; set; }
+    public WarehouseTransferCancellationReturnPolicy CancellationReturnPolicy { get; set; } = WarehouseTransferCancellationReturnPolicy.OriginalSourceLocation;
+    public long? CancellationReturnLocationId { get; set; }
 
     public string? ShipmentNo { get; set; }
     public string? WaybillNo { get; set; }
@@ -369,5 +378,6 @@ public sealed class WarehouseTransferPolicy : BaseEntity
     public bool RequireShipmentInformation { get; set; }
     public WarehouseTransferDirectPostingPolicy DirectPostingPolicy { get; set; } = WarehouseTransferDirectPostingPolicy.TwoStepTransit;
     public WarehouseTransferDiscrepancyPolicy DiscrepancyPolicy { get; set; } = WarehouseTransferDiscrepancyPolicy.RequireApproval;
+    public WarehouseTransferCancellationReturnPolicy CancellationReturnPolicy { get; set; } = WarehouseTransferCancellationReturnPolicy.OriginalSourceLocation;
     public byte[] RowVersion { get; set; } = [];
 }

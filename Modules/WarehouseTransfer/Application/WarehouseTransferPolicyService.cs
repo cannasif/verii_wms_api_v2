@@ -12,7 +12,7 @@ public sealed record WarehouseTransferPolicyDto(
     bool AllowPartialPicking,bool AllowPartialShipment,bool AllowPartialReceipt,bool RequireDestinationAcceptance,
     bool CreateTransitInventory,bool RequirePutaway,bool RequireSourceLocation,bool RequireTargetLocation,
     bool RequireShipmentInformation,WarehouseTransferDirectPostingPolicy DirectPostingPolicy,
-    WarehouseTransferDiscrepancyPolicy DiscrepancyPolicy,long? UpdatedBy,DateTime? UpdatedDate);
+    WarehouseTransferDiscrepancyPolicy DiscrepancyPolicy,WarehouseTransferCancellationReturnPolicy CancellationReturnPolicy,long? UpdatedBy,DateTime? UpdatedDate);
 
 public sealed record UpdateWarehouseTransferPolicyRequest(
     string BranchCode,bool AllowOrderBasedTask,bool AllowStockBasedTask,bool AllowOrderBasedDirect,bool AllowStockBasedDirect,
@@ -21,7 +21,7 @@ public sealed record UpdateWarehouseTransferPolicyRequest(
     bool AllowPartialPicking,bool AllowPartialShipment,bool AllowPartialReceipt,bool RequireDestinationAcceptance,
     bool CreateTransitInventory,bool RequirePutaway,bool RequireSourceLocation,bool RequireTargetLocation,
     bool RequireShipmentInformation,WarehouseTransferDirectPostingPolicy DirectPostingPolicy,
-    WarehouseTransferDiscrepancyPolicy DiscrepancyPolicy);
+    WarehouseTransferDiscrepancyPolicy DiscrepancyPolicy,WarehouseTransferCancellationReturnPolicy CancellationReturnPolicy);
 
 public interface IWarehouseTransferPolicyService
 {
@@ -61,7 +61,7 @@ public sealed class WarehouseTransferPolicyService(IUnitOfWork uow,IAuditLogWrit
         entity.CreateTransitInventory=r.CreateTransitInventory;entity.RequirePutaway=r.RequirePutaway;
         entity.RequireSourceLocation=r.RequireSourceLocation;entity.RequireTargetLocation=r.RequireTargetLocation;
         entity.RequireShipmentInformation=r.RequireShipmentInformation;entity.DirectPostingPolicy=r.DirectPostingPolicy;
-        entity.DiscrepancyPolicy=r.DiscrepancyPolicy;entity.UpdatedBy=actor;entity.UpdatedDate=DateTime.UtcNow;
+        entity.DiscrepancyPolicy=r.DiscrepancyPolicy;entity.CancellationReturnPolicy=r.CancellationReturnPolicy;entity.UpdatedBy=actor;entity.UpdatedDate=DateTime.UtcNow;
         await uow.SaveChangesAsync(ct);var result=Map(entity);
         await audit.WriteAsync(new("warehouse-transfer.policy.update",nameof(WarehouseTransferPolicy),entity.Id.ToString(),"Succeeded","warehouse-transfer",OldValues:before,NewValues:result,ChangedFields:["Policy"]),ct);
         return result;
@@ -73,5 +73,5 @@ public sealed class WarehouseTransferPolicyService(IUnitOfWork uow,IAuditLogWrit
         x.RequireApproval,x.RequireAssigneeForTask,x.AllowMultipleAssignees,x.AutoReleaseTaskBased,x.ReservationPolicy,
         x.MinimumFulfillmentPercent,x.AllowPartialPicking,x.AllowPartialShipment,x.AllowPartialReceipt,
         x.RequireDestinationAcceptance,x.CreateTransitInventory,x.RequirePutaway,x.RequireSourceLocation,x.RequireTargetLocation,
-        x.RequireShipmentInformation,x.DirectPostingPolicy,x.DiscrepancyPolicy,x.UpdatedBy,x.UpdatedDate);
+        x.RequireShipmentInformation,x.DirectPostingPolicy,x.DiscrepancyPolicy,x.CancellationReturnPolicy,x.UpdatedBy,x.UpdatedDate);
 }

@@ -21,6 +21,9 @@ public sealed class WarehouseTransferHeaderConfiguration : BaseEntityConfigurati
         b.Property(x=>x.BusinessContext).HasConversion<string>().HasMaxLength(40).HasDefaultValue(WarehouseTransferBusinessContext.InterWarehouse).HasSentinel((WarehouseTransferBusinessContext)0);
         b.Property(x=>x.DirectPostingPolicy).HasConversion<string>().HasMaxLength(30).HasDefaultValue(WarehouseTransferDirectPostingPolicy.TwoStepTransit).HasSentinel((WarehouseTransferDirectPostingPolicy)0);
         b.Property(x=>x.DiscrepancyPolicy).HasConversion<string>().HasMaxLength(30);
+        b.Property(x=>x.CancellationReturnPolicy).HasConversion<string>().HasMaxLength(40)
+            .HasDefaultValue(WarehouseTransferCancellationReturnPolicy.OriginalSourceLocation)
+            .HasSentinel((WarehouseTransferCancellationReturnPolicy)0);
         b.Property(x=>x.MinimumFulfillmentPercent).HasPrecision(9,4).HasDefaultValue(100m);
         b.Property(x=>x.RequireAssignee).HasDefaultValue(true);
         b.Property(x=>x.RequireSourceLocation).HasDefaultValue(true);
@@ -140,6 +143,9 @@ public sealed class WarehouseTransferPolicyConfiguration : BaseEntityConfigurati
         b.Property(x=>x.ReservationPolicy).HasConversion<string>().HasMaxLength(30);
         b.Property(x=>x.DirectPostingPolicy).HasConversion<string>().HasMaxLength(30);
         b.Property(x=>x.DiscrepancyPolicy).HasConversion<string>().HasMaxLength(30);
+        b.Property(x=>x.CancellationReturnPolicy).HasConversion<string>().HasMaxLength(40)
+            .HasDefaultValue(WarehouseTransferCancellationReturnPolicy.OriginalSourceLocation)
+            .HasSentinel((WarehouseTransferCancellationReturnPolicy)0);
         b.Property(x=>x.MinimumFulfillmentPercent).HasPrecision(9,4);
         b.Property(x=>x.RowVersion).IsRowVersion();
         b.HasIndex(x=>new{x.BranchCode,x.PolicyKey}).IsUnique().HasFilter("[IsDeleted] = 0");
