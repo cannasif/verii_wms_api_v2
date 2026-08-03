@@ -115,6 +115,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<KkdEntitlementRule> KkdEntitlementRules => Set<KkdEntitlementRule>();
     public DbSet<KkdEntitlementPhase> KkdEntitlementPhases => Set<KkdEntitlementPhase>();
     public DbSet<KkdEmployeeEntitlementOverride> KkdEmployeeEntitlementOverrides => Set<KkdEmployeeEntitlementOverride>();
+    public DbSet<KkdEmployeeStockPreference> KkdEmployeeStockPreferences => Set<KkdEmployeeStockPreference>();
     public DbSet<KkdDistribution> KkdDistributions => Set<KkdDistribution>();
     public DbSet<KkdDistributionLine> KkdDistributionLines => Set<KkdDistributionLine>();
     public DbSet<KkdEntitlementConsumption> KkdEntitlementConsumptions => Set<KkdEntitlementConsumption>();
@@ -293,6 +294,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new KkdEntitlementRuleConfiguration());
         modelBuilder.ApplyConfiguration(new KkdEntitlementPhaseConfiguration());
         modelBuilder.ApplyConfiguration(new KkdEmployeeEntitlementOverrideConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdEmployeeStockPreferenceConfiguration());
         modelBuilder.ApplyConfiguration(new KkdDistributionConfiguration());
         modelBuilder.ApplyConfiguration(new KkdDistributionLineConfiguration());
         modelBuilder.ApplyConfiguration(new KkdEntitlementConsumptionConfiguration());

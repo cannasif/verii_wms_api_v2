@@ -6,6 +6,7 @@ public enum KkdEntitlementPhaseType { Initial = 1, AfterMonths = 2, Recurring = 
 public enum KkdPeriodType { Day = 1, Month = 2, Year = 3 }
 public enum KkdDistributionStatus { Draft = 1, Validated = 2, OutboundCreated = 3, Completed = 4, Cancelled = 5, Failed = 6 }
 public enum KkdEntitlementSourceType { Matrix = 1, ManualOverride = 2, OpenOrderExcess = 3 }
+public enum KkdExcessApprovalStatus { NotRequired = 1, Pending = 2, Approved = 3, Rejected = 4 }
 
 public sealed class KkdPolicy : BaseEntity
 {
@@ -15,6 +16,7 @@ public sealed class KkdPolicy : BaseEntity
     public bool AllowMultipleOrdersPerDistribution { get; set; } = true;
     public bool RequireEmployeeUserLink { get; set; }
     public bool AllowFutureDatedDistribution { get; set; }
+    public bool RequireManagerApprovalForExcess { get; set; } = true;
     public byte[] RowVersion { get; set; } = [];
 }
 
@@ -132,6 +134,16 @@ public sealed class KkdEmployeeEntitlementOverride : BaseEntity
     public byte[] RowVersion { get; set; } = [];
 }
 
+public sealed class KkdEmployeeStockPreference : BaseEntity
+{
+    public long EmployeeId { get; set; }
+    public KkdEmployee Employee { get; set; } = null!;
+    public string GroupCode { get; set; } = string.Empty;
+    public long StockId { get; set; }
+    public DateTimeOffset LastSelectedAtUtc { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+}
+
 public sealed class KkdDistribution : BaseEntity
 {
     public Guid CorrelationId { get; set; }
@@ -143,6 +155,10 @@ public sealed class KkdDistribution : BaseEntity
     public string DocumentNo { get; set; } = string.Empty;
     public KkdDistributionStatus Status { get; set; } = KkdDistributionStatus.Draft;
     public long? WarehouseOutboundId { get; set; }
+    public KkdExcessApprovalStatus ExcessApprovalStatus { get; set; } = KkdExcessApprovalStatus.NotRequired;
+    public string? ExcessApprovalReason { get; set; }
+    public long? ExcessApprovedBy { get; set; }
+    public DateTimeOffset? ExcessApprovedAtUtc { get; set; }
     public string? FailureReason { get; set; }
     public DateTimeOffset? CompletedAtUtc { get; set; }
     public byte[] RowVersion { get; set; } = [];

@@ -11,6 +11,7 @@ public sealed class KkdPolicyConfiguration : BaseEntityConfiguration<KkdPolicy>
     {
         b.ToTable("RII_KKD_POLICY");
         b.Property(x => x.PolicyKey).HasMaxLength(30).IsRequired();
+        b.Property(x => x.RequireManagerApprovalForExcess).HasDefaultValue(true);
         b.Property(x => x.RowVersion).IsRowVersion();
         b.HasIndex(x => new { x.BranchCode, x.PolicyKey }).IsUnique().HasFilter("[IsDeleted] = 0");
     }
@@ -130,6 +131,19 @@ public sealed class KkdEmployeeEntitlementOverrideConfiguration : BaseEntityConf
     }
 }
 
+public sealed class KkdEmployeeStockPreferenceConfiguration : BaseEntityConfiguration<KkdEmployeeStockPreference>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdEmployeeStockPreference> b)
+    {
+        b.ToTable("RII_KKD_EMPLOYEE_STOCK_PREFERENCE");
+        b.Property(x => x.GroupCode).HasMaxLength(80).IsRequired();
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasOne(x => x.Employee).WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => new { x.BranchCode, x.EmployeeId, x.GroupCode }).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x => new { x.BranchCode, x.StockId });
+    }
+}
+
 public sealed class KkdDistributionConfiguration : BaseEntityConfiguration<KkdDistribution>
 {
     protected override void ConfigureEntity(EntityTypeBuilder<KkdDistribution> b)
@@ -137,6 +151,10 @@ public sealed class KkdDistributionConfiguration : BaseEntityConfiguration<KkdDi
         b.ToTable("RII_KKD_DISTRIBUTION");
         b.Property(x => x.DocumentNo).HasMaxLength(50).IsRequired();
         b.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+        b.Property(x => x.ExcessApprovalStatus).HasConversion<string>().HasMaxLength(30)
+            .HasDefaultValue(KkdExcessApprovalStatus.NotRequired)
+            .HasSentinel((KkdExcessApprovalStatus)0);
+        b.Property(x => x.ExcessApprovalReason).HasMaxLength(1000);
         b.Property(x => x.FailureReason).HasMaxLength(2000);
         b.Property(x => x.RowVersion).IsRowVersion();
         b.HasOne(x => x.Employee).WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Restrict);
