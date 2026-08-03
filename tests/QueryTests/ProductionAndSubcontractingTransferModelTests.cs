@@ -2,9 +2,11 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
+using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.SubcontractingTransfer.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
+using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 using Xunit;
 
 namespace verii_wms_api_v2.QueryTests;
@@ -35,6 +37,35 @@ public sealed class ProductionAndSubcontractingTransferModelTests
         AssertUniqueFilteredIndex(line, nameof(ProductionTransferLineLink.WarehouseTransferLineId));
         Assert.Contains(line.GetCheckConstraints(), x =>
             x.Name == "CK_RII_PT_LINE_LINK_REQUIRED_QTY" && x.Sql.Contains("> 0", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Transfer_cancellation_policy_and_selected_return_location_are_persisted()
+    {
+        using var context = CreateContext();
+        var model = context.GetService<IDesignTimeModel>().Model;
+        var header = AssertEntity<WarehouseTransferHeader>(model);
+        var productionPolicy = AssertEntity<ProductionTransferPolicy>(model);
+
+        Assert.Equal(40, header.FindProperty(nameof(WarehouseTransferHeader.CancellationReturnPolicy))?.GetMaxLength());
+        Assert.NotNull(header.FindProperty(nameof(WarehouseTransferHeader.CancellationReturnLocationId)));
+        Assert.Equal(40, productionPolicy.FindProperty(nameof(ProductionTransferPolicy.CancellationReturnPolicy))?.GetMaxLength());
+        Assert.Equal(new[] { "OriginalSourceLocation", "WarehouseDefaultReturnLocation", "ManagerSelectionRequired" },
+            Enum.GetNames<WarehouseTransferCancellationReturnPolicy>());
+        Assert.Contains(nameof(WarehouseTransferTaskType.CancellationReturn), Enum.GetNames<WarehouseTransferTaskType>());
+    }
+
+    [Fact]
+    public void Warehouse_default_transfer_return_location_is_optional_and_set_null_on_delete()
+    {
+        using var context = CreateContext();
+        var warehouse = AssertEntity<WarehouseEntity>(context.GetService<IDesignTimeModel>().Model);
+        var foreignKey = Assert.Single(warehouse.GetForeignKeys(), x =>
+            x.Properties.Single().Name == nameof(WarehouseEntity.DefaultTransferReturnLocationId));
+
+        Assert.False(foreignKey.IsRequired);
+        Assert.Equal(DeleteBehavior.SetNull, foreignKey.DeleteBehavior);
+        Assert.Equal(typeof(WarehouseLocation), foreignKey.PrincipalEntityType.ClrType);
     }
 
     [Fact]
