@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 
@@ -11,9 +12,11 @@ using verii_wms_api_v2.Modules.Identity.Infrastructure;
 namespace verii_wms_api_v2.Migrations
 {
     [DbContext(typeof(WmsDbContext))]
-    partial class WmsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260803093322_AddKkdEntitlementFoundation")]
+    partial class AddKkdEntitlementFoundation
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -1737,30 +1740,6 @@ namespace verii_wms_api_v2.Migrations
                             IsActive = true,
                             IsDeleted = false,
                             Name = "KKD raporlarını görüntüle"
-                        },
-                        new
-                        {
-                            Id = 2510L,
-                            AvailableOnMobile = false,
-                            AvailableOnWeb = true,
-                            BranchCode = "0",
-                            Code = "WMS.KKD.POLICY.VIEW",
-                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
-                            IsActive = true,
-                            IsDeleted = false,
-                            Name = "KKD süreç politikasını görüntüle"
-                        },
-                        new
-                        {
-                            Id = 2511L,
-                            AvailableOnMobile = false,
-                            AvailableOnWeb = true,
-                            BranchCode = "0",
-                            Code = "WMS.KKD.POLICY.MANAGE",
-                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
-                            IsActive = true,
-                            IsDeleted = false,
-                            Name = "KKD süreç politikasını yönet"
                         });
                 });
 
@@ -3111,24 +3090,6 @@ namespace verii_wms_api_v2.Migrations
                             CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
                             IsDeleted = false,
                             PermissionDefinitionId = 2509L,
-                            PermissionGroupId = 1001L
-                        },
-                        new
-                        {
-                            Id = 2510L,
-                            BranchCode = "0",
-                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
-                            IsDeleted = false,
-                            PermissionDefinitionId = 2510L,
-                            PermissionGroupId = 1001L
-                        },
-                        new
-                        {
-                            Id = 2511L,
-                            BranchCode = "0",
-                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
-                            IsDeleted = false,
-                            PermissionDefinitionId = 2511L,
                             PermissionGroupId = 1001L
                         });
                 });
@@ -9052,81 +9013,6 @@ namespace verii_wms_api_v2.Migrations
 
                             t.HasCheckConstraint("CK_RII_KKD_RULE_QUANTITY", "([AnnualQuantity] IS NULL OR [AnnualQuantity] >= 0) AND ([MaxCarryQuantity] IS NULL OR [MaxCarryQuantity] >= 0)");
                         });
-                });
-
-            modelBuilder.Entity("verii_wms_api_v2.Modules.Kkd.Domain.KkdPolicy", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
-
-                    b.Property<bool>("AllowFutureDatedDistribution")
-                        .HasColumnType("bit");
-
-                    b.Property<bool>("AllowMultipleOrdersPerDistribution")
-                        .HasColumnType("bit");
-
-                    b.Property<bool>("AllowOpenOrderExcess")
-                        .HasColumnType("bit");
-
-                    b.Property<string>("BranchCode")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(10)
-                        .HasColumnType("nvarchar(10)")
-                        .HasDefaultValue("0");
-
-                    b.Property<long?>("CreatedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("CreatedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long?>("DeletedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("DeletedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<bool>("IsDeleted")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bit")
-                        .HasDefaultValue(false);
-
-                    b.Property<string>("PolicyKey")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.Property<bool>("RequireEmployeeUserLink")
-                        .HasColumnType("bit");
-
-                    b.Property<bool>("RequireOpenOrder")
-                        .HasColumnType("bit");
-
-                    b.Property<byte[]>("RowVersion")
-                        .IsConcurrencyToken()
-                        .IsRequired()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("rowversion");
-
-                    b.Property<long?>("UpdatedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("UpdatedDate")
-                        .HasColumnType("datetime2");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("IsDeleted");
-
-                    b.HasIndex("BranchCode", "PolicyKey")
-                        .IsUnique()
-                        .HasFilter("[IsDeleted] = 0");
-
-                    b.ToTable("RII_KKD_POLICY", (string)null);
                 });
 
             modelBuilder.Entity("verii_wms_api_v2.Modules.Kkd.Domain.KkdRole", b =>
