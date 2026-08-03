@@ -180,6 +180,7 @@ public sealed class WarehouseTransferOperationService(
         var pickedLines = header.Lines.Where(x => x.PickedQuantity > 0).ToList();
         if (pickedLines.Count == 0) return null;
         var leftSourceWarehouse = header.Status is WarehouseTransferStatus.Shipped
+            or WarehouseTransferStatus.PartiallyShipped
             or WarehouseTransferStatus.PartiallyReceived or WarehouseTransferStatus.Received
             or WarehouseTransferStatus.PartiallyPutaway or WarehouseTransferStatus.Completed
             || header.Lines.Any(x => x.ShippedQuantity > 0 || x.ReceivedQuantity > 0 || x.PutawayQuantity > 0);
@@ -194,6 +195,29 @@ public sealed class WarehouseTransferOperationService(
                 ? $"Hedef depoya ulaşan transferi kaynak depoya geri gönderin. İptal nedeni: {Clean(reason, 400)}"
                 : $"Toplanan stokları kaynak depodaki iade raflarına geri koyun. İptal nedeni: {Clean(reason, 400)}"
         };
+        // Fiziksel stoğu aynı depoda en son yöneten kullanıcı, iade görevinin doğal sahibidir.
+        // Depo değişmişse kullanıcıyı varsaymak yerine görev yönetici havuzunda açık kalır.
+        var lastAssignee = header.Tasks
+            .Where(x => x.TaskType != WarehouseTransferTaskType.CancellationReturn && x.WarehouseId == task.WarehouseId)
+            .SelectMany(x => x.Assignments.Where(a => !a.IsDeleted))
+            .OrderByDescending(x => x.AcceptedAtUtc ?? x.AssignedAtUtc)
+            .ThenByDescending(x => x.Id)
+            .FirstOrDefault();
+        if (lastAssignee is not null)
+        {
+            task.Assignments.Add(new WarehouseTransferTaskAssignment
+            {
+                BranchCode = header.BranchCode,
+                CreatedBy = actor,
+                CreatedDate = now,
+                Task = task,
+                UserId = lastAssignee.UserId,
+                IsPrimary = true,
+                AssignedAtUtc = DateTimeOffset.UtcNow,
+                AssignedBy = actor
+            });
+            task.Status = WarehouseTransferTaskStatus.Assigned;
+        }
         foreach (var line in pickedLines)
         {
             var originalSources = line.Trackings.Where(x => x.PickedQuantity > 0 && x.SourceLocationId.HasValue)
@@ -241,7 +265,7 @@ public sealed class WarehouseTransferOperationService(
             }
 
             EnsurePhaseState(header, phase);
-            if (phase == TransferPhase.Pick) EnsurePickerAssignment(header, actor);
+            if (phase == TransferPhase.Pick) EnsurePickerAssignment(header, actor, requestLines.Keys);
             ValidateQuantities(header, lines, requestLines, phase);
             ApplyShipmentInfo(header, request, phase);
             if (phase == TransferPhase.Pick)
@@ -288,6 +312,9 @@ public sealed class WarehouseTransferOperationService(
                 line.UpdatedBy = actor;
                 line.UpdatedDate = DateTime.UtcNow;
             }
+
+            if (phase == TransferPhase.Dispatch)
+                SplitResidualProductionPickTask(header, actor);
 
             UpdateHeaderStatus(header, phase, actor);
             AddHistory(header, phase.ToString(), request.IdempotencyKey, request.Reason, actor);
@@ -355,26 +382,40 @@ public sealed class WarehouseTransferOperationService(
         var allowed = phase switch
         {
             TransferPhase.Pick => header.Status is WarehouseTransferStatus.Released
-                or WarehouseTransferStatus.Picking or WarehouseTransferStatus.PartiallyPicked,
+                or WarehouseTransferStatus.Picking or WarehouseTransferStatus.PartiallyPicked
+                or WarehouseTransferStatus.PartiallyShipped,
             TransferPhase.Dispatch => header.Status is WarehouseTransferStatus.Picked
-                or WarehouseTransferStatus.PartiallyPicked or WarehouseTransferStatus.Shipped
+                or WarehouseTransferStatus.PartiallyPicked or WarehouseTransferStatus.PartiallyShipped
+                or WarehouseTransferStatus.Shipped
                 || (!header.CreateTransitInventory && header.Status is
                     WarehouseTransferStatus.PartiallyReceived or WarehouseTransferStatus.Received),
             TransferPhase.Receive => header.Status is WarehouseTransferStatus.Shipped
-                or WarehouseTransferStatus.PartiallyReceived,
+                or WarehouseTransferStatus.PartiallyShipped or WarehouseTransferStatus.PartiallyReceived,
             TransferPhase.Putaway => header.Status is WarehouseTransferStatus.Received
-                or WarehouseTransferStatus.PartiallyReceived or WarehouseTransferStatus.PartiallyPutaway,
+                or WarehouseTransferStatus.PartiallyShipped or WarehouseTransferStatus.PartiallyReceived
+                or WarehouseTransferStatus.PartiallyPutaway,
             _ => false
         };
         if (!allowed) throw AppException.Conflict($"{phase} işlemi mevcut {header.Status} durumunda yapılamaz.");
     }
 
-    private static void EnsurePickerAssignment(WarehouseTransferHeader header, long actor)
+    private static void EnsurePickerAssignment(
+        WarehouseTransferHeader header,
+        long actor,
+        IEnumerable<long> requestedLineIds)
     {
         if (!header.RequireAssignee) return;
-        var task = header.Tasks.FirstOrDefault(x => x.TaskType == WarehouseTransferTaskType.Pick)
+        var lineIds = requestedLineIds.ToHashSet();
+        var task = header.Tasks
+            .Where(x => x.TaskType == WarehouseTransferTaskType.Pick
+                && x.Assignments.Any(a => !a.IsDeleted && a.UserId == actor)
+                && x.Lines.Any(line => lineIds.Contains(line.WtLineId)
+                    && line.ProcessedQuantity < line.PlannedQuantity))
+            .OrderByDescending(x => x.StartedBy == actor && x.StartedAtUtc.HasValue)
+            .ThenByDescending(x => x.Id)
+            .FirstOrDefault()
             ?? throw AppException.Conflict("Transfer toplama emri bulunamadı.");
-        var assignment = task.Assignments.FirstOrDefault(x => x.UserId == actor)
+        var assignment = task.Assignments.FirstOrDefault(x => !x.IsDeleted && x.UserId == actor)
             ?? throw AppException.Forbidden("Bu transfer toplama emri size atanmamış.");
         var productionContext = header.BusinessContext is WarehouseTransferBusinessContext.ProductionMaterialSupply
             or WarehouseTransferBusinessContext.ProductionWipMove
@@ -514,7 +555,13 @@ public sealed class WarehouseTransferOperationService(
 
     private static void UpdatePickTask(WarehouseTransferHeader header, WarehouseTransferLine line, decimal quantity, long actor)
     {
-        var task = header.Tasks.FirstOrDefault(x => x.TaskType == WarehouseTransferTaskType.Pick);
+        var task = header.Tasks
+            .Where(x => x.TaskType == WarehouseTransferTaskType.Pick
+                && x.StartedBy == actor
+                && x.Status is WarehouseTransferTaskStatus.InProgress or WarehouseTransferTaskStatus.PartiallyCompleted)
+            .OrderByDescending(x => x.Id)
+            .FirstOrDefault(x => x.Lines.Any(taskLine => taskLine.WtLineId == line.Id
+                && taskLine.ProcessedQuantity < taskLine.PlannedQuantity));
         var taskLine = task?.Lines.FirstOrDefault(x => x.WtLineId == line.Id);
         if (taskLine is null) return;
         taskLine.ProcessedQuantity += quantity;
@@ -527,6 +574,63 @@ public sealed class WarehouseTransferOperationService(
             task.CompletedBy = actor;
         }
         else task.Status = WarehouseTransferTaskStatus.PartiallyCompleted;
+    }
+
+    private static void SplitResidualProductionPickTask(WarehouseTransferHeader header, long actor)
+    {
+        if (header.BusinessContext is not (WarehouseTransferBusinessContext.ProductionMaterialSupply
+            or WarehouseTransferBusinessContext.ProductionWipMove
+            or WarehouseTransferBusinessContext.ProductionOutputMove)) return;
+
+        var residualLines = header.Lines
+            .Select(line => new { Line = line, Quantity = Math.Max(0, line.RequestedQuantity - line.PickedQuantity) })
+            .Where(x => x.Quantity > 0)
+            .ToArray();
+        if (residualLines.Length == 0) return;
+        var current = header.Tasks
+            .Where(x => x.TaskType == WarehouseTransferTaskType.Pick
+                && x.StartedBy == actor
+                && x.Status == WarehouseTransferTaskStatus.PartiallyCompleted)
+            .OrderByDescending(x => x.Id)
+            .FirstOrDefault();
+        if (current is null) return;
+
+        foreach (var line in current.Lines)
+            line.PlannedQuantity = line.ProcessedQuantity;
+        current.Status = WarehouseTransferTaskStatus.Completed;
+        current.CompletedAtUtc = DateTimeOffset.UtcNow;
+        current.CompletedBy = actor;
+        current.UpdatedBy = actor;
+        current.UpdatedDate = DateTime.UtcNow;
+
+        var sequence = header.Tasks.Count(x => x.TaskType == WarehouseTransferTaskType.Pick);
+        var next = new WarehouseTransferTask
+        {
+            BranchCode = header.BranchCode,
+            Header = header,
+            TaskNo = $"{header.DocumentNo}-P01-{sequence}",
+            TaskType = WarehouseTransferTaskType.Pick,
+            WarehouseId = header.SourceWarehouseId,
+            Status = WarehouseTransferTaskStatus.Open,
+            Priority = current.Priority,
+            PlannedAtUtc = DateTimeOffset.UtcNow,
+            Description = $"{header.DocumentNo} kısmi sevkinden kalan atanmamış toplama işi ({sequence}).",
+            CreatedBy = actor,
+            CreatedDate = DateTime.UtcNow
+        };
+        foreach (var residual in residualLines)
+            next.Lines.Add(new WarehouseTransferTaskLine
+            {
+                BranchCode = header.BranchCode,
+                Task = next,
+                Line = residual.Line,
+                PlannedQuantity = residual.Quantity,
+                ProcessedQuantity = 0,
+                SourceLocationId = residual.Line.DefaultSourceLocationId,
+                CreatedBy = actor,
+                CreatedDate = DateTime.UtcNow
+            });
+        header.Tasks.Add(next);
     }
 
     private static void ValidateTrackingDimension(
@@ -633,12 +737,18 @@ public sealed class WarehouseTransferOperationService(
             TransferPhase.Pick when all.All(x => x.PickedQuantity >= x.RequestedQuantity) => WarehouseTransferStatus.Picked,
             TransferPhase.Pick when all.Sum(x => x.PickedQuantity) > 0 => WarehouseTransferStatus.PartiallyPicked,
             TransferPhase.Pick => WarehouseTransferStatus.Picking,
-            TransferPhase.Dispatch when header.CreateTransitInventory => WarehouseTransferStatus.Shipped,
+            TransferPhase.Dispatch when header.CreateTransitInventory
+                && all.All(x => x.ShippedQuantity >= x.RequestedQuantity) => WarehouseTransferStatus.Shipped,
+            TransferPhase.Dispatch when header.CreateTransitInventory => WarehouseTransferStatus.PartiallyShipped,
             TransferPhase.Dispatch when all.All(x => x.ReceivedQuantity >= x.RequestedQuantity) => WarehouseTransferStatus.Received,
             TransferPhase.Dispatch => WarehouseTransferStatus.PartiallyReceived,
-            TransferPhase.Receive when all.All(x => x.ReceivedQuantity >= x.ShippedQuantity) => WarehouseTransferStatus.Received,
+            TransferPhase.Receive when all.All(x => x.ReceivedQuantity >= x.ShippedQuantity)
+                && all.All(x => x.ShippedQuantity >= x.RequestedQuantity) => WarehouseTransferStatus.Received,
+            TransferPhase.Receive when all.All(x => x.ReceivedQuantity >= x.ShippedQuantity) => WarehouseTransferStatus.PartiallyShipped,
             TransferPhase.Receive => WarehouseTransferStatus.PartiallyReceived,
-            TransferPhase.Putaway when all.All(x => x.PutawayQuantity >= x.ReceivedQuantity) => WarehouseTransferStatus.Completed,
+            TransferPhase.Putaway when all.All(x => x.PutawayQuantity >= x.ReceivedQuantity)
+                && all.All(x => x.ShippedQuantity >= x.RequestedQuantity) => WarehouseTransferStatus.Completed,
+            TransferPhase.Putaway when all.All(x => x.PutawayQuantity >= x.ReceivedQuantity) => WarehouseTransferStatus.PartiallyShipped,
             TransferPhase.Putaway => WarehouseTransferStatus.PartiallyPutaway,
             _ => header.Status
         };
