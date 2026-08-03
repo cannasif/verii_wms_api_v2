@@ -69,6 +69,10 @@ public sealed class ProductionTransfersController(
     public async Task<IActionResult>Tasks(long id,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.VIEW",ct);await Ensure(id,ct);
         return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.GetBoardAsync(id,ct)));}
+    [HttpGet("task-pool")]
+    public async Task<IActionResult>TaskPool(CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);
+        return Ok(ApiResponse<IReadOnlyList<ProductionTransferTaskPoolRow>>.Ok(await tasks.GetPoolAsync(UserId(),ct)));}
     [HttpPost("{id:long}/tasks/{taskId:long}/assign")]
     public async Task<IActionResult>Assign(long id,long taskId,AssignProductionTransferTaskRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);

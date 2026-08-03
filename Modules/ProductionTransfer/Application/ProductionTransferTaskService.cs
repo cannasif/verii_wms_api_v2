@@ -24,6 +24,37 @@ public sealed class ProductionTransferTaskService(IUnitOfWork uow, IAuditLogWrit
 
     public Task<ProductionTransferTaskBoardDto> GetBoardAsync(long transferId, CancellationToken ct = default) => MapAsync(transferId, ct);
 
+    public async Task<IReadOnlyList<ProductionTransferTaskPoolRow>> GetPoolAsync(long actor, CancellationToken ct = default)
+    {
+        var warehouseIds = await uow.Repository<UserWarehouseAssignment>().Query()
+            .Where(x => x.UserId == actor).Select(x => x.WarehouseId).Distinct().ToArrayAsync(ct);
+        var query = uow.Repository<WarehouseTransferTask>().Query()
+            .Where(x => Contexts.Contains(x.Header.BusinessContext));
+        if (warehouseIds.Length > 0) query = query.Where(x => warehouseIds.Contains(x.WarehouseId));
+        var rows = await query
+            .Include(x => x.Header)
+            .Include(x => x.Lines)
+            .Include(x => x.Assignments)
+            .Where(x => x.Status != WarehouseTransferTaskStatus.Cancelled)
+            .OrderBy(x => x.Status == WarehouseTransferTaskStatus.Completed)
+            .ThenByDescending(x => x.Id)
+            .Take(500)
+            .ToListAsync(ct);
+        var userIds = rows.SelectMany(x => x.Assignments.Where(a => !a.IsDeleted)).Select(x => x.UserId).Distinct().ToArray();
+        var users = await uow.Repository<User>().Query().Where(x => userIds.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, x => x.Username, ct);
+        return rows.Select(x => new ProductionTransferTaskPoolRow(
+            x.WtHeaderId, x.Header.DocumentNo, x.Header.BusinessContext, x.Header.Status,
+            x.Id, x.TaskNo, x.TaskType, x.WarehouseId, x.Status,
+            x.Lines.Sum(line => line.PlannedQuantity), x.Lines.Sum(line => line.ProcessedQuantity),
+            x.Lines.Sum(line => Math.Max(0, line.PlannedQuantity - line.ProcessedQuantity)),
+            x.Assignments.Where(a => !a.IsDeleted)
+                .OrderByDescending(a => a.IsPrimary)
+                .Select(a => users.GetValueOrDefault(a.UserId, $"Kullanıcı #{a.UserId}"))
+                .ToArray(),
+            x.CreatedDate)).ToArray();
+    }
+
     public Task<ProductionTransferTaskBoardDto> AssignAsync(long transferId, long taskId, AssignProductionTransferTaskRequest request, long actor, CancellationToken ct = default) =>
         uow.ExecuteInTransactionAsync(async token =>
         {
@@ -211,13 +242,26 @@ public sealed class ProductionTransferTaskService(IUnitOfWork uow, IAuditLogWrit
                     lineLocations.Length == 0 ? null : string.Join(", ", lineLocations.Select(v => v.Code).Distinct()),
                     lineLocations.Length == 0 ? null : string.Join(", ", lineLocations.Select(v => v.Name).Distinct()));
             }).ToList())).ToList();
-        var workloads = userIds.Select(userId =>
+        var workloadRows = await uow.Repository<WarehouseTransferTask>().Query()
+            .Where(x => Contexts.Contains(x.Header.BusinessContext) && x.BranchCode == header.BranchCode)
+            .SelectMany(x => x.Assignments.Where(a => !a.IsDeleted).Select(a => new
+            {
+                a.UserId,
+                TaskId = x.Id,
+                x.Status
+            }))
+            .ToListAsync(ct);
+        var workloadUserIds = workloadRows.Select(x => x.UserId).Distinct().ToArray();
+        var workloadUsers = await uow.Repository<User>().Query()
+            .Where(x => workloadUserIds.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, x => x.Username, ct);
+        var workloads = workloadRows.GroupBy(x => x.UserId).Select(group =>
         {
-            var assigned = tasks.Count(x => x.Assignments.Any(a => a.UserId == userId));
-            var completed = tasks.Count(x => x.Status == WarehouseTransferTaskStatus.Completed && x.Assignments.Any(a => a.UserId == userId));
-            return new ProductionTransferWorkloadDto(userId, users.GetValueOrDefault(userId, $"Kullanıcı #{userId}"), assigned, completed,
+            var assigned = group.Select(x => x.TaskId).Distinct().Count();
+            var completed = group.Where(x => x.Status == WarehouseTransferTaskStatus.Completed).Select(x => x.TaskId).Distinct().Count();
+            return new ProductionTransferWorkloadDto(group.Key, workloadUsers.GetValueOrDefault(group.Key, $"Kullanıcı #{group.Key}"), assigned, completed,
                 assigned == 0 ? 0 : decimal.Round(completed * 100m / assigned, 2));
-        }).ToList();
+        }).OrderBy(x => x.Username).ToList();
         var activeUsers = await uow.Repository<User>().Query().Where(user => user.IsActive)
             .OrderBy(user => user.Username).Select(user => new { user.Id, user.Username }).ToListAsync(ct);
         var activeUserIds = activeUsers.Select(x => x.Id).ToArray();

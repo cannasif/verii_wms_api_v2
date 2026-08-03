@@ -13,6 +13,12 @@ public sealed record ProductionTransferTaskDto(
     IReadOnlyList<ProductionTransferTaskAssignmentDto> Assignments,
     IReadOnlyList<ProductionTransferTaskLineDto> Lines);
 public sealed record ProductionTransferWorkloadDto(long UserId, string Username, int AssignedTaskCount, int CompletedTaskCount, decimal CompletionPercent);
+public sealed record ProductionTransferTaskPoolRow(
+    long TransferId, string DocumentNo, WarehouseTransferBusinessContext BusinessContext,
+    WarehouseTransferStatus TransferStatus, long TaskId, string TaskNo, WarehouseTransferTaskType TaskType,
+    long WarehouseId, WarehouseTransferTaskStatus TaskStatus, decimal PlannedQuantity,
+    decimal ProcessedQuantity, decimal RemainingQuantity, IReadOnlyList<string> AssignedUsers,
+    DateTime? CreatedDate);
 public sealed record ProductionTransferAssigneeOptionDto(long UserId, string Username, IReadOnlyList<long> WarehouseIds);
 public sealed record ProductionTransferTaskBoardDto(
     long TransferId, string DocumentNo, WarehouseTransferStatus TransferStatus, long SourceWarehouseId,
@@ -27,6 +33,7 @@ public sealed record UpdateWarehouseTransferReturnSettingRequest(long WarehouseI
 public interface IProductionTransferTaskService
 {
     Task<ProductionTransferTaskBoardDto> GetBoardAsync(long transferId, CancellationToken ct = default);
+    Task<IReadOnlyList<ProductionTransferTaskPoolRow>> GetPoolAsync(long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> AssignAsync(long transferId, long taskId, AssignProductionTransferTaskRequest request, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> RemoveAssignmentAsync(long transferId, long taskId, long userId, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> AcceptAndStartAsync(long transferId, long taskId, long actor, CancellationToken ct = default);
