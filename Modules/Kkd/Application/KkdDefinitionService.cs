@@ -1,0 +1,227 @@
+using Microsoft.EntityFrameworkCore;
+using verii_wms_api_v2.Modules.Kkd.Domain;
+using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
+using verii_wms_api_v2.Shared.Application.Exceptions;
+using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
+
+namespace verii_wms_api_v2.Modules.Kkd.Application;
+
+public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionService
+{
+    public async Task<IReadOnlyList<KkdLookupRow>> GetDepartmentsAsync(CancellationToken ct = default) =>
+        await uow.Repository<KkdDepartment>().Query().OrderBy(x => x.Name)
+            .Select(x => new KkdLookupRow(x.Id, x.Code, x.Name, x.IsActive)).ToListAsync(ct);
+
+    public async Task<IReadOnlyList<KkdLookupRow>> GetRolesAsync(long? departmentId, CancellationToken ct = default) =>
+        await uow.Repository<KkdRole>().Query().Where(x => !departmentId.HasValue || x.DepartmentId == departmentId)
+            .OrderBy(x => x.Name).Select(x => new KkdLookupRow(x.Id, x.Code, x.Name, x.IsActive)).ToListAsync(ct);
+
+    public async Task<IReadOnlyList<KkdEmployeeRow>> GetEmployeesAsync(CancellationToken ct = default) =>
+        await uow.Repository<KkdEmployee>().Query().OrderBy(x => x.EmployeeCode)
+            .Select(x => new KkdEmployeeRow(x.Id, x.EmployeeCode, x.FirstName + " " + x.LastName, x.QrCode, x.CustomerId,
+                x.DepartmentId, x.Department.Name, x.RoleId, x.Role.Name, x.EmploymentStartDate, x.IsActive)).ToListAsync(ct);
+
+    public async Task<KkdEmployeeRow> ResolveEmployeeByQrAsync(string qrCode, CancellationToken ct = default)
+    {
+        var normalized = RequiredCode(qrCode, "Personel QR kodu", 200);
+        return await uow.Repository<KkdEmployee>().Query()
+            .Where(x => x.QrCode == normalized && x.IsActive)
+            .Select(x => new KkdEmployeeRow(x.Id, x.EmployeeCode, x.FirstName + " " + x.LastName, x.QrCode, x.CustomerId,
+                x.DepartmentId, x.Department.Name, x.RoleId, x.Role.Name, x.EmploymentStartDate, x.IsActive))
+            .SingleOrDefaultAsync(ct)
+            ?? throw AppException.NotFound("Aktif KKD personeli QR koduyla bulunamadı.");
+    }
+
+    public async Task<IReadOnlyList<KkdMatrixRow>> GetMatricesAsync(CancellationToken ct = default) =>
+        await uow.Repository<KkdEntitlementMatrix>().Query().OrderBy(x => x.Code)
+            .Select(x => new KkdMatrixRow(x.Id, x.Code, x.Name, x.CustomerId, x.DepartmentId, x.RoleId,
+                x.EffectiveFrom, x.EffectiveTo, x.IsActive, x.Rules.Count(r => !r.IsDeleted))).ToListAsync(ct);
+
+    public async Task<long> UpsertDepartmentAsync(long? id, KkdDepartmentUpsertRequest request, long actor, CancellationToken ct = default)
+    {
+        var code = RequiredCode(request.Code, "Departman kodu", 50);
+        var name = RequiredText(request.Name, "Departman adı", 200);
+        var repository = uow.Repository<KkdDepartment>();
+        if (await repository.AnyAsync(x => x.Code == code && (!id.HasValue || x.Id != id), ct))
+            throw AppException.Conflict("Aynı departman kodu zaten tanımlı.");
+        var entity = id.HasValue ? await repository.FindByIdAsync(id.Value, true, ct)
+            ?? throw AppException.NotFound("Departman bulunamadı.") : new KkdDepartment();
+        entity.Code = code; entity.Name = name; entity.IsActive = request.IsActive;
+        Touch(entity, actor, id.HasValue);
+        if (!id.HasValue) await repository.AddAsync(entity, ct);
+        await uow.SaveChangesAsync(ct);
+        return entity.Id;
+    }
+
+    public async Task<long> UpsertRoleAsync(long? id, KkdRoleUpsertRequest request, long actor, CancellationToken ct = default)
+    {
+        if (request.DepartmentId.HasValue && !await uow.Repository<KkdDepartment>().AnyAsync(x => x.Id == request.DepartmentId && x.IsActive, ct))
+            throw AppException.BadRequest("Seçilen departman bulunamadı veya aktif değil.");
+        var code = RequiredCode(request.Code, "Rol kodu", 50);
+        var repository = uow.Repository<KkdRole>();
+        if (await repository.AnyAsync(x => x.DepartmentId == request.DepartmentId && x.Code == code && (!id.HasValue || x.Id != id), ct))
+            throw AppException.Conflict("Departman içinde aynı rol kodu zaten tanımlı.");
+        var entity = id.HasValue ? await repository.FindByIdAsync(id.Value, true, ct)
+            ?? throw AppException.NotFound("Rol bulunamadı.") : new KkdRole();
+        entity.DepartmentId = request.DepartmentId; entity.Code = code;
+        entity.Name = RequiredText(request.Name, "Rol adı", 200); entity.IsActive = request.IsActive;
+        Touch(entity, actor, id.HasValue);
+        if (!id.HasValue) await repository.AddAsync(entity, ct);
+        await uow.SaveChangesAsync(ct);
+        return entity.Id;
+    }
+
+    public async Task<long> UpsertEmployeeAsync(long? id, KkdEmployeeUpsertRequest request, long actor, CancellationToken ct = default)
+    {
+        var department = await uow.Repository<KkdDepartment>().FindByIdAsync(request.DepartmentId, false, ct)
+            ?? throw AppException.BadRequest("Departman bulunamadı.");
+        var role = await uow.Repository<KkdRole>().FindByIdAsync(request.RoleId, false, ct)
+            ?? throw AppException.BadRequest("Rol bulunamadı.");
+        if (!department.IsActive || !role.IsActive || (role.DepartmentId.HasValue && role.DepartmentId != department.Id))
+            throw AppException.BadRequest("Personel departman ve rol eşleşmesi geçersiz.");
+        var code = RequiredCode(request.EmployeeCode, "Personel kodu", 80);
+        var qr = RequiredCode(request.QrCode, "QR kodu", 200);
+        var repository = uow.Repository<KkdEmployee>();
+        if (await repository.AnyAsync(x => (x.EmployeeCode == code || x.QrCode == qr) && (!id.HasValue || x.Id != id), ct))
+            throw AppException.Conflict("Personel kodu veya QR kodu daha önce kullanılmış.");
+        var entity = id.HasValue ? await repository.FindByIdAsync(id.Value, true, ct)
+            ?? throw AppException.NotFound("KKD personeli bulunamadı.") : new KkdEmployee();
+        entity.CustomerId = request.CustomerId; entity.UserId = request.UserId; entity.EmployeeCode = code;
+        entity.FirstName = RequiredText(request.FirstName, "Ad", 100); entity.LastName = RequiredText(request.LastName, "Soyad", 100);
+        entity.DepartmentId = department.Id; entity.RoleId = role.Id; entity.QrCode = qr;
+        entity.EmploymentStartDate = request.EmploymentStartDate; entity.IsActive = request.IsActive;
+        Touch(entity, actor, id.HasValue);
+        if (!id.HasValue) await repository.AddAsync(entity, ct);
+        await uow.SaveChangesAsync(ct);
+        return entity.Id;
+    }
+
+    public Task<long> UpsertMatrixAsync(long? id, KkdMatrixUpsertRequest request, long actor, CancellationToken ct = default) =>
+        uow.ExecuteInTransactionAsync(token => UpsertMatrixCoreAsync(id, request, actor, token), ct);
+
+    private async Task<long> UpsertMatrixCoreAsync(long? id, KkdMatrixUpsertRequest request, long actor, CancellationToken ct)
+    {
+        if (request.Rules.Count == 0) throw AppException.BadRequest("Hak matrisi en az bir kural içermelidir.");
+        if (request.EffectiveTo.HasValue && request.EffectiveFrom.HasValue && request.EffectiveTo < request.EffectiveFrom)
+            throw AppException.BadRequest("Matris bitiş tarihi başlangıç tarihinden önce olamaz.");
+        if (!await uow.Repository<KkdDepartment>().AnyAsync(x => x.Id == request.DepartmentId && x.IsActive, ct)
+            || !await uow.Repository<KkdRole>().AnyAsync(x => x.Id == request.RoleId && x.IsActive, ct))
+            throw AppException.BadRequest("Aktif departman ve rol seçilmelidir.");
+
+        var code = RequiredCode(request.Code, "Matris kodu", 80);
+        var repository = uow.Repository<KkdEntitlementMatrix>();
+        if (await repository.AnyAsync(x => x.Code == code && (!id.HasValue || x.Id != id), ct))
+            throw AppException.Conflict("Aynı matris kodu zaten tanımlı.");
+        if (request.IsActive && await repository.AnyAsync(x => x.CustomerId == request.CustomerId
+            && x.DepartmentId == request.DepartmentId && x.RoleId == request.RoleId && x.IsActive
+            && (!id.HasValue || x.Id != id)
+            && (!x.EffectiveTo.HasValue || !request.EffectiveFrom.HasValue || x.EffectiveTo >= request.EffectiveFrom)
+            && (!request.EffectiveTo.HasValue || !x.EffectiveFrom.HasValue || request.EffectiveTo >= x.EffectiveFrom), ct))
+            throw AppException.Conflict("Aynı cari, departman ve rol için tarihleri çakışan aktif bir KKD matrisi var.");
+
+        var entity = id.HasValue
+            ? await repository.Query(true).Include(x => x.Rules).ThenInclude(x => x.Phases).SingleOrDefaultAsync(x => x.Id == id, ct)
+                ?? throw AppException.NotFound("KKD matrisi bulunamadı.")
+            : new KkdEntitlementMatrix();
+        var now = DateTime.UtcNow;
+        foreach (var oldRule in entity.Rules.Where(x => !x.IsDeleted))
+        {
+            oldRule.IsDeleted = true; oldRule.DeletedBy = actor; oldRule.DeletedDate = now;
+            foreach (var oldPhase in oldRule.Phases.Where(x => !x.IsDeleted))
+            { oldPhase.IsDeleted = true; oldPhase.DeletedBy = actor; oldPhase.DeletedDate = now; }
+        }
+
+        entity.CustomerId = request.CustomerId; entity.DepartmentId = request.DepartmentId; entity.RoleId = request.RoleId;
+        entity.Code = code; entity.Name = RequiredText(request.Name, "Matris adı", 200);
+        entity.EffectiveFrom = request.EffectiveFrom; entity.EffectiveTo = request.EffectiveTo;
+        entity.IsActive = request.IsActive; entity.Description = Clean(request.Description, 1000);
+        Touch(entity, actor, id.HasValue);
+        if (!id.HasValue) await repository.AddAsync(entity, ct);
+
+        var duplicateKeys = request.Rules.GroupBy(x => $"{x.StockId?.ToString() ?? "GROUP"}|{Normalize(x.GroupCode)}")
+            .Where(x => x.Count() > 1).Select(x => x.Key).ToArray();
+        if (duplicateKeys.Length > 0) throw AppException.BadRequest("Matris içinde aynı stok/grup kuralı birden fazla kez tanımlanamaz.");
+
+        foreach (var item in request.Rules)
+        {
+            StockEntity? stock = null;
+            if (item.StockId.HasValue)
+                stock = await uow.Repository<StockEntity>().FindByIdAsync(item.StockId.Value, false, ct)
+                    ?? throw AppException.BadRequest($"{item.StockId} numaralı stok bulunamadı.");
+            var rule = new KkdEntitlementRule
+            {
+                BranchCode = entity.BranchCode,
+                Matrix = entity, GroupCode = Normalize(item.GroupCode), GroupName = Clean(item.GroupName, 200),
+                StockId = stock?.Id, StockCodeSnapshot = stock?.ErpStockCode, StockNameSnapshot = stock?.StockName,
+                StandardCode = Clean(item.StandardCode, 80), StandardName = Clean(item.StandardName, 200),
+                AnnualIssueCount = item.AnnualIssueCount, AnnualQuantity = item.AnnualQuantity, MaxCarryQuantity = item.MaxCarryQuantity,
+                AllowBulkIssue = item.AllowBulkIssue, IsMandatory = item.IsMandatory, SortOrder = item.SortOrder,
+                IsActive = item.IsActive, Description = Clean(item.Description, 1000), CreatedBy = actor, CreatedDate = now
+            };
+            if (rule.GroupCode.Length == 0) throw AppException.BadRequest("Her KKD kuralında grup kodu zorunludur.");
+            if (item.Phases.Count == 0) throw AppException.BadRequest($"{rule.GroupCode} kuralında en az bir dönem olmalıdır.");
+            foreach (var phaseRequest in item.Phases)
+            {
+                if (!Enum.TryParse<KkdEntitlementPhaseType>(phaseRequest.PhaseType, true, out var phaseType))
+                    throw AppException.BadRequest($"Geçersiz KKD dönem tipi: {phaseRequest.PhaseType}");
+                KkdPeriodType? periodType = null;
+                if (!string.IsNullOrWhiteSpace(phaseRequest.PeriodType))
+                {
+                    if (!Enum.TryParse<KkdPeriodType>(phaseRequest.PeriodType, true, out var parsed))
+                        throw AppException.BadRequest($"Geçersiz KKD periyot tipi: {phaseRequest.PeriodType}");
+                    periodType = parsed;
+                }
+                rule.Phases.Add(new KkdEntitlementPhase
+                {
+                    BranchCode = entity.BranchCode,
+                    Rule = rule, PhaseType = phaseType, OffsetMonths = phaseRequest.OffsetMonths,
+                    Quantity = phaseRequest.Quantity, AllowBulkIssue = phaseRequest.AllowBulkIssue,
+                    FrequencyDays = phaseRequest.FrequencyDays, QuantityPerFrequency = phaseRequest.QuantityPerFrequency,
+                    PeriodType = periodType, PeriodInterval = phaseRequest.PeriodInterval, SortOrder = phaseRequest.SortOrder,
+                    IsActive = phaseRequest.IsActive, Description = Clean(phaseRequest.Description, 1000),
+                    CreatedBy = actor, CreatedDate = now
+                });
+            }
+            entity.Rules.Add(rule);
+        }
+        await uow.SaveChangesAsync(ct);
+        return entity.Id;
+    }
+
+    public async Task<long> CreateOverrideAsync(KkdOverrideCreateRequest request, long actor, CancellationToken ct = default)
+    {
+        if (request.Quantity <= 0) throw AppException.BadRequest("Ek hak miktarı sıfırdan büyük olmalıdır.");
+        if (request.ValidTo.HasValue && request.ValidTo < request.ValidFrom) throw AppException.BadRequest("Ek hak tarih aralığı geçersiz.");
+        if (!await uow.Repository<KkdEmployee>().AnyAsync(x => x.Id == request.EmployeeId && x.IsActive, ct))
+            throw AppException.BadRequest("Aktif KKD personeli bulunamadı.");
+        if (request.RuleId.HasValue && !await uow.Repository<KkdEntitlementRule>().AnyAsync(x => x.Id == request.RuleId && x.IsActive, ct))
+            throw AppException.BadRequest("Aktif KKD kuralı bulunamadı.");
+        var entity = new KkdEmployeeEntitlementOverride
+        {
+            EmployeeId = request.EmployeeId, RuleId = request.RuleId, GroupCode = Normalize(request.GroupCode),
+            Quantity = request.Quantity, ValidFrom = request.ValidFrom, ValidTo = request.ValidTo,
+            Reason = RequiredText(request.Reason, "Ek hak gerekçesi", 1000), ApprovedByUserId = actor,
+            IsActive = request.IsActive, CreatedBy = actor, CreatedDate = DateTime.UtcNow
+        };
+        await uow.Repository<KkdEmployeeEntitlementOverride>().AddAsync(entity, ct);
+        await uow.SaveChangesAsync(ct);
+        return entity.Id;
+    }
+
+    private static string RequiredText(string? value, string field, int max)
+    {
+        var result = value?.Trim();
+        if (string.IsNullOrWhiteSpace(result)) throw AppException.BadRequest($"{field} zorunludur.");
+        if (result.Length > max) throw AppException.BadRequest($"{field} en fazla {max} karakter olabilir.");
+        return result;
+    }
+    private static string RequiredCode(string? value, string field, int max) =>
+        RequiredText(value, field, max).ToUpperInvariant();
+    private static string Normalize(string? value) => value?.Trim().ToUpperInvariant() ?? string.Empty;
+    private static string? Clean(string? value, int max) => string.IsNullOrWhiteSpace(value) ? null : value.Trim()[..Math.Min(value.Trim().Length, max)];
+    private static void Touch(verii_wms_api_v2.Shared.Domain.BaseEntity entity, long actor, bool exists)
+    {
+        if (exists) { entity.UpdatedBy = actor; entity.UpdatedDate = DateTime.UtcNow; }
+        else { entity.CreatedBy = actor; entity.CreatedDate = DateTime.UtcNow; }
+    }
+}

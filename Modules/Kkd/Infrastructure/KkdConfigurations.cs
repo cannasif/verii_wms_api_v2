@@ -1,0 +1,215 @@
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using verii_wms_api_v2.Modules.Kkd.Domain;
+using verii_wms_api_v2.Shared.Infrastructure;
+
+namespace verii_wms_api_v2.Modules.Kkd.Infrastructure;
+
+public sealed class KkdPolicyConfiguration : BaseEntityConfiguration<KkdPolicy>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdPolicy> b)
+    {
+        b.ToTable("RII_KKD_POLICY");
+        b.Property(x => x.PolicyKey).HasMaxLength(30).IsRequired();
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasIndex(x => new { x.BranchCode, x.PolicyKey }).IsUnique().HasFilter("[IsDeleted] = 0");
+    }
+}
+
+public sealed class KkdDepartmentConfiguration : BaseEntityConfiguration<KkdDepartment>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdDepartment> b)
+    {
+        b.ToTable("RII_KKD_DEPARTMENT");
+        b.Property(x => x.Code).HasMaxLength(50).IsRequired();
+        b.Property(x => x.Name).HasMaxLength(200).IsRequired();
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasIndex(x => new { x.BranchCode, x.Code }).IsUnique().HasFilter("[IsDeleted] = 0");
+    }
+}
+
+public sealed class KkdRoleConfiguration : BaseEntityConfiguration<KkdRole>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdRole> b)
+    {
+        b.ToTable("RII_KKD_ROLE");
+        b.Property(x => x.Code).HasMaxLength(50).IsRequired();
+        b.Property(x => x.Name).HasMaxLength(200).IsRequired();
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasOne(x => x.Department).WithMany(x => x.Roles).HasForeignKey(x => x.DepartmentId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => new { x.BranchCode, x.DepartmentId, x.Code }).IsUnique().HasFilter("[IsDeleted] = 0");
+    }
+}
+
+public sealed class KkdEmployeeConfiguration : BaseEntityConfiguration<KkdEmployee>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdEmployee> b)
+    {
+        b.ToTable("RII_KKD_EMPLOYEE");
+        b.Property(x => x.EmployeeCode).HasMaxLength(80).IsRequired();
+        b.Property(x => x.FirstName).HasMaxLength(100).IsRequired();
+        b.Property(x => x.LastName).HasMaxLength(100).IsRequired();
+        b.Property(x => x.QrCode).HasMaxLength(200).IsRequired();
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasOne(x => x.Department).WithMany(x => x.Employees).HasForeignKey(x => x.DepartmentId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.Role).WithMany(x => x.Employees).HasForeignKey(x => x.RoleId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => new { x.BranchCode, x.EmployeeCode }).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x => new { x.BranchCode, x.QrCode }).IsUnique().HasFilter("[IsDeleted] = 0");
+    }
+}
+
+public sealed class KkdEntitlementMatrixConfiguration : BaseEntityConfiguration<KkdEntitlementMatrix>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdEntitlementMatrix> b)
+    {
+        b.ToTable("RII_KKD_MATRIX", t => t.HasCheckConstraint("CK_RII_KKD_MATRIX_DATES", "[EffectiveTo] IS NULL OR [EffectiveFrom] IS NULL OR [EffectiveTo] >= [EffectiveFrom]"));
+        b.Property(x => x.Code).HasMaxLength(80).IsRequired();
+        b.Property(x => x.Name).HasMaxLength(200).IsRequired();
+        b.Property(x => x.Description).HasMaxLength(1000);
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasOne(x => x.Department).WithMany().HasForeignKey(x => x.DepartmentId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.Role).WithMany().HasForeignKey(x => x.RoleId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => new { x.BranchCode, x.Code }).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x => new { x.BranchCode, x.CustomerId, x.DepartmentId, x.RoleId, x.IsActive });
+    }
+}
+
+public sealed class KkdEntitlementRuleConfiguration : BaseEntityConfiguration<KkdEntitlementRule>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdEntitlementRule> b)
+    {
+        b.ToTable("RII_KKD_RULE", t =>
+        {
+            t.HasCheckConstraint("CK_RII_KKD_RULE_ANNUAL_COUNT", "[AnnualIssueCount] IS NULL OR [AnnualIssueCount] > 0");
+            t.HasCheckConstraint("CK_RII_KKD_RULE_QUANTITY", "([AnnualQuantity] IS NULL OR [AnnualQuantity] >= 0) AND ([MaxCarryQuantity] IS NULL OR [MaxCarryQuantity] >= 0)");
+        });
+        b.Property(x => x.GroupCode).HasMaxLength(80).IsRequired();
+        b.Property(x => x.GroupName).HasMaxLength(200);
+        b.Property(x => x.StockCodeSnapshot).HasMaxLength(100);
+        b.Property(x => x.StockNameSnapshot).HasMaxLength(300);
+        b.Property(x => x.StandardCode).HasMaxLength(80);
+        b.Property(x => x.StandardName).HasMaxLength(200);
+        b.Property(x => x.AnnualQuantity).HasPrecision(20, 6);
+        b.Property(x => x.MaxCarryQuantity).HasPrecision(20, 6);
+        b.Property(x => x.Description).HasMaxLength(1000);
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasOne(x => x.Matrix).WithMany(x => x.Rules).HasForeignKey(x => x.MatrixId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => new { x.MatrixId, x.StockId, x.GroupCode }).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x => new { x.BranchCode, x.StockId, x.GroupCode, x.IsActive });
+    }
+}
+
+public sealed class KkdEntitlementPhaseConfiguration : BaseEntityConfiguration<KkdEntitlementPhase>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdEntitlementPhase> b)
+    {
+        b.ToTable("RII_KKD_PHASE", t => t.HasCheckConstraint("CK_RII_KKD_PHASE_VALUES", "[Quantity] >= 0 AND [OffsetMonths] >= 0 AND ([FrequencyDays] IS NULL OR [FrequencyDays] > 0) AND ([PeriodInterval] IS NULL OR [PeriodInterval] > 0)"));
+        b.Property(x => x.PhaseType).HasConversion<string>().HasMaxLength(30);
+        b.Property(x => x.PeriodType).HasConversion<string>().HasMaxLength(20);
+        b.Property(x => x.Quantity).HasPrecision(20, 6);
+        b.Property(x => x.QuantityPerFrequency).HasPrecision(20, 6);
+        b.Property(x => x.Description).HasMaxLength(1000);
+        b.HasOne(x => x.Rule).WithMany(x => x.Phases).HasForeignKey(x => x.RuleId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => new { x.RuleId, x.PhaseType, x.OffsetMonths }).IsUnique().HasFilter("[IsDeleted] = 0");
+    }
+}
+
+public sealed class KkdEmployeeEntitlementOverrideConfiguration : BaseEntityConfiguration<KkdEmployeeEntitlementOverride>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdEmployeeEntitlementOverride> b)
+    {
+        b.ToTable("RII_KKD_OVERRIDE", t => t.HasCheckConstraint("CK_RII_KKD_OVERRIDE_QTY", "[Quantity] > 0 AND [ConsumedQuantity] >= 0 AND [ConsumedQuantity] <= [Quantity] AND ([ValidTo] IS NULL OR [ValidTo] >= [ValidFrom])"));
+        b.Property(x => x.GroupCode).HasMaxLength(80).IsRequired();
+        b.Property(x => x.Quantity).HasPrecision(20, 6);
+        b.Property(x => x.ConsumedQuantity).HasPrecision(20, 6);
+        b.Property(x => x.Reason).HasMaxLength(1000).IsRequired();
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasOne(x => x.Employee).WithMany(x => x.Overrides).HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.Rule).WithMany().HasForeignKey(x => x.RuleId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => new { x.BranchCode, x.EmployeeId, x.GroupCode, x.IsActive });
+    }
+}
+
+public sealed class KkdDistributionConfiguration : BaseEntityConfiguration<KkdDistribution>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdDistribution> b)
+    {
+        b.ToTable("RII_KKD_DISTRIBUTION");
+        b.Property(x => x.DocumentNo).HasMaxLength(50).IsRequired();
+        b.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+        b.Property(x => x.FailureReason).HasMaxLength(2000);
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasOne(x => x.Employee).WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => x.CorrelationId).IsUnique();
+        b.HasIndex(x => new { x.BranchCode, x.DocumentNo }).IsUnique();
+        b.HasIndex(x => x.WarehouseOutboundId).IsUnique().HasFilter("[WarehouseOutboundId] IS NOT NULL");
+    }
+}
+
+public sealed class KkdDistributionLineConfiguration : BaseEntityConfiguration<KkdDistributionLine>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdDistributionLine> b)
+    {
+        b.ToTable("RII_KKD_DISTRIBUTION_LINE", t => t.HasCheckConstraint("CK_RII_KKD_DISTRIBUTION_LINE_QTY", "[Quantity] > 0 AND [EntitledQuantity] >= 0 AND [ExcessQuantity] >= 0 AND [EntitledQuantity] + [ExcessQuantity] = [Quantity]"));
+        b.Property(x => x.StockCodeSnapshot).HasMaxLength(100).IsRequired();
+        b.Property(x => x.StockNameSnapshot).HasMaxLength(300);
+        b.Property(x => x.GroupCode).HasMaxLength(80).IsRequired();
+        b.Property(x => x.Quantity).HasPrecision(20, 6);
+        b.Property(x => x.EntitledQuantity).HasPrecision(20, 6);
+        b.Property(x => x.ExcessQuantity).HasPrecision(20, 6);
+        b.Property(x => x.LotNo).HasMaxLength(100);
+        b.Property(x => x.SerialNo).HasMaxLength(200);
+        b.Property(x => x.OpenOrderNo).HasMaxLength(100);
+        b.Property(x => x.OpenOrderLineId).HasMaxLength(100);
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasOne(x => x.Distribution).WithMany(x => x.Lines).HasForeignKey(x => x.DistributionId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => new { x.DistributionId, x.LineNo }).IsUnique();
+    }
+}
+
+public sealed class KkdEntitlementConsumptionConfiguration : BaseEntityConfiguration<KkdEntitlementConsumption>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdEntitlementConsumption> b)
+    {
+        b.ToTable("RII_KKD_CONSUMPTION", t => t.HasCheckConstraint("CK_RII_KKD_CONSUMPTION_QTY", "[Quantity] > 0"));
+        b.Property(x => x.GroupCode).HasMaxLength(80).IsRequired();
+        b.Property(x => x.SourceType).HasConversion<string>().HasMaxLength(30);
+        b.Property(x => x.Quantity).HasPrecision(20, 6);
+        b.HasOne(x => x.DistributionLine).WithMany(x => x.Consumptions).HasForeignKey(x => x.DistributionLineId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => new { x.BranchCode, x.EmployeeId, x.GroupCode, x.ConsumedAtUtc });
+        b.HasIndex(x => x.ReversesConsumptionId).IsUnique().HasFilter("[ReversesConsumptionId] IS NOT NULL");
+    }
+}
+
+public sealed class KkdDistributionEntitlementAllocationConfiguration : BaseEntityConfiguration<KkdDistributionEntitlementAllocation>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdDistributionEntitlementAllocation> b)
+    {
+        b.ToTable("RII_KKD_DISTRIBUTION_ALLOCATION", t =>
+        {
+            t.HasCheckConstraint("CK_RII_KKD_DISTRIBUTION_ALLOCATION_QTY", "[Quantity] > 0");
+            t.HasCheckConstraint("CK_RII_KKD_DISTRIBUTION_ALLOCATION_DATES", "[PeriodEnd] IS NULL OR [PeriodEnd] >= [PeriodStart]");
+        });
+        b.Property(x => x.SourceType).HasConversion<string>().HasMaxLength(30);
+        b.Property(x => x.Quantity).HasPrecision(20, 6);
+        b.HasOne(x => x.DistributionLine).WithMany(x => x.EntitlementAllocations)
+            .HasForeignKey(x => x.DistributionLineId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => new { x.DistributionLineId, x.SourceType, x.SourceId, x.PeriodStart }).IsUnique();
+        b.HasIndex(x => new { x.BranchCode, x.SourceType, x.SourceId, x.PeriodStart, x.PeriodEnd });
+    }
+}
+
+public sealed class KkdValidationLogConfiguration : BaseEntityConfiguration<KkdValidationLog>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdValidationLog> b)
+    {
+        b.ToTable("RII_KKD_VALIDATION_LOG");
+        b.Property(x => x.GroupCode).HasMaxLength(80);
+        b.Property(x => x.AttemptedQuantity).HasPrecision(20, 6);
+        b.Property(x => x.ReasonCode).HasMaxLength(80).IsRequired();
+        b.Property(x => x.Message).HasMaxLength(2000);
+        b.Property(x => x.DeviceInfo).HasMaxLength(1000);
+        b.HasIndex(x => new { x.BranchCode, x.CorrelationId });
+        b.HasIndex(x => new { x.BranchCode, x.EmployeeId, x.CreatedDate });
+    }
+}
