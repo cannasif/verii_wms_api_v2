@@ -78,7 +78,7 @@ public sealed class KkdController(
 
     [HttpGet("distributions")]
     public async Task<IActionResult> Distributions(CancellationToken ct)
-    { await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct); return Ok(ApiResponse<IReadOnlyList<KkdDistributionRow>>.Ok(await distributions.GetRecentAsync(ct))); }
+    { await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct); return Ok(ApiResponse<IReadOnlyList<KkdDistributionRow>>.Ok(await distributions.GetRecentAsync(UserId(), ct))); }
 
     [HttpGet("distributions/context/{employeeId:long}")]
     public async Task<IActionResult> DistributionContext(long employeeId, CancellationToken ct)
@@ -103,6 +103,15 @@ public sealed class KkdController(
     [HttpPost("distributions/{id:long}/complete")]
     public async Task<IActionResult> CompleteDistribution(long id, KkdDistributionCompleteRequest request, CancellationToken ct)
     { await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct); return Ok(ApiResponse<KkdDistributionCompleteResult>.Ok(await distributions.CompleteAsync(id, request, UserId(), ct), "KKD teslimi ve ERP ambar çıkışı tamamlandı.")); }
+
+    [HttpPost("distributions/{id:long}/excess-approval")]
+    public async Task<IActionResult> DecideExcessApproval(long id, KkdExcessApprovalRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.OVERRIDES.MANAGE", ct);
+        var result = await distributions.DecideExcessApprovalAsync(id, request, UserId(), ct);
+        return Ok(ApiResponse<KkdDistributionRow>.Ok(result,
+            request.Approve ? "KKD kota aşımı onaylandı." : "KKD kota aşımı reddedildi."));
+    }
 
     [HttpPost("distributions/{id:long}/cancel")]
     public async Task<IActionResult> CancelDistribution(long id, KkdDistributionCancelRequest request, CancellationToken ct)

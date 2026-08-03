@@ -45,10 +45,12 @@ public sealed record KkdDistributionCreateResult(
     decimal TotalQuantity,
     decimal EntitledQuantity,
     decimal ExcessQuantity,
+    string ExcessApprovalStatus,
     bool Replayed);
 
 public sealed record KkdDistributionCompleteRequest(Guid IdempotencyKey);
 public sealed record KkdDistributionCancelRequest(Guid IdempotencyKey, string Reason);
+public sealed record KkdExcessApprovalRequest(Guid IdempotencyKey, bool Approve, string Reason);
 
 public sealed record KkdDistributionCompleteResult(
     long Id,
@@ -71,6 +73,10 @@ public sealed record KkdDistributionRow(
     decimal TotalQuantity,
     decimal EntitledQuantity,
     decimal ExcessQuantity,
+    string ExcessApprovalStatus,
+    string? ExcessApprovalReason,
+    long? ExcessApprovedBy,
+    DateTimeOffset? ExcessApprovedAtUtc,
     DateTime? CreatedDate,
     DateTimeOffset? CompletedAtUtc);
 
@@ -83,7 +89,10 @@ public sealed record KkdDistributionContext(
     string CustomerCode,
     string CustomerName,
     KkdPolicyDto Policy,
-    IReadOnlyList<KkdOpenOrderHeader> Orders);
+    IReadOnlyList<KkdOpenOrderHeader> Orders,
+    IReadOnlyList<KkdPreferredStock> PreferredStocks);
+
+public sealed record KkdPreferredStock(string GroupCode, long StockId, string StockCode, string StockName);
 
 public sealed record KkdOpenOrderHeader(
     string OrderNumber,
@@ -112,8 +121,9 @@ public interface IKkdDistributionService
     Task<KkdDistributionContext> GetContextAsync(long employeeId, CancellationToken ct = default);
     Task<IReadOnlyList<KkdOpenOrderLine>> GetOpenOrderLinesAsync(long employeeId, string orderNumbersCsv, CancellationToken ct = default);
     Task<KkdDistributionCreateResult> CreateAsync(KkdDistributionCreateRequest request, long actor, CancellationToken ct = default);
-    Task<IReadOnlyList<KkdDistributionRow>> GetRecentAsync(CancellationToken ct = default);
+    Task<IReadOnlyList<KkdDistributionRow>> GetRecentAsync(long actor, CancellationToken ct = default);
     Task<KkdDistributionCompleteResult> CompleteAsync(long id, KkdDistributionCompleteRequest request, long actor, CancellationToken ct = default);
+    Task<KkdDistributionRow> DecideExcessApprovalAsync(long id, KkdExcessApprovalRequest request, long actor, CancellationToken ct = default);
     Task<KkdDistributionCompleteResult?> CompleteByWarehouseOutboundAsync(long warehouseOutboundId, Guid idempotencyKey, long actor, CancellationToken ct = default);
     Task CancelAsync(long id, Guid idempotencyKey, string reason, long actor, CancellationToken ct = default);
 }

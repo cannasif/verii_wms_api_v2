@@ -12,6 +12,7 @@ public sealed record KkdPolicyDto(
     bool AllowMultipleOrdersPerDistribution,
     bool RequireEmployeeUserLink,
     bool AllowFutureDatedDistribution,
+    bool RequireManagerApprovalForExcess,
     long? UpdatedBy,
     DateTime? UpdatedDate);
 
@@ -20,7 +21,8 @@ public sealed record UpdateKkdPolicyRequest(
     bool AllowOpenOrderExcess,
     bool AllowMultipleOrdersPerDistribution,
     bool RequireEmployeeUserLink,
-    bool AllowFutureDatedDistribution);
+    bool AllowFutureDatedDistribution,
+    bool RequireManagerApprovalForExcess);
 
 public interface IKkdPolicyService
 {
@@ -64,6 +66,7 @@ public sealed class KkdPolicyService(IUnitOfWork uow) : IKkdPolicyService
         entity.AllowMultipleOrdersPerDistribution = request.AllowMultipleOrdersPerDistribution;
         entity.RequireEmployeeUserLink = request.RequireEmployeeUserLink;
         entity.AllowFutureDatedDistribution = request.AllowFutureDatedDistribution;
+        entity.RequireManagerApprovalForExcess = request.RequireManagerApprovalForExcess;
         entity.UpdatedBy = actor;
         entity.UpdatedDate = now;
         await uow.SaveChangesAsync(ct);
@@ -78,13 +81,15 @@ public sealed class KkdPolicyService(IUnitOfWork uow) : IKkdPolicyService
         AllowOpenOrderExcess = true,
         AllowMultipleOrdersPerDistribution = true,
         RequireEmployeeUserLink = false,
-        AllowFutureDatedDistribution = false
+        AllowFutureDatedDistribution = false,
+        RequireManagerApprovalForExcess = true
     };
 
     private static KkdPolicyDto Map(KkdPolicy x) => new(
         x.Id, x.BranchCode, x.RequireOpenOrder, x.AllowOpenOrderExcess,
         x.AllowMultipleOrdersPerDistribution, x.RequireEmployeeUserLink,
-        x.AllowFutureDatedDistribution, x.UpdatedBy, x.UpdatedDate);
+        x.AllowFutureDatedDistribution, x.RequireManagerApprovalForExcess,
+        x.UpdatedBy, x.UpdatedDate);
 
     private static string NormalizeBranch(string branchCode) =>
         string.IsNullOrWhiteSpace(branchCode) ? "0" : branchCode.Trim();

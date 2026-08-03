@@ -43,6 +43,10 @@ public sealed class KkdDistributionCompletionService(IUnitOfWork uow, IErpPostin
                 ?? throw AppException.NotFound("KKD dağıtımı bulunamadı.");
             if (entity.Status == KkdDistributionStatus.Cancelled)
                 throw AppException.Conflict("İptal edilmiş KKD dağıtımı tamamlanamaz.");
+            if (entity.ExcessApprovalStatus == KkdExcessApprovalStatus.Pending)
+                throw AppException.Conflict("Kota aşımı için depo yöneticisinin fiziksel kontrol onayı bekleniyor.");
+            if (entity.ExcessApprovalStatus == KkdExcessApprovalStatus.Rejected)
+                throw AppException.Conflict("Kota aşımı reddedilmiş KKD dağıtımı tamamlanamaz.");
             if (!entity.WarehouseOutboundId.HasValue)
                 throw AppException.Conflict("KKD dağıtımının ambar çıkış belgesi bulunmuyor.");
             var outboundStatus = await uow.Repository<WarehouseOutboundHeader>().Query()

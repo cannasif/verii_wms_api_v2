@@ -1,6 +1,7 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
+using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Kkd.Domain;
 using verii_wms_api_v2.Modules.NetsisRead.Application;
 using verii_wms_api_v2.Modules.NetsisRead.Application.Dtos;
@@ -32,6 +33,13 @@ public sealed class KkdDistributionService(
             ?? throw AppException.Conflict("KKD personelinin bağlı olduğu cari bulunamadı.");
         var headers = await netsis.GetShipmentOpenOrderHeadersAsync(customer.CustomerCode, employee.BranchCode, ct);
         var policy = await policies.GetAsync(employee.BranchCode, ct);
+        var preferredStocks = await uow.Repository<KkdEmployeeStockPreference>().Query()
+            .Where(x => x.EmployeeId == employee.Id)
+            .Join(uow.Repository<StockEntity>().Query(), preference => preference.StockId, stock => stock.Id,
+                (preference, stock) => new KkdPreferredStock(
+                    preference.GroupCode, stock.Id, stock.ErpStockCode, stock.StockName))
+            .OrderBy(x => x.GroupCode)
+            .ToListAsync(ct);
         return new(
             employee.Id,
             employee.EmployeeCode,
@@ -49,7 +57,8 @@ public sealed class KkdDistributionService(
                     x.OrderDate.HasValue ? DateOnly.FromDateTime(x.OrderDate.Value) : null,
                     x.ProjectCode,
                     x.AvailableQuantity ?? x.RemainingQuantity ?? 0))
-                .ToArray());
+                .ToArray(),
+            preferredStocks);
     }
 
     public async Task<IReadOnlyList<KkdOpenOrderLine>> GetOpenOrderLinesAsync(
@@ -108,6 +117,14 @@ public sealed class KkdDistributionService(
         if (existing is not null)
             return CreateResult(existing, true);
 
+        var assignedWarehouseIds = await uow.Repository<UserWarehouseAssignment>().Query()
+            .Where(x => x.UserId == actor)
+            .Select(x => x.WarehouseId)
+            .Distinct()
+            .ToArrayAsync(ct);
+        if (assignedWarehouseIds.Length > 0 && !assignedWarehouseIds.Contains(request.WarehouseId))
+            throw AppException.Forbidden("Seçilen depo, oturum kullanıcısının yetkili olduğu depolar arasında değil.");
+
         var employee = await ActiveEmployeeAsync(request.EmployeeId, ct);
         var policy = await policies.GetAsync(employee.BranchCode, ct);
         ValidatePolicy(request, employee, policy);
@@ -161,6 +178,9 @@ public sealed class KkdDistributionService(
             prepared.Add(new(item, stock, order, trackingPolicy, check.GroupCode, entitled, excess, allocations));
         }
 
+        var requiresExcessApproval = policy.RequireManagerApprovalForExcess
+            && prepared.Any(x => x.Excess > 0);
+
         var outboundRequest = new CreateWarehouseOutboundDraftRequest(
             request.IdempotencyKey,
             employee.BranchCode,
@@ -200,10 +220,17 @@ public sealed class KkdDistributionService(
                 DocumentNo = $"KKD-{outbound.DocumentNo}",
                 Status = KkdDistributionStatus.OutboundCreated,
                 WarehouseOutboundId = outbound.Id,
+                ExcessApprovalStatus = requiresExcessApproval
+                    ? KkdExcessApprovalStatus.Pending
+                    : KkdExcessApprovalStatus.NotRequired,
                 CreatedBy = actor,
                 CreatedDate = now
             };
             var lineNo = 0;
+            var preferenceGroups = prepared.Select(x => x.GroupCode).Distinct().ToArray();
+            var preferences = await uow.Repository<KkdEmployeeStockPreference>().Query(true)
+                .Where(x => x.EmployeeId == employee.Id && preferenceGroups.Contains(x.GroupCode))
+                .ToDictionaryAsync(x => x.GroupCode, token);
             foreach (var item in prepared)
             {
                 var line = new KkdDistributionLine
@@ -240,22 +267,118 @@ public sealed class KkdDistributionService(
                         CreatedDate = now
                     });
                 distribution.Lines.Add(line);
+
+                if (!preferences.TryGetValue(item.GroupCode, out var preference))
+                {
+                    preference = new KkdEmployeeStockPreference
+                    {
+                        BranchCode = employee.BranchCode,
+                        EmployeeId = employee.Id,
+                        GroupCode = item.GroupCode,
+                        StockId = item.Stock.Id,
+                        LastSelectedAtUtc = DateTimeOffset.UtcNow,
+                        CreatedBy = actor,
+                        CreatedDate = now
+                    };
+                    await uow.Repository<KkdEmployeeStockPreference>().AddAsync(preference, token);
+                    preferences[item.GroupCode] = preference;
+                }
+                else
+                {
+                    preference.StockId = item.Stock.Id;
+                    preference.LastSelectedAtUtc = DateTimeOffset.UtcNow;
+                    preference.UpdatedBy = actor;
+                    preference.UpdatedDate = now;
+                }
             }
             await uow.Repository<KkdDistribution>().AddAsync(distribution, token);
+            if (requiresExcessApproval)
+            {
+                var outboundHeader = await uow.Repository<WarehouseOutboundHeader>().FindByIdAsync(
+                    outbound.Id, tracking: true, cancellationToken: token)
+                    ?? throw AppException.Conflict("KKD ambar çıkış taslağı bulunamadı.");
+                outboundHeader.RequireApproval = true;
+                outboundHeader.ApprovalStatus = OperationApprovalStatus.Pending;
+                outboundHeader.UpdatedBy = actor;
+                outboundHeader.UpdatedDate = now;
+            }
             await uow.SaveChangesAsync(token);
             return CreateResult(distribution, false);
         }, ct, IsolationLevel.Serializable);
     }
 
-    public async Task<IReadOnlyList<KkdDistributionRow>> GetRecentAsync(CancellationToken ct = default) =>
-        await uow.Repository<KkdDistribution>().Query()
+    public async Task<IReadOnlyList<KkdDistributionRow>> GetRecentAsync(long actor, CancellationToken ct = default)
+    {
+        var warehouseIds = await uow.Repository<UserWarehouseAssignment>().Query()
+            .Where(x => x.UserId == actor)
+            .Select(x => x.WarehouseId)
+            .Distinct()
+            .ToArrayAsync(ct);
+        var query = uow.Repository<KkdDistribution>().Query();
+        if (warehouseIds.Length > 0) query = query.Where(x => warehouseIds.Contains(x.WarehouseId));
+        return await query
             .OrderByDescending(x => x.Id).Take(250)
             .Select(x => new KkdDistributionRow(
                 x.Id, x.DocumentNo, x.Status.ToString(), x.EmployeeId, x.Employee.EmployeeCode,
                 x.Employee.FirstName + " " + x.Employee.LastName, x.WarehouseId, x.WarehouseOutboundId,
                 x.Lines.Sum(l => l.Quantity), x.Lines.Sum(l => l.EntitledQuantity),
-                x.Lines.Sum(l => l.ExcessQuantity), x.CreatedDate, x.CompletedAtUtc))
+                x.Lines.Sum(l => l.ExcessQuantity), x.ExcessApprovalStatus.ToString(),
+                x.ExcessApprovalReason, x.ExcessApprovedBy, x.ExcessApprovedAtUtc,
+                x.CreatedDate, x.CompletedAtUtc))
             .ToListAsync(ct);
+    }
+
+    public async Task<KkdDistributionRow> DecideExcessApprovalAsync(
+        long id,
+        KkdExcessApprovalRequest request,
+        long actor,
+        CancellationToken ct = default)
+    {
+        if (id <= 0 || request.IdempotencyKey == Guid.Empty || string.IsNullOrWhiteSpace(request.Reason))
+            throw AppException.BadRequest("Dağıtım, idempotency anahtarı ve karar açıklaması zorunludur.");
+        if (request.Reason.Trim().Length < 5)
+            throw AppException.BadRequest("Karar açıklaması en az 5 karakter olmalıdır.");
+
+        await uow.ExecuteInTransactionAsync(async token =>
+        {
+            var entity = await uow.Repository<KkdDistribution>().Query(true)
+                .SingleOrDefaultAsync(x => x.Id == id, token)
+                ?? throw AppException.NotFound("KKD dağıtımı bulunamadı.");
+            if (entity.Status is KkdDistributionStatus.Completed or KkdDistributionStatus.Cancelled)
+                throw AppException.Conflict("Tamamlanmış veya iptal edilmiş KKD dağıtımında kota aşım kararı değiştirilemez.");
+            if (entity.ExcessApprovalStatus == KkdExcessApprovalStatus.NotRequired)
+                throw AppException.Conflict("Bu KKD dağıtımında yönetici kota aşım onayı gerekmiyor.");
+
+            var desired = request.Approve ? KkdExcessApprovalStatus.Approved : KkdExcessApprovalStatus.Rejected;
+            if (entity.ExcessApprovalStatus == desired) return true;
+            var outbound = entity.WarehouseOutboundId.HasValue
+                ? await uow.Repository<WarehouseOutboundHeader>().FindByIdAsync(
+                    entity.WarehouseOutboundId.Value, tracking: true, cancellationToken: token)
+                : null;
+            if (outbound is null)
+                throw AppException.Conflict("KKD dağıtımına bağlı ambar çıkışı bulunamadı.");
+            if (outbound.Status != WarehouseOutboundStatus.Draft)
+                throw AppException.Conflict("Ambar çıkışı serbest bırakıldıktan sonra kota aşım kararı değiştirilemez.");
+
+            var now = DateTimeOffset.UtcNow;
+            entity.ExcessApprovalStatus = desired;
+            entity.ExcessApprovalReason = request.Reason.Trim();
+            entity.ExcessApprovedBy = actor;
+            entity.ExcessApprovedAtUtc = now;
+            entity.UpdatedBy = actor;
+            entity.UpdatedDate = now.UtcDateTime;
+            outbound.RequireApproval = true;
+            outbound.ApprovalStatus = request.Approve
+                ? OperationApprovalStatus.Approved
+                : OperationApprovalStatus.Rejected;
+            outbound.UpdatedBy = actor;
+            outbound.UpdatedDate = now.UtcDateTime;
+            await uow.SaveChangesAsync(token);
+            return true;
+        }, ct, IsolationLevel.Serializable);
+
+        return await GetRowAsync(id, ct);
+    }
 
     public async Task<KkdDistributionCompleteResult> CompleteAsync(
         long id,
@@ -399,7 +522,20 @@ public sealed class KkdDistributionService(
 
     private static KkdDistributionCreateResult CreateResult(KkdDistribution x, bool replayed) => new(
         x.Id, x.DocumentNo, x.Status.ToString(), x.WarehouseOutboundId ?? 0, x.DocumentNo.Replace("KKD-", string.Empty),
-        x.Lines.Sum(l => l.Quantity), x.Lines.Sum(l => l.EntitledQuantity), x.Lines.Sum(l => l.ExcessQuantity), replayed);
+        x.Lines.Sum(l => l.Quantity), x.Lines.Sum(l => l.EntitledQuantity), x.Lines.Sum(l => l.ExcessQuantity),
+        x.ExcessApprovalStatus.ToString(), replayed);
+
+    private async Task<KkdDistributionRow> GetRowAsync(long id, CancellationToken ct) =>
+        await uow.Repository<KkdDistribution>().Query()
+            .Where(x => x.Id == id)
+            .Select(x => new KkdDistributionRow(
+                x.Id, x.DocumentNo, x.Status.ToString(), x.EmployeeId, x.Employee.EmployeeCode,
+                x.Employee.FirstName + " " + x.Employee.LastName, x.WarehouseId, x.WarehouseOutboundId,
+                x.Lines.Sum(l => l.Quantity), x.Lines.Sum(l => l.EntitledQuantity),
+                x.Lines.Sum(l => l.ExcessQuantity), x.ExcessApprovalStatus.ToString(),
+                x.ExcessApprovalReason, x.ExcessApprovedBy, x.ExcessApprovedAtUtc,
+                x.CreatedDate, x.CompletedAtUtc))
+            .SingleAsync(ct);
 
     internal static void ValidateCreateEnvelope(KkdDistributionCreateRequest request)
     {
