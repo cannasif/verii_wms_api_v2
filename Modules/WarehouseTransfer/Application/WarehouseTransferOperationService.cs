@@ -3,11 +3,13 @@ using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.StockMovement.Application;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
+using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 using verii_wms_api_v2.Shared.Application.Validation;
+using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 
 namespace verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 
@@ -102,6 +104,7 @@ public sealed class WarehouseTransferOperationService(
                     && x.OperationType != StockMovementTypes.Reversal
                     && !operationRepo.Query().Any(r => r.ReversalOfOperationId == x.Id))
                 .OrderByDescending(x => x.Id).Select(x => x.Id).ToListAsync(token);
+            var returnLocationId = await ResolveCancellationReturnLocationAsync(header, request, operations.Count > 0, token);
             long? lastReversalId = null;
             foreach (var operationId in operations)
             {
@@ -109,9 +112,11 @@ public sealed class WarehouseTransferOperationService(
                     new($"WT:{id}:CANCEL:{request.IdempotencyKey:N}:{operationId}", request.Reason!.Trim(), DateTime.UtcNow), token);
                 lastReversalId = reversal.OperationId;
             }
+            var returnTask = CreateCancellationReturnTask(header, returnLocationId, request.Reason!, actor);
+            if (returnLocationId.HasValue) header.CancellationReturnLocationId = returnLocationId;
             await reservations.ReleaseAllAsync(header, $"WT:{id}:RESERVE:CANCEL:{request.IdempotencyKey:N}", request.Reason!.Trim(), actor, token);
             foreach (var line in header.Lines) line.Status = WarehouseTransferLineStatus.Cancelled;
-            foreach (var task in header.Tasks) task.Status = WarehouseTransferTaskStatus.Cancelled;
+            foreach (var task in header.Tasks.Where(x => x != returnTask)) task.Status = WarehouseTransferTaskStatus.Cancelled;
             foreach (var tracking in header.Lines.SelectMany(x => x.Trackings)) tracking.Status = WarehouseTransferTrackingStatus.Cancelled;
             header.Status = WarehouseTransferStatus.Cancelled;
             header.CancelledAtUtc = DateTimeOffset.UtcNow;
@@ -123,10 +128,92 @@ public sealed class WarehouseTransferOperationService(
             AddHistory(header, "Cancel", request.IdempotencyKey, request.Reason, actor);
             await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("warehouse-transfer.cancel", nameof(WarehouseTransferHeader), id.ToString(), "Succeeded", "warehouse-transfer",
-                NewValues: new { header.DocumentNo, ReversedOperationCount = operations.Count, LastReversalId = lastReversalId, header.CancellationReason },
+                NewValues: new { header.DocumentNo, ReversedOperationCount = operations.Count, LastReversalId = lastReversalId, ReturnTaskId = returnTask?.Id, header.CancellationReturnLocationId, header.CancellationReason },
                 ChangedFields: ["Status", "Reservations", "StockMovement"]), token);
             return Result(header, lastReversalId, false);
         }, ct, IsolationLevel.Serializable);
+    }
+
+    private async Task<long?> ResolveCancellationReturnLocationAsync(
+        WarehouseTransferHeader header,
+        WarehouseTransferTransitionRequest request,
+        bool hasPhysicalMovement,
+        CancellationToken ct)
+    {
+        if (!hasPhysicalMovement) return null;
+
+        var sourceLocationIds = header.Lines
+            .SelectMany(x => x.Trackings.Where(t => t.PickedQuantity > 0).Select(t => t.SourceLocationId)
+                .Append(x.DefaultSourceLocationId))
+            .Where(x => x.HasValue).Select(x => x!.Value).Distinct().ToArray();
+        var activeSourceIds = await uow.Repository<WarehouseLocation>().Query()
+            .Where(x => sourceLocationIds.Contains(x.Id) && x.WarehouseId == header.SourceWarehouseId && x.IsActive)
+            .Select(x => x.Id).ToListAsync(ct);
+        var originalLocationsUsable = sourceLocationIds.Length > 0 && sourceLocationIds.All(activeSourceIds.Contains);
+
+        long? selected = header.CancellationReturnPolicy switch
+        {
+            WarehouseTransferCancellationReturnPolicy.OriginalSourceLocation when originalLocationsUsable => null,
+            WarehouseTransferCancellationReturnPolicy.ManagerSelectionRequired => request.ReturnLocationId ?? header.CancellationReturnLocationId
+                ?? throw AppException.BadRequest("İptal politikası gereği kaynak depodan bir iade rafı seçilmelidir."),
+            _ => (await uow.Repository<WarehouseEntity>().Query()
+                    .Where(x => x.Id == header.SourceWarehouseId)
+                    .Select(x => x.DefaultTransferReturnLocationId)
+                    .SingleOrDefaultAsync(ct))
+                ?? throw AppException.Conflict("Kaynak depoda varsayılan transfer iade rafı tanımlı değil. İptal tamamlanmadı."),
+        };
+
+        if (!selected.HasValue) return null;
+        var valid = await uow.Repository<WarehouseLocation>().Query()
+            .AnyAsync(x => x.Id == selected && x.WarehouseId == header.SourceWarehouseId && x.IsActive && x.IsPutaway, ct);
+        if (!valid)
+            throw AppException.BadRequest("Seçilen iade rafı kaynak depoya ait, aktif ve yerleştirmeye uygun olmalıdır.");
+        return selected;
+    }
+
+    private static WarehouseTransferTask? CreateCancellationReturnTask(
+        WarehouseTransferHeader header,
+        long? returnLocationId,
+        string reason,
+        long actor)
+    {
+        var pickedLines = header.Lines.Where(x => x.PickedQuantity > 0).ToList();
+        if (pickedLines.Count == 0) return null;
+        var leftSourceWarehouse = header.Status is WarehouseTransferStatus.Shipped
+            or WarehouseTransferStatus.PartiallyReceived or WarehouseTransferStatus.Received
+            or WarehouseTransferStatus.PartiallyPutaway or WarehouseTransferStatus.Completed
+            || header.Lines.Any(x => x.ShippedQuantity > 0 || x.ReceivedQuantity > 0 || x.PutawayQuantity > 0);
+        var now = DateTime.UtcNow;
+        var task = new WarehouseTransferTask
+        {
+            BranchCode = header.BranchCode, CreatedBy = actor, CreatedDate = now, Header = header,
+            TaskNo = $"{header.DocumentNo}-C01", TaskType = WarehouseTransferTaskType.CancellationReturn,
+            WarehouseId = leftSourceWarehouse ? header.TargetWarehouseId : header.SourceWarehouseId,
+            Status = WarehouseTransferTaskStatus.Open, Priority = 1,
+            Description = leftSourceWarehouse
+                ? $"Hedef depoya ulaşan transferi kaynak depoya geri gönderin. İptal nedeni: {Clean(reason, 400)}"
+                : $"Toplanan stokları kaynak depodaki iade raflarına geri koyun. İptal nedeni: {Clean(reason, 400)}"
+        };
+        foreach (var line in pickedLines)
+        {
+            var originalSources = line.Trackings.Where(x => x.PickedQuantity > 0 && x.SourceLocationId.HasValue)
+                .Select(x => x.SourceLocationId!.Value).Append(line.DefaultSourceLocationId ?? 0).Where(x => x > 0).Distinct().ToArray();
+            var physicalSources = leftSourceWarehouse
+                ? line.Trackings.Where(x => x.PickedQuantity > 0 && x.TargetLocationId.HasValue)
+                    .Select(x => x.TargetLocationId!.Value)
+                    .Append(line.DefaultTargetLocationId ?? header.TargetPutawayLocationId ?? header.TargetReceivingLocationId ?? 0)
+                    .Where(x => x > 0).Distinct().ToArray()
+                : originalSources;
+            task.Lines.Add(new WarehouseTransferTaskLine
+            {
+                BranchCode = header.BranchCode, CreatedBy = actor, CreatedDate = now, Task = task, Line = line,
+                PlannedQuantity = line.PickedQuantity, ProcessedQuantity = 0,
+                SourceLocationId = physicalSources.Length == 1 ? physicalSources[0] : null,
+                TargetLocationId = returnLocationId ?? (originalSources.Length == 1 ? originalSources[0] : null)
+            });
+        }
+        header.Tasks.Add(task);
+        return task;
     }
 
     private Task<WarehouseTransferOperationResult> ExecuteMovementAsync(
@@ -289,12 +376,24 @@ public sealed class WarehouseTransferOperationService(
             ?? throw AppException.Conflict("Transfer toplama emri bulunamadı.");
         var assignment = task.Assignments.FirstOrDefault(x => x.UserId == actor)
             ?? throw AppException.Forbidden("Bu transfer toplama emri size atanmamış.");
-        assignment.AcceptedAtUtc ??= DateTimeOffset.UtcNow;
-        task.AcceptedAtUtc ??= DateTimeOffset.UtcNow;
-        task.AcceptedBy ??= actor;
-        task.StartedAtUtc ??= DateTimeOffset.UtcNow;
-        task.StartedBy ??= actor;
-        task.Status = WarehouseTransferTaskStatus.InProgress;
+        var productionContext = header.BusinessContext is WarehouseTransferBusinessContext.ProductionMaterialSupply
+            or WarehouseTransferBusinessContext.ProductionWipMove
+            or WarehouseTransferBusinessContext.ProductionOutputMove;
+        if (!productionContext)
+        {
+            var now = DateTimeOffset.UtcNow;
+            assignment.AcceptedAtUtc ??= now;
+            task.AcceptedAtUtc ??= now;
+            task.AcceptedBy ??= actor;
+            task.StartedAtUtc ??= now;
+            task.StartedBy ??= actor;
+            if (task.Status is WarehouseTransferTaskStatus.Open or WarehouseTransferTaskStatus.Assigned)
+                task.Status = WarehouseTransferTaskStatus.InProgress;
+            return;
+        }
+        if (!assignment.AcceptedAtUtc.HasValue || task.StartedBy != actor
+            || task.Status is not (WarehouseTransferTaskStatus.InProgress or WarehouseTransferTaskStatus.PartiallyCompleted))
+            throw AppException.Conflict("Toplamaya başlamadan önce görev ekranından 'Bu işi yapıyorum' işlemini kullanın.");
     }
 
     private static void ValidateQuantities(

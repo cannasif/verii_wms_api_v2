@@ -6,6 +6,7 @@ using verii_wms_api_v2.Modules.Shipping.Application;
 using verii_wms_api_v2.Modules.Shipping.Domain;
 using verii_wms_api_v2.Modules.WarehouseInbound.Application;
 using verii_wms_api_v2.Modules.WarehouseInbound.Domain;
+using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.WarehouseOutbound.Application;
 using verii_wms_api_v2.Modules.WarehouseOutbound.Domain;
@@ -112,6 +113,8 @@ public sealed class OperationCancellationCoordinator(
         if (route == OperationCancellationRoute.ManualReconciliationRequired)
             throw ReconciliationRequired("depolar arası transfer", header.ErpIntegrationStatus, erpCancellationSupported: true);
         if (route == OperationCancellationRoute.ErpCompensation)
+        {
+            await PersistManagerReturnLocationAsync(header, request, userId, cancellationToken);
             return await CancelErpAsync(
                 ErpPostingSourceType.WarehouseTransfer,
                 header.Id,
@@ -119,6 +122,7 @@ public sealed class OperationCancellationCoordinator(
                 request.Reason!,
                 userId,
                 cancellationToken);
+        }
 
         var result = await warehouseTransfers.CancelAsync(id, request, userId, cancellationToken);
         return Local("WarehouseTransfer", result.TransferId, result.DocumentNo, result.Status,
@@ -230,6 +234,30 @@ public sealed class OperationCancellationCoordinator(
             prior?.Status == ErpCancellationStatus.Succeeded,
             result.ErrorCode,
             result.ErrorMessage);
+    }
+
+    private async Task PersistManagerReturnLocationAsync(
+        WarehouseTransferHeader header,
+        WarehouseTransferTransitionRequest request,
+        long userId,
+        CancellationToken cancellationToken)
+    {
+        if (header.CancellationReturnPolicy != WarehouseTransferCancellationReturnPolicy.ManagerSelectionRequired)
+            return;
+        var returnLocationId = request.ReturnLocationId
+            ?? throw AppException.BadRequest("İptal politikası gereği kaynak depodan bir iade rafı seçilmelidir.");
+        var valid = await unitOfWork.Repository<WarehouseLocation>().Query().AnyAsync(x =>
+            x.Id == returnLocationId && x.WarehouseId == header.SourceWarehouseId && x.IsActive && x.IsPutaway,
+            cancellationToken);
+        if (!valid)
+            throw AppException.BadRequest("Seçilen iade rafı kaynak depoya ait, aktif ve yerleştirmeye uygun olmalıdır.");
+        var tracked = await unitOfWork.Repository<WarehouseTransferHeader>().FindByIdAsync(
+            header.Id, tracking: true, cancellationToken: cancellationToken)
+            ?? throw AppException.NotFound("Depolar arası transfer kaydı bulunamadı.");
+        tracked.CancellationReturnLocationId = returnLocationId;
+        tracked.UpdatedBy = userId;
+        tracked.UpdatedDate = DateTime.UtcNow;
+        await unitOfWork.SaveChangesAsync(cancellationToken);
     }
 
     private static OperationCancellationResult Local(

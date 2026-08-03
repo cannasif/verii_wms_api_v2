@@ -17,7 +17,7 @@ public sealed record WarehouseTransferOperationRequest(
     string? DriverName,
     string? WaybillNo);
 
-public sealed record WarehouseTransferTransitionRequest(Guid IdempotencyKey, string? Reason);
+public sealed record WarehouseTransferTransitionRequest(Guid IdempotencyKey, string? Reason, long? ReturnLocationId = null);
 
 public sealed record WarehouseTransferOperationResult(
     long TransferId,
