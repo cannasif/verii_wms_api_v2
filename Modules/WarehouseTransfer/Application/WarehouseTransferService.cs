@@ -4,6 +4,7 @@ using verii_wms_api_v2.Modules.DocumentSeries.Application;
 using verii_wms_api_v2.Modules.DocumentSeries.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Identity.Domain;
+using verii_wms_api_v2.Modules.Identity.Application;
 using verii_wms_api_v2.Modules.Stock.Application;
 using verii_wms_api_v2.Modules.StockTracking.Application;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
@@ -29,6 +30,8 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
             if(existing is not null){var replayTask=await uow.Repository<WarehouseTransferTask>().Query().Where(x=>x.WtHeaderId==existing.Id&&x.TaskType==WarehouseTransferTaskType.Pick).OrderBy(x=>x.Id).FirstOrDefaultAsync(token);return new(existing.Id,existing.DocumentNo,existing.Lines.Count,existing.Lines.Sum(x=>x.RequestedQuantity),true,replayTask?.Id,replayTask?.TaskNo);}
 
             var branch=request.BranchCode.Trim();
+            await UserWarehouseAccessService.EnsureAsync(
+                uow, actor, branch, [request.SourceWarehouseId, request.TargetWarehouseId], token);
             var policy=await policyService.GetAsync(branch,token);
             ValidateMode(request,policy);
             var taskBased=request.InitiationMode is WarehouseTransferInitiationMode.OrderBasedTask or WarehouseTransferInitiationMode.StockBasedTask;
@@ -75,7 +78,7 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
             var header=new WarehouseTransferHeader{
                 BranchCode=branch,CreatedBy=actor,CreatedDate=now,DocumentSeriesId=allocated.DocumentSeriesId,DocumentNo=allocated.DocumentNumber,
                 DocumentDate=request.DocumentDate,BusinessContext=request.BusinessContext,InitiationMode=request.InitiationMode,ProcessType=request.ProcessType,SourceSystem=orderBased?WarehouseOperationSourceSystem.Netsis:WarehouseOperationSourceSystem.Manual,
-                CorrelationId=request.IdempotencyKey,ExternalReferenceNo=Clean(request.ExternalReferenceNo,100),
+                CorrelationId=request.IdempotencyKey,ExternalReferenceNo=Clean(request.ExternalReferenceNo,100),ProjectCode=Clean(request.ProjectCode,50),
                 SourceWarehouseId=request.SourceWarehouseId,TargetWarehouseId=request.TargetWarehouseId,
                 SourceStagingLocationId=request.SourceStagingLocationId,TargetReceivingLocationId=request.TargetReceivingLocationId,TargetPutawayLocationId=request.TargetPutawayLocationId,
                 Status=WarehouseTransferStatus.Draft,ErpIntegrationStatus=ErpIntegrationStatus.Pending,
@@ -240,8 +243,8 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
             .Select(x=>new WarehouseTransferDetailLine(x.Id,x.LineNo,x.StockId,x.StockCodeSnapshot,x.StockNameSnapshot,x.YapCodeId,x.YapCodeSnapshot,
                 x.UnitCode,x.RequestedQuantity,x.ReservedQuantity,x.PickedQuantity,x.ShippedQuantity,x.ReceivedQuantity,x.PutawayQuantity,x.DamagedQuantity,x.LostQuantity,
                 x.TrackingType,x.Status,x.Trackings.Count)).ToListAsync(ct);
-        var draft=await Headers.Query().Where(x=>x.Id==id).Select(x=>new{x.RowVersion,x.SourceStagingLocationId,x.TargetReceivingLocationId,x.TargetPutawayLocationId,x.ExternalReferenceNo,x.Description}).SingleAsync(ct);
-        return new(header,lines,Convert.ToBase64String(draft.RowVersion),new(draft.SourceStagingLocationId,draft.TargetReceivingLocationId,draft.TargetPutawayLocationId,draft.ExternalReferenceNo,draft.Description));
+        var draft=await Headers.Query().Where(x=>x.Id==id).Select(x=>new{x.RowVersion,x.SourceStagingLocationId,x.TargetReceivingLocationId,x.TargetPutawayLocationId,x.ExternalReferenceNo,x.Description,x.ProjectCode}).SingleAsync(ct);
+        return new(header,lines,Convert.ToBase64String(draft.RowVersion),new(draft.SourceStagingLocationId,draft.TargetReceivingLocationId,draft.TargetPutawayLocationId,draft.ExternalReferenceNo,draft.Description,draft.ProjectCode));
     }
 
     public async Task<WarehouseTransferDetail> GetDetailForContextAsync(
@@ -281,15 +284,15 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
                 if(locations[targetId].WarehouseId!=header.TargetWarehouseId)throw AppException.BadRequest("Kabul ve yerleştirme rafları hedef depoya ait olmalıdır.");
             if(request.PlannedDispatchAtUtc.HasValue&&request.PlannedArrivalAtUtc.HasValue&&request.PlannedArrivalAtUtc<request.PlannedDispatchAtUtc)
                 throw AppException.BadRequest("Planlanan varış zamanı sevk zamanından önce olamaz.");
-            var old=new{header.DocumentDate,header.SourceStagingLocationId,header.TargetReceivingLocationId,header.TargetPutawayLocationId,header.PlannedDispatchAtUtc,header.PlannedArrivalAtUtc,header.Priority,header.ExternalReferenceNo,header.Description};
+            var old=new{header.DocumentDate,header.SourceStagingLocationId,header.TargetReceivingLocationId,header.TargetPutawayLocationId,header.PlannedDispatchAtUtc,header.PlannedArrivalAtUtc,header.Priority,header.ExternalReferenceNo,header.Description,header.ProjectCode};
             header.DocumentDate=request.DocumentDate;header.SourceStagingLocationId=request.SourceStagingLocationId;
             header.TargetReceivingLocationId=request.TargetReceivingLocationId;header.TargetPutawayLocationId=request.TargetPutawayLocationId;
             header.PlannedDispatchAtUtc=request.PlannedDispatchAtUtc?.ToUniversalTime();header.PlannedArrivalAtUtc=request.PlannedArrivalAtUtc?.ToUniversalTime();
-            header.Priority=request.Priority;header.ExternalReferenceNo=Clean(request.ExternalReferenceNo,100);header.Description=Clean(request.Description,2000);
+            header.Priority=request.Priority;header.ExternalReferenceNo=Clean(request.ExternalReferenceNo,100);header.Description=Clean(request.Description,2000);header.ProjectCode=Clean(request.ProjectCode,50);
             header.UpdatedBy=actor;header.UpdatedDate=DateTime.UtcNow;
             try{await uow.SaveChangesAsync(token);}catch(DbUpdateConcurrencyException){throw AppException.Conflict("Transfer başka bir kullanıcı tarafından değiştirildi. Listeyi yenileyip tekrar deneyin.");}
             await audit.WriteAsync(new("warehouse-transfer.draft.update",nameof(WarehouseTransferHeader),id.ToString(),"Succeeded","warehouse-transfer",OldValues:old,
-                NewValues:new{header.DocumentDate,header.SourceStagingLocationId,header.TargetReceivingLocationId,header.TargetPutawayLocationId,header.PlannedDispatchAtUtc,header.PlannedArrivalAtUtc,header.Priority,header.ExternalReferenceNo,header.Description},
+                NewValues:new{header.DocumentDate,header.SourceStagingLocationId,header.TargetReceivingLocationId,header.TargetPutawayLocationId,header.PlannedDispatchAtUtc,header.PlannedArrivalAtUtc,header.Priority,header.ExternalReferenceNo,header.Description,header.ProjectCode},
                 ChangedFields:["Header"]),token);
             return await GetDetailAsync(id,token);
         },ct);
