@@ -628,7 +628,10 @@ public sealed class ErpPostingService(
         return NewRequest(options.WarehouseTransferDocumentType, options.WarehouseTransferSeries,
             header.DocumentNo, header.WaybillNo ?? header.DocumentNo, header.DocumentDate, header.ShippedAtUtc,
             null, sourceWarehouse, header.Description, lines,
-            ResolveErpHeaderProjectCode(usedOrderRows), ResolveErpDeliveryDate(usedOrderRows, header.DocumentDate));
+            usedOrderRows.Count > 0
+                ? ResolveErpHeaderProjectCode(usedOrderRows)
+                : NetsisItemSlipDefaults.NormalizeProjectCode(header.ProjectCode),
+            ResolveErpDeliveryDate(usedOrderRows, header.DocumentDate));
     }
 
     private async Task<NetsisItemSlipRequest> MapShipmentAsync(
