@@ -32,7 +32,8 @@ public sealed class KkdPolicyServiceTests
             AllowOpenOrderExcess: false,
             AllowMultipleOrdersPerDistribution: false,
             RequireEmployeeUserLink: true,
-            AllowFutureDatedDistribution: false);
+            AllowFutureDatedDistribution: false,
+            RequireManagerApprovalForExcess: true);
 
         var first = await fixture.Service.UpdateAsync("0", request, 42);
         var second = await fixture.Service.GetAsync("0");
@@ -42,6 +43,7 @@ public sealed class KkdPolicyServiceTests
         Assert.False(second.AllowOpenOrderExcess);
         Assert.False(second.AllowMultipleOrdersPerDistribution);
         Assert.True(second.RequireEmployeeUserLink);
+        Assert.True(second.RequireManagerApprovalForExcess);
         Assert.Single(fixture.Db.KkdPolicies);
     }
 

@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
+using verii_wms_api_v2.Modules.Kkd.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.SubcontractingTransfer.Domain;
@@ -22,6 +23,8 @@ public sealed class ProductionAndSubcontractingTransferModelTests
 
         Assert.NotNull(property);
         Assert.Equal(40, property!.GetMaxLength());
+        Assert.Equal(50, entity.FindProperty(nameof(WarehouseTransferHeader.ProjectCode))?.GetMaxLength());
+        Assert.Contains(nameof(WarehouseTransferStatus.PartiallyShipped), Enum.GetNames<WarehouseTransferStatus>());
         Assert.DoesNotContain(entity.GetCheckConstraints(), x => x.Name == "CK_RII_WT_HEADER_WAREHOUSE");
     }
 
@@ -82,6 +85,29 @@ public sealed class ProductionAndSubcontractingTransferModelTests
         Assert.Contains(line.GetCheckConstraints(), x =>
             x.Name == "CK_RII_ST_LINE_LINK_QTY"
             && x.Sql.Contains("[ScrapQuantity] <= [ExpectedQuantity]", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Kkd_excess_approval_and_employee_group_preference_are_persisted()
+    {
+        using var context = CreateContext();
+        var model = context.GetService<IDesignTimeModel>().Model;
+        var policy = AssertEntity<KkdPolicy>(model);
+        var distribution = AssertEntity<KkdDistribution>(model);
+        var preference = AssertEntity<KkdEmployeeStockPreference>(model);
+
+        Assert.NotNull(policy.FindProperty(nameof(KkdPolicy.RequireManagerApprovalForExcess)));
+        Assert.Equal(30, distribution.FindProperty(nameof(KkdDistribution.ExcessApprovalStatus))?.GetMaxLength());
+        Assert.Equal(1000, distribution.FindProperty(nameof(KkdDistribution.ExcessApprovalReason))?.GetMaxLength());
+        var uniquePreference = Assert.Single(preference.GetIndexes(), x =>
+            x.Properties.Select(p => p.Name).SequenceEqual(new[]
+            {
+                nameof(KkdEmployeeStockPreference.BranchCode),
+                nameof(KkdEmployeeStockPreference.EmployeeId),
+                nameof(KkdEmployeeStockPreference.GroupCode)
+            }));
+        Assert.True(uniquePreference.IsUnique);
+        Assert.Equal("[IsDeleted] = 0", uniquePreference.GetFilter());
     }
 
     private static IEntityType AssertEntity<TEntity>(IModel model) =>
