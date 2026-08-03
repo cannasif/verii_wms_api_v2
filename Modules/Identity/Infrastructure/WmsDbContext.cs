@@ -36,6 +36,7 @@ using verii_wms_api_v2.Modules.Shipping.Infrastructure;
 using verii_wms_api_v2.Modules.Smtp.Domain;
 using verii_wms_api_v2.Modules.Smtp.Infrastructure;
 using verii_wms_api_v2.Modules.Stock.Infrastructure;
+using verii_wms_api_v2.Modules.Stock.Domain;
 using verii_wms_api_v2.Modules.StockTracking.Domain;
 using verii_wms_api_v2.Modules.StockTracking.Infrastructure;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
@@ -74,6 +75,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<RefreshTokenSession> RefreshTokenSessions => Set<RefreshTokenSession>();
     public DbSet<PasswordResetToken> PasswordResetTokens => Set<PasswordResetToken>();
     public DbSet<StockEntity> Stocks => Set<StockEntity>();
+    public DbSet<StockImage> StockImages => Set<StockImage>();
     public DbSet<CustomerEntity> Customers => Set<CustomerEntity>();
     public DbSet<WarehouseEntity> Warehouses => Set<WarehouseEntity>();
     public DbSet<YapCodeEntity> YapCodes => Set<YapCodeEntity>();
@@ -251,6 +253,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         });
 
         modelBuilder.ApplyConfiguration(new StockConfiguration());
+        modelBuilder.ApplyConfiguration(new StockImageConfiguration());
         modelBuilder.ApplyConfiguration(new RefreshTokenSessionConfiguration());
         modelBuilder.ApplyConfiguration(new PasswordResetTokenConfiguration());
         modelBuilder.ApplyConfiguration(new CustomerConfiguration());
