@@ -34,7 +34,11 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
             var taskBased=request.InitiationMode is WarehouseTransferInitiationMode.OrderBasedTask or WarehouseTransferInitiationMode.StockBasedTask;
             var orderBased=request.InitiationMode is WarehouseTransferInitiationMode.OrderBasedTask or WarehouseTransferInitiationMode.OrderBasedDirectTransfer;
             var assigneeIds=(request.AssignedUserIds??[]).Distinct().ToArray();
-            if(taskBased&&policy.RequireAssigneeForTask&&assigneeIds.Length==0)throw AppException.BadRequest("Emirli transferde en az bir kullanıcı atanmalıdır.");
+            var productionContext=request.BusinessContext is WarehouseTransferBusinessContext.ProductionMaterialSupply
+                or WarehouseTransferBusinessContext.ProductionWipMove
+                or WarehouseTransferBusinessContext.ProductionOutputMove;
+            if(taskBased&&policy.RequireAssigneeForTask&&assigneeIds.Length==0&&!productionContext)
+                throw AppException.BadRequest("Emirli transferde en az bir kullanıcı atanmalıdır.");
             if(!policy.AllowMultipleAssignees&&assigneeIds.Length>1)throw AppException.BadRequest("Transfer politikası birden fazla kullanıcı atamasına izin vermiyor.");
             if(assigneeIds.Length>0){
                 var activeUsers=await uow.Repository<User>().Query().CountAsync(x=>assigneeIds.Contains(x.Id)&&x.IsActive,token);
@@ -80,6 +84,7 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
                 AllowPartialPicking=policy.AllowPartialPicking,AllowPartialShipment=policy.AllowPartialShipment,AllowPartialReceipt=policy.AllowPartialReceipt,
                 RequireDestinationAcceptance=policy.RequireDestinationAcceptance,RequirePutaway=policy.RequirePutaway,
                 CreateTransitInventory=policy.CreateTransitInventory,DiscrepancyPolicy=policy.DiscrepancyPolicy,
+                CancellationReturnPolicy=policy.CancellationReturnPolicy,
                 ReservationPolicy=policy.ReservationPolicy,DirectPostingPolicy=policy.DirectPostingPolicy,
                 RequireAssignee=policy.RequireAssigneeForTask,RequireSourceLocation=policy.RequireSourceLocation,
                 RequireTargetLocation=policy.RequireTargetLocation,RequireShipmentInformation=policy.RequireShipmentInformation,
