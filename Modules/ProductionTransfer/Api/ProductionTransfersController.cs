@@ -2,6 +2,7 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using verii_wms_api_v2.Modules.AccessControl.Application;
+using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.ProductionTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
@@ -15,6 +16,8 @@ public sealed class ProductionTransfersController(
     IProductionTransferService service,
     IWarehouseTransferService transfers,
     IWarehouseTransferOperationService operations,
+    IProductionTransferTaskService tasks,
+    IOperationCancellationCoordinator cancellationCoordinator,
     IPermissionAuthorizationService permissions) : ControllerBase
 {
     private static readonly WarehouseTransferBusinessContext[] Contexts=[
@@ -61,7 +64,35 @@ public sealed class ProductionTransfersController(
     [HttpPost("{id:long}/cancel")]
     public async Task<IActionResult>Cancel(long id,WarehouseTransferTransitionRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.CANCEL",ct);await Ensure(id,ct);
-        return Ok(ApiResponse<WarehouseTransferOperationResult>.Ok(await operations.CancelAsync(id,request,UserId(),ct)));}
+        return Ok(ApiResponse<OperationCancellationResult>.Ok(await cancellationCoordinator.CancelWarehouseTransferAsync(id,request,UserId(),ct)));}
+    [HttpGet("{id:long}/tasks")]
+    public async Task<IActionResult>Tasks(long id,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.VIEW",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.GetBoardAsync(id,ct)));}
+    [HttpPost("{id:long}/tasks/{taskId:long}/assign")]
+    public async Task<IActionResult>Assign(long id,long taskId,AssignProductionTransferTaskRequest request,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.AssignAsync(id,taskId,request,UserId(),ct),"Görev atandı."));}
+    [HttpDelete("{id:long}/tasks/{taskId:long}/assignments/{userId:long}"),HttpPost("{id:long}/tasks/{taskId:long}/assignments/{userId:long}/remove")]
+    public async Task<IActionResult>RemoveAssignment(long id,long taskId,long userId,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.RemoveAssignmentAsync(id,taskId,userId,UserId(),ct),"Görev ataması kaldırıldı."));}
+    [HttpPost("{id:long}/tasks/{taskId:long}/start")]
+    public async Task<IActionResult>StartTask(long id,long taskId,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.AcceptAndStartAsync(id,taskId,UserId(),ct),"Görev başlatıldı."));}
+    [HttpPost("{id:long}/tasks/{taskId:long}/complete-cancellation-return")]
+    public async Task<IActionResult>CompleteCancellationReturn(long id,long taskId,StartProductionTransferTaskRequest request,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.CompleteCancellationReturnAsync(id,taskId,request.IdempotencyKey,UserId(),ct),"İptal iadesi tamamlandı."));}
+    [HttpGet("warehouse-return-setting")]
+    public async Task<IActionResult>ReturnSetting([FromQuery]long warehouseId,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.SETTINGS.VIEW",ct);
+        return Ok(ApiResponse<WarehouseTransferReturnSettingDto>.Ok(await tasks.GetReturnSettingAsync(warehouseId,ct)));}
+    [HttpPut("warehouse-return-setting")]
+    public async Task<IActionResult>UpdateReturnSetting(UpdateWarehouseTransferReturnSettingRequest request,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.SETTINGS.MANAGE",ct);
+        return Ok(ApiResponse<WarehouseTransferReturnSettingDto>.Ok(await tasks.UpdateReturnSettingAsync(request,UserId(),ct),"Varsayılan transfer iade rafı kaydedildi."));}
     [HttpGet("policy")]
     public async Task<IActionResult>Policy([FromQuery]string branchCode,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.SETTINGS.VIEW",ct);return Ok(ApiResponse<ProductionTransferPolicyDto>.Ok(await service.GetPolicyAsync(branchCode,ct)));}

@@ -82,5 +82,6 @@ public sealed class ProductionTransferPolicy : BaseEntity
     public bool AllowOverIssue { get; set; }
     public decimal OverIssueTolerancePercent { get; set; }
     public bool RequireApproval { get; set; }
+    public WarehouseTransferCancellationReturnPolicy CancellationReturnPolicy { get; set; } = WarehouseTransferCancellationReturnPolicy.OriginalSourceLocation;
     public byte[] RowVersion { get; set; } = [];
 }

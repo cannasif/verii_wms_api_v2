@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
+using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared.Infrastructure;
 
 namespace verii_wms_api_v2.Modules.ProductionTransfer.Infrastructure;
@@ -54,6 +55,9 @@ public sealed class ProductionTransferPolicyConfiguration : BaseEntityConfigurat
         b.ToTable("RII_PT_POLICIES",t=>t.HasCheckConstraint("CK_RII_PT_POLICY_OVER_ISSUE","[OverIssueTolerancePercent] >= 0 AND [OverIssueTolerancePercent] <= 100"));
         b.Property(x=>x.PolicyKey).HasMaxLength(30).IsRequired();
         b.Property(x=>x.OverIssueTolerancePercent).HasPrecision(9,4);
+        b.Property(x=>x.CancellationReturnPolicy).HasConversion<string>().HasMaxLength(40)
+            .HasDefaultValue(WarehouseTransferCancellationReturnPolicy.OriginalSourceLocation)
+            .HasSentinel((WarehouseTransferCancellationReturnPolicy)0);
         b.Property(x=>x.RowVersion).IsRowVersion();
         b.HasIndex(x=>new{x.BranchCode,x.PolicyKey}).IsUnique().HasFilter("[IsDeleted] = 0");
     }

@@ -1,5 +1,6 @@
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
+using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared;
 
 namespace verii_wms_api_v2.Modules.ProductionTransfer.Application;
@@ -52,13 +53,13 @@ public sealed record ProductionTransferPolicyDto(
     long Id,string BranchCode,string RowVersion,bool RequireProductionOrderReference,bool AllowManualTransfer,bool AllowAutomaticGeneration,
     bool CheckMaterialAvailability,bool BlockOnShortage,bool RequireTaskAssignment,bool RequireSourceProductionLocation,
     bool RequireTargetProductionLocation,bool AllowPartialSupply,bool AllowOverIssue,decimal OverIssueTolerancePercent,
-    bool RequireApproval,long? UpdatedBy,DateTime? UpdatedDate);
+    bool RequireApproval,WarehouseTransferCancellationReturnPolicy CancellationReturnPolicy,long? UpdatedBy,DateTime? UpdatedDate);
 
 public sealed record UpdateProductionTransferPolicyRequest(
     string BranchCode,string? RowVersion,bool RequireProductionOrderReference,bool AllowManualTransfer,bool AllowAutomaticGeneration,
     bool CheckMaterialAvailability,bool BlockOnShortage,bool RequireTaskAssignment,bool RequireSourceProductionLocation,
     bool RequireTargetProductionLocation,bool AllowPartialSupply,bool AllowOverIssue,decimal OverIssueTolerancePercent,
-    bool RequireApproval);
+    bool RequireApproval,WarehouseTransferCancellationReturnPolicy CancellationReturnPolicy);
 
 public interface IProductionTransferService
 {
