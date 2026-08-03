@@ -15,7 +15,8 @@ public sealed class WarehouseOutboundOperationService(
     IUnitOfWork uow,
     IStockMovementService movements,
     IWarehouseOutboundReservationService reservations,
-    IAuditLogWriter audit) : IWarehouseOutboundOperationService
+    IAuditLogWriter audit,
+    IEnumerable<IWarehouseOutboundShipmentFinalizationHandler> shipmentFinalizers) : IWarehouseOutboundOperationService
 {
     public Task<WarehouseOutboundOperationResult> ApproveAsync(
         long id, WarehouseOutboundTransitionRequest request, long actor, CancellationToken ct = default) =>
@@ -52,9 +53,17 @@ public sealed class WarehouseOutboundOperationService(
         long id, WarehouseOutboundOperationRequest request, long actor, CancellationToken ct = default) =>
         ExecuteMovementAsync(id, request, actor, WarehouseOutboundPhase.Load, ct);
 
-    public Task<WarehouseOutboundOperationResult> ShipAsync(
-        long id, WarehouseOutboundOperationRequest request, long actor, CancellationToken ct = default) =>
-        ExecuteMovementAsync(id, request, actor, WarehouseOutboundPhase.Ship, ct);
+    public async Task<WarehouseOutboundOperationResult> ShipAsync(
+        long id, WarehouseOutboundOperationRequest request, long actor, CancellationToken ct = default)
+    {
+        var result = await ExecuteMovementAsync(id, request, actor, WarehouseOutboundPhase.Ship, ct);
+        if (string.Equals(result.Status, WarehouseOutboundStatus.Shipped.ToString(), StringComparison.Ordinal))
+        {
+            foreach (var finalizer in shipmentFinalizers)
+                await finalizer.OnShippedAsync(id, request.IdempotencyKey, actor, ct);
+        }
+        return result;
+    }
 
     public Task<WarehouseOutboundOperationResult> CancelAsync(
         long id, WarehouseOutboundTransitionRequest request, long actor, CancellationToken ct = default)

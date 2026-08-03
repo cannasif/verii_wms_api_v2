@@ -42,3 +42,16 @@ public interface IWarehouseOutboundOperationService
     Task<WarehouseOutboundOperationResult> ShipAsync(long id, WarehouseOutboundOperationRequest request, long actor, CancellationToken ct = default);
     Task<WarehouseOutboundOperationResult> CancelAsync(long id, WarehouseOutboundTransitionRequest request, long actor, CancellationToken ct = default);
 }
+
+/// <summary>
+/// Finalizes the owning business process after the physical shipment commits.
+/// Implementations must be idempotent because shipment requests can be replayed.
+/// </summary>
+public interface IWarehouseOutboundShipmentFinalizationHandler
+{
+    Task OnShippedAsync(
+        long warehouseOutboundId,
+        Guid idempotencyKey,
+        long actor,
+        CancellationToken ct = default);
+}
