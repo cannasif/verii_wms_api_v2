@@ -52,7 +52,8 @@ public enum WarehouseTransferStatus
     Received = 8,
     PartiallyPutaway = 9,
     Completed = 10,
-    Cancelled = 11
+    Cancelled = 11,
+    PartiallyShipped = 12
 }
 
 public enum WarehouseTransferLineStatus
@@ -132,6 +133,7 @@ public sealed class WarehouseTransferHeader : BaseEntity
     public WarehouseOperationSourceSystem SourceSystem { get; set; } = WarehouseOperationSourceSystem.Manual;
     public Guid CorrelationId { get; set; } = Guid.NewGuid();
     public string? ExternalReferenceNo { get; set; }
+    public string? ProjectCode { get; set; }
 
     public long SourceWarehouseId { get; set; }
     public long TargetWarehouseId { get; set; }

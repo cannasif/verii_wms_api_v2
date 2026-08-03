@@ -60,12 +60,13 @@ public sealed record CreateWarehouseTransferDraftRequest(
     string? Description,
     IReadOnlyList<WarehouseTransferLineDraftRequest> Lines,
     IReadOnlyList<long>? AssignedUserIds,
-    WarehouseTransferBusinessContext BusinessContext = WarehouseTransferBusinessContext.InterWarehouse);
+    WarehouseTransferBusinessContext BusinessContext = WarehouseTransferBusinessContext.InterWarehouse,
+    string? ProjectCode = null);
 
 public sealed record CreateWarehouseTransferDraftResult(long Id,string DocumentNo,int LineCount,decimal RequestedQuantity,bool Replayed,long? TaskId,string? TaskNo);
 public sealed record UpdateWarehouseTransferDraftRequest(string RowVersion,DateOnly DocumentDate,long? SourceStagingLocationId,
     long? TargetReceivingLocationId,long? TargetPutawayLocationId,DateTimeOffset? PlannedDispatchAtUtc,
-    DateTimeOffset? PlannedArrivalAtUtc,byte Priority,string? ExternalReferenceNo,string? Description);
+    DateTimeOffset? PlannedArrivalAtUtc,byte Priority,string? ExternalReferenceNo,string? Description,string? ProjectCode = null);
 
 public sealed record WarehouseTransferGridRow(
     long Id,string BranchCode,string DocumentNo,DateOnly DocumentDate,
@@ -85,7 +86,7 @@ public sealed record WarehouseTransferDetailLine(
     StockTrackingType TrackingType,WarehouseTransferLineStatus Status,int TrackingCount);
 
 public sealed record WarehouseTransferDraftMetadata(long? SourceStagingLocationId,long? TargetReceivingLocationId,long? TargetPutawayLocationId,
-    string? ExternalReferenceNo,string? Description);
+    string? ExternalReferenceNo,string? Description,string? ProjectCode);
 public sealed record WarehouseTransferDetail(WarehouseTransferGridRow Header,IReadOnlyList<WarehouseTransferDetailLine> Lines,string RowVersion,
     WarehouseTransferDraftMetadata Draft);
 

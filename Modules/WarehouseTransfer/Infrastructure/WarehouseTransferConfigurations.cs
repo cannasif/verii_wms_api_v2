@@ -12,6 +12,7 @@ public sealed class WarehouseTransferHeaderConfiguration : BaseEntityConfigurati
         b.ToTable("RII_WT_HEADER");
         b.Property(x=>x.DocumentNo).HasMaxLength(50).IsRequired();
         b.Property(x=>x.ExternalReferenceNo).HasMaxLength(100);
+        b.Property(x=>x.ProjectCode).HasMaxLength(50);
         b.Property(x=>x.ShipmentNo).HasMaxLength(50); b.Property(x=>x.WaybillNo).HasMaxLength(50);
         b.Property(x=>x.CarrierCode).HasMaxLength(50); b.Property(x=>x.CarrierName).HasMaxLength(200);
         b.Property(x=>x.VehiclePlate).HasMaxLength(20); b.Property(x=>x.TrailerPlate).HasMaxLength(20);
