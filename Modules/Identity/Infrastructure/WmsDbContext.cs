@@ -547,7 +547,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             new PermissionDefinition { Id=2405, BranchCode="0", Code="WMS.PRODUCTION_TRANSFER.SETTINGS.VIEW", Name="Üretim transfer ayarlarını görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2406, BranchCode="0", Code="WMS.PRODUCTION_TRANSFER.SETTINGS.MANAGE", Name="Üretim transfer ayarlarını yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2407, BranchCode="0", Code="WMS.PRODUCTION_TRANSFER.UPDATE", Name="Üretim transfer taslağını güncelle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
-            new PermissionDefinition { Id=2408, BranchCode="0", Code="WMS.PRODUCTION_TRANSFER.DELETE", Name="Üretim transfer taslağını sil", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
+            new PermissionDefinition { Id=2408, BranchCode="0", Code="WMS.PRODUCTION_TRANSFER.DELETE", Name="Üretim transfer taslağını sil", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2409, BranchCode="0", Code="WMS.PRODUCTION_TRANSFER.ASSIGN", Name="Üretim transfer görevlerini ata ve kaldır", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionDefinition>().HasData(
             new PermissionDefinition { Id=2410, BranchCode="0", Code="WMS.SUBCONTRACTING_TRANSFER.VIEW", Name="Fason transferlerini görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2411, BranchCode="0", Code="WMS.SUBCONTRACTING_TRANSFER.CREATE", Name="Fason transferi oluştur", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
@@ -596,7 +597,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2110,9).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2200,8).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2300,7).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
-        modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2400,9).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
+        modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2400,10).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2410,9).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2420,5).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2500,12).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
