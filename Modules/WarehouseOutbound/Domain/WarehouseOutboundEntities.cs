@@ -42,6 +42,10 @@ public sealed class WarehouseOutboundHeader : BaseEntity
     public string? DriverName { get; set; }
     public string? SealNo { get; set; }
     public string? TrackingNo { get; set; }
+    public string? ProjectCode { get; set; }
+    public string? CostCenterCode { get; set; }
+    public string? MovementTypeCode { get; set; }
+    public string? ExitLocationCode { get; set; }
     public byte Priority { get; set; } = 3;
     public string? Description { get; set; }
 
@@ -103,6 +107,7 @@ public sealed class WarehouseOutboundLine : BaseEntity
     public long? DefaultSourceLocationId { get; set; }
     public WarehouseOutboundLineStatus Status { get; set; } = WarehouseOutboundLineStatus.Open;
     public string? Description { get; set; }
+    public string? ProjectCode { get; set; }
     public byte[] RowVersion { get; set; } = [];
     public ICollection<WarehouseOutboundLineSource> Sources { get; set; } = [];
     public ICollection<WarehouseOutboundTracking> Trackings { get; set; } = [];

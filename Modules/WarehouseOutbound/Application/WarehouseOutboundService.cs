@@ -157,7 +157,8 @@ public sealed class WarehouseOutboundService(
                 TrackingType = trackingPolicy.TrackingType,
                 RequireHandlingUnit = item.RequireHandlingUnit,
                 DefaultSourceLocationId = item.SourceLocationId,
-                Description = Clean(item.Description, 1000)
+                Description = Clean(item.Description, 1000),
+                ProjectCode = Clean(item.ProjectCode, 50) ?? Clean(request.ProjectCode, 50)
             };
 
             foreach (var tracking in item.Trackings ?? [])
@@ -394,16 +395,19 @@ public sealed class WarehouseOutboundService(
                 x.Status,
                 tracking.Count(t => t.WarehouseOutboundLineId == x.Id),
                 x.TrackingType,
-                x.RequireHandlingUnit))
+                x.RequireHandlingUnit,
+                x.ProjectCode))
             .ToListAsync(ct);
         var draft = await Headers.Query().Where(x => x.Id == id).Select(x => new
         {
             x.RowVersion, x.StagingLocationId, x.LoadingLocationId, x.ExternalReferenceNo, x.IsEDispatch,
-            x.CarrierCode, x.CarrierName, x.VehiclePlate, x.TrailerPlate, x.DriverName, x.SealNo, x.Description
+            x.CarrierCode, x.CarrierName, x.VehiclePlate, x.TrailerPlate, x.DriverName, x.SealNo, x.Description,
+            x.ProjectCode, x.CostCenterCode, x.MovementTypeCode, x.ExitLocationCode
         }).SingleAsync(ct);
         return new(header, lines, Convert.ToBase64String(draft.RowVersion), new(draft.StagingLocationId, draft.LoadingLocationId,
             draft.ExternalReferenceNo, draft.IsEDispatch, draft.CarrierCode, draft.CarrierName, draft.VehiclePlate,
-            draft.TrailerPlate, draft.DriverName, draft.SealNo, draft.Description));
+            draft.TrailerPlate, draft.DriverName, draft.SealNo, draft.Description, draft.ProjectCode,
+            draft.CostCenterCode, draft.MovementTypeCode, draft.ExitLocationCode));
     }
 
     public Task<WarehouseOutboundDetail> UpdateDraftAsync(long id, UpdateWarehouseOutboundDraftRequest request, long actor, CancellationToken ct = default) =>
@@ -420,7 +424,8 @@ public sealed class WarehouseOutboundService(
                 throw AppException.BadRequest("Hazırlık ve yükleme rafları kaynak depoya ait ve aktif olmalıdır.");
             var old = new { header.DocumentDate, header.StagingLocationId, header.LoadingLocationId, header.PlannedWarehouseOutboundAtUtc, header.Priority,
                 header.ExternalReferenceNo, header.IsEDispatch, header.CarrierCode, header.CarrierName, header.VehiclePlate, header.TrailerPlate,
-                header.DriverName, header.SealNo, header.Description };
+                header.DriverName, header.SealNo, header.Description, header.ProjectCode, header.CostCenterCode,
+                header.MovementTypeCode, header.ExitLocationCode };
             header.DocumentDate = request.DocumentDate;
             header.StagingLocationId = request.StagingLocationId;
             header.LoadingLocationId = request.LoadingLocationId;
@@ -435,6 +440,10 @@ public sealed class WarehouseOutboundService(
             header.DriverName = Clean(request.DriverName, 200);
             header.SealNo = Clean(request.SealNo, 100);
             header.Description = Clean(request.Description, 2000);
+            header.ProjectCode = Clean(request.ProjectCode, 50);
+            header.CostCenterCode = Clean(request.CostCenterCode, 100);
+            header.MovementTypeCode = Clean(request.MovementTypeCode, 50);
+            header.ExitLocationCode = Clean(request.ExitLocationCode, 100);
             header.UpdatedBy = actor;
             header.UpdatedDate = DateTime.UtcNow;
             try { await uow.SaveChangesAsync(token); }
@@ -442,7 +451,8 @@ public sealed class WarehouseOutboundService(
             await audit.WriteAsync(new("warehouse-outbound.draft.update", nameof(WarehouseOutboundHeader), id.ToString(), "Succeeded", "warehouse-outbound", OldValues: old,
                 NewValues: new { header.DocumentDate, header.StagingLocationId, header.LoadingLocationId, header.PlannedWarehouseOutboundAtUtc, header.Priority,
                     header.ExternalReferenceNo, header.IsEDispatch, header.CarrierCode, header.CarrierName, header.VehiclePlate, header.TrailerPlate,
-                    header.DriverName, header.SealNo, header.Description }, ChangedFields: ["Header"]), token);
+                    header.DriverName, header.SealNo, header.Description, header.ProjectCode, header.CostCenterCode,
+                    header.MovementTypeCode, header.ExitLocationCode }, ChangedFields: ["Header"]), token);
             return await GetDetailAsync(id, token);
         }, ct);
 
@@ -684,6 +694,10 @@ public sealed class WarehouseOutboundService(
             DriverName = Clean(request.DriverName, 200),
             SealNo = Clean(request.SealNo, 50),
             Description = Clean(request.Description, 2000),
+            ProjectCode = Clean(request.ProjectCode, 50),
+            CostCenterCode = Clean(request.CostCenterCode, 100),
+            MovementTypeCode = Clean(request.MovementTypeCode, 50),
+            ExitLocationCode = Clean(request.ExitLocationCode, 100),
             ApprovalStatus = policy.RequireApproval ? OperationApprovalStatus.Pending : OperationApprovalStatus.NotRequired,
             RequireApproval = policy.RequireApproval,
             RequireAssignee = taskBased && policy.RequireAssigneeForTask,
