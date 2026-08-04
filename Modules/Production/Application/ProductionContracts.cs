@@ -73,6 +73,45 @@ public sealed record CreateProductionPlanResult(
     int OutputCount,
     bool Replayed);
 
+public sealed record PreparedNetsisProductionMaterial(
+    long? StockId,
+    string StockCode,
+    string? StockName,
+    string UnitCode,
+    long? YapCodeId,
+    string? ConfigurationCode,
+    int OperationNumber,
+    decimal RecipeQuantity,
+    decimal WasteQuantity,
+    decimal RequiredQuantity,
+    string? MappingError);
+
+public sealed record PreparedNetsisProductionWorkOrder(
+    string WorkOrderNumber,
+    int BranchCode,
+    string ProductCode,
+    string ProductName,
+    string UnitCode,
+    decimal PlannedQuantity,
+    long? ProducedStockId,
+    long? ProducedYapCodeId,
+    string? ConfigurationCode,
+    long? SourceWarehouseId,
+    int SourceWarehouseCode,
+    string? SourceWarehouseName,
+    long? TargetWarehouseId,
+    int TargetWarehouseCode,
+    string? TargetWarehouseName,
+    DateTime? WorkOrderDate,
+    DateTime? DeliveryDate,
+    string? ProjectCode,
+    bool IsClosed,
+    long? ExistingProductionHeaderId,
+    long? ExistingProductionOrderId,
+    string? ExistingProductionDocumentNo,
+    IReadOnlyList<string> MappingErrors,
+    IReadOnlyList<PreparedNetsisProductionMaterial> Materials);
+
 public sealed record ProductionPlanGridRow(
     long Id,
     string BranchCode,
@@ -191,6 +230,7 @@ public sealed record ProductionTransitionRequest(string RowVersion,string? Reaso
 
 public interface IProductionService
 {
+    Task<PreparedNetsisProductionWorkOrder> PrepareNetsisWorkOrderAsync(string workOrderNumber,string branchCode,CancellationToken ct=default);
     Task<CreateProductionPlanResult> CreateAsync(CreateProductionPlanRequest request,long actor,CancellationToken ct=default);
     Task<PagedResponse<ProductionPlanGridRow>> GetPagedAsync(PagedRequest request,CancellationToken ct=default);
     Task<ProductionPlanDetail> GetDetailAsync(long id,CancellationToken ct=default);

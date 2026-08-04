@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using verii_wms_api_v2.Modules.AccessControl.Application;
 using verii_wms_api_v2.Modules.Production.Application;
+using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 
@@ -19,6 +20,15 @@ public sealed class ProductionController(
         await Require("WMS.PRODUCTION.CREATE",ct);
         return Ok(ApiResponse<CreateProductionPlanResult>.Ok(
             await service.CreateAsync(request,UserId(),ct),"Üretim planı oluşturuldu."));
+    }
+
+    [HttpGet("netsis-work-orders/{workOrderNumber}/prepare")]
+    public async Task<IActionResult> PrepareNetsisWorkOrder(string workOrderNumber,CancellationToken ct)
+    {
+        await Require("WMS.PRODUCTION.VIEW",ct);
+        await Require("ERP.NETSIS_READ.VIEW",ct);
+        return Ok(ApiResponse<PreparedNetsisProductionWorkOrder>.Ok(
+            await service.PrepareNetsisWorkOrderAsync(workOrderNumber,BranchCode(),ct)));
     }
 
     [HttpPost("plans/paged")]
@@ -58,6 +68,9 @@ public sealed class ProductionController(
     private long UserId()=>long.TryParse(
         User.FindFirstValue(ClaimTypes.NameIdentifier),out var id)
         ?id:throw AppException.Unauthorized("Kullanıcı kimliği bulunamadı.");
+
+    private string BranchCode()=>User.FindFirstValue(JwtTokenIssuer.BranchCodeClaim)?.Trim()
+        is {Length:>0} branch?branch:throw AppException.Unauthorized("Oturum şube bilgisi bulunamadı.");
 
     private async Task Require(string code,CancellationToken ct)
     {

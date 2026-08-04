@@ -6,6 +6,7 @@ using verii_wms_api_v2.Modules.DocumentSeries.Application;
 using verii_wms_api_v2.Modules.DocumentSeries.Domain;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
+using verii_wms_api_v2.Modules.NetsisRead.Application;
 using verii_wms_api_v2.Modules.Production.Domain;
 using verii_wms_api_v2.Modules.Stock.Application;
 using verii_wms_api_v2.Modules.StockTracking.Application;
@@ -23,9 +24,90 @@ public sealed class ProductionService(
     IUnitOfWork uow,
     IDocumentNumberAllocator numberAllocator,
     IStockTrackingPolicyResolver trackingPolicyResolver,
-    IAuditLogWriter audit) : IProductionService
+    IAuditLogWriter audit,
+    INetsisReadService netsisRead) : IProductionService
 {
     private IGenericRepository<ProductionHeader> Headers => uow.Repository<ProductionHeader>();
+
+    public async Task<PreparedNetsisProductionWorkOrder> PrepareNetsisWorkOrderAsync(
+        string workOrderNumber,
+        string branchCode,
+        CancellationToken ct=default)
+    {
+        var externalNo=workOrderNumber?.Trim();
+        if(string.IsNullOrWhiteSpace(externalNo))
+            throw AppException.BadRequest("Netsis iş emri numarası zorunludur.");
+        var branch=branchCode.Trim();
+        if(!int.TryParse(branch,out var branchNumber))
+            throw AppException.BadRequest("Oturum şube kodu sayısal değildir.");
+
+        var workOrders=await netsisRead.GetProductionWorkOrdersAsync(externalNo,branchNumber,true,20,ct);
+        var workOrder=workOrders.SingleOrDefault(x=>
+            string.Equals(x.WorkOrderNumber,externalNo,StringComparison.OrdinalIgnoreCase))
+            ??throw AppException.NotFound("Netsis iş emri bulunamadı.");
+        var recipe=await netsisRead.GetProductionWorkOrderRecipeAsync(externalNo,branchNumber,ct);
+        if(recipe.Count==0)
+            throw AppException.Conflict("Netsis iş emrinin reçete bileşeni bulunamadı.");
+
+        var stockCodes=recipe.Select(x=>x.ComponentStockCode)
+            .Append(workOrder.StockCode).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var stocks=await uow.Repository<StockEntity>().Query()
+            .Where(x=>x.BranchCode==branch&&stockCodes.Contains(x.ErpStockCode))
+            .ToListAsync(ct);
+        var stockMap=stocks.GroupBy(x=>x.ErpStockCode,StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x=>x.Key,x=>x.First(),StringComparer.OrdinalIgnoreCase);
+
+        var warehouseCodes=new[]{workOrder.IssueWarehouseCode,workOrder.WarehouseCode}.Distinct().ToArray();
+        var warehouses=await uow.Repository<WarehouseEntity>().Query()
+            .Where(x=>x.BranchCode==branch&&warehouseCodes.Contains(x.WarehouseCode))
+            .ToListAsync(ct);
+        var warehouseMap=warehouses.ToDictionary(x=>x.WarehouseCode);
+
+        var configurationCodes=recipe.Select(x=>x.ComponentConfigurationCode)
+            .Append(workOrder.ConfigurationCode).Where(x=>!string.IsNullOrWhiteSpace(x))
+            .Select(x=>x!.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var yapCodes=configurationCodes.Length==0?[]:await uow.Repository<YapCodeEntity>().Query()
+            .Where(x=>x.BranchCode==branch&&configurationCodes.Contains(x.ConfigurationCode))
+            .ToListAsync(ct);
+        long? ResolveYap(string? code,long? stockId)=>string.IsNullOrWhiteSpace(code)?null:yapCodes
+            .Where(x=>string.Equals(x.ConfigurationCode,code.Trim(),StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(x=>x.StockId==stockId).ThenBy(x=>x.Id).Select(x=>(long?)x.Id).FirstOrDefault();
+
+        stockMap.TryGetValue(workOrder.StockCode,out var productStock);
+        warehouseMap.TryGetValue(workOrder.IssueWarehouseCode,out var sourceWarehouse);
+        warehouseMap.TryGetValue(workOrder.WarehouseCode,out var targetWarehouse);
+        var errors=new List<string>();
+        if(productStock is null)errors.Add($"Mamul stok WMS ERP aynasında bulunamadı: {workOrder.StockCode}");
+        if(sourceWarehouse is null)errors.Add($"Çıkış deposu WMS ERP aynasında bulunamadı: {workOrder.IssueWarehouseCode}");
+        if(targetWarehouse is null)errors.Add($"Üretim deposu WMS ERP aynasında bulunamadı: {workOrder.WarehouseCode}");
+
+        var materials=recipe.Select(row=>
+        {
+            stockMap.TryGetValue(row.ComponentStockCode,out var stock);
+            var error=stock is null?$"Bileşen stok WMS ERP aynasında bulunamadı: {row.ComponentStockCode}":null;
+            if(error is not null)errors.Add(error);
+            return new PreparedNetsisProductionMaterial(
+                stock?.Id,row.ComponentStockCode,row.ComponentStockName,
+                stock?.BaseUnitCode??row.ComponentUnitCode??"ADET",
+                ResolveYap(row.ComponentConfigurationCode,stock?.Id),row.ComponentConfigurationCode,
+                row.OperationNumber,row.RecipeQuantity,row.VariableWasteQuantity+row.FixedWasteQuantity,
+                row.TotalRequiredQuantity,error);
+        }).ToArray();
+
+        var existing=await uow.Repository<ProductionOrder>().Query()
+            .Where(x=>x.BranchCode==branch&&x.ExternalOrderNo==externalNo)
+            .OrderByDescending(x=>x.Id)
+            .Select(x=>new{x.Id,x.ProductionHeaderId,x.Header.DocumentNo}).FirstOrDefaultAsync(ct);
+        return new PreparedNetsisProductionWorkOrder(
+            workOrder.WorkOrderNumber,workOrder.BranchCode,workOrder.StockCode,workOrder.StockName,
+            productStock?.BaseUnitCode??workOrder.UnitCode??"ADET",workOrder.WorkOrderQuantity,
+            productStock?.Id,ResolveYap(workOrder.ConfigurationCode,productStock?.Id),workOrder.ConfigurationCode,
+            sourceWarehouse?.Id,workOrder.IssueWarehouseCode,sourceWarehouse?.WarehouseName,
+            targetWarehouse?.Id,workOrder.WarehouseCode,targetWarehouse?.WarehouseName,
+            workOrder.WorkOrderDate,workOrder.DeliveryDate,workOrder.ProjectCode,workOrder.IsClosed,
+            existing?.ProductionHeaderId,existing?.Id,existing?.DocumentNo,
+            errors.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),materials);
+    }
 
     public Task<CreateProductionPlanResult> CreateAsync(
         CreateProductionPlanRequest request,
