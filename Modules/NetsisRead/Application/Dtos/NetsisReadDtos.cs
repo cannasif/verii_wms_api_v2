@@ -72,3 +72,66 @@ public sealed record ShipmentOpenOrderLineDto(
     decimal? NetUnitPrice,decimal? GrossUnitPrice,
     decimal? OrderedQuantity,decimal? DeliveredQuantity,decimal? RemainingQuantity,
     decimal? PlannedQuantity,decimal? AvailableQuantity);
+
+/// <summary>Read-only Netsis production work-order projection. No ERP row is tracked by EF.</summary>
+public sealed record ProductionWorkOrderDto(
+    string WorkOrderNumber,
+    int BranchCode,
+    string StockCode,
+    string StockName,
+    string? ConfigurationCode,
+    decimal WorkOrderQuantity,
+    int UnitSequence,
+    string? UnitCode,
+    decimal RecipeTotal,
+    DateTime? WorkOrderDate,
+    DateTime? DeliveryDate,
+    string? OrderNumber,
+    int OrderLineSequence,
+    string? ProjectCode,
+    int WarehouseCode,
+    int IssueWarehouseCode,
+    bool IsClosed);
+
+/// <summary>One material component of a Netsis stock recipe.</summary>
+public sealed record StockRecipeComponentDto(
+    int BranchCode,
+    string ProductCode,
+    string ProductName,
+    string? ProductUnitCode,
+    string? ProductConfigurationCode,
+    string ComponentStockCode,
+    string? ComponentStockName,
+    string? ComponentUnitCode,
+    string? ComponentConfigurationCode,
+    int OperationNumber,
+    decimal RecipeTotal,
+    decimal RecipeQuantity,
+    decimal QuantityPerProduct,
+    decimal WasteValue,
+    decimal FixedWasteQuantity,
+    bool IsQuantityFixed);
+
+/// <summary>A Netsis work order resolved into its material requirements.</summary>
+public sealed record ProductionWorkOrderRecipeComponentDto(
+    string WorkOrderNumber,
+    int BranchCode,
+    string ProductCode,
+    string ProductName,
+    string? ConfigurationCode,
+    decimal WorkOrderQuantity,
+    string? ProductUnitCode,
+    decimal RecipeTotal,
+    string ComponentStockCode,
+    string? ComponentStockName,
+    string? ComponentUnitCode,
+    string? ComponentConfigurationCode,
+    int OperationNumber,
+    decimal RecipeQuantity,
+    decimal QuantityPerProduct,
+    decimal WasteValue,
+    decimal FixedWasteQuantity,
+    bool IsQuantityFixed,
+    decimal BaseRequiredQuantity,
+    decimal VariableWasteQuantity,
+    decimal TotalRequiredQuantity);
