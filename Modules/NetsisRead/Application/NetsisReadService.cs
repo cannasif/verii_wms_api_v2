@@ -146,6 +146,84 @@ public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INet
             ct,Parameter("@orderNumbersCsv",orderNumbersCsv),Parameter("@branchCode",Normalize(branchCode)));
     }
 
+    public async Task<IReadOnlyList<ProductionWorkOrderDto>> GetProductionWorkOrdersAsync(
+        string? workOrderNumber,
+        int branchCode,
+        bool includeClosed,
+        int take,
+        CancellationToken ct)
+    {
+        workOrderNumber = Normalize(workOrderNumber);
+        take = Math.Clamp(take, 1, 1_000);
+
+        return await queryExecutor.QueryAsync<ProductionWorkOrderDto>(
+            "RII_FN_ISEMRI",
+            """
+            SELECT TOP (@take) *
+            FROM dbo.RII_FN_ISEMRI(@workOrderNumber, @branchCode, @includeClosed)
+            ORDER BY Tarih DESC, IsEmriNo
+            """,
+            r => new ProductionWorkOrderDto(
+                String(r, "IsEmriNo"), Get<int>(r, "SubeKodu"), String(r, "StokKodu"), String(r, "StokAdi"),
+                NullableString(r, "YapilandirmaKodu"), Get<decimal>(r, "IsEmriMiktari"), Get<int>(r, "BirimSirasi"),
+                NullableString(r, "BirimKodu"), Get<decimal>(r, "ReceteToplami"), Nullable<DateTime>(r, "Tarih"),
+                Nullable<DateTime>(r, "TeslimTarihi"), NullableString(r, "SiparisNo"), Get<int>(r, "SiparisSatirNo"),
+                NullableString(r, "ProjeKodu"), Get<int>(r, "DepoKodu"), Get<int>(r, "CikisDepoKodu"), Get<bool>(r, "Kapali")),
+            ct,
+            Parameter("@take", take),
+            Parameter("@workOrderNumber", workOrderNumber),
+            Parameter("@branchCode", branchCode),
+            Parameter("@includeClosed", includeClosed));
+    }
+
+    public async Task<IReadOnlyList<StockRecipeComponentDto>> GetStockRecipeAsync(
+        string stockCode,
+        int branchCode,
+        string? configurationCode,
+        CancellationToken ct)
+    {
+        stockCode = Normalize(stockCode) ?? throw new ArgumentException("Stok kodu zorunludur.", nameof(stockCode));
+
+        return await queryExecutor.QueryAsync<StockRecipeComponentDto>(
+            "RII_FN_STOK_RECETE",
+            "SELECT * FROM dbo.RII_FN_STOK_RECETE(@stockCode, @branchCode, @configurationCode) ORDER BY OperasyonNo, BilesenStokKodu",
+            r => new StockRecipeComponentDto(
+                Get<int>(r, "SubeKodu"), String(r, "MamulKodu"), String(r, "MamulAdi"), NullableString(r, "MamulBirimKodu"),
+                NullableString(r, "MamulYapilandirmaKodu"), String(r, "BilesenStokKodu"), NullableString(r, "BilesenStokAdi"),
+                NullableString(r, "BilesenBirimKodu"), NullableString(r, "BilesenYapilandirmaKodu"), Get<int>(r, "OperasyonNo"),
+                Get<decimal>(r, "ReceteToplami"), Get<decimal>(r, "ReceteMiktari"), Get<decimal>(r, "BirMamulIcinMiktar"),
+                Get<decimal>(r, "FireDegeri"), Get<decimal>(r, "SabitFireMiktari"), Get<bool>(r, "MiktarSabit")),
+            ct,
+            Parameter("@stockCode", stockCode),
+            Parameter("@branchCode", branchCode),
+            Parameter("@configurationCode", Normalize(configurationCode)));
+    }
+
+    public async Task<IReadOnlyList<ProductionWorkOrderRecipeComponentDto>> GetProductionWorkOrderRecipeAsync(
+        string workOrderNumber,
+        int branchCode,
+        CancellationToken ct)
+    {
+        workOrderNumber = Normalize(workOrderNumber)
+            ?? throw new ArgumentException("İş emri numarası zorunludur.", nameof(workOrderNumber));
+
+        return await queryExecutor.QueryAsync<ProductionWorkOrderRecipeComponentDto>(
+            "RII_FN_ISEMRI_RECETE",
+            "SELECT * FROM dbo.RII_FN_ISEMRI_RECETE(@workOrderNumber, @branchCode) ORDER BY OperasyonNo, BilesenStokKodu",
+            r => new ProductionWorkOrderRecipeComponentDto(
+                String(r, "IsEmriNo"), Get<int>(r, "SubeKodu"), String(r, "MamulKodu"), String(r, "MamulAdi"),
+                NullableString(r, "YapilandirmaKodu"), Get<decimal>(r, "IsEmriMiktari"), NullableString(r, "MamulBirimKodu"),
+                Get<decimal>(r, "ReceteToplami"), String(r, "BilesenStokKodu"), NullableString(r, "BilesenStokAdi"),
+                NullableString(r, "BilesenBirimKodu"), NullableString(r, "BilesenYapilandirmaKodu"), Get<int>(r, "OperasyonNo"),
+                Get<decimal>(r, "ReceteMiktari"), Get<decimal>(r, "BirMamulIcinMiktar"), Get<decimal>(r, "FireDegeri"),
+                Get<decimal>(r, "SabitFireMiktari"), Get<bool>(r, "MiktarSabit"), Get<decimal>(r, "BazIhtiyacMiktari"),
+                Get<decimal>(r, "DegiskenFireMiktari"),
+                Get<decimal>(r, "ToplamIhtiyacMiktari")),
+            ct,
+            Parameter("@workOrderNumber", workOrderNumber),
+            Parameter("@branchCode", branchCode));
+    }
+
     private static SqlParameter Parameter(string name, object? value) => new(name, value ?? DBNull.Value);
     private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static string String(SqlDataReader r, string name) => NullableString(r,name) ?? string.Empty;
