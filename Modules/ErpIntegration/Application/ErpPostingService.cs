@@ -840,7 +840,8 @@ public sealed class ErpPostingService(
                     allocations,
                     warehouse.WarehouseCode,
                     null,
-                    null);
+                    null,
+                    line.ProjectCode ?? header.ProjectCode);
             }
             else if (allocations.Count > 0)
                 lines.AddRange(allocations.Select(x => NewOrderLinkedLine(
@@ -848,7 +849,8 @@ public sealed class ErpPostingService(
                     null, line.YapCodeSnapshot, null, line.Description, x.OrderRow)));
             else
                 lines.Add(NewLine(line.StockCodeSnapshot, quantity, warehouse.WarehouseCode,
-                    null, null, line.YapCodeSnapshot, null, null, line.Description));
+                    null, null, line.YapCodeSnapshot, null, null, line.Description,
+                    projectCode: line.ProjectCode ?? header.ProjectCode));
         }
 
         var options = optionsAccessor.Value.Rest;
@@ -863,7 +865,7 @@ public sealed class ErpPostingService(
             warehouse,
             header.Description,
             lines,
-            ResolveErpHeaderProjectCode(usedOrderRows),
+            usedOrderRows.Count > 0 ? ResolveErpHeaderProjectCode(usedOrderRows) : header.ProjectCode,
             ResolveErpDeliveryDate(usedOrderRows, header.DocumentDate));
     }
 
@@ -1398,14 +1400,15 @@ public sealed class ErpPostingService(
         IReadOnlyList<ErpOrderAllocation> allocations,
         int? warehouseCode,
         int? sourceWarehouseCode,
-        int? targetWarehouseCode)
+        int? targetWarehouseCode,
+        string? fallbackProjectCode = null)
     {
         if (allocations.Count == 0)
         {
             foreach (var serial in serialParts)
                 target.Add(NewLine(
                     stockCode, serial.Quantity, warehouseCode, sourceWarehouseCode, targetWarehouseCode,
-                    yapCode, serial.SerialNo, null, description));
+                    yapCode, serial.SerialNo, null, description, projectCode: fallbackProjectCode));
             return;
         }
 
