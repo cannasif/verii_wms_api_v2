@@ -81,6 +81,14 @@ public sealed class ProductionTransfersController(
     public async Task<IActionResult>RemoveAssignment(long id,long taskId,long userId,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);
         return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.RemoveAssignmentAsync(id,taskId,userId,UserId(),ct),"Görev ataması kaldırıldı."));}
+    [HttpPost("{id:long}/tasks/{taskId:long}/handoff")]
+    public async Task<IActionResult>Handoff(long id,long taskId,HandoffProductionTransferTaskRequest request,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.HandoffAsync(id,taskId,request,UserId(),ct),"Görevin kalan miktarı devredildi."));}
+    [HttpPost("{id:long}/tasks/{taskId:long}/refresh-route")]
+    public async Task<IActionResult>RefreshRoute(long id,long taskId,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.RefreshRouteAsync(id,taskId,UserId(),ct),"Toplanmamış kalemlerin rotası güncel stok bakiyesine göre yenilendi."));}
     [HttpPost("{id:long}/tasks/{taskId:long}/start")]
     public async Task<IActionResult>StartTask(long id,long taskId,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
