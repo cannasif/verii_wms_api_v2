@@ -11,6 +11,7 @@ public enum KkdExcessApprovalStatus { NotRequired = 1, Pending = 2, Approved = 3
 public sealed class KkdPolicy : BaseEntity
 {
     public string PolicyKey { get; set; } = "DEFAULT";
+    public bool EnableMaterialRequestOrderFlow { get; set; } = true;
     public bool RequireOpenOrder { get; set; } = true;
     public bool AllowOpenOrderExcess { get; set; } = true;
     public bool AllowMultipleOrdersPerDistribution { get; set; } = true;

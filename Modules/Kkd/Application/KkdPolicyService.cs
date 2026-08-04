@@ -7,6 +7,7 @@ namespace verii_wms_api_v2.Modules.Kkd.Application;
 public sealed record KkdPolicyDto(
     long Id,
     string BranchCode,
+    bool EnableMaterialRequestOrderFlow,
     bool RequireOpenOrder,
     bool AllowOpenOrderExcess,
     bool AllowMultipleOrdersPerDistribution,
@@ -17,6 +18,7 @@ public sealed record KkdPolicyDto(
     DateTime? UpdatedDate);
 
 public sealed record UpdateKkdPolicyRequest(
+    bool EnableMaterialRequestOrderFlow,
     bool RequireOpenOrder,
     bool AllowOpenOrderExcess,
     bool AllowMultipleOrdersPerDistribution,
@@ -61,6 +63,7 @@ public sealed class KkdPolicyService(IUnitOfWork uow) : IKkdPolicyService
             await repository.AddAsync(entity, ct);
         }
 
+        entity.EnableMaterialRequestOrderFlow = request.EnableMaterialRequestOrderFlow;
         entity.RequireOpenOrder = request.RequireOpenOrder;
         entity.AllowOpenOrderExcess = request.AllowOpenOrderExcess;
         entity.AllowMultipleOrdersPerDistribution = request.AllowMultipleOrdersPerDistribution;
@@ -77,6 +80,7 @@ public sealed class KkdPolicyService(IUnitOfWork uow) : IKkdPolicyService
     {
         BranchCode = branchCode,
         PolicyKey = DefaultKey,
+        EnableMaterialRequestOrderFlow = true,
         RequireOpenOrder = true,
         AllowOpenOrderExcess = true,
         AllowMultipleOrdersPerDistribution = true,
@@ -86,7 +90,8 @@ public sealed class KkdPolicyService(IUnitOfWork uow) : IKkdPolicyService
     };
 
     private static KkdPolicyDto Map(KkdPolicy x) => new(
-        x.Id, x.BranchCode, x.RequireOpenOrder, x.AllowOpenOrderExcess,
+        x.Id, x.BranchCode, x.EnableMaterialRequestOrderFlow,
+        x.RequireOpenOrder, x.AllowOpenOrderExcess,
         x.AllowMultipleOrdersPerDistribution, x.RequireEmployeeUserLink,
         x.AllowFutureDatedDistribution, x.RequireManagerApprovalForExcess,
         x.UpdatedBy, x.UpdatedDate);

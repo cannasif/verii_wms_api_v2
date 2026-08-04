@@ -88,6 +88,28 @@ public sealed class KkdController(
     public async Task<IActionResult> DistributionOrderLines(long employeeId, [FromQuery] string orderNumbersCsv, CancellationToken ct)
     { await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct); return Ok(ApiResponse<IReadOnlyList<KkdOpenOrderLine>>.Ok(await distributions.GetOpenOrderLinesAsync(employeeId, orderNumbersCsv, ct))); }
 
+    [HttpGet("material-requests/configuration")]
+    public async Task<IActionResult> MaterialRequestConfiguration(CancellationToken ct)
+    {
+        await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct);
+        var effective = await policy.GetAsync(BranchCode(), ct);
+        return Ok(ApiResponse<KkdMaterialRequestConfiguration>.Ok(new(effective.EnableMaterialRequestOrderFlow)));
+    }
+
+    [HttpGet("material-requests/context/{employeeId:long}")]
+    public async Task<IActionResult> MaterialRequestContext(long employeeId, CancellationToken ct)
+    {
+        await RequireMaterialRequestOrderFlow(ct);
+        return Ok(ApiResponse<KkdDistributionContext>.Ok(await distributions.GetContextAsync(employeeId, ct)));
+    }
+
+    [HttpGet("material-requests/context/{employeeId:long}/lines")]
+    public async Task<IActionResult> MaterialRequestOrderLines(long employeeId, [FromQuery] string orderNumbersCsv, CancellationToken ct)
+    {
+        await RequireMaterialRequestOrderFlow(ct);
+        return Ok(ApiResponse<IReadOnlyList<KkdOpenOrderLine>>.Ok(await distributions.GetOpenOrderLinesAsync(employeeId, orderNumbersCsv, ct)));
+    }
+
     [HttpPost("distributions/stock/barcode-resolve")]
     public async Task<IActionResult> ResolveDistributionStock(KkdBarcodeResolveRequest request, CancellationToken ct)
     {
@@ -134,4 +156,12 @@ public sealed class KkdController(
 
     private async Task Require(string code, CancellationToken ct)
     { if (!await permissions.HasPermissionAsync(User, code, ct)) throw AppException.Forbidden(); }
+
+    private async Task RequireMaterialRequestOrderFlow(CancellationToken ct)
+    {
+        await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct);
+        var effective = await policy.GetAsync(BranchCode(), ct);
+        if (!effective.EnableMaterialRequestOrderFlow)
+            throw AppException.Conflict("Malzeme talep siparişleri bu şubenin KKD süreç politikasında kapalıdır.");
+    }
 }

@@ -11,6 +11,7 @@ public sealed class KkdPolicyConfiguration : BaseEntityConfiguration<KkdPolicy>
     {
         b.ToTable("RII_KKD_POLICY");
         b.Property(x => x.PolicyKey).HasMaxLength(30).IsRequired();
+        b.Property(x => x.EnableMaterialRequestOrderFlow).HasDefaultValue(true);
         b.Property(x => x.RequireManagerApprovalForExcess).HasDefaultValue(true);
         b.Property(x => x.RowVersion).IsRowVersion();
         b.HasIndex(x => new { x.BranchCode, x.PolicyKey }).IsUnique().HasFilter("[IsDeleted] = 0");

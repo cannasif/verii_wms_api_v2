@@ -140,6 +140,12 @@ public sealed class KkdDistributionService(
             .Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var orderBased = orderNumbers.Length > 0;
+        var assignedUserIds = (request.AssignedUserIds ?? [])
+            .Where(x => x > 0)
+            .Distinct()
+            .ToArray();
+        if (!request.CreateWarehouseTask && assignedUserIds.Length > 0)
+            throw AppException.BadRequest("Doğrudan KKD dağıtımına görev sorumlusu atanamaz.");
         var openRows = orderBased
             ? await netsis.GetShipmentOpenOrderLinesAsync(string.Join(',', orderNumbers), employee.BranchCode, ct)
             : [];
@@ -186,7 +192,9 @@ public sealed class KkdDistributionService(
             employee.BranchCode,
             request.DocumentSeriesId,
             request.DocumentDate,
-            orderBased ? WarehouseOutboundInitiationMode.OrderBasedDirect : WarehouseOutboundInitiationMode.StockBasedDirect,
+            request.CreateWarehouseTask
+                ? orderBased ? WarehouseOutboundInitiationMode.OrderBasedTask : WarehouseOutboundInitiationMode.StockBasedTask
+                : orderBased ? WarehouseOutboundInitiationMode.OrderBasedDirect : WarehouseOutboundInitiationMode.StockBasedDirect,
             employee.CustomerId,
             request.WarehouseId,
             request.StagingLocationId,
@@ -198,7 +206,7 @@ public sealed class KkdDistributionService(
             null, null, null, null, null, null,
             Clean(request.Description, 1000) ?? $"{employee.EmployeeCode} KKD teslimi",
             prepared.Select(ToOutboundLine).ToArray(),
-            null);
+            request.CreateWarehouseTask ? assignedUserIds : null);
         var outbound = await outbounds.CreateDraftAsync(outboundRequest, actor, ct);
 
         return await uow.ExecuteInTransactionAsync(async token =>

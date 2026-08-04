@@ -3,6 +3,7 @@ using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 namespace verii_wms_api_v2.Modules.Kkd.Application;
 
 public sealed record KkdBarcodeResolveRequest(string Barcode, long? WarehouseId);
+public sealed record KkdMaterialRequestConfiguration(bool IsEnabled);
 
 public sealed record KkdDistributionTrackingRequest(
     decimal Quantity,
@@ -34,7 +35,9 @@ public sealed record KkdDistributionCreateRequest(
     long? StagingLocationId,
     long? LoadingLocationId,
     string? Description,
-    IReadOnlyList<KkdDistributionLineCreateRequest> Lines);
+    IReadOnlyList<KkdDistributionLineCreateRequest> Lines,
+    bool CreateWarehouseTask = false,
+    IReadOnlyList<long>? AssignedUserIds = null);
 
 public sealed record KkdDistributionCreateResult(
     long Id,
