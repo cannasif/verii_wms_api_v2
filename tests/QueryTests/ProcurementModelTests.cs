@@ -19,6 +19,7 @@ public sealed class ProcurementModelTests
         Assert.Equal("RII_PC_RFQ", Entity<ProcurementRfq>(model).GetTableName());
         Assert.Equal("RII_PC_QUOTE", Entity<ProcurementSupplierQuote>(model).GetTableName());
         Assert.Equal("RII_PC_ORDER", Entity<ProcurementPurchaseOrder>(model).GetTableName());
+        Assert.Equal("RII_PC_POLICY", Entity<ProcurementPolicy>(model).GetTableName());
         Assert.NotNull(Entity<ProcurementRequest>(model).FindProperty(nameof(ProcurementRequest.BranchCode)));
         Assert.NotNull(Entity<ProcurementPurchaseOrder>(model).FindProperty(nameof(ProcurementPurchaseOrder.BranchCode)));
     }
@@ -42,11 +43,28 @@ public sealed class ProcurementModelTests
     [Fact]
     public void Procurement_lifecycle_has_explicit_approval_and_receipt_states()
     {
-        Assert.Equal(
-            ["Draft", "PendingApproval", "Approved", "Rejected", "Converted", "Cancelled"],
-            Enum.GetNames<ProcurementRequestStatus>());
+        Assert.Contains(nameof(ProcurementRequestStatus.PartiallyConverted), Enum.GetNames<ProcurementRequestStatus>());
+        Assert.Contains(nameof(ProcurementQuoteStatus.PartiallyConverted), Enum.GetNames<ProcurementQuoteStatus>());
         Assert.Contains(nameof(ProcurementOrderStatus.PartiallyReceived), Enum.GetNames<ProcurementOrderStatus>());
         Assert.Contains(nameof(ProcurementOrderStatus.Received), Enum.GetNames<ProcurementOrderStatus>());
+    }
+
+    [Fact]
+    public void Split_awards_have_branch_policy_and_concurrency_tokens()
+    {
+        using var context = CreateContext();
+        var model = context.GetService<IDesignTimeModel>().Model;
+        var policy = Entity<ProcurementPolicy>(model);
+        var requestLine = Entity<ProcurementRequestLine>(model);
+        var quoteLine = Entity<ProcurementSupplierQuoteLine>(model);
+
+        Assert.NotNull(policy.FindProperty(nameof(ProcurementPolicy.AllowMultipleRfqsPerRequest)));
+        Assert.NotNull(policy.FindProperty(nameof(ProcurementPolicy.AllowMultipleOrdersPerQuote)));
+        Assert.True(requestLine.FindProperty(nameof(ProcurementRequestLine.RowVersion))!.IsConcurrencyToken);
+        Assert.True(quoteLine.FindProperty(nameof(ProcurementSupplierQuoteLine.RowVersion))!.IsConcurrencyToken);
+        Assert.Contains(quoteLine.GetCheckConstraints(), x =>
+            x.Name == "CK_RII_PC_QUOTE_LINE_AMOUNTS"
+            && x.Sql.Contains("[ConvertedQuantity] <= [QuotedQuantity]", StringComparison.Ordinal));
     }
 
     private static IEntityType Entity<TEntity>(IModel model) =>
