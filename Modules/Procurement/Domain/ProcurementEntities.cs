@@ -2,9 +2,9 @@ using verii_wms_api_v2.Shared.Domain;
 
 namespace verii_wms_api_v2.Modules.Procurement.Domain;
 
-public enum ProcurementRequestStatus { Draft=1, PendingApproval=2, Approved=3, Rejected=4, Converted=5, Cancelled=6 }
+public enum ProcurementRequestStatus { Draft=1, PendingApproval=2, Approved=3, Rejected=4, Converted=5, Cancelled=6, PartiallyConverted=7 }
 public enum ProcurementRfqStatus { Draft=1, Sent=2, Quoted=3, Closed=4, Cancelled=5 }
-public enum ProcurementQuoteStatus { Draft=1, Submitted=2, Approved=3, Rejected=4, Converted=5, Cancelled=6 }
+public enum ProcurementQuoteStatus { Draft=1, Submitted=2, Approved=3, Rejected=4, Converted=5, Cancelled=6, PartiallyConverted=7 }
 public enum ProcurementOrderStatus { Draft=1, PendingApproval=2, Approved=3, SentToSupplier=4, PartiallyReceived=5, Received=6, Cancelled=7 }
 
 public sealed class ProcurementRequest : BaseEntity
@@ -39,6 +39,7 @@ public sealed class ProcurementRequestLine : BaseEntity
     public DateOnly? RequiredDate { get; set; }
     public string? ProjectCode { get; set; }
     public string? Description { get; set; }
+    public byte[] RowVersion { get; set; } = [];
 }
 
 public sealed class ProcurementRfq : BaseEntity
@@ -107,10 +108,24 @@ public sealed class ProcurementSupplierQuoteLine : BaseEntity
     public long ProcurementRfqLineId { get; set; }
     public int LineNo { get; set; }
     public decimal QuotedQuantity { get; set; }
+    public decimal ConvertedQuantity { get; set; }
     public decimal UnitPrice { get; set; }
     public decimal DiscountRate { get; set; }
     public decimal VatRate { get; set; }
     public DateOnly? DeliveryDate { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+}
+
+public sealed class ProcurementPolicy : BaseEntity
+{
+    public string PolicyKey { get; set; } = "DEFAULT";
+    public bool AllowMultipleRfqsPerRequest { get; set; } = true;
+    public bool AllowPartialRfqLines { get; set; } = true;
+    public bool AllowMultipleQuotesPerSupplier { get; set; } = true;
+    public bool AllowMultipleOrdersPerQuote { get; set; } = true;
+    public bool AllowPartialOrderLines { get; set; } = true;
+    public bool AllowSplitAwardsAcrossSuppliers { get; set; } = true;
+    public byte[] RowVersion { get; set; } = [];
 }
 
 public sealed class ProcurementPurchaseOrder : BaseEntity

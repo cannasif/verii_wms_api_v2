@@ -14,7 +14,7 @@ public sealed class ProcurementRequestConfiguration : BaseEntityConfiguration<Pr
 }
 public sealed class ProcurementRequestLineConfiguration : BaseEntityConfiguration<ProcurementRequestLine>
 {
-    protected override void ConfigureEntity(EntityTypeBuilder<ProcurementRequestLine> b) { b.ToTable("RII_PC_REQUEST_LINE",t=>t.HasCheckConstraint("CK_RII_PC_REQUEST_LINE_QTY","[RequestedQuantity] > 0 AND [ConvertedQuantity] >= 0 AND [ConvertedQuantity] <= [RequestedQuantity]")); b.Property(x=>x.StockCodeSnapshot).HasMaxLength(100); b.Property(x=>x.StockNameSnapshot).HasMaxLength(300).IsRequired(); b.Property(x=>x.UnitCode).HasMaxLength(20).IsRequired(); b.Property(x=>x.ProjectCode).HasMaxLength(100); b.Property(x=>x.Description).HasMaxLength(1000); b.Property(x=>x.RequestedQuantity).HasPrecision(20,6); b.Property(x=>x.ConvertedQuantity).HasPrecision(20,6); b.HasOne(x=>x.Request).WithMany(x=>x.Lines).HasForeignKey(x=>x.ProcurementRequestId).OnDelete(DeleteBehavior.Restrict); b.HasIndex(x=>new{x.ProcurementRequestId,x.LineNo}).IsUnique(); }
+    protected override void ConfigureEntity(EntityTypeBuilder<ProcurementRequestLine> b) { b.ToTable("RII_PC_REQUEST_LINE",t=>t.HasCheckConstraint("CK_RII_PC_REQUEST_LINE_QTY","[RequestedQuantity] > 0 AND [ConvertedQuantity] >= 0 AND [ConvertedQuantity] <= [RequestedQuantity]")); b.Property(x=>x.StockCodeSnapshot).HasMaxLength(100); b.Property(x=>x.StockNameSnapshot).HasMaxLength(300).IsRequired(); b.Property(x=>x.UnitCode).HasMaxLength(20).IsRequired(); b.Property(x=>x.ProjectCode).HasMaxLength(100); b.Property(x=>x.Description).HasMaxLength(1000); b.Property(x=>x.RequestedQuantity).HasPrecision(20,6); b.Property(x=>x.ConvertedQuantity).HasPrecision(20,6); b.Property(x=>x.RowVersion).IsRowVersion(); b.HasOne(x=>x.Request).WithMany(x=>x.Lines).HasForeignKey(x=>x.ProcurementRequestId).OnDelete(DeleteBehavior.Restrict); b.HasIndex(x=>new{x.ProcurementRequestId,x.LineNo}).IsUnique(); }
 }
 public sealed class ProcurementRfqConfiguration : BaseEntityConfiguration<ProcurementRfq>
 {
@@ -34,7 +34,11 @@ public sealed class ProcurementSupplierQuoteConfiguration : BaseEntityConfigurat
 }
 public sealed class ProcurementSupplierQuoteLineConfiguration : BaseEntityConfiguration<ProcurementSupplierQuoteLine>
 {
-    protected override void ConfigureEntity(EntityTypeBuilder<ProcurementSupplierQuoteLine> b) { b.ToTable("RII_PC_QUOTE_LINE",t=>t.HasCheckConstraint("CK_RII_PC_QUOTE_LINE_AMOUNTS","[QuotedQuantity] > 0 AND [UnitPrice] >= 0 AND [DiscountRate] >= 0 AND [DiscountRate] <= 100 AND [VatRate] >= 0")); b.Property(x=>x.QuotedQuantity).HasPrecision(20,6); b.Property(x=>x.UnitPrice).HasPrecision(20,6); b.Property(x=>x.DiscountRate).HasPrecision(9,4); b.Property(x=>x.VatRate).HasPrecision(9,4); b.HasOne(x=>x.Quote).WithMany(x=>x.Lines).HasForeignKey(x=>x.ProcurementSupplierQuoteId).OnDelete(DeleteBehavior.Restrict); b.HasIndex(x=>new{x.ProcurementSupplierQuoteId,x.LineNo}).IsUnique(); }
+    protected override void ConfigureEntity(EntityTypeBuilder<ProcurementSupplierQuoteLine> b) { b.ToTable("RII_PC_QUOTE_LINE",t=>t.HasCheckConstraint("CK_RII_PC_QUOTE_LINE_AMOUNTS","[QuotedQuantity] > 0 AND [ConvertedQuantity] >= 0 AND [ConvertedQuantity] <= [QuotedQuantity] AND [UnitPrice] >= 0 AND [DiscountRate] >= 0 AND [DiscountRate] <= 100 AND [VatRate] >= 0")); b.Property(x=>x.QuotedQuantity).HasPrecision(20,6); b.Property(x=>x.ConvertedQuantity).HasPrecision(20,6); b.Property(x=>x.UnitPrice).HasPrecision(20,6); b.Property(x=>x.DiscountRate).HasPrecision(9,4); b.Property(x=>x.VatRate).HasPrecision(9,4); b.Property(x=>x.RowVersion).IsRowVersion(); b.HasOne(x=>x.Quote).WithMany(x=>x.Lines).HasForeignKey(x=>x.ProcurementSupplierQuoteId).OnDelete(DeleteBehavior.Restrict); b.HasIndex(x=>new{x.ProcurementSupplierQuoteId,x.LineNo}).IsUnique(); }
+}
+public sealed class ProcurementPolicyConfiguration : BaseEntityConfiguration<ProcurementPolicy>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<ProcurementPolicy> b) { b.ToTable("RII_PC_POLICY"); b.Property(x=>x.PolicyKey).HasMaxLength(30).IsRequired(); b.Property(x=>x.RowVersion).IsRowVersion(); b.HasIndex(x=>new{x.BranchCode,x.PolicyKey}).IsUnique().HasFilter("[IsDeleted] = 0"); }
 }
 public sealed class ProcurementPurchaseOrderConfiguration : BaseEntityConfiguration<ProcurementPurchaseOrder>
 {
