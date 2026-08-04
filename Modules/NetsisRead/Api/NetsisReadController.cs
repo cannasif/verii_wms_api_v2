@@ -1,6 +1,8 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 using verii_wms_api_v2.Modules.AccessControl.Application;
+using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Modules.NetsisRead.Application;
 using verii_wms_api_v2.Modules.NetsisRead.Application.Dtos;
 using verii_wms_api_v2.Shared;
@@ -72,9 +74,47 @@ public sealed class NetsisReadController(INetsisReadService service, ILogger<Net
     [HttpGet("shipping/open-orders/lines")]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<ShipmentOpenOrderLineDto>>>> ShipmentOpenOrderLines([FromQuery]string orderNumbersCsv,[FromQuery]string? branchCode,CancellationToken ct){await Require(ct);return await Execute(()=>service.GetShipmentOpenOrderLinesAsync(orderNumbersCsv,branchCode,ct));}
 
+    [HttpGet("production/work-orders")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<ProductionWorkOrderDto>>>> ProductionWorkOrders(
+        [FromQuery] string? workOrderNumber,
+        [FromQuery] bool includeClosed = false,
+        [FromQuery] int take = 200,
+        CancellationToken ct = default)
+    {
+        await Require(ct);
+        return await Execute(() => service.GetProductionWorkOrdersAsync(workOrderNumber, CurrentBranchCode(), includeClosed, take, ct));
+    }
+
+    [HttpGet("production/stocks/{stockCode}/recipe")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<StockRecipeComponentDto>>>> StockRecipe(
+        string stockCode,
+        [FromQuery] string? configurationCode,
+        CancellationToken ct)
+    {
+        await Require(ct);
+        return await Execute(() => service.GetStockRecipeAsync(stockCode, CurrentBranchCode(), configurationCode, ct));
+    }
+
+    [HttpGet("production/work-orders/{workOrderNumber}/recipe")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<ProductionWorkOrderRecipeComponentDto>>>> ProductionWorkOrderRecipe(
+        string workOrderNumber,
+        CancellationToken ct)
+    {
+        await Require(ct);
+        return await Execute(() => service.GetProductionWorkOrderRecipeAsync(workOrderNumber, CurrentBranchCode(), ct));
+    }
+
     private async Task Require(CancellationToken ct)
     {
         if (!await permissions.HasPermissionAsync(User, "ERP.NETSIS_READ.VIEW", ct)) throw AppException.Forbidden();
+    }
+
+    private int CurrentBranchCode()
+    {
+        var value = User.FindFirstValue(JwtTokenIssuer.BranchCodeClaim)?.Trim();
+        return int.TryParse(value, out var branchCode)
+            ? branchCode
+            : throw AppException.Unauthorized("Oturum şube bilgisi bulunamadı.");
     }
 
     private async Task<ActionResult<ApiResponse<T>>> Execute<T>(Func<Task<T>> action)
