@@ -25,6 +25,8 @@ using verii_wms_api_v2.Modules.ProjectSettings.Domain;
 using verii_wms_api_v2.Modules.ProjectSettings.Infrastructure;
 using verii_wms_api_v2.Modules.Production.Domain;
 using verii_wms_api_v2.Modules.Production.Infrastructure;
+using verii_wms_api_v2.Modules.Procurement.Domain;
+using verii_wms_api_v2.Modules.Procurement.Infrastructure;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Infrastructure;
 using verii_wms_api_v2.Modules.Quality.Domain;
@@ -177,6 +179,16 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<WarehouseTransferStatusHistory> WarehouseTransferStatusHistory => Set<WarehouseTransferStatusHistory>();
     public DbSet<WarehouseTransferPolicy> WarehouseTransferPolicies => Set<WarehouseTransferPolicy>();
     public DbSet<ProductionHeader> ProductionHeaders => Set<ProductionHeader>();
+    public DbSet<ProcurementRequest> ProcurementRequests => Set<ProcurementRequest>();
+    public DbSet<ProcurementRequestLine> ProcurementRequestLines => Set<ProcurementRequestLine>();
+    public DbSet<ProcurementRfq> ProcurementRfqs => Set<ProcurementRfq>();
+    public DbSet<ProcurementRfqLine> ProcurementRfqLines => Set<ProcurementRfqLine>();
+    public DbSet<ProcurementRfqSupplier> ProcurementRfqSuppliers => Set<ProcurementRfqSupplier>();
+    public DbSet<ProcurementSupplierQuote> ProcurementSupplierQuotes => Set<ProcurementSupplierQuote>();
+    public DbSet<ProcurementSupplierQuoteLine> ProcurementSupplierQuoteLines => Set<ProcurementSupplierQuoteLine>();
+    public DbSet<ProcurementPurchaseOrder> ProcurementPurchaseOrders => Set<ProcurementPurchaseOrder>();
+    public DbSet<ProcurementPurchaseOrderLine> ProcurementPurchaseOrderLines => Set<ProcurementPurchaseOrderLine>();
+    public DbSet<ProcurementStatusHistory> ProcurementStatusHistory => Set<ProcurementStatusHistory>();
     public DbSet<ProductionOrder> ProductionOrders => Set<ProductionOrder>();
     public DbSet<ProductionMaterialRequirement> ProductionMaterialRequirements => Set<ProductionMaterialRequirement>();
     public DbSet<ProductionOutputExpectation> ProductionOutputExpectations => Set<ProductionOutputExpectation>();
@@ -359,6 +371,16 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new WarehouseTransferStatusHistoryConfiguration());
         modelBuilder.ApplyConfiguration(new WarehouseTransferPolicyConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionHeaderConfiguration());
+        modelBuilder.ApplyConfiguration(new ProcurementRequestConfiguration());
+        modelBuilder.ApplyConfiguration(new ProcurementRequestLineConfiguration());
+        modelBuilder.ApplyConfiguration(new ProcurementRfqConfiguration());
+        modelBuilder.ApplyConfiguration(new ProcurementRfqLineConfiguration());
+        modelBuilder.ApplyConfiguration(new ProcurementRfqSupplierConfiguration());
+        modelBuilder.ApplyConfiguration(new ProcurementSupplierQuoteConfiguration());
+        modelBuilder.ApplyConfiguration(new ProcurementSupplierQuoteLineConfiguration());
+        modelBuilder.ApplyConfiguration(new ProcurementPurchaseOrderConfiguration());
+        modelBuilder.ApplyConfiguration(new ProcurementPurchaseOrderLineConfiguration());
+        modelBuilder.ApplyConfiguration(new ProcurementStatusHistoryConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionOrderConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionMaterialRequirementConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionOutputExpectationConfiguration());
@@ -583,6 +605,13 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             new PermissionDefinition { Id=2509, BranchCode="0", Code="WMS.KKD.REPORTS.VIEW", Name="KKD raporlarını görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2510, BranchCode="0", Code="WMS.KKD.POLICY.VIEW", Name="KKD süreç politikasını görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2511, BranchCode="0", Code="WMS.KKD.POLICY.MANAGE", Name="KKD süreç politikasını yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
+        modelBuilder.Entity<PermissionDefinition>().HasData(
+            new PermissionDefinition { Id=2600, BranchCode="0", Code="WMS.PROCUREMENT.VIEW", Name="Satınalma belgelerini görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2601, BranchCode="0", Code="WMS.PROCUREMENT.REQUEST.MANAGE", Name="Satınalma taleplerini yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2602, BranchCode="0", Code="WMS.PROCUREMENT.RFQ.MANAGE", Name="Teklif taleplerini yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2603, BranchCode="0", Code="WMS.PROCUREMENT.QUOTE.MANAGE", Name="Tedarikçi tekliflerini yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2604, BranchCode="0", Code="WMS.PROCUREMENT.ORDER.MANAGE", Name="Satınalma siparişlerini yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2605, BranchCode="0", Code="WMS.PROCUREMENT.APPROVE", Name="Satınalma belgelerini onayla", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionGroup>().HasData(new PermissionGroup { Id=1001, BranchCode="0", Name="System Administrators", Description="Tam sistem yönetimi", IsSystemAdmin=true, IsActive=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(1,8).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(9,7).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
@@ -606,6 +635,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2410,9).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2420,5).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2500,12).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
+        modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2600,6).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<UserPermissionGroup>().HasData(new UserPermissionGroup { Id=1001, BranchCode="0", UserId=1, PermissionGroupId=1001, CreatedDate=seedDate });
     }
 
