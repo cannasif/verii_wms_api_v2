@@ -15,7 +15,7 @@ public sealed class WarehouseConfiguration : BaseEntityConfiguration<Domain.Ware
         builder.HasOne<WarehouseLocation>()
             .WithMany()
             .HasForeignKey(x => x.DefaultGoodsReceiptLocationId)
-            .OnDelete(DeleteBehavior.SetNull);
+            .OnDelete(DeleteBehavior.NoAction);
         builder.HasIndex(x => x.DefaultGoodsReceiptLocationId)
             .HasDatabaseName("IX_RII_WAREHOUSE_DEFAULT_GR_LOCATION");
         builder.HasOne<WarehouseLocation>()
