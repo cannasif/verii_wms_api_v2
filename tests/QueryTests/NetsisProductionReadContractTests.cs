@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using verii_wms_api_v2.Migrations;
 using verii_wms_api_v2.Modules.NetsisRead.Application.Dtos;
@@ -43,5 +44,33 @@ public sealed class NetsisProductionReadContractTests
         Assert.Contains("\"baseRequiredQuantity\":20", json, StringComparison.Ordinal);
         Assert.Contains("\"variableWasteQuantity\":4", json, StringComparison.Ordinal);
         Assert.Contains("\"totalRequiredQuantity\":21", json, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Compatible_production_functions_match_the_installed_netsis_schema_and_include_waste()
+    {
+        var sql = new AddCompatibleNetsisProductionReadFunctions().UpOperations
+            .OfType<SqlOperation>()
+            .Select(x => x.Sql)
+            .ToList();
+
+        Assert.Equal(3, sql.Count);
+        Assert.Contains(sql, x => x.Contains("I.SUBEKODU", StringComparison.Ordinal));
+        Assert.DoesNotContain(sql, x => x.Contains("I.SUBE_KODU", StringComparison.Ordinal));
+        Assert.DoesNotContain(sql, x => x.Contains("I.OLCUBR", StringComparison.Ordinal));
+        Assert.Contains(sql, x => x.Contains(
+            "B.BazIhtiyacMiktari + F.DegiskenFireMiktari + R.SabitFireMiktari",
+            StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Warehouse_return_location_bridge_removes_the_second_set_null_path()
+    {
+        var foreignKey = new PrepareWarehouseTransferReturnLocation().UpOperations
+            .OfType<AddForeignKeyOperation>()
+            .Single();
+
+        Assert.Equal(ReferentialAction.NoAction, foreignKey.OnDelete);
+        Assert.Equal("DefaultGoodsReceiptLocationId", foreignKey.Columns.Single());
     }
 }

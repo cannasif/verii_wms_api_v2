@@ -62,5 +62,5 @@ public sealed class KkdDistributionPolicyTests
     };
 
     private static KkdPolicyDto Policy(bool requireOpenOrder = true, bool allowMultipleOrders = true) => new(
-        0, "0", requireOpenOrder, true, allowMultipleOrders, false, false, true, null, null);
+        0, "0", true, requireOpenOrder, true, allowMultipleOrders, false, false, true, null, null);
 }

@@ -16,6 +16,7 @@ public sealed class KkdPolicyServiceTests
 
         var result = await fixture.Service.GetAsync("0");
 
+        Assert.True(result.EnableMaterialRequestOrderFlow);
         Assert.True(result.RequireOpenOrder);
         Assert.True(result.AllowOpenOrderExcess);
         Assert.True(result.AllowMultipleOrdersPerDistribution);
@@ -28,6 +29,7 @@ public sealed class KkdPolicyServiceTests
     {
         await using var fixture = Fixture.Create();
         var request = new UpdateKkdPolicyRequest(
+            EnableMaterialRequestOrderFlow: false,
             RequireOpenOrder: true,
             AllowOpenOrderExcess: false,
             AllowMultipleOrdersPerDistribution: false,
@@ -39,6 +41,7 @@ public sealed class KkdPolicyServiceTests
         var second = await fixture.Service.GetAsync("0");
 
         Assert.Equal(first.Id, second.Id);
+        Assert.False(second.EnableMaterialRequestOrderFlow);
         Assert.True(second.RequireOpenOrder);
         Assert.False(second.AllowOpenOrderExcess);
         Assert.False(second.AllowMultipleOrdersPerDistribution);

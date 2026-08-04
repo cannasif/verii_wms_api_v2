@@ -7,6 +7,7 @@ using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.SubcontractingTransfer.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
+using verii_wms_api_v2.Modules.WarehouseOutbound.Domain;
 using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 using Xunit;
 
@@ -96,6 +97,7 @@ public sealed class ProductionAndSubcontractingTransferModelTests
         var distribution = AssertEntity<KkdDistribution>(model);
         var preference = AssertEntity<KkdEmployeeStockPreference>(model);
 
+        Assert.NotNull(policy.FindProperty(nameof(KkdPolicy.EnableMaterialRequestOrderFlow)));
         Assert.NotNull(policy.FindProperty(nameof(KkdPolicy.RequireManagerApprovalForExcess)));
         Assert.Equal(30, distribution.FindProperty(nameof(KkdDistribution.ExcessApprovalStatus))?.GetMaxLength());
         Assert.Equal(1000, distribution.FindProperty(nameof(KkdDistribution.ExcessApprovalReason))?.GetMaxLength());
@@ -108,6 +110,21 @@ public sealed class ProductionAndSubcontractingTransferModelTests
             }));
         Assert.True(uniquePreference.IsUnique);
         Assert.Equal("[IsDeleted] = 0", uniquePreference.GetFilter());
+    }
+
+    [Fact]
+    public void Warehouse_outbound_keeps_operation_and_line_project_metadata()
+    {
+        using var context = CreateContext();
+        var model = context.GetService<IDesignTimeModel>().Model;
+        var header = AssertEntity<WarehouseOutboundHeader>(model);
+        var line = AssertEntity<WarehouseOutboundLine>(model);
+
+        Assert.Equal(50, header.FindProperty(nameof(WarehouseOutboundHeader.ProjectCode))?.GetMaxLength());
+        Assert.Equal(100, header.FindProperty(nameof(WarehouseOutboundHeader.CostCenterCode))?.GetMaxLength());
+        Assert.Equal(50, header.FindProperty(nameof(WarehouseOutboundHeader.MovementTypeCode))?.GetMaxLength());
+        Assert.Equal(100, header.FindProperty(nameof(WarehouseOutboundHeader.ExitLocationCode))?.GetMaxLength());
+        Assert.Equal(50, line.FindProperty(nameof(WarehouseOutboundLine.ProjectCode))?.GetMaxLength());
     }
 
     private static IEntityType AssertEntity<TEntity>(IModel model) =>
