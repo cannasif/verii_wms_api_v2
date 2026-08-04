@@ -5,15 +5,21 @@ namespace verii_wms_api_v2.Modules.Procurement.Application;
 public sealed record ProcurementLineInput(long? StockId,string? StockCode,string StockName,string UnitCode,decimal Quantity,DateOnly? RequiredDate,string? ProjectCode,string? Description);
 public sealed record CreateProcurementRequest(DateOnly? RequestDate,DateOnly? RequiredDate,string? DepartmentCode,string? ProjectCode,string Subject,string? Description,IReadOnlyList<ProcurementLineInput> Lines);
 public sealed record ProcurementTransitionRequest(string? Note);
-public sealed record ConvertRequestToRfqRequest(DateOnly ResponseDueDate,IReadOnlyList<long> SupplierIds,string? BuyerMessage);
+public sealed record RfqRequestLineInput(long RequestLineId,decimal Quantity);
+public sealed record ConvertRequestToRfqRequest(DateOnly ResponseDueDate,IReadOnlyList<long> SupplierIds,string? BuyerMessage,IReadOnlyList<RfqRequestLineInput>? Lines=null);
 public sealed record CreateSupplierQuoteRequest(long SupplierId,string QuoteNo,DateOnly? QuoteDate,DateOnly? ValidUntil,string CurrencyCode,decimal ExchangeRate,string? Note,IReadOnlyList<SupplierQuoteLineInput> Lines);
 public sealed record SupplierQuoteLineInput(long RfqLineId,decimal Quantity,decimal UnitPrice,decimal DiscountRate,decimal VatRate,DateOnly? DeliveryDate);
 public sealed record CreatePurchaseOrderRequest(long SupplierId,DateOnly? OrderDate,DateOnly? DeliveryDate,string CurrencyCode,decimal ExchangeRate,string? ProjectCode,string? Description,IReadOnlyList<PurchaseOrderLineInput> Lines);
 public sealed record PurchaseOrderLineInput(long? StockId,string? StockCode,string StockName,string UnitCode,decimal Quantity,decimal UnitPrice,decimal DiscountRate,decimal VatRate,DateOnly? DeliveryDate,string? ProjectCode);
+public sealed record QuoteOrderLineInput(long QuoteLineId,decimal Quantity);
+public sealed record ConvertQuoteToOrderRequest(IReadOnlyList<QuoteOrderLineInput>? Lines=null,DateOnly? OrderDate=null,DateOnly? DeliveryDate=null,string? ProjectCode=null,string? Description=null);
+
+public sealed record ProcurementPolicyDto(long Id,string BranchCode,bool AllowMultipleRfqsPerRequest,bool AllowPartialRfqLines,bool AllowMultipleQuotesPerSupplier,bool AllowMultipleOrdersPerQuote,bool AllowPartialOrderLines,bool AllowSplitAwardsAcrossSuppliers,long? UpdatedBy,DateTime? UpdatedDate);
+public sealed record UpdateProcurementPolicyRequest(bool AllowMultipleRfqsPerRequest,bool AllowPartialRfqLines,bool AllowMultipleQuotesPerSupplier,bool AllowMultipleOrdersPerQuote,bool AllowPartialOrderLines,bool AllowSplitAwardsAcrossSuppliers);
 
 public sealed record ProcurementWorkspaceSummary(int DraftRequests,int PendingRequests,int OpenRfqs,int SubmittedQuotes,int PendingOrders,int ApprovedOpenOrders);
 public sealed record ProcurementGridRow(long Id,string DocumentType,string DocumentNo,DateOnly DocumentDate,string Status,string Subject,string? Counterparty,int LineCount,decimal TotalAmount,string CurrencyCode,DateOnly? DueDate,DateTime? CreatedDate);
-public sealed record ProcurementLineDetail(long Id,int LineNo,long? StockId,string? StockCode,string StockName,string UnitCode,decimal Quantity,decimal SecondaryQuantity,decimal UnitPrice,decimal DiscountRate,decimal VatRate,DateOnly? RequiredDate,string? ProjectCode);
+public sealed record ProcurementLineDetail(long Id,int LineNo,long? StockId,string? StockCode,string StockName,string UnitCode,decimal Quantity,decimal SecondaryQuantity,decimal UnitPrice,decimal DiscountRate,decimal VatRate,DateOnly? RequiredDate,string? ProjectCode,decimal OpenQuantity);
 public sealed record ProcurementSupplierParticipant(long SupplierId,string SupplierCode,string SupplierName);
 public sealed record ProcurementDocumentDetail(long Id,string DocumentType,string DocumentNo,DateOnly DocumentDate,string Status,string Subject,string? Description,string? CounterpartyCode,string? CounterpartyName,string CurrencyCode,decimal ExchangeRate,DateOnly? DueDate,IReadOnlyList<ProcurementLineDetail> Lines,IReadOnlyList<ProcurementHistoryRow> History,IReadOnlyList<ProcurementSupplierParticipant>? Suppliers=null);
 public sealed record ProcurementHistoryRow(string FromStatus,string ToStatus,long ActorUserId,string? Note,DateTimeOffset ChangedAtUtc);
@@ -33,8 +39,14 @@ public interface IProcurementService
     Task TransitionRfqAsync(long id,string action,ProcurementTransitionRequest request,long actorUserId,CancellationToken ct=default);
     Task<long> CreateQuoteAsync(long rfqId,CreateSupplierQuoteRequest request,long actorUserId,CancellationToken ct=default);
     Task TransitionQuoteAsync(long id,string action,ProcurementTransitionRequest request,long actorUserId,CancellationToken ct=default);
-    Task<long> ConvertQuoteToOrderAsync(long id,long actorUserId,CancellationToken ct=default);
+    Task<long> ConvertQuoteToOrderAsync(long id,ConvertQuoteToOrderRequest request,long actorUserId,CancellationToken ct=default);
     Task<long> CreateOrderAsync(CreatePurchaseOrderRequest request,long actorUserId,CancellationToken ct=default);
     Task TransitionOrderAsync(long id,string action,ProcurementTransitionRequest request,long actorUserId,CancellationToken ct=default);
     Task<IReadOnlyList<ProcurementReceiptSourceLine>> GetOpenReceiptSourceLinesAsync(long? purchaseOrderId,CancellationToken ct=default);
+}
+
+public interface IProcurementPolicyService
+{
+    Task<ProcurementPolicyDto> GetAsync(string branchCode,CancellationToken ct=default);
+    Task<ProcurementPolicyDto> UpdateAsync(string branchCode,UpdateProcurementPolicyRequest request,long actorUserId,CancellationToken ct=default);
 }
