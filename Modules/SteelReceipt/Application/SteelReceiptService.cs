@@ -218,7 +218,8 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
     {
         var query=Plans.Query()
             .Where(plan=>plan.Status!=SteelReceiptPlanStatus.Cancelled
-                &&plan.Lines.Any(line=>line.ConversionStatus==SteelReceiptConversionStatus.NotCreated))
+                &&plan.Lines.Any(line=>line.ConversionStatus==SteelReceiptConversionStatus.NotCreated)
+                &&plan.Lines.Any(line=>line.VehicleAcceptanceId!=null))
             .Select(plan=>new SteelReceiptPendingSourceRow(
                 plan.Id,plan.BranchCode,plan.ImportReferenceNo,plan.SourceFileName,plan.WaybillNo,plan.WaybillDate,
                 plan.SupplierCodeSnapshot,plan.SupplierNameSnapshot,
@@ -243,6 +244,8 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
         if(plans.Count==0)throw AppException.NotFound("Excel aktarım referansı veya irsaliye numarasıyla eşleşen SAC planı bulunamadı.");
         if(plans.Count>1)throw AppException.Conflict("Bu irsaliye numarası birden fazla SAC planında bulunuyor. Excel aktarım referansını girin.");
         var plan=plans[0];
+        if(!await Lines.AnyAsync(x=>x.PlanId==plan.Id&&x.VehicleAcceptanceId!=null,ct))
+            throw AppException.Conflict("Bu Excel aktarımı için araç girişi tamamlanmamış. Önce araç kabulünü yapın.");
         var lines=await GridQuery(Lines.Query()
             .Where(x=>x.PlanId==plan.Id)
             .OrderBy(x=>x.LineNo))
