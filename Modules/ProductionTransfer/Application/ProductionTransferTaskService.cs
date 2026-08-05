@@ -86,7 +86,15 @@ public sealed class ProductionTransferTaskService(IUnitOfWork uow, IAuditLogWrit
             });
             if (task.Status == WarehouseTransferTaskStatus.Open) task.Status = WarehouseTransferTaskStatus.Assigned;
             task.UpdatedBy = actor; task.UpdatedDate = DateTime.UtcNow;
-            await uow.SaveChangesAsync(token);
+            try { await uow.SaveChangesAsync(token); }
+            catch (DbUpdateException exception) when (
+                exception.InnerException?.Message.Contains(
+                    "IX_RII_WT_TASK_ASSIGNMENT_WtTaskId_UserId",
+                    StringComparison.OrdinalIgnoreCase) == true)
+            {
+                throw AppException.Conflict(
+                    $"{user.Username} bu göreve daha önce atanıp kaldırılmış; bu kaydın arşiv izi veritabanında tutulduğu için şu an yeniden atanamıyor. Lütfen sistem yöneticisine bildirin (Görev #{task.Id}, Kullanıcı #{user.Id}).");
+            }
             await audit.WriteAsync(new("production-transfer.task.assign", nameof(WarehouseTransferTask), task.Id.ToString(), "Succeeded", "production-transfer",
                 NewValues: new { TransferId = transferId, TaskId = task.Id, UserId = user.Id }, ChangedFields: ["Assignments", "Status"]), token);
             return await MapAsync(transferId, token);
@@ -98,7 +106,7 @@ public sealed class ProductionTransferTaskService(IUnitOfWork uow, IAuditLogWrit
             var task = await LoadTaskAsync(transferId, taskId, token);
             var assignment = task.Assignments.SingleOrDefault(x => !x.IsDeleted && x.UserId == userId)
                 ?? throw AppException.NotFound("Görev ataması bulunamadı.");
-            if (task.Lines.Any(x => x.ProcessedQuantity > 0))
+            if (task.StartedBy == userId && task.Lines.Any(x => x.ProcessedQuantity > 0))
                 throw AppException.Conflict("Stok toplamış görevden atama kaldırılamaz. Önce toplanan stoklar yerine konmalıdır.");
             assignment.IsDeleted = true; assignment.DeletedBy = actor; assignment.DeletedDate = DateTime.UtcNow;
             var remainingAssignments = task.Assignments.Where(x => !x.IsDeleted && x.Id != assignment.Id).ToList();
@@ -442,7 +450,8 @@ public sealed class ProductionTransferTaskService(IUnitOfWork uow, IAuditLogWrit
                     x.PlannedQuantity, covered, Math.Max(0, x.PlannedQuantity - covered), x.ProcessedQuantity,
                     x.SourceLocationId,
                     lineLocations.Length == 0 ? null : string.Join(", ", lineLocations.Select(v => v.Code).Distinct()),
-                    lineLocations.Length == 0 ? null : string.Join(", ", lineLocations.Select(v => v.Name).Distinct()));
+                    lineLocations.Length == 0 ? null : string.Join(", ", lineLocations.Select(v => v.Name).Distinct()),
+                    x.Line.RequestedQuantity);
             }).ToList())).ToList();
         var workloadRows = await uow.Repository<WarehouseTransferTask>().Query()
             .Where(x => Contexts.Contains(x.Header.BusinessContext) && x.BranchCode == header.BranchCode)

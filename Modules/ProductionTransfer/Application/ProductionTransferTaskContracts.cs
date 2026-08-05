@@ -6,7 +6,8 @@ public sealed record ProductionTransferTaskAssignmentDto(long UserId, string Use
 public sealed record ProductionTransferTaskLineDto(
     long TaskLineId, long TransferLineId, string StockCode, string? StockName,
     decimal RequestedQuantity, decimal ReservedQuantity, decimal MissingQuantity, decimal ProcessedQuantity,
-    long? SourceLocationId, string? SourceLocationCode, string? SourceLocationName);
+    long? SourceLocationId, string? SourceLocationCode, string? SourceLocationName,
+    decimal TotalRequestedQuantity);
 public sealed record ProductionTransferTaskDto(
     long TaskId, string TaskNo, WarehouseTransferTaskType TaskType, long WarehouseId, WarehouseTransferTaskStatus Status,
     DateTimeOffset? AcceptedAtUtc, long? AcceptedBy, DateTimeOffset? StartedAtUtc, long? StartedBy,

@@ -685,13 +685,26 @@ public sealed class WarehouseTransferOperationService(
             TaskNo = $"{header.DocumentNo}-P01-{sequence}",
             TaskType = WarehouseTransferTaskType.Pick,
             WarehouseId = header.SourceWarehouseId,
-            Status = WarehouseTransferTaskStatus.Open,
+            Status = WarehouseTransferTaskStatus.Assigned,
             Priority = current.Priority,
             PlannedAtUtc = DateTimeOffset.UtcNow,
-            Description = $"{header.DocumentNo} kısmi sevkinden kalan atanmamış toplama işi ({sequence}).",
+            Description = $"{header.DocumentNo} kısmi sevkinden kalan toplama işi ({sequence}).",
             CreatedBy = actor,
             CreatedDate = DateTime.UtcNow
         };
+        // Kısmi sevk sonrası kalan işi, önceki işi yapan kullanıcıya otomatik atar — aksi halde görev
+        // kimseye atanmamış kalır ve kullanıcı devam etmeye çalıştığında "toplama emri bulunamadı" hatası alır.
+        next.Assignments.Add(new WarehouseTransferTaskAssignment
+        {
+            BranchCode = header.BranchCode,
+            CreatedBy = actor,
+            CreatedDate = DateTime.UtcNow,
+            Task = next,
+            UserId = actor,
+            IsPrimary = true,
+            AssignedAtUtc = DateTimeOffset.UtcNow,
+            AssignedBy = actor
+        });
         foreach (var residual in residualLines)
             next.Lines.Add(new WarehouseTransferTaskLine
             {
