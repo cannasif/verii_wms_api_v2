@@ -341,11 +341,13 @@ public sealed class GoodsReceiptOperationsService(
             foreach (var stock in stocks.Values) trackingPolicies[stock.Id] = await trackingPolicyResolver.ResolveAsync(branch, stock.Id, token);
             var requiresQuality = RequiresQuality(
                 qualityAlreadyApproved,
-                resolved.Values.Any(x => x.InspectionMode != QualityInspectionMode.NoCheck));
+                resolved.Values.Any(x => x.InspectionMode != QualityInspectionMode.NoCheck),
+                request.ForceQualityControl);
             foreach (var input in request.Lines)
             {
                 var lineRequiresQuality = RequiresQualityForLine(
-                    qualityAlreadyApproved, resolved[input.StockId]);
+                    qualityAlreadyApproved, resolved[input.StockId],
+                    request.ForceQualityControl || input.ForceQualityControl);
                 var lineLocationId = input.ReceivingLocationId ?? request.ReceivingLocationId;
                 var locationPolicy = GoodsReceiptLocationPolicy.ResolveSelectionPolicy(
                     policy.BlockPutawayUntilQualityDecision);
@@ -363,7 +365,8 @@ public sealed class GoodsReceiptOperationsService(
                 policy.BlockPutawayUntilQualityDecision,
                 request.Lines
                     .Where(input => RequiresQualityForLine(
-                        qualityAlreadyApproved, resolved[input.StockId]))
+                        qualityAlreadyApproved, resolved[input.StockId],
+                        request.ForceQualityControl || input.ForceQualityControl))
                     .Select(input => lineLocations[
                         input.ReceivingLocationId ?? request.ReceivingLocationId].IsPutaway));
 
@@ -466,7 +469,8 @@ public sealed class GoodsReceiptOperationsService(
                 yaps.TryGetValue(input.YapCodeId ?? 0, out var yap); var qp = resolved[stock.Id];
                 var trackingPolicy = trackingPolicies[stock.Id];
                 var unit = StockUnitPolicy.Resolve(stock, input.UnitCode);
-                var qualityRequired = RequiresQualityForLine(qualityAlreadyApproved, qp);
+                var qualityRequired = RequiresQualityForLine(
+                    qualityAlreadyApproved, qp, request.ForceQualityControl || input.ForceQualityControl);
                 var line = Stamp(new GoodsReceiptLine
                 {
                     BranchCode = branch, Header = header, LineNo = index + 1, StockId = stock.Id,
@@ -732,13 +736,16 @@ public sealed class GoodsReceiptOperationsService(
 
     internal static bool RequiresQuality(
         bool qualityAlreadyApproved,
-        bool anyStockPolicyRequiresQuality) =>
-        !qualityAlreadyApproved && anyStockPolicyRequiresQuality;
+        bool anyStockPolicyRequiresQuality,
+        bool forceQualityControl = false) =>
+        !qualityAlreadyApproved && (anyStockPolicyRequiresQuality || forceQualityControl);
 
     internal static bool RequiresQualityForLine(
         bool qualityAlreadyApproved,
-        ResolvedQualityPolicy qualityPolicy) =>
-        !qualityAlreadyApproved && qualityPolicy.InspectionMode != QualityInspectionMode.NoCheck;
+        ResolvedQualityPolicy qualityPolicy,
+        bool forceQualityControl = false) =>
+        !qualityAlreadyApproved
+        && (qualityPolicy.InspectionMode != QualityInspectionMode.NoCheck || forceQualityControl);
 
     internal static string ResolveNextAction(bool requiresQualityControl) =>
         requiresQualityControl ? "SendToQuality" : "CreateWaybill";

@@ -11,7 +11,8 @@ public sealed record ReserveGoodsReceiptOrderLineRequest(
     string OrderNumber, int OrderId, decimal Quantity,
     long TargetWarehouseId, long ReceivingLocationId,
     StockTrackingType TrackingType,
-    IReadOnlyList<PlanGoodsReceiptTrackingRequest>? Trackings);
+    IReadOnlyList<PlanGoodsReceiptTrackingRequest>? Trackings,
+    bool ForceQualityControl = false);
 
 public sealed record CreateOrderBasedGoodsReceiptRequest(
     Guid IdempotencyKey,
@@ -34,7 +35,8 @@ public sealed record CreateOrderBasedGoodsReceiptRequest(
     byte Priority,
     string? Description,
     IReadOnlyList<long>? AssignedUserIds,
-    IReadOnlyList<ReserveGoodsReceiptOrderLineRequest> Lines);
+    IReadOnlyList<ReserveGoodsReceiptOrderLineRequest> Lines,
+    bool ForceQualityControl = false);
 
 public sealed record CreateGoodsReceiptResult(
     long Id,

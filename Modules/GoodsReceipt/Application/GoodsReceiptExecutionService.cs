@@ -134,7 +134,8 @@ public sealed class GoodsReceiptExecutionService(
                 task.BranchCode, taskLine.Line.StockId, stockGroupCode, token);
             var requiresQuality = GoodsReceiptOperationsService.RequiresQualityForLine(
                 false,
-                policy);
+                policy,
+                taskLine.Line.RequireQualityControl);
             taskLine.Line.RequireQualityControl = requiresQuality;
             var now = DateTimeOffset.UtcNow;
             QualityInspection? inspection = null;

@@ -116,17 +116,23 @@ public sealed class GoodsReceiptService(
                 trackingPolicies[stock.Id] = await trackingPolicyResolver.ResolveAsync(branch, stock.Id, ct);
             sourceSelected = await ApplyAutomaticSerialsAsync(
                 sourceSelected, stockByCode, trackingPolicies, branch, request.IdempotencyKey, actorUserId, ct);
-            var requiresQuality = qualityPolicies.Values.Any(x => x.InspectionMode != QualityInspectionMode.NoCheck);
+            var requiresQuality = GoodsReceiptOperationsService.RequiresQuality(
+                false,
+                qualityPolicies.Values.Any(x => x.InspectionMode != QualityInspectionMode.NoCheck),
+                request.ForceQualityControl || sourceSelected.Any(x => x.Request.ForceQualityControl));
             foreach (var item in sourceSelected)
             {
                 var stock = stockByCode[item.Source.StockCode!];
                 var locationPolicy = GoodsReceiptLocationPolicy.ResolveSelectionPolicy(
                     receiptPolicy.BlockPutawayUntilQualityDecision);
+                var lineRequiresQuality = GoodsReceiptOperationsService.RequiresQualityForLine(
+                    false, qualityPolicies[stock.Id],
+                    request.ForceQualityControl || item.Request.ForceQualityControl);
                 if (!GoodsReceiptLocationPolicy.IsAllowedForReceiptLine(
                         locationPolicy,
                         receivingLocations[item.Request.ReceivingLocationId],
                         item.Request.TargetWarehouseId,
-                        qualityPolicies[stock.Id].InspectionMode != QualityInspectionMode.NoCheck,
+                        lineRequiresQuality,
                         receiptPolicy.BlockPutawayUntilQualityDecision))
                     throw AppException.BadRequest(
                         $"{stock.ErpStockCode}: {GoodsReceiptOperationsService.LocationPolicyError(locationPolicy)}");
@@ -135,9 +141,9 @@ public sealed class GoodsReceiptService(
                 requiresQuality,
                 receiptPolicy.BlockPutawayUntilQualityDecision,
                 sourceSelected
-                    .Where(item =>
-                        qualityPolicies[stockByCode[item.Source.StockCode!].Id].InspectionMode
-                        != QualityInspectionMode.NoCheck)
+                    .Where(item => GoodsReceiptOperationsService.RequiresQualityForLine(
+                        false, qualityPolicies[stockByCode[item.Source.StockCode!].Id],
+                        request.ForceQualityControl || item.Request.ForceQualityControl))
                     .Select(item => receivingLocations[item.Request.ReceivingLocationId].IsPutaway));
 
             var yapCodes = sourceSelected.Select(x => x.Source.YapCode).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -234,7 +240,9 @@ public sealed class GoodsReceiptService(
                     RequireExpirationDate = trackingPolicy.RequireExpirationDate,
                     AllowOverReceipt = request.AllowOverReceipt, OverReceiptTolerancePercent = request.OverReceiptTolerancePercent,
                     AllowUnderReceipt = receiptPolicy.AllowUnderReceipt,
-                    RequireQualityControl = GoodsReceiptOperationsService.RequiresQualityForLine(false, qualityPolicies[stock.Id]),
+                    RequireQualityControl = GoodsReceiptOperationsService.RequiresQualityForLine(
+                        false, qualityPolicies[stock.Id],
+                        request.ForceQualityControl || item.Request.ForceQualityControl),
                     DefaultReceivingLocationId = item.Request.ReceivingLocationId, Status = GoodsReceiptLineStatus.Open }, actorUserId, now);
                 header.Lines.Add(line);
                 line.Sources.Add(Stamp(new GoodsReceiptLineSource { BranchCode = branch, Line = line, SourceDocument = documents[source.OrderNumber],

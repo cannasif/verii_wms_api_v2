@@ -128,6 +128,24 @@ public sealed class QualityRuleResolutionTests
     }
 
     [Fact]
+    public void ForceQualityControl_overrides_a_no_check_policy_but_not_prior_approval()
+    {
+        var noRule = Policy("NoRule", QualityInspectionMode.NoCheck);
+        var stockRule = Policy("StockRule", QualityInspectionMode.InspectionRequired);
+
+        Assert.True(GoodsReceiptOperationsService.RequiresQualityForLine(false, noRule, forceQualityControl: true));
+        Assert.False(GoodsReceiptOperationsService.RequiresQualityForLine(false, noRule, forceQualityControl: false));
+        Assert.True(GoodsReceiptOperationsService.RequiresQualityForLine(false, stockRule, forceQualityControl: false));
+        Assert.False(GoodsReceiptOperationsService.RequiresQualityForLine(true, noRule, forceQualityControl: true),
+            "Already-approved quality must not be re-forced back on.");
+
+        Assert.True(GoodsReceiptOperationsService.RequiresQuality(false, false, forceQualityControl: true));
+        Assert.False(GoodsReceiptOperationsService.RequiresQuality(false, false, forceQualityControl: false));
+        Assert.False(GoodsReceiptOperationsService.RequiresQuality(true, false, forceQualityControl: true),
+            "Already-approved quality must not be re-forced back on.");
+    }
+
+    [Fact]
     public void Receipt_waits_until_every_matching_quality_line_has_a_final_decision()
     {
         var partiallyDecided = QualityService.ResolveDecisionState(

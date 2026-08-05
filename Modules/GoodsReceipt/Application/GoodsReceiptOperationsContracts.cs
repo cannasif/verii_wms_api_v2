@@ -10,7 +10,8 @@ public sealed record ManualGoodsReceiptLineRequest(
     string? LotNo, string? SerialNo, DateOnly? ManufacturingDate, DateOnly? ExpirationDate,
     string? ScannedBarcode, long? GoodsReceiptLabelId, string? Description,
     long? TargetWarehouseId, long? ReceivingLocationId,
-    string? SourceOrderNumber = null, int? SourceOrderId = null);
+    string? SourceOrderNumber = null, int? SourceOrderId = null,
+    bool ForceQualityControl = false);
 
 public sealed record CreateManualGoodsReceiptRequest(
     Guid IdempotencyKey, string BranchCode, long DocumentSeriesId, long SupplierId,
@@ -21,7 +22,8 @@ public sealed record CreateManualGoodsReceiptRequest(
     DateTimeOffset? PlannedArrivalAtUtc, DateTimeOffset? OccurredAtUtc,
     GoodsReceiptLabelStrategy LabelStrategy, GoodsReceiptExecutionMode ExecutionMode,
     byte Priority, string? DeviceId, string? Description,
-    IReadOnlyList<long>? AssignedUserIds, IReadOnlyList<ManualGoodsReceiptLineRequest> Lines);
+    IReadOnlyList<long>? AssignedUserIds, IReadOnlyList<ManualGoodsReceiptLineRequest> Lines,
+    bool ForceQualityControl = false);
 
 public sealed record ManualGoodsReceiptResult(
     long Id, string DocumentNo, GoodsReceiptInitiationMode InitiationMode,
