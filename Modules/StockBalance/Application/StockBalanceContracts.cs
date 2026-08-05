@@ -45,6 +45,13 @@ public sealed record PostStockReservationRequest(string IdempotencyKey, string R
     string? ReferenceNo, string OperationType, string? Reason, IReadOnlyList<StockReservationLineRequest> Lines);
 public sealed record StockReservationPostResult(long OperationId, bool Replayed, decimal QuantityDelta);
 
+public sealed record ResolveSerialLocationsRequest(string BranchCode, long WarehouseId, long StockId,
+    long? YapCodeId, IReadOnlyList<string> SerialNumbers);
+public sealed record SerialLocationMatchDto(string SerialNo, long? LocationId, string? LocationCode,
+    string? LocationName, decimal AvailableQuantity);
+public sealed record StockLocationBalanceDto(long LocationId, string LocationCode, string LocationName,
+    decimal AvailableQuantity);
+
 public interface IStockBalanceService
 {
     Task ApplyEntriesAsync(IReadOnlyCollection<StockMovementEntry> entries, CancellationToken cancellationToken = default);
@@ -57,6 +64,8 @@ public interface IStockBalanceService
     Task<ProjectionRebuildResult> RebuildAsync(CancellationToken cancellationToken = default);
     Task<ReconciliationSummary> GetReconciliationSummaryAsync(CancellationToken cancellationToken = default);
     Task<PagedResponse<ReconciliationIssue>> GetReconciliationIssuesAsync(PagedRequest request, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<SerialLocationMatchDto>> ResolveSerialLocationsAsync(ResolveSerialLocationsRequest request, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<StockLocationBalanceDto>> ResolveStockLocationsAsync(string branchCode, long warehouseId, long stockId, long? yapCodeId, CancellationToken cancellationToken = default);
 }
 
 public interface IStockBalanceJobRunner

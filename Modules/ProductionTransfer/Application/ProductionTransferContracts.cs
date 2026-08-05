@@ -64,6 +64,8 @@ public sealed record UpdateProductionTransferPolicyRequest(
     bool RequireTargetProductionLocation,bool AllowPartialSupply,bool AllowOverIssue,decimal OverIssueTolerancePercent,
     bool RequireApproval,WarehouseTransferCancellationReturnPolicy CancellationReturnPolicy);
 
+public sealed record DefaultProductionTargetLocationDto(long? LocationId,string? LocationCode,string? LocationName);
+
 public interface IProductionTransferService
 {
     Task<CreateWarehouseTransferDraftResult> CreateDraftAsync(CreateProductionTransferDraftRequest request,long actor,CancellationToken ct=default);
@@ -73,4 +75,5 @@ public interface IProductionTransferService
     Task DeleteDraftAsync(long id,long actor,CancellationToken ct=default);
     Task<ProductionTransferPolicyDto> GetPolicyAsync(string branchCode,CancellationToken ct=default);
     Task<ProductionTransferPolicyDto> UpdatePolicyAsync(UpdateProductionTransferPolicyRequest request,long actor,CancellationToken ct=default);
+    Task<DefaultProductionTargetLocationDto> GetDefaultTargetLocationAsync(long warehouseId,string branchCode,CancellationToken ct=default);
 }

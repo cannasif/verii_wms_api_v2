@@ -34,6 +34,22 @@ public sealed class StockBalancesController(IStockBalanceService service, IOpeni
             result.IsReplay ? "İlk bakiye aktarımının önceki sonucu döndürüldü." : $"{result.TotalRows} ilk bakiye satırı kaydedildi."));
     }
 
+    [HttpPost("resolve-serial-locations")]
+    public async Task<IActionResult> ResolveSerialLocations(ResolveSerialLocationsRequest request, CancellationToken ct)
+    {
+        await RequireAsync("WMS.LOCATIONS.VIEW", ct);
+        return Ok(ApiResponse<IReadOnlyList<SerialLocationMatchDto>>.Ok(await service.ResolveSerialLocationsAsync(request, ct)));
+    }
+
+    [HttpGet("stocks/{stockId:long}/locations")]
+    public async Task<IActionResult> ResolveStockLocations(long stockId, [FromQuery] long warehouseId,
+        [FromQuery] string branchCode, [FromQuery] long? yapCodeId, CancellationToken ct)
+    {
+        await RequireAsync("WMS.LOCATIONS.VIEW", ct);
+        return Ok(ApiResponse<IReadOnlyList<StockLocationBalanceDto>>.Ok(
+            await service.ResolveStockLocationsAsync(branchCode, warehouseId, stockId, yapCodeId, ct)));
+    }
+
     [HttpPost("locations/paged")]
     public async Task<IActionResult> Locations(PagedRequest request, CancellationToken ct)
     {

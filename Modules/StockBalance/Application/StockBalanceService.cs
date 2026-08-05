@@ -165,6 +165,54 @@ public sealed class StockBalanceService(IUnitOfWork unitOfWork) : IStockBalanceS
         }, cancellationToken, IsolationLevel.Serializable);
     }
 
+    public async Task<IReadOnlyList<SerialLocationMatchDto>> ResolveSerialLocationsAsync(
+        ResolveSerialLocationsRequest request, CancellationToken cancellationToken = default)
+    {
+        var requestedSerials = request.SerialNumbers.Where(x => !string.IsNullOrWhiteSpace(x)).ToArray();
+        if (requestedSerials.Length == 0) return [];
+
+        var candidates = await Locations.Query(true)
+            .Where(x => x.BranchCode == request.BranchCode && x.WarehouseId == request.WarehouseId
+                && x.StockId == request.StockId && x.YapCodeId == request.YapCodeId
+                && x.AvailableQuantity > 0 && !string.IsNullOrEmpty(x.SerialNo))
+            .ToListAsync(cancellationToken);
+        var balanceBySerial = candidates
+            .GroupBy(x => NormalizeKeyPart(x.SerialNo))
+            .ToDictionary(g => g.Key, g => g.First());
+
+        var locationIds = balanceBySerial.Values.Select(x => x.LocationId).Distinct().ToArray();
+        var locationLookup = locationIds.Length == 0
+            ? new Dictionary<long, WarehouseLocation>()
+            : await LocationDefinitions.Query().Where(x => locationIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, cancellationToken);
+
+        return requestedSerials.Select(serial =>
+        {
+            if (!balanceBySerial.TryGetValue(NormalizeKeyPart(serial), out var balance))
+                return new SerialLocationMatchDto(serial, null, null, null, 0);
+            locationLookup.TryGetValue(balance.LocationId, out var location);
+            return new SerialLocationMatchDto(serial, balance.LocationId, location?.Code, location?.Name, balance.AvailableQuantity);
+        }).ToList();
+    }
+
+    public async Task<IReadOnlyList<StockLocationBalanceDto>> ResolveStockLocationsAsync(
+        string branchCode, long warehouseId, long stockId, long? yapCodeId, CancellationToken cancellationToken = default)
+    {
+        var candidates = await Locations.Query(true)
+            .Where(x => x.BranchCode == branchCode && x.WarehouseId == warehouseId
+                && x.StockId == stockId && x.YapCodeId == yapCodeId && x.AvailableQuantity > 0)
+            .GroupBy(x => x.LocationId)
+            .Select(g => new { LocationId = g.Key, AvailableQuantity = g.Sum(x => x.AvailableQuantity) })
+            .ToListAsync(cancellationToken);
+        if (candidates.Count == 0) return [];
+
+        var locationIds = candidates.Select(x => x.LocationId).ToArray();
+        var locations = await LocationDefinitions.Query().Where(x => locationIds.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, cancellationToken);
+        return candidates.Select(x => locations.TryGetValue(x.LocationId, out var location)
+            ? new StockLocationBalanceDto(x.LocationId, location.Code, location.Name, x.AvailableQuantity)
+            : new StockLocationBalanceDto(x.LocationId, "?", "?", x.AvailableQuantity)).ToList();
+    }
+
     public async Task<PagedResponse<LocationBalanceRow>> GetLocationBalancesAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
         var search = request.Search?.Trim() ?? string.Empty;
