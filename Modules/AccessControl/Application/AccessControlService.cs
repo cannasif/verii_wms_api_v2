@@ -72,7 +72,7 @@ public sealed class AccessControlService(IUnitOfWork unitOfWork, IAuditLogWriter
     {
         var search = request.Search?.Trim();
         var query = PermissionGroups.Query().Where(x => string.IsNullOrWhiteSpace(search) || x.Name.Contains(search) || (x.Description != null && x.Description.Contains(search)))
-            .Select(x => new GroupGridRow(x.Id, x.Name, x.Description, x.IsSystemAdmin, x.IsActive, x.GroupPermissions.Count, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate))
+            .Select(x => new GroupGridRow(x.Id, x.Name, x.Description, x.IsSystemAdmin, x.IsProtected, x.TemplateKey, x.IsActive, x.GroupPermissions.Count, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate))
             .ApplyAdvancedFilters(request).ApplySort(request, nameof(GroupGridRow.Name));
         return await query.ToPagedResponseAsync(request, ct);
     }
@@ -92,21 +92,50 @@ public sealed class AccessControlService(IUnitOfWork unitOfWork, IAuditLogWriter
         }, ct);
     }
 
+    public async Task<long> CopyGroupAsync(long id, CopyGroupRequest request, CancellationToken ct)
+    {
+        var source = await PermissionGroups.Query().FirstOrDefaultAsync(x => x.Id == id, ct)
+            ?? throw AppException.NotFound("Yetki grubu bulunamadı.");
+        await ValidateGroup(new GroupRequest(request.Name, request.Description, false, true, []), null, ct);
+
+        return await unitOfWork.ExecuteInTransactionAsync(async token =>
+        {
+            var permissionIds = source.IsSystemAdmin
+                ? await PermissionDefinitions.Query().Where(x => x.IsActive).Select(x => x.Id).OrderBy(x => x).ToListAsync(token)
+                : await GroupPermissions.Query().Where(x => x.PermissionGroupId == id && x.PermissionDefinition.IsActive).Select(x => x.PermissionDefinitionId).Distinct().OrderBy(x => x).ToListAsync(token);
+            var entity = new PermissionGroup
+            {
+                Name = request.Name.Trim(),
+                Description = Normalize(request.Description) ?? $"{source.Name} grubundan kopyalandı.",
+                IsSystemAdmin = false,
+                IsProtected = false,
+                TemplateKey = null,
+                IsActive = true
+            };
+            await PermissionGroups.AddAsync(entity, token);
+            await unitOfWork.SaveChangesAsync(token);
+            await SetGroupPermissions(entity.Id, permissionIds, token);
+            await unitOfWork.SaveChangesAsync(token);
+            await audit.WriteAsync(new AuditLogWriteEntry("permission-group.copy", "PermissionGroup", entity.Id.ToString(), "Succeeded", "access-control", NewValues: new { SourceGroupId = source.Id, Group = GroupSnapshot(entity, permissionIds) }, ChangedFields: GroupFields), token);
+            return entity.Id;
+        }, ct);
+    }
+
     public async Task<GroupDetail> GetGroupAsync(long id, CancellationToken ct) => await PermissionGroups.Query().Where(x => x.Id == id)
-        .Select(x => new GroupDetail(x.Id, x.Name, x.Description, x.IsSystemAdmin, x.IsActive, x.GroupPermissions.Select(p => p.PermissionDefinitionId).OrderBy(value => value).ToList(), x.GroupPermissions.Select(p => p.PermissionDefinition.Code).OrderBy(value => value).ToList()))
+        .Select(x => new GroupDetail(x.Id, x.Name, x.Description, x.IsSystemAdmin, x.IsProtected, x.TemplateKey, x.IsActive, x.GroupPermissions.Select(p => p.PermissionDefinitionId).OrderBy(value => value).ToList(), x.GroupPermissions.Select(p => p.PermissionDefinition.Code).OrderBy(value => value).ToList()))
         .FirstOrDefaultAsync(ct) ?? throw AppException.NotFound("Yetki grubu bulunamadı.");
 
     public async Task UpdateGroupAsync(long id, GroupRequest request, CancellationToken ct)
     {
         var entity = await PermissionGroups.FindByIdAsync(id, true, ct) ?? throw AppException.NotFound("Yetki grubu bulunamadı.");
-        if (entity.IsSystemAdmin) throw AppException.Forbidden("System Administrator grubu düzenlenemez."); await ValidateGroup(request, id, ct);
+        if (entity.IsProtected || entity.IsSystemAdmin) throw AppException.Forbidden("Varsayılan yetki grupları düzenlenemez; kopyalayarak özelleştirebilirsiniz."); await ValidateGroup(request, id, ct);
         var oldIds = await GroupPermissions.Query().Where(x => x.PermissionGroupId == id).Select(x => x.PermissionDefinitionId).OrderBy(x => x).ToListAsync(ct); var old = GroupSnapshot(entity, oldIds); var nextIds = request.PermissionIds.Distinct().OrderBy(x => x).ToList();
         await unitOfWork.ExecuteInTransactionAsync(async token => { entity.Name = request.Name.Trim(); entity.Description = Normalize(request.Description); entity.IsActive = request.IsActive; entity.UpdatedDate = DateTime.UtcNow; await SetGroupPermissions(id, nextIds, token); await unitOfWork.SaveChangesAsync(token); await audit.WriteAsync(new AuditLogWriteEntry("permission-group.update", "PermissionGroup", id.ToString(), "Succeeded", "access-control", OldValues: old, NewValues: GroupSnapshot(entity, nextIds), ChangedFields: GroupFields), token); return true; }, ct);
     }
 
     public async Task DeleteGroupAsync(long id, CancellationToken ct)
     {
-        var entity = await PermissionGroups.FindByIdAsync(id, true, ct) ?? throw AppException.NotFound("Yetki grubu bulunamadı."); if (entity.IsSystemAdmin) throw AppException.Forbidden("System Administrator grubu silinemez.");
+        var entity = await PermissionGroups.FindByIdAsync(id, true, ct) ?? throw AppException.NotFound("Yetki grubu bulunamadı."); if (entity.IsProtected || entity.IsSystemAdmin) throw AppException.Forbidden("Varsayılan yetki grupları silinemez; yalnızca görüntülenebilir ve kopyalanabilir.");
         var ids = await GroupPermissions.Query().Where(x => x.PermissionGroupId == id).Select(x => x.PermissionDefinitionId).OrderBy(x => x).ToListAsync(ct); var old = GroupSnapshot(entity, ids);
         await unitOfWork.ExecuteInTransactionAsync(async token => { entity.IsDeleted = true; entity.IsActive = false; entity.DeletedDate = DateTime.UtcNow; var links = await GroupPermissions.Query(true).Where(x => x.PermissionGroupId == id).ToListAsync(token); var users = await UserGroups.Query(true).Where(x => x.PermissionGroupId == id).ToListAsync(token); foreach (var link in links) { link.IsDeleted = true; link.DeletedDate = DateTime.UtcNow; } foreach (var link in users) { link.IsDeleted = true; link.DeletedDate = DateTime.UtcNow; } await unitOfWork.SaveChangesAsync(token); await audit.WriteAsync(new AuditLogWriteEntry("permission-group.delete", "PermissionGroup", id.ToString(), "Succeeded", "access-control", OldValues: old, ChangedFields: ["IsDeleted", "IsActive"]), token); return true; }, ct);
     }
@@ -115,10 +144,15 @@ public sealed class AccessControlService(IUnitOfWork unitOfWork, IAuditLogWriter
 
     public async Task SetUserGroupsAsync(long userId, IReadOnlyList<long> ids, CancellationToken ct)
     {
-        if (!await Users.AnyAsync(x => x.Id == userId, ct)) throw AppException.NotFound("Kullanıcı bulunamadı."); var selected = ids.Distinct().OrderBy(x => x).ToList();
+        var user = await Users.FirstOrDefaultAsync(x => x.Id == userId, true, ct) ?? throw AppException.NotFound("Kullanıcı bulunamadı."); var selected = ids.Distinct().OrderBy(x => x).ToList();
         if (await PermissionGroups.CountAsync(x => selected.Contains(x.Id) && x.IsActive, ct) != selected.Count) throw AppException.BadRequest("Geçersiz veya pasif yetki grubu seçimi.");
-        var old = await GetUserGroupsAsync(userId, ct); await SetUserGroupLinks(userId, selected, ct); await unitOfWork.SaveChangesAsync(ct);
-        await audit.WriteAsync(new AuditLogWriteEntry("user.permission-groups.update", "User", userId.ToString(), "Succeeded", "access-control", OldValues: new { PermissionGroupIds = old }, NewValues: new { PermissionGroupIds = selected }, ChangedFields: ["PermissionGroupIds"]), ct);
+        var hasSystemAdminGroup = await PermissionGroups.AnyAsync(x => selected.Contains(x.Id) && x.IsSystemAdmin, ct);
+        var old = await GetUserGroupsAsync(userId, ct);
+        var oldRole = user.Role;
+        if (!user.Role.Equals("superadmin", StringComparison.OrdinalIgnoreCase))
+            user.Role = hasSystemAdminGroup ? "Admin" : user.Role.Equals("Admin", StringComparison.OrdinalIgnoreCase) ? "User" : user.Role;
+        await SetUserGroupLinks(userId, selected, ct); await unitOfWork.SaveChangesAsync(ct);
+        await audit.WriteAsync(new AuditLogWriteEntry("user.permission-groups.update", "User", userId.ToString(), "Succeeded", "access-control", OldValues: new { PermissionGroupIds = old, Role = oldRole }, NewValues: new { PermissionGroupIds = selected, user.Role }, ChangedFields: oldRole == user.Role ? ["PermissionGroupIds"] : ["PermissionGroupIds", "Role"]), ct);
     }
 
     public async Task<MyPermissionsResponse> GetMyPermissionsAsync(long userId, string? role, CancellationToken ct)
@@ -135,7 +169,7 @@ public sealed class AccessControlService(IUnitOfWork unitOfWork, IAuditLogWriter
     private async Task SetUserGroupLinks(long userId, IReadOnlyCollection<long> ids, CancellationToken ct) { var selected = ids.ToHashSet(); var links = await UserGroups.Query(true, true).Where(x => x.UserId == userId).ToListAsync(ct); foreach (var link in links) { var keep = selected.Remove(link.PermissionGroupId); link.IsDeleted = !keep; link.DeletedDate = keep ? null : DateTime.UtcNow; link.UpdatedDate = DateTime.UtcNow; } await UserGroups.AddRangeAsync(selected.Select(id => new UserPermissionGroup { UserId = userId, PermissionGroupId = id }), ct); }
     private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static object PermissionSnapshot(PermissionDefinition x) => new { x.Code, x.Name, x.Description, x.IsActive, x.AvailableOnWeb, x.AvailableOnMobile };
-    private static object GroupSnapshot(PermissionGroup x, IReadOnlyCollection<long> ids) => new { x.Name, x.Description, x.IsSystemAdmin, x.IsActive, PermissionIds = ids.OrderBy(v => v).ToArray() };
+    private static object GroupSnapshot(PermissionGroup x, IReadOnlyCollection<long> ids) => new { x.Name, x.Description, x.IsSystemAdmin, x.IsProtected, x.TemplateKey, x.IsActive, PermissionIds = ids.OrderBy(v => v).ToArray() };
     private static readonly string[] PermissionFields = ["Code", "Name", "Description", "IsActive", "AvailableOnWeb", "AvailableOnMobile"];
     private static readonly string[] GroupFields = ["Name", "Description", "IsActive", "PermissionIds"];
 }

@@ -27,6 +27,8 @@ public sealed class AccessControlController(IAccessControlService service, IPerm
     public async Task<IActionResult> GroupStats(CancellationToken ct) { await Require("SYSTEM.PERMISSIONS.VIEW", ct); return Ok(ApiResponse<GroupStats>.Ok(await service.GetGroupStatsAsync(ct))); }
     [HttpPost("groups")]
     public async Task<IActionResult> CreateGroup(GroupRequest request, CancellationToken ct) { await Require("SYSTEM.PERMISSIONS.MANAGE", ct); return Ok(ApiResponse<object>.Ok(new { id = await service.CreateGroupAsync(request, ct) }, "Yetki grubu oluşturuldu.")); }
+    [HttpPost("groups/{id:long}/copy")]
+    public async Task<IActionResult> CopyGroup(long id, CopyGroupRequest request, CancellationToken ct) { await Require("SYSTEM.PERMISSIONS.MANAGE", ct); return Ok(ApiResponse<object>.Ok(new { id = await service.CopyGroupAsync(id, request, ct) }, "Yetki grubu kopyalandı.")); }
     [HttpGet("groups/{id:long}")]
     public async Task<IActionResult> Group(long id, CancellationToken ct) { await Require("SYSTEM.PERMISSIONS.VIEW", ct); return Ok(ApiResponse<GroupDetail>.Ok(await service.GetGroupAsync(id, ct))); }
     [HttpPut("groups/{id:long}"), HttpPost("groups/{id:long}/update")]

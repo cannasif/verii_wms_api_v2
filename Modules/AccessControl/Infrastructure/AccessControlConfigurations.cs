@@ -11,7 +11,7 @@ public sealed class PermissionDefinitionConfiguration : BaseEntityConfiguration<
 }
 public sealed class PermissionGroupConfiguration : BaseEntityConfiguration<PermissionGroup>
 {
-    protected override void ConfigureEntity(EntityTypeBuilder<PermissionGroup> b) { b.ToTable("RII_PERMISSION_GROUPS"); b.Property(x=>x.Name).HasMaxLength(150).IsRequired(); b.Property(x=>x.Description).HasMaxLength(500); b.HasIndex(x=>x.Name).IsUnique().HasFilter("[IsDeleted] = 0"); }
+    protected override void ConfigureEntity(EntityTypeBuilder<PermissionGroup> b) { b.ToTable("RII_PERMISSION_GROUPS"); b.Property(x=>x.Name).HasMaxLength(150).IsRequired(); b.Property(x=>x.Description).HasMaxLength(500); b.Property(x=>x.TemplateKey).HasMaxLength(80); b.HasIndex(x=>x.Name).IsUnique().HasFilter("[IsDeleted] = 0"); b.HasIndex(x=>x.TemplateKey).IsUnique().HasFilter("[TemplateKey] IS NOT NULL AND [IsDeleted] = 0"); }
 }
 public sealed class PermissionGroupPermissionConfiguration : BaseEntityConfiguration<PermissionGroupPermission>
 {

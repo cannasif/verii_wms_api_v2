@@ -177,6 +177,13 @@ public sealed partial class UserManagementService(
         if (await Users.AnyAsync(x => x.Id != currentId && x.Email == email, ct)) throw AppException.Conflict("Bu e-posta adresi zaten kullanılıyor.");
         var ids = groupIds.Distinct().ToList();
         if (await Groups.CountAsync(x => ids.Contains(x.Id) && x.IsActive, ct) != ids.Count) throw AppException.BadRequest("Geçersiz veya pasif yetki grubu seçildi.");
+        if (!allowSuperAdmin)
+        {
+            var hasSystemAdminGroup = await Groups.AnyAsync(x => ids.Contains(x.Id) && x.IsSystemAdmin && x.IsActive, ct);
+            var hasAdminRole = role.Equals("Admin", StringComparison.OrdinalIgnoreCase);
+            if (hasSystemAdminGroup != hasAdminRole)
+                throw AppException.BadRequest("Admin rolü yalnızca System Administrators grubu ile birlikte kullanılabilir. Grup seçildiğinde rol Admin olmalı; grup seçili değilse Admin rolü verilemez.");
+        }
         var selectedWarehouses = (warehouseIds ?? []).Distinct().ToList();
         if (await unitOfWork.Repository<WarehouseEntity>().CountAsync(x => selectedWarehouses.Contains(x.Id), ct) != selectedWarehouses.Count)
             throw AppException.BadRequest("Geçersiz depo seçildi.");
