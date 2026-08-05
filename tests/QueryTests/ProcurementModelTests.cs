@@ -79,6 +79,31 @@ public sealed class ProcurementModelTests
         Assert.Contains(invitation.GetIndexes(),x=>x.IsUnique&&x.Properties.Select(p=>p.Name).SequenceEqual([nameof(ProcurementQuoteInvitation.ProcurementRfqId),nameof(ProcurementQuoteInvitation.SupplierId)]));
     }
 
+    [Fact]
+    public void Supplier_portal_behavior_is_branch_policy_driven_and_database_constrained()
+    {
+        using var context = CreateContext();
+        var policy = Entity<ProcurementPolicy>(context.GetService<IDesignTimeModel>().Model);
+
+        Assert.NotNull(policy.FindProperty(nameof(ProcurementPolicy.SupplierQuoteChannelMode)));
+        Assert.NotNull(policy.FindProperty(nameof(ProcurementPolicy.InvitationValidityDays)));
+        Assert.NotNull(policy.FindProperty(nameof(ProcurementPolicy.AllowSupplierDraftSave)));
+        Assert.NotNull(policy.FindProperty(nameof(ProcurementPolicy.AllowSupplierQuantityChange)));
+        Assert.NotNull(policy.FindProperty(nameof(ProcurementPolicy.AllowSupplierRevisions)));
+        Assert.NotNull(policy.FindProperty(nameof(ProcurementPolicy.MaximumSupplierRevisionCount)));
+        Assert.NotNull(policy.FindProperty(nameof(ProcurementPolicy.RequireSupplierDeliveryDate)));
+        Assert.NotNull(policy.FindProperty(nameof(ProcurementPolicy.AllowZeroUnitPrice)));
+        Assert.Contains(policy.GetCheckConstraints(), x =>
+            x.Name == "CK_RII_PC_POLICY_SUPPLIER_PORTAL"
+            && x.Sql.Contains("[InvitationValidityDays] BETWEEN 1 AND 30", StringComparison.Ordinal));
+
+        var defaults = new ProcurementPolicy();
+        Assert.Equal(SupplierQuoteChannelMode.PortalOptional, defaults.SupplierQuoteChannelMode);
+        Assert.Equal(7, defaults.InvitationValidityDays);
+        Assert.Equal(3, defaults.MaximumSupplierRevisionCount);
+        Assert.True(defaults.AllowSupplierDraftSave);
+    }
+
     private static IEntityType Entity<TEntity>(IModel model) =>
         model.FindEntityType(typeof(TEntity))
         ?? throw new InvalidOperationException($"{typeof(TEntity).Name} modelde bulunamadı.");

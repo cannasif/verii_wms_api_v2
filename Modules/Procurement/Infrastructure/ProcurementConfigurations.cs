@@ -55,7 +55,15 @@ public sealed class ProcurementQuoteInvitationConfiguration : BaseEntityConfigur
 }
 public sealed class ProcurementPolicyConfiguration : BaseEntityConfiguration<ProcurementPolicy>
 {
-    protected override void ConfigureEntity(EntityTypeBuilder<ProcurementPolicy> b) { b.ToTable("RII_PC_POLICY"); b.Property(x=>x.PolicyKey).HasMaxLength(30).IsRequired(); b.Property(x=>x.RowVersion).IsRowVersion(); b.HasIndex(x=>new{x.BranchCode,x.PolicyKey}).IsUnique().HasFilter("[IsDeleted] = 0"); }
+    protected override void ConfigureEntity(EntityTypeBuilder<ProcurementPolicy> b)
+    {
+        b.ToTable("RII_PC_POLICY", table => table.HasCheckConstraint(
+            "CK_RII_PC_POLICY_SUPPLIER_PORTAL",
+            "[SupplierQuoteChannelMode] IN (1, 2, 3) AND [InvitationValidityDays] BETWEEN 1 AND 30 AND [MaximumSupplierRevisionCount] BETWEEN 0 AND 20"));
+        b.Property(x => x.PolicyKey).HasMaxLength(30).IsRequired();
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasIndex(x => new { x.BranchCode, x.PolicyKey }).IsUnique().HasFilter("[IsDeleted] = 0");
+    }
 }
 public sealed class ProcurementPurchaseOrderConfiguration : BaseEntityConfiguration<ProcurementPurchaseOrder>
 {

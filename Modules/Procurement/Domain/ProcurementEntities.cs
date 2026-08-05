@@ -7,6 +7,7 @@ public enum ProcurementRfqStatus { Draft=1, Sent=2, Quoted=3, Closed=4, Cancelle
 public enum ProcurementQuoteStatus { Draft=1, Submitted=2, Approved=3, Rejected=4, Converted=5, Cancelled=6, PartiallyConverted=7 }
 public enum ProcurementOrderStatus { Draft=1, PendingApproval=2, Approved=3, SentToSupplier=4, PartiallyReceived=5, Received=6, Cancelled=7 }
 public enum ProcurementInvitationStatus { Sent=1, Opened=2, DraftSaved=3, Submitted=4, RevisionRequested=5, Revoked=6, Expired=7 }
+public enum SupplierQuoteChannelMode { InternalOnly=1, PortalOptional=2, PortalRequired=3 }
 
 public sealed class ProcurementRequest : BaseEntity
 {
@@ -150,6 +151,14 @@ public sealed class ProcurementPolicy : BaseEntity
     public bool AllowMultipleOrdersPerQuote { get; set; } = true;
     public bool AllowPartialOrderLines { get; set; } = true;
     public bool AllowSplitAwardsAcrossSuppliers { get; set; } = true;
+    public SupplierQuoteChannelMode SupplierQuoteChannelMode { get; set; } = SupplierQuoteChannelMode.PortalOptional;
+    public int InvitationValidityDays { get; set; } = 7;
+    public bool AllowSupplierDraftSave { get; set; } = true;
+    public bool AllowSupplierQuantityChange { get; set; } = true;
+    public bool AllowSupplierRevisions { get; set; } = true;
+    public int MaximumSupplierRevisionCount { get; set; } = 3;
+    public bool RequireSupplierDeliveryDate { get; set; }
+    public bool AllowZeroUnitPrice { get; set; }
     public byte[] RowVersion { get; set; } = [];
 }
 
