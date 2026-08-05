@@ -6,6 +6,7 @@ using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Identity.Application;
 using verii_wms_api_v2.Modules.Stock.Application;
+using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.StockTracking.Application;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
@@ -72,6 +73,7 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
             var yaps=await uow.Repository<YapCodeEntity>().Query().Where(x=>yapIds.Contains(x.Id)&&x.BranchCode==branch).ToDictionaryAsync(x=>x.Id,token);
             if(yaps.Count!=yapIds.Length)throw AppException.BadRequest("Seçilen yapı kodlarından biri ERP mirror tablosunda bulunamadı.");
             ValidateTrackings(request,trackingPolicies);
+            await ValidateSerialSourceBalancesAsync(request,trackingPolicies,stocks,token);
 
             var allocated=await numberAllocator.AllocateAsync(request.DocumentSeriesId,DocumentType(request.BusinessContext),DateTime.UtcNow,token);
             var now=DateTime.UtcNow;
@@ -388,6 +390,54 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
                     trackings.Select(x=>new StockTrackingCapture(x.Quantity,x.LotNo,x.SerialNo,x.ManufacturingDate,x.ExpirationDate)).ToArray(),
                     requireCompleteCapture:policy.TrackingType!=StockTrackingType.None);
             }catch(StockTrackingPolicyViolationException ex){throw AppException.BadRequest(ex.Message);}
+        }
+    }
+    private async Task ValidateSerialSourceBalancesAsync(
+        CreateWarehouseTransferDraftRequest request,
+        IReadOnlyDictionary<long,EffectiveStockTrackingPolicy> policies,
+        IReadOnlyDictionary<long,StockEntity> stocks,
+        CancellationToken ct)
+    {
+        var selections=request.Lines
+            .SelectMany(line=>(line.Trackings??[])
+                .Where(tracking=>!string.IsNullOrWhiteSpace(tracking.SerialNo))
+                .Select(tracking=>new{Line=line,Tracking=tracking,LocationId=tracking.SourceLocationId??line.DefaultSourceLocationId}))
+            .Where(x=>x.LocationId.HasValue)
+            .ToArray();
+        if(selections.Length==0)return;
+        var stockIds=selections.Select(x=>x.Line.StockId).Distinct().ToArray();
+        var locationIds=selections.Select(x=>x.LocationId!.Value).Distinct().ToArray();
+        var serials=selections.Select(x=>x.Tracking.SerialNo!.Trim().ToUpperInvariant()).Distinct().ToArray();
+        var rows=await uow.Repository<LocationStockBalance>().Query()
+            .Where(x=>x.WarehouseId==request.SourceWarehouseId
+                && stockIds.Contains(x.StockId)
+                && locationIds.Contains(x.LocationId)
+                && x.SerialNo!=null
+                && serials.Contains(x.SerialNo))
+            .Select(x=>new{x.StockId,x.YapCodeId,x.WarehouseId,x.LocationId,x.UnitCode,x.LotNo,x.SerialNo,x.StockStatus,x.AvailableQuantity})
+            .ToListAsync(ct);
+        var balances=rows
+            .GroupBy(x=>WarehouseTransferSerialBalanceKey.Create(x.StockId,x.YapCodeId,x.WarehouseId,x.LocationId,x.UnitCode,x.LotNo,x.SerialNo!,x.StockStatus))
+            .ToDictionary(x=>x.Key,x=>x.Sum(row=>row.AvailableQuantity));
+
+        foreach(var selection in selections)
+        {
+            var line=selection.Line;
+            var tracking=selection.Tracking;
+            var policy=policies[line.StockId];
+            var serial=tracking.SerialNo!.Trim().ToUpperInvariant();
+            var unit=StockUnitPolicy.Resolve(stocks[line.StockId],line.UnitCode);
+            var sourceStatus=NormalizeStockStatus(line.SourceStockStatus);
+            var key=WarehouseTransferSerialBalanceKey.Create(line.StockId,line.YapCodeId,request.SourceWarehouseId,
+                selection.LocationId!.Value,unit,tracking.LotNo,serial,sourceStatus);
+            try
+            {
+                StockTrackingPolicyGuard.ValidateSerialMovementQuantity(policy,tracking.Quantity,balances.GetValueOrDefault(key),serial);
+            }
+            catch(StockTrackingPolicyViolationException ex)
+            {
+                throw AppException.Conflict(ex.Message);
+            }
         }
     }
     private static WmsDocumentType DocumentType(WarehouseTransferBusinessContext context)=>context switch{

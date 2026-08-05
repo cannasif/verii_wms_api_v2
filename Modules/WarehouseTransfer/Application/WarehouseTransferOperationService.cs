@@ -3,6 +3,8 @@ using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.StockMovement.Application;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
+using verii_wms_api_v2.Modules.StockBalance.Domain;
+using verii_wms_api_v2.Modules.StockTracking.Application;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
@@ -17,6 +19,7 @@ public sealed class WarehouseTransferOperationService(
     IUnitOfWork uow,
     IStockMovementService movements,
     IWarehouseTransferReservationService reservations,
+    IStockTrackingPolicyResolver trackingPolicyResolver,
     IAuditLogWriter audit) : IWarehouseTransferOperationService
 {
     public Task<WarehouseTransferOperationResult> ApproveAsync(
@@ -267,6 +270,7 @@ public sealed class WarehouseTransferOperationService(
             EnsurePhaseState(header, phase);
             if (phase == TransferPhase.Pick) EnsurePickerAssignment(header, actor, requestLines.Keys);
             ValidateQuantities(header, lines, requestLines, phase);
+            await ValidateSerialSourceBalancesAsync(header, lines, requestLines, phase, token);
             ApplyShipmentInfo(header, request, phase);
             if (phase == TransferPhase.Pick)
                 await reservations.ConsumeAsync(header, requestLines, $"WT:{header.Id}:RESERVE:PICK:{request.IdempotencyKey:N}", actor, token);
@@ -482,6 +486,76 @@ public sealed class WarehouseTransferOperationService(
             throw AppException.Conflict("Transfer politikası kısmi kabule izin vermiyor.");
     }
 
+    private async Task ValidateSerialSourceBalancesAsync(
+        WarehouseTransferHeader header,
+        IReadOnlyCollection<WarehouseTransferLine> lines,
+        IReadOnlyDictionary<long,WarehouseTransferOperationLineRequest> requests,
+        TransferPhase phase,
+        CancellationToken ct)
+    {
+        var selections=lines
+            .Select(line=>new{Line=line,Request=requests[line.Id]})
+            .Where(x=>!string.IsNullOrWhiteSpace(x.Request.SerialNo))
+            .Select(x=>new
+            {
+                x.Line,
+                x.Request,
+                SourceLocationId=phase switch
+                {
+                    TransferPhase.Pick=>x.Request.SourceLocationId??x.Line.DefaultSourceLocationId,
+                    TransferPhase.Dispatch=>x.Request.SourceLocationId??header.SourceStagingLocationId,
+                    TransferPhase.Receive=>x.Request.SourceLocationId??header.TargetReceivingLocationId,
+                    TransferPhase.Putaway=>x.Request.SourceLocationId??header.TargetReceivingLocationId,
+                    _=>null
+                },
+                SourceWarehouseId=phase is TransferPhase.Pick or TransferPhase.Dispatch
+                    ?header.SourceWarehouseId:header.TargetWarehouseId,
+                SourceStatus=phase==TransferPhase.Receive&&header.CreateTransitInventory
+                    ?"InTransit":phase is TransferPhase.Pick or TransferPhase.Dispatch
+                        ?x.Line.SourceStockStatus:x.Line.TargetStockStatus
+            })
+            .Where(x=>x.SourceLocationId.HasValue)
+            .ToArray();
+        if(selections.Length==0)return;
+
+        var stockIds=selections.Select(x=>x.Line.StockId).Distinct().ToArray();
+        var warehouseIds=selections.Select(x=>x.SourceWarehouseId).Distinct().ToArray();
+        var locationIds=selections.Select(x=>x.SourceLocationId!.Value).Distinct().ToArray();
+        var serials=selections.Select(x=>x.Request.SerialNo!.Trim().ToUpperInvariant()).Distinct().ToArray();
+        var rows=await uow.Repository<LocationStockBalance>().Query()
+            .Where(x=>stockIds.Contains(x.StockId)
+                && warehouseIds.Contains(x.WarehouseId)
+                && locationIds.Contains(x.LocationId)
+                && x.SerialNo!=null
+                && serials.Contains(x.SerialNo))
+            .Select(x=>new{x.StockId,x.YapCodeId,x.WarehouseId,x.LocationId,x.UnitCode,x.LotNo,x.SerialNo,x.StockStatus,x.AvailableQuantity})
+            .ToListAsync(ct);
+        var balances=rows
+            .GroupBy(x=>WarehouseTransferSerialBalanceKey.Create(x.StockId,x.YapCodeId,x.WarehouseId,x.LocationId,x.UnitCode,x.LotNo,x.SerialNo!,x.StockStatus))
+            .ToDictionary(x=>x.Key,x=>x.Sum(row=>row.AvailableQuantity));
+        var policies=new Dictionary<long,EffectiveStockTrackingPolicy>();
+        foreach(var stockId in stockIds)
+            policies[stockId]=await trackingPolicyResolver.ResolveAsync(header.BranchCode,stockId,ct);
+
+        foreach(var selection in selections)
+        {
+            var line=selection.Line;
+            var request=selection.Request;
+            var serial=request.SerialNo!.Trim().ToUpperInvariant();
+            var key=WarehouseTransferSerialBalanceKey.Create(line.StockId,line.YapCodeId,selection.SourceWarehouseId,
+                selection.SourceLocationId!.Value,line.UnitCode,request.LotNo,serial,selection.SourceStatus);
+            try
+            {
+                StockTrackingPolicyGuard.ValidateSerialMovementQuantity(
+                    policies[line.StockId],request.Quantity,balances.GetValueOrDefault(key),serial);
+            }
+            catch(StockTrackingPolicyViolationException ex)
+            {
+                throw AppException.Conflict(ex.Message);
+            }
+        }
+    }
+
     private static PostStockMovementRequest BuildMovementRequest(
         WarehouseTransferHeader header,
         IReadOnlyCollection<WarehouseTransferLine> lines,
@@ -644,10 +718,6 @@ public sealed class WarehouseTransferOperationService(
             throw AppException.BadRequest($"{line.LineNo}. satır için seri numarası zorunludur.");
         if (line.RequireLot && lotNo is null)
             throw AppException.BadRequest($"{line.LineNo}. satır için lot numarası zorunludur.");
-        if (line.TrackingType is StockTrackingType.Serial or StockTrackingType.LotAndSerial
-            && request.Quantity != 1)
-            throw AppException.BadRequest($"{line.LineNo}. satırda serili stok miktarı 1 olmalıdır.");
-
         var tracking = line.Trackings.FirstOrDefault(x =>
             Equal(x.LotNo, lotNo) && Equal(x.SerialNo, serialNo));
         var hasTrackingDimension = lotNo is not null || serialNo is not null

@@ -72,6 +72,32 @@ public static class StockTrackingPolicyGuard
                 $"{policy.StockCode} için her stok birimi ayrı seriyle ve 1 miktarla işlenmelidir.");
     }
 
+    public static void ValidateSerialMovementQuantity(
+        EffectiveStockTrackingPolicy policy,
+        decimal requestedQuantity,
+        decimal availableQuantityAtSource,
+        string? serialNo)
+    {
+        if (string.IsNullOrWhiteSpace(serialNo)) return;
+        ValidateSerialQuantity(policy, requestedQuantity, serialNo);
+
+        if (availableQuantityAtSource <= 0)
+            throw new StockTrackingPolicyViolationException(
+                $"{policy.StockCode} / {serialNo.Trim()} serisi seçilen kaynak rafta kullanılabilir değil.");
+
+        if (policy.SerialQuantityRule == SerialQuantityRule.OneSerialPerBaseUnit
+            && availableQuantityAtSource != 1)
+            throw new StockTrackingPolicyViolationException(
+                $"{policy.StockCode} / {serialNo.Trim()} adet-serisinin kaynak raf bakiyesi 1 olmalıdır; mevcut bakiye {availableQuantityAtSource:0.######}. " +
+                "Seri bakiyesi veri bütünlüğü kontrolü gerektiriyor.");
+
+        if (policy.SerialQuantityRule == SerialQuantityRule.OneSerialPerLine
+            && requestedQuantity != availableQuantityAtSource)
+            throw new StockTrackingPolicyViolationException(
+                $"{policy.StockCode} / {serialNo.Trim()} tek bir levha/palet serisidir ve raflar arasında kısmi bölünemez. " +
+                $"Kaynak raftaki {availableQuantityAtSource:0.######} miktarın tamamını seçin veya önce kontrollü seri bölme işlemi yapın; istenen miktar {requestedQuantity:0.######}.");
+    }
+
     public static void Validate(
         EffectiveStockTrackingPolicy policy,
         decimal requestedQuantity,
