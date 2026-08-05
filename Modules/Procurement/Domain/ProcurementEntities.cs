@@ -6,6 +6,7 @@ public enum ProcurementRequestStatus { Draft=1, PendingApproval=2, Approved=3, R
 public enum ProcurementRfqStatus { Draft=1, Sent=2, Quoted=3, Closed=4, Cancelled=5 }
 public enum ProcurementQuoteStatus { Draft=1, Submitted=2, Approved=3, Rejected=4, Converted=5, Cancelled=6, PartiallyConverted=7 }
 public enum ProcurementOrderStatus { Draft=1, PendingApproval=2, Approved=3, SentToSupplier=4, PartiallyReceived=5, Received=6, Cancelled=7 }
+public enum ProcurementInvitationStatus { Sent=1, Opened=2, DraftSaved=3, Submitted=4, RevisionRequested=5, Revoked=6, Expired=7 }
 
 public sealed class ProcurementRequest : BaseEntity
 {
@@ -97,8 +98,32 @@ public sealed class ProcurementSupplierQuote : BaseEntity
     public decimal ExchangeRate { get; set; } = 1;
     public ProcurementQuoteStatus Status { get; set; } = ProcurementQuoteStatus.Submitted;
     public string? Note { get; set; }
+    public int RevisionNo { get; set; } = 1;
+    public long? PreviousQuoteId { get; set; }
+    public DateTimeOffset? SubmittedAtUtc { get; set; }
     public byte[] RowVersion { get; set; } = [];
     public ICollection<ProcurementSupplierQuoteLine> Lines { get; set; } = [];
+}
+
+public sealed class ProcurementQuoteInvitation : BaseEntity
+{
+    public long ProcurementRfqId { get; set; }
+    public ProcurementRfq Rfq { get; set; } = null!;
+    public long ProcurementRfqSupplierId { get; set; }
+    public ProcurementRfqSupplier RfqSupplier { get; set; } = null!;
+    public long SupplierId { get; set; }
+    public string RecipientEmail { get; set; } = string.Empty;
+    public string TokenHash { get; set; } = string.Empty;
+    public ProcurementInvitationStatus Status { get; set; } = ProcurementInvitationStatus.Sent;
+    public DateTimeOffset ExpiresAtUtc { get; set; }
+    public DateTimeOffset? FirstOpenedAtUtc { get; set; }
+    public DateTimeOffset? LastOpenedAtUtc { get; set; }
+    public DateTimeOffset? LastSentAtUtc { get; set; }
+    public DateTimeOffset? SubmittedAtUtc { get; set; }
+    public DateTimeOffset? RevokedAtUtc { get; set; }
+    public long? CurrentQuoteId { get; set; }
+    public ProcurementSupplierQuote? CurrentQuote { get; set; }
+    public byte[] RowVersion { get; set; } = [];
 }
 
 public sealed class ProcurementSupplierQuoteLine : BaseEntity

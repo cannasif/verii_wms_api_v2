@@ -192,6 +192,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<ProcurementPurchaseOrderLine> ProcurementPurchaseOrderLines => Set<ProcurementPurchaseOrderLine>();
     public DbSet<ProcurementStatusHistory> ProcurementStatusHistory => Set<ProcurementStatusHistory>();
     public DbSet<ProcurementPolicy> ProcurementPolicies => Set<ProcurementPolicy>();
+    public DbSet<ProcurementQuoteInvitation> ProcurementQuoteInvitations => Set<ProcurementQuoteInvitation>();
     public DbSet<ProductionOrder> ProductionOrders => Set<ProductionOrder>();
     public DbSet<ProductionMaterialRequirement> ProductionMaterialRequirements => Set<ProductionMaterialRequirement>();
     public DbSet<ProductionOutputExpectation> ProductionOutputExpectations => Set<ProductionOutputExpectation>();
@@ -387,6 +388,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new ProcurementPurchaseOrderLineConfiguration());
         modelBuilder.ApplyConfiguration(new ProcurementStatusHistoryConfiguration());
         modelBuilder.ApplyConfiguration(new ProcurementPolicyConfiguration());
+        modelBuilder.ApplyConfiguration(new ProcurementQuoteInvitationConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionOrderConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionMaterialRequirementConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionOutputExpectationConfiguration());

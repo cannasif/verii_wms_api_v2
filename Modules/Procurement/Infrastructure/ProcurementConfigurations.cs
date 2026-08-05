@@ -36,6 +36,23 @@ public sealed class ProcurementSupplierQuoteLineConfiguration : BaseEntityConfig
 {
     protected override void ConfigureEntity(EntityTypeBuilder<ProcurementSupplierQuoteLine> b) { b.ToTable("RII_PC_QUOTE_LINE",t=>t.HasCheckConstraint("CK_RII_PC_QUOTE_LINE_AMOUNTS","[QuotedQuantity] > 0 AND [ConvertedQuantity] >= 0 AND [ConvertedQuantity] <= [QuotedQuantity] AND [UnitPrice] >= 0 AND [DiscountRate] >= 0 AND [DiscountRate] <= 100 AND [VatRate] >= 0")); b.Property(x=>x.QuotedQuantity).HasPrecision(20,6); b.Property(x=>x.ConvertedQuantity).HasPrecision(20,6); b.Property(x=>x.UnitPrice).HasPrecision(20,6); b.Property(x=>x.DiscountRate).HasPrecision(9,4); b.Property(x=>x.VatRate).HasPrecision(9,4); b.Property(x=>x.RowVersion).IsRowVersion(); b.HasOne(x=>x.Quote).WithMany(x=>x.Lines).HasForeignKey(x=>x.ProcurementSupplierQuoteId).OnDelete(DeleteBehavior.Restrict); b.HasIndex(x=>new{x.ProcurementSupplierQuoteId,x.LineNo}).IsUnique(); }
 }
+public sealed class ProcurementQuoteInvitationConfiguration : BaseEntityConfiguration<ProcurementQuoteInvitation>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<ProcurementQuoteInvitation> b)
+    {
+        b.ToTable("RII_PC_QUOTE_INVITATION");
+        b.Property(x=>x.RecipientEmail).HasMaxLength(320).IsRequired();
+        b.Property(x=>x.TokenHash).HasMaxLength(64).IsFixedLength().IsRequired();
+        b.Property(x=>x.Status).HasConversion<string>().HasMaxLength(30);
+        b.Property(x=>x.RowVersion).IsRowVersion();
+        b.HasOne(x=>x.Rfq).WithMany().HasForeignKey(x=>x.ProcurementRfqId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x=>x.RfqSupplier).WithMany().HasForeignKey(x=>x.ProcurementRfqSupplierId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x=>x.CurrentQuote).WithMany().HasForeignKey(x=>x.CurrentQuoteId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x=>x.TokenHash).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x=>new{x.ProcurementRfqId,x.SupplierId}).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x=>new{x.Status,x.ExpiresAtUtc});
+    }
+}
 public sealed class ProcurementPolicyConfiguration : BaseEntityConfiguration<ProcurementPolicy>
 {
     protected override void ConfigureEntity(EntityTypeBuilder<ProcurementPolicy> b) { b.ToTable("RII_PC_POLICY"); b.Property(x=>x.PolicyKey).HasMaxLength(30).IsRequired(); b.Property(x=>x.RowVersion).IsRowVersion(); b.HasIndex(x=>new{x.BranchCode,x.PolicyKey}).IsUnique().HasFilter("[IsDeleted] = 0"); }

@@ -67,6 +67,18 @@ public sealed class ProcurementModelTests
             && x.Sql.Contains("[ConvertedQuantity] <= [QuotedQuantity]", StringComparison.Ordinal));
     }
 
+    [Fact]
+    public void Supplier_portal_invitation_uses_hashed_unique_token_and_concurrency_control()
+    {
+        using var context=CreateContext();
+        var invitation=Entity<ProcurementQuoteInvitation>(context.GetService<IDesignTimeModel>().Model);
+        Assert.Equal("RII_PC_QUOTE_INVITATION",invitation.GetTableName());
+        Assert.Equal(64,invitation.FindProperty(nameof(ProcurementQuoteInvitation.TokenHash))!.GetMaxLength());
+        Assert.True(invitation.FindProperty(nameof(ProcurementQuoteInvitation.RowVersion))!.IsConcurrencyToken);
+        Assert.Contains(invitation.GetIndexes(),x=>x.IsUnique&&x.Properties.Select(p=>p.Name).SequenceEqual([nameof(ProcurementQuoteInvitation.TokenHash)]));
+        Assert.Contains(invitation.GetIndexes(),x=>x.IsUnique&&x.Properties.Select(p=>p.Name).SequenceEqual([nameof(ProcurementQuoteInvitation.ProcurementRfqId),nameof(ProcurementQuoteInvitation.SupplierId)]));
+    }
+
     private static IEntityType Entity<TEntity>(IModel model) =>
         model.FindEntityType(typeof(TEntity))
         ?? throw new InvalidOperationException($"{typeof(TEntity).Name} modelde bulunamadı.");
