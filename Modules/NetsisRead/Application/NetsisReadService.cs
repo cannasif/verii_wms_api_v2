@@ -164,7 +164,7 @@ public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INet
             ORDER BY Tarih DESC, IsEmriNo
             """,
             r => new ProductionWorkOrderDto(
-                String(r, "IsEmriNo"), Get<int>(r, "SubeKodu"), String(r, "StokKodu"), String(r, "StokAdi"),
+                String(r, "IsEmriNo"), Nullable<int>(r, "SubeKodu"), String(r, "StokKodu"), String(r, "StokAdi"),
                 NullableString(r, "YapilandirmaKodu"), Get<decimal>(r, "IsEmriMiktari"), Get<int>(r, "BirimSirasi"),
                 NullableString(r, "BirimKodu"), Get<decimal>(r, "ReceteToplami"), Nullable<DateTime>(r, "Tarih"),
                 Nullable<DateTime>(r, "TeslimTarihi"), NullableString(r, "SiparisNo"), Get<int>(r, "SiparisSatirNo"),
@@ -211,7 +211,7 @@ public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INet
             "RII_FN_ISEMRI_RECETE",
             "SELECT * FROM dbo.RII_FN_ISEMRI_RECETE(@workOrderNumber, @branchCode) ORDER BY OperasyonNo, BilesenStokKodu",
             r => new ProductionWorkOrderRecipeComponentDto(
-                String(r, "IsEmriNo"), Get<int>(r, "SubeKodu"), String(r, "MamulKodu"), String(r, "MamulAdi"),
+                String(r, "IsEmriNo"), Nullable<int>(r, "SubeKodu"), String(r, "MamulKodu"), String(r, "MamulAdi"),
                 NullableString(r, "YapilandirmaKodu"), Get<decimal>(r, "IsEmriMiktari"), NullableString(r, "MamulBirimKodu"),
                 Get<decimal>(r, "ReceteToplami"), String(r, "BilesenStokKodu"), NullableString(r, "BilesenStokAdi"),
                 NullableString(r, "BilesenBirimKodu"), NullableString(r, "BilesenYapilandirmaKodu"), Get<int>(r, "OperasyonNo"),

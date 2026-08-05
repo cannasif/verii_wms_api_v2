@@ -99,7 +99,7 @@ public sealed class ProductionService(
             .OrderByDescending(x=>x.Id)
             .Select(x=>new{x.Id,x.ProductionHeaderId,x.Header.DocumentNo}).FirstOrDefaultAsync(ct);
         return new PreparedNetsisProductionWorkOrder(
-            workOrder.WorkOrderNumber,workOrder.BranchCode,workOrder.StockCode,workOrder.StockName,
+            workOrder.WorkOrderNumber,workOrder.BranchCode??branchNumber,workOrder.StockCode,workOrder.StockName,
             productStock?.BaseUnitCode??workOrder.UnitCode??"ADET",workOrder.WorkOrderQuantity,
             productStock?.Id,ResolveYap(workOrder.ConfigurationCode,productStock?.Id),workOrder.ConfigurationCode,
             sourceWarehouse?.Id,workOrder.IssueWarehouseCode,sourceWarehouse?.WarehouseName,

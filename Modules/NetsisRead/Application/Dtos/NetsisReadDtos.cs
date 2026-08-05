@@ -76,7 +76,7 @@ public sealed record ShipmentOpenOrderLineDto(
 /// <summary>Read-only Netsis production work-order projection. No ERP row is tracked by EF.</summary>
 public sealed record ProductionWorkOrderDto(
     string WorkOrderNumber,
-    int BranchCode,
+    int? BranchCode,
     string StockCode,
     string StockName,
     string? ConfigurationCode,
@@ -115,7 +115,7 @@ public sealed record StockRecipeComponentDto(
 /// <summary>A Netsis work order resolved into its material requirements.</summary>
 public sealed record ProductionWorkOrderRecipeComponentDto(
     string WorkOrderNumber,
-    int BranchCode,
+    int? BranchCode,
     string ProductCode,
     string ProductName,
     string? ConfigurationCode,
