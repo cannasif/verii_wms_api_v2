@@ -19,14 +19,11 @@ public sealed class StockTrackingMovementQuantityTests
     }
 
     [Fact]
-    public void Weighted_serial_cannot_be_partially_moved_to_another_location()
+    public void Line_serial_can_be_partially_moved_when_quantity_per_serial_is_disabled()
     {
         var policy=Policy(SerialQuantityRule.OneSerialPerLine);
 
-        var error=Assert.Throws<StockTrackingPolicyViolationException>(()=>
-            StockTrackingPolicyGuard.ValidateSerialMovementQuantity(policy,1,10,"DTG-1"));
-
-        Assert.Contains("tamamını seçin",error.Message);
+        StockTrackingPolicyGuard.ValidateSerialMovementQuantity(policy,1,10,"DTG-1");
         StockTrackingPolicyGuard.ValidateSerialMovementQuantity(policy,10,10,"DTG-1");
     }
 

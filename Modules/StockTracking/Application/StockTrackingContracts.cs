@@ -91,11 +91,6 @@ public static class StockTrackingPolicyGuard
                 $"{policy.StockCode} / {serialNo.Trim()} adet-serisinin kaynak raf bakiyesi 1 olmalıdır; mevcut bakiye {availableQuantityAtSource:0.######}. " +
                 "Seri bakiyesi veri bütünlüğü kontrolü gerektiriyor.");
 
-        if (policy.SerialQuantityRule == SerialQuantityRule.OneSerialPerLine
-            && requestedQuantity != availableQuantityAtSource)
-            throw new StockTrackingPolicyViolationException(
-                $"{policy.StockCode} / {serialNo.Trim()} tek bir levha/palet serisidir ve raflar arasında kısmi bölünemez. " +
-                $"Kaynak raftaki {availableQuantityAtSource:0.######} miktarın tamamını seçin veya önce kontrollü seri bölme işlemi yapın; istenen miktar {requestedQuantity:0.######}.");
     }
 
     public static void Validate(

@@ -276,42 +276,6 @@ public sealed class StockMovementService(
                     : $"Seri numarası tekil bir stok örneğidir; toplam bakiye 0 veya 1 olabilir. Seri: {group.First().SerialNo}.");
         }
 
-        var weightedStockIds = policies
-            .Where(x => x.Value.SerialQuantityRule == SerialQuantityRule.OneSerialPerLine)
-            .Select(x => x.Key).ToHashSet();
-        var weightedDrafts = serialDrafts.Where(x => weightedStockIds.Contains(x.StockId)).ToList();
-        if (weightedDrafts.Count == 0) return;
-        var weightedSerials = weightedDrafts.Select(x => x.SerialNo!).Distinct().ToList();
-        var locationRows = await LocationBalances.Query()
-            .Where(x => weightedStockIds.Contains(x.StockId)
-                && x.SerialNo != null
-                && weightedSerials.Contains(x.SerialNo))
-            .Select(x => new
-            {
-                x.StockId, x.YapCodeId, x.WarehouseId, x.LocationId, x.UnitCode,
-                x.LotNo, x.SerialNo, x.StockStatus, x.AvailableQuantity
-            }).ToListAsync(ct);
-        var resultingLocations = locationRows.ToDictionary(
-            x => WeightedLocationKey(x.StockId, x.YapCodeId, x.WarehouseId, x.LocationId,
-                x.UnitCode, x.LotNo, x.SerialNo!, x.StockStatus),
-            x => x.AvailableQuantity);
-        foreach (var draft in weightedDrafts)
-        {
-            var key = WeightedLocationKey(draft.StockId, draft.YapCodeId, draft.WarehouseId,
-                draft.LocationId, draft.UnitCode, draft.LotNo, draft.SerialNo!, draft.StockStatus);
-            resultingLocations[key] = resultingLocations.GetValueOrDefault(key) + draft.QuantityDelta;
-        }
-        var splitSerial = resultingLocations
-            .Where(x => x.Value > 0)
-            .GroupBy(x => (x.Key.StockId, x.Key.SerialNo))
-            .FirstOrDefault(x => x.Count() > 1);
-        if (splitSerial is not null)
-        {
-            var detail = string.Join(" | ", splitSerial.Select(x =>
-                $"[Depo:{x.Key.WarehouseId} Raf:{x.Key.LocationId} Yap:{x.Key.YapCodeId?.ToString() ?? "yok"} Birim:{x.Key.UnitCode} Lot:'{x.Key.LotNo}' Statü:{x.Key.StockStatus} Miktar:{x.Value}]"));
-            throw AppException.Conflict(
-                $"Aynı levha/palet serisi birden fazla aktif raf veya stok statüsüne bölünemez. Seri: {splitSerial.Key.SerialNo}. Bulunan aktif kayıtlar: {detail}");
-        }
     }
 
     private async Task SynchronizeSerialRegistryAsync(
@@ -436,24 +400,4 @@ public sealed class StockMovementService(
     private static string Hash(object value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value))));
     private static string Key(long stockId, long? yapCodeId, long warehouseId, long locationId, string unit, string? lot, string? serial, string status) => $"{stockId}|{yapCodeId?.ToString() ?? "0"}|{warehouseId}|{locationId}|{unit}|{lot ?? ""}|{serial ?? ""}|{status}";
     private static string SerialKey(long stockId, long? yapCodeId, string unit, string? lot, string serial, string status) => $"{stockId}|{yapCodeId?.ToString() ?? "0"}|{unit}|{lot ?? ""}|{serial}|{status}";
-    private static WeightedSerialLocationKey WeightedLocationKey(
-        long stockId,
-        long? yapCodeId,
-        long warehouseId,
-        long locationId,
-        string unitCode,
-        string? lotNo,
-        string serialNo,
-        string stockStatus) =>
-        new(stockId, yapCodeId, warehouseId, locationId, unitCode, lotNo ?? string.Empty,
-            serialNo.Trim().ToUpperInvariant(), stockStatus);
-    private readonly record struct WeightedSerialLocationKey(
-        long StockId,
-        long? YapCodeId,
-        long WarehouseId,
-        long LocationId,
-        string UnitCode,
-        string LotNo,
-        string SerialNo,
-        string StockStatus);
 }
