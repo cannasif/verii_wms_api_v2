@@ -316,6 +316,22 @@ public sealed class ProductionTransferService(
         return request with{Transfer=transfer};
     }
 
+    public async Task<DefaultProductionTargetLocationDto> GetDefaultTargetLocationAsync(
+        long warehouseId,string branchCode,CancellationToken ct=default)
+    {
+        var branch=Branch(branchCode);
+        var warehouse=await uow.Repository<WarehouseEntity>().Query()
+            .Where(x=>x.Id==warehouseId&&x.BranchCode==branch)
+            .Select(x=>new{x.Id,x.DefaultProductionTransferLocationId})
+            .SingleOrDefaultAsync(ct);
+        if(warehouse?.DefaultProductionTransferLocationId is not long locationId)
+            return new(null,null,null);
+        var location=await uow.Repository<WarehouseLocation>().Query()
+            .Where(x=>x.Id==locationId&&x.WarehouseId==warehouse.Id&&x.IsActive&&x.IsPutaway)
+            .Select(x=>new{x.Code,x.Name}).SingleOrDefaultAsync(ct);
+        return location is null?new(null,null,null):new(locationId,location.Code,location.Name);
+    }
+
     private static void Validate(CreateProductionTransferDraftRequest request)
     {
         if(request.Transfer is null)throw AppException.BadRequest("Transfer gövdesi zorunludur.");
