@@ -23,7 +23,7 @@ public sealed class StockBalancesController(IStockBalanceService service, IOpeni
     }
 
     [HttpPost("opening-import"), RequestSizeLimit(OpeningBalanceImportService.MaxFileSize)]
-    public async Task<IActionResult> ImportOpeningBalance([FromForm] IFormFile? file,
+    public async Task<IActionResult> ImportOpeningBalance(IFormFile? file,
         [FromQuery] string branchCode, [FromQuery] string idempotencyKey, CancellationToken ct)
     {
         await RequireAsync("WMS.STOCK_MOVEMENTS.POST", ct);

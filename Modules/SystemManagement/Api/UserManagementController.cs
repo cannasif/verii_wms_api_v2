@@ -39,7 +39,7 @@ public sealed class UserManagementController(IUserManagementService service, IPe
     [Consumes("multipart/form-data")]
     [RequestSizeLimit(MaxImportRequestSize)]
     [RequestFormLimits(MultipartBodyLengthLimit = MaxImportFileSize)]
-    public async Task<IActionResult> Import([FromForm] IFormFile? file, CancellationToken ct)
+    public async Task<IActionResult> Import(IFormFile? file, CancellationToken ct)
     {
         await Require("SYSTEM.USERS.MANAGE", ct);
         ValidateImportFile(file);

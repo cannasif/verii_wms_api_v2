@@ -19,7 +19,7 @@ public sealed class VehicleCheckInController(IVehicleCheckInService service,IPer
     {await Require("WMS.STEEL_RECEIPT.VEHICLE.VIEW",ct);return Ok(ApiResponse<VehicleCheckInDetail>.Ok(await service.GetAsync(id,ct)));}
     [HttpPost("paged")]public async Task<IActionResult> Paged(PagedRequest request,CancellationToken ct)
     {await Require("WMS.STEEL_RECEIPT.VEHICLE.VIEW",ct);return Ok(ApiResponse<PagedResponse<VehicleCheckInRow>>.Ok(await service.GetPagedAsync(request,ct)));}
-    [HttpPost("{id:long}/images"),RequestSizeLimit(80_000_000)]public async Task<IActionResult> Images(long id,[FromForm] List<IFormFile> files,CancellationToken ct)
+    [HttpPost("{id:long}/images"),RequestSizeLimit(80_000_000)]public async Task<IActionResult> Images(long id,List<IFormFile> files,CancellationToken ct)
     {
         await Require("WMS.STEEL_RECEIPT.VEHICLE.MANAGE",ct);var uploads=new List<VehicleImageUpload>();
         foreach(var file in files)uploads.Add(new(file.OpenReadStream(),file.FileName,file.ContentType,file.Length));

@@ -24,7 +24,7 @@ public sealed class LocationsController(ILocationService service, ILocationImpor
     }
 
     [HttpPost("import"), RequestSizeLimit(LocationImportService.MaxFileSize)]
-    public async Task<IActionResult> Import([FromForm] IFormFile? file, [FromQuery] string branchCode = "0",
+    public async Task<IActionResult> Import(IFormFile? file, [FromQuery] string branchCode = "0",
         CancellationToken cancellationToken = default)
     {
         await RequireAsync("WMS.LOCATIONS.CREATE", cancellationToken);

@@ -32,7 +32,7 @@ public sealed class QualityController(
         return File(await importService.CreateTemplateAsync(branchCode,ct),XlsxContentType,"wms-kalite-kurallari-aktarim-sablonu.xlsx");
     }
     [HttpPost("rules/import"),Consumes("multipart/form-data"),RequestSizeLimit(MaxImportRequestSize),RequestFormLimits(MultipartBodyLengthLimit=MaxImportFileSize)]
-    public async Task<IActionResult> ImportRules([FromQuery]string branchCode,[FromForm]IFormFile? file,CancellationToken ct)
+    public async Task<IActionResult> ImportRules([FromQuery]string branchCode,IFormFile? file,CancellationToken ct)
     {
         await Require("WMS.QUALITY.RULES.MANAGE",ct);
         ValidateImportFile(file);

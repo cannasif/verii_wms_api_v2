@@ -27,7 +27,7 @@ public sealed class WarehouseOpeningImportController(
 
     [HttpPost("preview"), RequestSizeLimit(WarehouseOpeningImportService.MaxFileSize)]
     public async Task<IActionResult> Preview(
-        [FromForm] IFormFile? file,
+        IFormFile? file,
         [FromQuery] string branchCode,
         CancellationToken cancellationToken)
     {
@@ -42,7 +42,7 @@ public sealed class WarehouseOpeningImportController(
 
     [HttpPost("commit"), RequestSizeLimit(WarehouseOpeningImportService.MaxFileSize)]
     public async Task<IActionResult> Commit(
-        [FromForm] IFormFile? file,
+        IFormFile? file,
         [FromQuery] string branchCode,
         [FromQuery] string previewHash,
         [FromQuery] string idempotencyKey,

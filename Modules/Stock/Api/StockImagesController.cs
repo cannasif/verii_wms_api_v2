@@ -16,7 +16,7 @@ public sealed class StockImagesController(IStockImageService service,IPermission
     public async Task<IActionResult> List(long stockId,CancellationToken ct){await Require("ERP.MIRROR.VIEW",ct);return Ok(ApiResponse<IReadOnlyList<StockImageDto>>.Ok(await service.ListAsync(stockId,Branch(),ct)));}
 
     [HttpPost,Consumes("multipart/form-data"),RequestSizeLimit(105_000_000),RequestFormLimits(MultipartBodyLengthLimit=105_000_000)]
-    public async Task<IActionResult> Upload(long stockId,[FromForm]List<IFormFile>? files,[FromForm]List<string>? altTexts,CancellationToken ct)
+    public async Task<IActionResult> Upload(long stockId,List<IFormFile>? files,[FromForm]List<string>? altTexts,CancellationToken ct)
     {
         await Require("ERP.MIRROR.SYNC",ct);
         if(files is null||files.Count==0)throw AppException.BadRequest("En az bir görsel seçilmelidir.");

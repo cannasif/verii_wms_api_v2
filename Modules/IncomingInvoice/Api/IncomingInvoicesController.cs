@@ -82,7 +82,7 @@ public sealed class IncomingInvoicesController(
     public async Task<IActionResult> ImportOcr(
         [FromForm] string branchCode,
         [FromForm] long supplierId,
-        [FromForm] IFormFile file,
+        IFormFile file,
         CancellationToken ct)
     {
         await Require("WMS.INCOMING_INVOICE.OCR_IMPORT", ct);
