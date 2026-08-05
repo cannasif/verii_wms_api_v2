@@ -1,3 +1,5 @@
+using verii_wms_api_v2.Shared;
+
 namespace verii_wms_api_v2.Modules.Kkd.Application;
 
 public sealed record KkdEntitlementCheckRequest(long EmployeeId, long StockId, decimal Quantity, DateOnly? AtDate = null);
@@ -40,6 +42,9 @@ public sealed record KkdOverrideCreateRequest(long EmployeeId, long? RuleId, str
     DateOnly ValidFrom, DateOnly? ValidTo, string Reason, bool IsActive = true);
 
 public sealed record KkdLookupRow(long Id, string Code, string Name, bool IsActive);
+public sealed record KkdCustomerLookupRow(long Id, string Code, string Name);
+public sealed record KkdStockLookupRow(long Id, string Code, string Name, string UnitCode, string? GroupCode);
+public sealed record KkdStockGroupLookupRow(string Code, int StockCount);
 public sealed record KkdEmployeeRow(long Id, string EmployeeCode, string FullName, string QrCode, long CustomerId,
     long DepartmentId, string DepartmentName, long RoleId, string RoleName, DateOnly EmploymentStartDate, bool IsActive);
 public sealed record KkdEmployeeQrResolveRequest(string QrCode);
@@ -50,6 +55,9 @@ public interface IKkdDefinitionService
 {
     Task<IReadOnlyList<KkdLookupRow>> GetDepartmentsAsync(CancellationToken ct = default);
     Task<IReadOnlyList<KkdLookupRow>> GetRolesAsync(long? departmentId, CancellationToken ct = default);
+    Task<PagedResponse<KkdCustomerLookupRow>> GetCustomersPagedAsync(PagedRequest request, CancellationToken ct = default);
+    Task<PagedResponse<KkdStockLookupRow>> GetStocksPagedAsync(PagedRequest request, string? groupCode, CancellationToken ct = default);
+    Task<PagedResponse<KkdStockGroupLookupRow>> GetStockGroupsPagedAsync(PagedRequest request, CancellationToken ct = default);
     Task<IReadOnlyList<KkdEmployeeRow>> GetEmployeesAsync(CancellationToken ct = default);
     Task<KkdEmployeeRow> ResolveEmployeeByQrAsync(string qrCode, CancellationToken ct = default);
     Task<IReadOnlyList<KkdMatrixRow>> GetMatricesAsync(CancellationToken ct = default);

@@ -41,6 +41,18 @@ public sealed class KkdController(
     public async Task<IActionResult> Roles([FromQuery] long? departmentId, CancellationToken ct)
     { await Require("WMS.KKD.DEFINITIONS.VIEW", ct); return Ok(ApiResponse<IReadOnlyList<KkdLookupRow>>.Ok(await definitions.GetRolesAsync(departmentId, ct))); }
 
+    [HttpPost("lookups/customers/paged")]
+    public async Task<IActionResult> CustomersPaged(PagedRequest request, CancellationToken ct)
+    { await Require("WMS.KKD.DEFINITIONS.VIEW", ct); return Ok(ApiResponse<PagedResponse<KkdCustomerLookupRow>>.Ok(await definitions.GetCustomersPagedAsync(request, ct))); }
+
+    [HttpPost("lookups/stocks/paged")]
+    public async Task<IActionResult> StocksPaged(PagedRequest request, [FromQuery] string? groupCode, CancellationToken ct)
+    { await Require("WMS.KKD.DEFINITIONS.VIEW", ct); return Ok(ApiResponse<PagedResponse<KkdStockLookupRow>>.Ok(await definitions.GetStocksPagedAsync(request, groupCode, ct))); }
+
+    [HttpPost("lookups/stock-groups/paged")]
+    public async Task<IActionResult> StockGroupsPaged(PagedRequest request, CancellationToken ct)
+    { await Require("WMS.KKD.DEFINITIONS.VIEW", ct); return Ok(ApiResponse<PagedResponse<KkdStockGroupLookupRow>>.Ok(await definitions.GetStockGroupsPagedAsync(request, ct))); }
+
     [HttpPost("roles")]
     [HttpPut("roles/{id:long}")]
     public async Task<IActionResult> UpsertRole(long? id, KkdRoleUpsertRequest request, CancellationToken ct)

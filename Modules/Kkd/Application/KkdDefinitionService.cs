@@ -1,7 +1,9 @@
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Kkd.Domain;
+using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
+using CustomerEntity = verii_wms_api_v2.Modules.Customer.Domain.Customer;
 using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
 
 namespace verii_wms_api_v2.Modules.Kkd.Application;
@@ -15,6 +17,49 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
     public async Task<IReadOnlyList<KkdLookupRow>> GetRolesAsync(long? departmentId, CancellationToken ct = default) =>
         await uow.Repository<KkdRole>().Query().Where(x => !departmentId.HasValue || x.DepartmentId == departmentId)
             .OrderBy(x => x.Name).Select(x => new KkdLookupRow(x.Id, x.Code, x.Name, x.IsActive)).ToListAsync(ct);
+
+    public Task<PagedResponse<KkdCustomerLookupRow>> GetCustomersPagedAsync(PagedRequest request, CancellationToken ct = default)
+    {
+        var query = uow.Repository<CustomerEntity>().Query()
+            .Select(x => new KkdCustomerLookupRow(x.Id, x.CustomerCode, x.CustomerName))
+            .ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["code"] = nameof(KkdCustomerLookupRow.Code),
+                ["name"] = nameof(KkdCustomerLookupRow.Name)
+            }, ["code", "name"])
+            .ApplySort(request, nameof(KkdCustomerLookupRow.Code));
+        return query.ToPagedResponseAsync(request, ct);
+    }
+
+    public Task<PagedResponse<KkdStockLookupRow>> GetStocksPagedAsync(PagedRequest request, string? groupCode, CancellationToken ct = default)
+    {
+        var normalizedGroup = Normalize(groupCode);
+        var stocks = uow.Repository<StockEntity>().Query()
+            .Where(x => normalizedGroup.Length == 0 || x.GroupCode == normalizedGroup);
+        var query = stocks
+            .Select(x => new KkdStockLookupRow(x.Id, x.ErpStockCode, x.StockName, x.BaseUnitCode, x.GroupCode))
+            .ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["code"] = nameof(KkdStockLookupRow.Code),
+                ["name"] = nameof(KkdStockLookupRow.Name)
+            }, ["code", "name"])
+            .ApplySort(request, nameof(KkdStockLookupRow.Code));
+        return query.ToPagedResponseAsync(request, ct);
+    }
+
+    public Task<PagedResponse<KkdStockGroupLookupRow>> GetStockGroupsPagedAsync(PagedRequest request, CancellationToken ct = default)
+    {
+        var groups = uow.Repository<StockEntity>().Query()
+            .Where(x => x.GroupCode != null && x.GroupCode != string.Empty)
+            .GroupBy(x => x.GroupCode!)
+            .Select(x => new KkdStockGroupLookupRow(x.Key, x.Count()))
+            .ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["code"] = nameof(KkdStockGroupLookupRow.Code)
+            }, ["code"])
+            .ApplySort(request, nameof(KkdStockGroupLookupRow.Code));
+        return groups.ToPagedResponseAsync(request, ct);
+    }
 
     public async Task<IReadOnlyList<KkdEmployeeRow>> GetEmployeesAsync(CancellationToken ct = default) =>
         await uow.Repository<KkdEmployee>().Query().OrderBy(x => x.EmployeeCode)
@@ -73,6 +118,8 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
 
     public async Task<long> UpsertEmployeeAsync(long? id, KkdEmployeeUpsertRequest request, long actor, CancellationToken ct = default)
     {
+        if (!await uow.Repository<CustomerEntity>().AnyAsync(x => x.Id == request.CustomerId, ct))
+            throw AppException.BadRequest("Seçilen entegre cari bulunamadı.");
         var department = await uow.Repository<KkdDepartment>().FindByIdAsync(request.DepartmentId, false, ct)
             ?? throw AppException.BadRequest("Departman bulunamadı.");
         var role = await uow.Repository<KkdRole>().FindByIdAsync(request.RoleId, false, ct)
@@ -107,6 +154,8 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
         if (!await uow.Repository<KkdDepartment>().AnyAsync(x => x.Id == request.DepartmentId && x.IsActive, ct)
             || !await uow.Repository<KkdRole>().AnyAsync(x => x.Id == request.RoleId && x.IsActive, ct))
             throw AppException.BadRequest("Aktif departman ve rol seçilmelidir.");
+        if (!await uow.Repository<CustomerEntity>().AnyAsync(x => x.Id == request.CustomerId, ct))
+            throw AppException.BadRequest("Seçilen entegre cari bulunamadı.");
 
         var code = RequiredCode(request.Code, "Matris kodu", 80);
         var repository = uow.Repository<KkdEntitlementMatrix>();
@@ -148,17 +197,28 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
             if (item.StockId.HasValue)
                 stock = await uow.Repository<StockEntity>().FindByIdAsync(item.StockId.Value, false, ct)
                     ?? throw AppException.BadRequest($"{item.StockId} numaralı stok bulunamadı.");
+            var groupCode = Normalize(item.GroupCode);
+            var stockGroupCode = Normalize(stock?.GroupCode);
+            if (stock is not null && stockGroupCode.Length == 0)
+                throw AppException.BadRequest($"{stock.ErpStockCode} stok kartında grup kodu bulunmuyor.");
+            if (stock is not null && groupCode.Length == 0)
+                groupCode = stockGroupCode;
+            if (groupCode.Length == 0)
+                throw AppException.BadRequest("Stok seçilmediğinde stok grubu zorunludur.");
+            if (stock is not null && !string.Equals(groupCode, stockGroupCode, StringComparison.OrdinalIgnoreCase))
+                throw AppException.BadRequest($"{stock.ErpStockCode} stoku {groupCode} grubuna ait değildir.");
+            if (!await uow.Repository<StockEntity>().AnyAsync(x => x.GroupCode == groupCode, ct))
+                throw AppException.BadRequest($"{groupCode} kodlu stok grubu bulunamadı.");
             var rule = new KkdEntitlementRule
             {
                 BranchCode = entity.BranchCode,
-                Matrix = entity, GroupCode = Normalize(item.GroupCode), GroupName = Clean(item.GroupName, 200),
+                Matrix = entity, GroupCode = groupCode, GroupName = Clean(item.GroupName, 200) ?? groupCode,
                 StockId = stock?.Id, StockCodeSnapshot = stock?.ErpStockCode, StockNameSnapshot = stock?.StockName,
                 StandardCode = Clean(item.StandardCode, 80), StandardName = Clean(item.StandardName, 200),
                 AnnualIssueCount = item.AnnualIssueCount, AnnualQuantity = item.AnnualQuantity, MaxCarryQuantity = item.MaxCarryQuantity,
                 AllowBulkIssue = item.AllowBulkIssue, IsMandatory = item.IsMandatory, SortOrder = item.SortOrder,
                 IsActive = item.IsActive, Description = Clean(item.Description, 1000), CreatedBy = actor, CreatedDate = now
             };
-            if (rule.GroupCode.Length == 0) throw AppException.BadRequest("Her KKD kuralında grup kodu zorunludur.");
             if (item.Phases.Count == 0) throw AppException.BadRequest($"{rule.GroupCode} kuralında en az bir dönem olmalıdır.");
             foreach (var phaseRequest in item.Phases)
             {
