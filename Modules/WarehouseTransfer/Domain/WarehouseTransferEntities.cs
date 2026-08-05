@@ -76,7 +76,8 @@ public enum WarehouseTransferTaskType
     Dispatch = 2,
     Receive = 3,
     Putaway = 4,
-    CancellationReturn = 5
+    CancellationReturn = 5,
+    AssignmentReturn = 6
 }
 
 public enum WarehouseTransferTaskStatus
@@ -313,6 +314,14 @@ public sealed class WarehouseTransferTask : BaseEntity
     public DateTimeOffset? CompletedAtUtc { get; set; }
     public long? CompletedBy { get; set; }
     public string? Description { get; set; }
+    // AssignmentReturn görevleri için: hangi görevdeki hangi kullanıcının atamasının, bu iade
+    // görevi tamamlandığında kaldırılacağı. Diğer görev tiplerinde null.
+    public long? OriginTaskId { get; set; }
+    public long? OriginUserId { get; set; }
+    // Devret (handoff) ile oluşan görevler için: bu görevin kalan işi devraldığı önceki görev.
+    // İade tetiklendiğinde bu zincir geriye doğru izlenip önceki kullanıcıların işlediği miktar
+    // da iadeye dahil edilir — iş emri tamamlanmadan devredildiği için geçmiş parçalar da iade kapsamına girer.
+    public long? PreviousTaskId { get; set; }
     public byte[] RowVersion { get; set; } = [];
     public ICollection<WarehouseTransferTaskLine> Lines { get; set; } = [];
     public ICollection<WarehouseTransferTaskAssignment> Assignments { get; set; } = [];

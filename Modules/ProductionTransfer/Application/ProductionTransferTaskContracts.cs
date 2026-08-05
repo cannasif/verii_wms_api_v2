@@ -12,6 +12,7 @@ public sealed record ProductionTransferTaskDto(
     long TaskId, string TaskNo, WarehouseTransferTaskType TaskType, long WarehouseId, WarehouseTransferTaskStatus Status,
     DateTimeOffset? AcceptedAtUtc, long? AcceptedBy, DateTimeOffset? StartedAtUtc, long? StartedBy,
     DateTimeOffset? CompletedAtUtc, long? CompletedBy,
+    long? OriginTaskId, long? OriginUserId, long? PreviousTaskId,
     IReadOnlyList<ProductionTransferTaskAssignmentDto> Assignments,
     IReadOnlyList<ProductionTransferTaskLineDto> Lines);
 public sealed record ProductionTransferWorkloadDto(
@@ -47,6 +48,8 @@ public interface IProductionTransferTaskService
     Task<IReadOnlyList<ProductionTransferTaskPoolRow>> GetPoolAsync(long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> AssignAsync(long transferId, long taskId, AssignProductionTransferTaskRequest request, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> RemoveAssignmentAsync(long transferId, long taskId, long userId, long actor, CancellationToken ct = default);
+    Task<ProductionTransferTaskBoardDto> RequestAssignmentReturnAsync(long transferId, long taskId, long userId, long actor, CancellationToken ct = default);
+    Task<ProductionTransferTaskBoardDto> CompleteAssignmentReturnAsync(long transferId, long taskId, Guid idempotencyKey, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> HandoffAsync(long transferId, long taskId, HandoffProductionTransferTaskRequest request, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> RefreshRouteAsync(long transferId, long taskId, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> AcceptAndStartAsync(long transferId, long taskId, long actor, CancellationToken ct = default);

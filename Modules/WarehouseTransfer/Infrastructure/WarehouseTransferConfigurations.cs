@@ -99,7 +99,9 @@ public sealed class WarehouseTransferTaskConfiguration : BaseEntityConfiguration
     {
         b.ToTable("RII_WT_TASK"); b.Property(x=>x.TaskNo).HasMaxLength(50).IsRequired(); b.Property(x=>x.Description).HasMaxLength(1000); b.Property(x=>x.RowVersion).IsRowVersion();
         b.HasOne(x=>x.Header).WithMany(x=>x.Tasks).HasForeignKey(x=>x.WtHeaderId).OnDelete(DeleteBehavior.Restrict);
-        b.HasIndex(x=>new{x.BranchCode,x.TaskNo}).IsUnique(); b.HasIndex(x=>new{x.WarehouseId,x.TaskType,x.Status});
+        b.HasOne<WarehouseTransferTask>().WithMany().HasForeignKey(x=>x.OriginTaskId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<WarehouseTransferTask>().WithMany().HasForeignKey(x=>x.PreviousTaskId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x=>new{x.BranchCode,x.TaskNo}).IsUnique(); b.HasIndex(x=>new{x.WarehouseId,x.TaskType,x.Status}); b.HasIndex(x=>x.OriginTaskId); b.HasIndex(x=>x.PreviousTaskId);
     }
 }
 

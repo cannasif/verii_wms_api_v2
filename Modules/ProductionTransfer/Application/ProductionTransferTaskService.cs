@@ -106,24 +106,163 @@ public sealed class ProductionTransferTaskService(IUnitOfWork uow, IAuditLogWrit
             var task = await LoadTaskAsync(transferId, taskId, token);
             var assignment = task.Assignments.SingleOrDefault(x => !x.IsDeleted && x.UserId == userId)
                 ?? throw AppException.NotFound("Görev ataması bulunamadı.");
-            if (task.StartedBy == userId && task.Lines.Any(x => x.ProcessedQuantity > 0))
-                throw AppException.Conflict("Stok toplamış görevden atama kaldırılamaz. Önce toplanan stoklar yerine konmalıdır.");
-            assignment.IsDeleted = true; assignment.DeletedBy = actor; assignment.DeletedDate = DateTime.UtcNow;
-            var remainingAssignments = task.Assignments.Where(x => !x.IsDeleted && x.Id != assignment.Id).ToList();
-            if (task.StartedBy == userId || task.AcceptedBy == userId)
+            var lineageLines = await GetLineageProcessedLinesAsync(task, token);
+            if (lineageLines.Count > 0)
             {
-                task.StartedAtUtc = null; task.StartedBy = null;
-                task.AcceptedAtUtc = null; task.AcceptedBy = null;
+                var completedReturn = await uow.Repository<WarehouseTransferTask>().Query()
+                    .AnyAsync(x => x.OriginTaskId == task.Id && x.OriginUserId == userId
+                        && x.Status == WarehouseTransferTaskStatus.Completed, token);
+                if (!completedReturn)
+                    throw AppException.Conflict(
+                        "Bu iş emri için toplanmış stok var (devir öncesi dahil). Önce 'İade görevi oluştur' ile tüm stokları eski rafına koydurup onaylatın.");
             }
-            if (remainingAssignments.Count == 0) task.Status = WarehouseTransferTaskStatus.Open;
-            else if (task.Status is WarehouseTransferTaskStatus.Accepted or WarehouseTransferTaskStatus.InProgress)
-                task.Status = WarehouseTransferTaskStatus.Assigned;
-            if (assignment.IsPrimary && remainingAssignments.Count > 0)
-                remainingAssignments.OrderBy(x => x.AssignedAtUtc).First().IsPrimary = true;
+            RemoveAssignmentCore(task, assignment, actor);
             task.UpdatedBy = actor; task.UpdatedDate = DateTime.UtcNow;
             await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("production-transfer.task.unassign", nameof(WarehouseTransferTask), task.Id.ToString(), "Succeeded", "production-transfer",
                 NewValues: new { TransferId = transferId, TaskId = task.Id, UserId = userId }, ChangedFields: ["Assignments", "Status"]), token);
+            return await MapAsync(transferId, token);
+        }, ct, IsolationLevel.Serializable);
+
+    private static void RemoveAssignmentCore(WarehouseTransferTask task, WarehouseTransferTaskAssignment assignment, long actor)
+    {
+        var userId = assignment.UserId;
+        assignment.IsDeleted = true; assignment.DeletedBy = actor; assignment.DeletedDate = DateTime.UtcNow;
+        var remainingAssignments = task.Assignments.Where(x => !x.IsDeleted && x.Id != assignment.Id).ToList();
+        if (task.StartedBy == userId || task.AcceptedBy == userId)
+        {
+            task.StartedAtUtc = null; task.StartedBy = null;
+            task.AcceptedAtUtc = null; task.AcceptedBy = null;
+        }
+        if (remainingAssignments.Count == 0) task.Status = WarehouseTransferTaskStatus.Open;
+        else if (task.Status is WarehouseTransferTaskStatus.Accepted or WarehouseTransferTaskStatus.InProgress)
+            task.Status = WarehouseTransferTaskStatus.Assigned;
+        if (assignment.IsPrimary && remainingAssignments.Count > 0)
+            remainingAssignments.OrderBy(x => x.AssignedAtUtc).First().IsPrimary = true;
+    }
+
+    // Devret zincirini (PreviousTaskId üzerinden) geriye doğru izleyip, zincirdeki TÜM görevlerde
+    // işlenmiş satırları toplar. İş emri devredildiğinde bitmiş sayılmadığından, önceki kullanıcının
+    // (örn. A) topladığı stok da iadeye dahil edilmeli — sadece güncel görevin kendi satırları yeterli değil.
+    private async Task<List<WarehouseTransferTaskLine>> GetLineageProcessedLinesAsync(WarehouseTransferTask task, CancellationToken ct)
+    {
+        var lines = new List<WarehouseTransferTaskLine>(task.Lines.Where(x => x.ProcessedQuantity > 0));
+        var cursor = task;
+        while (cursor.PreviousTaskId.HasValue)
+        {
+            var previous = await uow.Repository<WarehouseTransferTask>().Query()
+                .Include(x => x.Lines).ThenInclude(x => x.Line).ThenInclude(x => x.Trackings)
+                .SingleOrDefaultAsync(x => x.Id == cursor.PreviousTaskId.Value, ct);
+            if (previous is null) break;
+            lines.AddRange(previous.Lines.Where(x => x.ProcessedQuantity > 0));
+            cursor = previous;
+        }
+        return lines;
+    }
+
+    public Task<ProductionTransferTaskBoardDto> RequestAssignmentReturnAsync(long transferId, long taskId, long userId, long actor, CancellationToken ct = default) =>
+        uow.ExecuteInTransactionAsync(async token =>
+        {
+            var task = await LoadTaskAsync(transferId, taskId, token);
+            if (!task.Assignments.Any(x => !x.IsDeleted && x.UserId == userId))
+                throw AppException.NotFound("Görev ataması bulunamadı.");
+            // Devir zincirindeki (bu görev + tüm önceki görevler) işlenmiş satırlar — en son atanan
+            // kullanıcı (userId), kendisininki de dahil olmak üzere TÜM zincirin stoğunu iade eder;
+            // önceki kullanıcı (ör. A) kendi topladığını ayrıca iade edemez/etmez.
+            var processedLines = await GetLineageProcessedLinesAsync(task, token);
+            if (processedLines.Count == 0)
+                throw AppException.BadRequest("Bu görev için iade edilecek toplanmış stok bulunmuyor; atama doğrudan kaldırılabilir.");
+            var existing = await uow.Repository<WarehouseTransferTask>().Query()
+                .SingleOrDefaultAsync(x => x.OriginTaskId == task.Id && x.OriginUserId == userId
+                    && x.Status != WarehouseTransferTaskStatus.Cancelled, token);
+            if (existing is not null) return await MapAsync(transferId, token);
+
+            var now = DateTime.UtcNow;
+            var suffix = await NextRemainderSuffixAsync(task.Header.DocumentNo, token);
+            var returnTask = new WarehouseTransferTask
+            {
+                BranchCode = task.BranchCode, CreatedBy = actor, CreatedDate = now, Header = task.Header,
+                TaskNo = $"{task.Header.DocumentNo}-IADE{suffix}", TaskType = WarehouseTransferTaskType.AssignmentReturn,
+                WarehouseId = task.WarehouseId, Status = WarehouseTransferTaskStatus.Assigned, Priority = task.Priority,
+                OriginTaskId = task.Id, OriginUserId = userId,
+                Description = $"{task.TaskNo} görevindeki atamanızın kaldırılabilmesi için topladığınız stokları eski rafına geri koyun."
+            };
+            returnTask.Assignments.Add(new WarehouseTransferTaskAssignment
+            {
+                BranchCode = task.BranchCode, Task = returnTask, UserId = userId, IsPrimary = true,
+                AssignedAtUtc = DateTimeOffset.UtcNow, AssignedBy = actor, CreatedBy = actor, CreatedDate = now
+            });
+            // Aynı transfer satırı (WtLineId), devir zincirinde birden fazla görevde işlenmiş
+            // olabilir (ör. A kısmen işledi, kalan B'ye devredildi, B de bir kısmını işledi) —
+            // bunları tek bir iade satırında topla; konum için zincirdeki en güncel (en yeni
+            // görevdeki) kaydı esas al.
+            foreach (var group in processedLines.GroupBy(x => x.WtLineId))
+            {
+                var representative = group.OrderByDescending(x => x.WtTaskId).First();
+                var line = representative.Line;
+                var totalProcessed = group.Sum(x => x.ProcessedQuantity);
+                var originalSources = line.Trackings.Where(x => x.PickedQuantity > 0 && x.SourceLocationId.HasValue)
+                    .Select(x => x.SourceLocationId!.Value).Append(line.DefaultSourceLocationId ?? 0).Where(x => x > 0).Distinct().ToArray();
+                returnTask.Lines.Add(new WarehouseTransferTaskLine
+                {
+                    BranchCode = task.BranchCode, CreatedBy = actor, CreatedDate = now, Task = returnTask, Line = line,
+                    PlannedQuantity = totalProcessed, ProcessedQuantity = 0,
+                    SourceLocationId = representative.TargetLocationId ?? representative.SourceLocationId,
+                    TargetLocationId = originalSources.Length == 1 ? originalSources[0] : representative.SourceLocationId
+                });
+            }
+            await uow.Repository<WarehouseTransferTask>().AddAsync(returnTask, token);
+            await uow.SaveChangesAsync(token);
+            await audit.WriteAsync(new("production-transfer.task.assignment-return.request", nameof(WarehouseTransferTask), task.Id.ToString(), "Succeeded", "production-transfer",
+                NewValues: new { TransferId = transferId, OriginTaskId = task.Id, ReturnTaskId = returnTask.Id, returnTask.TaskNo, UserId = userId },
+                ChangedFields: ["Lines", "Assignments"]), token);
+            return await MapAsync(transferId, token);
+        }, ct, IsolationLevel.Serializable);
+
+    public Task<ProductionTransferTaskBoardDto> CompleteAssignmentReturnAsync(
+        long transferId, long taskId, Guid idempotencyKey, long actor, CancellationToken ct = default) =>
+        uow.ExecuteInTransactionAsync(async token =>
+        {
+            if (idempotencyKey == Guid.Empty) throw AppException.BadRequest("İdempotency anahtarı zorunludur.");
+            var task = await LoadTaskAsync(transferId, taskId, token);
+            if (task.TaskType != WarehouseTransferTaskType.AssignmentReturn)
+                throw AppException.BadRequest("Seçilen görev bir atama iade görevi değildir.");
+            if (task.Status == WarehouseTransferTaskStatus.Completed) return await MapAsync(transferId, token);
+            if (task.Status != WarehouseTransferTaskStatus.InProgress || task.StartedBy != actor
+                || !task.Assignments.Any(x => !x.IsDeleted && x.UserId == actor && x.AcceptedAtUtc.HasValue))
+                throw AppException.Conflict("İade görevini tamamlamadan önce 'Bu işi yapıyorum' işlemini kullanın.");
+
+            var movementLines = BuildReturnMovementLines(task);
+            long? operationId = null;
+            if (movementLines.Count > 0)
+            {
+                var movement = await movements.PostAsync(new(
+                    $"WT:{transferId}:ASSIGN-RETURN:{idempotencyKey:N}", StockMovementTypes.Transfer,
+                    "WarehouseTransferAssignmentReturn", task.Header.DocumentNo, transferId, DateTime.UtcNow,
+                    "Atama kaldırma öncesi fiziksel iade",
+                    $"{task.Header.DocumentNo} atama iade görevi tamamlandı", movementLines), token);
+                operationId = movement.OperationId;
+            }
+            var now = DateTimeOffset.UtcNow;
+            foreach (var line in task.Lines) line.ProcessedQuantity = line.PlannedQuantity;
+            task.Status = WarehouseTransferTaskStatus.Completed;
+            task.CompletedAtUtc = now; task.CompletedBy = actor;
+            task.UpdatedBy = actor; task.UpdatedDate = DateTime.UtcNow;
+
+            if (task.OriginTaskId.HasValue && task.OriginUserId.HasValue)
+            {
+                var originTask = await LoadTaskAsync(transferId, task.OriginTaskId.Value, token);
+                var originAssignment = originTask.Assignments.SingleOrDefault(x => !x.IsDeleted && x.UserId == task.OriginUserId.Value);
+                if (originAssignment is not null)
+                {
+                    RemoveAssignmentCore(originTask, originAssignment, actor);
+                    originTask.UpdatedBy = actor; originTask.UpdatedDate = DateTime.UtcNow;
+                }
+            }
+            await uow.SaveChangesAsync(token);
+            await audit.WriteAsync(new("production-transfer.task.assignment-return.complete", nameof(WarehouseTransferTask), task.Id.ToString(), "Succeeded", "production-transfer",
+                NewValues: new { TransferId = transferId, TaskId = task.Id, StockMovementOperationId = operationId, OriginTaskId = task.OriginTaskId, OriginUserId = task.OriginUserId },
+                ChangedFields: ["ProcessedQuantity", "Status", "OriginTask.Assignments"]), token);
             return await MapAsync(transferId, token);
         }, ct, IsolationLevel.Serializable);
 
@@ -132,8 +271,8 @@ public sealed class ProductionTransferTaskService(IUnitOfWork uow, IAuditLogWrit
         uow.ExecuteInTransactionAsync(async token =>
         {
             var task = await LoadTaskAsync(transferId, taskId, token);
-            if (task.TaskType == WarehouseTransferTaskType.CancellationReturn)
-                throw AppException.BadRequest("İptal iade görevi başka kullanıcıya devredilemez.");
+            if (task.TaskType is WarehouseTransferTaskType.CancellationReturn or WarehouseTransferTaskType.AssignmentReturn)
+                throw AppException.BadRequest("İade görevi başka kullanıcıya devredilemez.");
             if (task.Status is WarehouseTransferTaskStatus.Completed or WarehouseTransferTaskStatus.Cancelled)
                 throw AppException.Conflict("Tamamlanmış veya iptal edilmiş görev devredilemez.");
             if (request.TargetUserId <= 0) throw AppException.BadRequest("Görevin devredileceği kullanıcı zorunludur.");
@@ -186,7 +325,7 @@ public sealed class ProductionTransferTaskService(IUnitOfWork uow, IAuditLogWrit
             {
                 BranchCode = task.BranchCode, Header = task.Header, TaskNo = $"{task.Header.DocumentNo}-{suffix}",
                 TaskType = task.TaskType, WarehouseId = task.WarehouseId, Status = WarehouseTransferTaskStatus.Assigned,
-                Priority = task.Priority, PlannedAtUtc = task.PlannedAtUtc,
+                Priority = task.Priority, PlannedAtUtc = task.PlannedAtUtc, PreviousTaskId = task.Id,
                 Description = $"{task.TaskNo} kalan işi devredildi. {CleanReason(request.Reason)}".Trim(),
                 CreatedBy = actor, CreatedDate = DateTime.UtcNow
             };
@@ -229,8 +368,8 @@ public sealed class ProductionTransferTaskService(IUnitOfWork uow, IAuditLogWrit
         uow.ExecuteInTransactionAsync(async token =>
         {
             var task = await LoadTaskAsync(transferId, taskId, token);
-            if (task.TaskType == WarehouseTransferTaskType.CancellationReturn)
-                throw AppException.BadRequest("İptal iade görevinin kaynak rotası değiştirilemez.");
+            if (task.TaskType is WarehouseTransferTaskType.CancellationReturn or WarehouseTransferTaskType.AssignmentReturn)
+                throw AppException.BadRequest("İade görevinin kaynak rotası değiştirilemez.");
             if (task.Status is WarehouseTransferTaskStatus.Completed or WarehouseTransferTaskStatus.Cancelled)
                 throw AppException.Conflict("Tamamlanmış veya iptal edilmiş görevin rotası yenilenemez.");
 
@@ -431,7 +570,7 @@ public sealed class ProductionTransferTaskService(IUnitOfWork uow, IAuditLogWrit
 
         var tasks = header.Tasks.OrderBy(x => x.Id).Select(task => new ProductionTransferTaskDto(
             task.Id, task.TaskNo, task.TaskType, task.WarehouseId, task.Status, task.AcceptedAtUtc, task.AcceptedBy, task.StartedAtUtc, task.StartedBy,
-            task.CompletedAtUtc, task.CompletedBy,
+            task.CompletedAtUtc, task.CompletedBy, task.OriginTaskId, task.OriginUserId, task.PreviousTaskId,
             task.Assignments.Where(x => !x.IsDeleted).OrderByDescending(x => x.IsPrimary).Select(x => new ProductionTransferTaskAssignmentDto(
                 x.UserId, users.GetValueOrDefault(x.UserId, $"Kullanıcı #{x.UserId}"), x.IsPrimary, x.AssignedAtUtc, x.AcceptedAtUtc)).ToList(),
             task.Lines.OrderBy(x => x.Id).Select(x =>
@@ -439,7 +578,7 @@ public sealed class ProductionTransferTaskService(IUnitOfWork uow, IAuditLogWrit
                 var available = x.SourceLocationId.HasValue
                     ? balances.Where(v => v.Key.LocationId == x.SourceLocationId && v.Key.StockId == x.Line.StockId && v.Key.YapCodeId == x.Line.YapCodeId).Sum(v => v.Quantity)
                     : 0m;
-                var covered = task.TaskType == WarehouseTransferTaskType.CancellationReturn
+                var covered = task.TaskType is WarehouseTransferTaskType.CancellationReturn or WarehouseTransferTaskType.AssignmentReturn
                     ? x.PlannedQuantity
                     : Math.Min(x.PlannedQuantity, Math.Max(x.Line.ReservedQuantity, Math.Min(x.PlannedQuantity, available)));
                 var lineLocationIds = x.SourceLocationId.HasValue

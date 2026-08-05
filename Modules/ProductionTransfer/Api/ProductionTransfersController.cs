@@ -81,6 +81,14 @@ public sealed class ProductionTransfersController(
     public async Task<IActionResult>RemoveAssignment(long id,long taskId,long userId,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);
         return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.RemoveAssignmentAsync(id,taskId,userId,UserId(),ct),"Görev ataması kaldırıldı."));}
+    [HttpPost("{id:long}/tasks/{taskId:long}/assignments/{userId:long}/request-return")]
+    public async Task<IActionResult>RequestAssignmentReturn(long id,long taskId,long userId,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.RequestAssignmentReturnAsync(id,taskId,userId,UserId(),ct),"İade görevi oluşturuldu."));}
+    [HttpPost("{id:long}/tasks/{taskId:long}/complete-assignment-return")]
+    public async Task<IActionResult>CompleteAssignmentReturn(long id,long taskId,StartProductionTransferTaskRequest request,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.CompleteAssignmentReturnAsync(id,taskId,request.IdempotencyKey,UserId(),ct),"İade tamamlandı, atama kaldırıldı."));}
     [HttpPost("{id:long}/tasks/{taskId:long}/handoff")]
     public async Task<IActionResult>Handoff(long id,long taskId,HandoffProductionTransferTaskRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);
