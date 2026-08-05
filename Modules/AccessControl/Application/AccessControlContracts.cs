@@ -14,6 +14,7 @@ public sealed record MyPermissionsResponse(bool IsSystemAdmin, IReadOnlyList<str
 public interface IAccessControlService
 {
     Task<PagedResponse<PermissionGridRow>> GetPermissionsAsync(PagedRequest request, CancellationToken ct);
+    Task<IReadOnlyList<PermissionGridRow>> GetActivePermissionCatalogAsync(CancellationToken ct);
     Task<long> CreatePermissionAsync(PermissionRequest request, CancellationToken ct);
     Task UpdatePermissionAsync(long id, PermissionRequest request, CancellationToken ct);
     Task DeletePermissionAsync(long id, CancellationToken ct);

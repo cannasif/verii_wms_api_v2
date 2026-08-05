@@ -25,6 +25,24 @@ public sealed class AccessControlService(IUnitOfWork unitOfWork, IAuditLogWriter
         return await query.ToPagedResponseAsync(request, ct);
     }
 
+    public async Task<IReadOnlyList<PermissionGridRow>> GetActivePermissionCatalogAsync(CancellationToken ct) =>
+        await PermissionDefinitions.Query()
+            .Where(x => x.IsActive)
+            .OrderBy(x => x.Code)
+            .Select(x => new PermissionGridRow(
+                x.Id,
+                x.Code,
+                x.Name,
+                x.Description,
+                x.IsActive,
+                x.AvailableOnWeb,
+                x.AvailableOnMobile,
+                x.CreatedBy,
+                x.CreatedDate,
+                x.UpdatedBy,
+                x.UpdatedDate))
+            .ToListAsync(ct);
+
     public async Task<long> CreatePermissionAsync(PermissionRequest request, CancellationToken ct)
     {
         await ValidatePermission(request, null, ct);

@@ -12,6 +12,8 @@ public sealed class AccessControlController(IAccessControlService service, IPerm
 {
     [HttpPost("permissions/paged")]
     public async Task<IActionResult> Permissions(PagedRequest request, CancellationToken ct) { await Require("SYSTEM.PERMISSIONS.VIEW", ct); return Ok(ApiResponse<PagedResponse<PermissionGridRow>>.Ok(await service.GetPermissionsAsync(request, ct))); }
+    [HttpGet("permissions/catalog")]
+    public async Task<IActionResult> PermissionCatalog(CancellationToken ct) { await Require("SYSTEM.PERMISSIONS.VIEW", ct); return Ok(ApiResponse<IReadOnlyList<PermissionGridRow>>.Ok(await service.GetActivePermissionCatalogAsync(ct))); }
     [HttpPost("permissions")]
     public async Task<IActionResult> CreatePermission(PermissionRequest request, CancellationToken ct) { await Require("SYSTEM.PERMISSIONS.MANAGE", ct); return Ok(ApiResponse<object>.Ok(new { id = await service.CreatePermissionAsync(request, ct) }, "İzin tanımı oluşturuldu.")); }
     [HttpPut("permissions/{id:long}"), HttpPost("permissions/{id:long}/update")]
