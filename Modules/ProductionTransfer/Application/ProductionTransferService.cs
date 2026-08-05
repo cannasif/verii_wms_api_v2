@@ -9,6 +9,9 @@ using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
+using StockEntity=verii_wms_api_v2.Modules.Stock.Domain.Stock;
+using WarehouseEntity=verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
+using YapCodeEntity=verii_wms_api_v2.Modules.YapCode.Domain.YapCode;
 
 namespace verii_wms_api_v2.Modules.ProductionTransfer.Application;
 
@@ -49,6 +52,8 @@ public sealed class ProductionTransferService(
             var policy=await GetPolicyEntityAsync(request.Transfer.BranchCode,token);
             ValidatePolicy(request,policy);
             await ValidateProductionReferencesAsync(request,token);
+            if(!request.TriggeredByProduction&&policy.RequireErpMasterDataForManualTransfer)
+                await ValidateManualErpMasterDataAsync(request,token);
             var context=Context(request.Purpose);
             var availability=policy.CheckMaterialAvailability
                 ? await AvailabilityAsync(request.Transfer,token)
@@ -145,7 +150,8 @@ public sealed class ProductionTransferService(
         if(!request.AllowOverIssue&&request.OverIssueTolerancePercent!=0)
             throw AppException.BadRequest("Fazla sarf kapalıyken tolerans sıfır olmalıdır.");
         var sourceSystemCode=Clean(request.WmsSourceSystemCode,50)?.ToUpperInvariant();
-        if(request.ProductionOrderSource==ProductionOrderSourceType.WmsIntegrationTables&&string.IsNullOrWhiteSpace(sourceSystemCode))
+        if((request.ProductionOrderSource is ProductionOrderSourceType.WmsIntegrationTables or ProductionOrderSourceType.ErpAndWms)&&
+           string.IsNullOrWhiteSpace(sourceSystemCode))
             throw AppException.BadRequest("WMS entegrasyon tablosu seçildiğinde kaynak sistem kodu zorunludur.");
         var branch=Branch(request.BranchCode);
         var entity=await Policies.FirstOrDefaultAsync(x=>x.BranchCode==branch&&x.PolicyKey=="DEFAULT",true,ct);
@@ -155,7 +161,9 @@ public sealed class ProductionTransferService(
         entity.ProductionOrderSource=request.ProductionOrderSource;
         entity.WmsSourceSystemCode=sourceSystemCode??"WINDBOX";
         entity.RequireProductionOrderReference=request.RequireProductionOrderReference;
-        entity.AllowManualTransfer=request.AllowManualTransfer;entity.AllowAutomaticGeneration=request.AllowAutomaticGeneration;
+        entity.AllowManualTransfer=request.AllowManualTransfer;
+        entity.RequireErpMasterDataForManualTransfer=request.RequireErpMasterDataForManualTransfer;
+        entity.AllowAutomaticGeneration=request.AllowAutomaticGeneration;
         entity.CheckMaterialAvailability=request.CheckMaterialAvailability;entity.BlockOnShortage=request.BlockOnShortage;
         entity.RequireTaskAssignment=request.RequireTaskAssignment;
         entity.RequireSourceProductionLocation=request.RequireSourceProductionLocation;
@@ -237,6 +245,42 @@ public sealed class ProductionTransferService(
         }
     }
 
+    private async Task ValidateManualErpMasterDataAsync(
+        CreateProductionTransferDraftRequest request,CancellationToken ct)
+    {
+        var branch=Branch(request.Transfer.BranchCode);
+        var warehouseIds=new[]{request.Transfer.SourceWarehouseId,request.Transfer.TargetWarehouseId}.Distinct().ToArray();
+        var warehouseCount=await uow.Repository<WarehouseEntity>().Query()
+            .CountAsync(x=>x.BranchCode==branch&&warehouseIds.Contains(x.Id),ct);
+        if(warehouseCount!=warehouseIds.Length)
+            throw AppException.BadRequest("Plansız üretim transferindeki kaynak veya hedef depo ERP aynasında bulunamadı.");
+
+        var stockIds=request.Transfer.Lines.Select(x=>x.StockId).Distinct().ToArray();
+        var stocks=await uow.Repository<StockEntity>().Query()
+            .Where(x=>x.BranchCode==branch&&stockIds.Contains(x.Id))
+            .Select(x=>new{x.Id,x.BaseUnitCode}).ToListAsync(ct);
+        if(stocks.Count!=stockIds.Length)
+            throw AppException.BadRequest("Plansız üretim transferindeki stoklardan biri ERP aynasında bulunamadı.");
+        var units=stocks.ToDictionary(x=>x.Id,x=>x.BaseUnitCode);
+        foreach(var line in request.Transfer.Lines)
+            if(string.IsNullOrWhiteSpace(line.UnitCode)||
+               !string.Equals(units[line.StockId].Trim(),line.UnitCode.Trim(),StringComparison.OrdinalIgnoreCase))
+                throw AppException.BadRequest($"Stok {line.StockId} için ölçü birimi ERP ana birimiyle uyuşmuyor. Beklenen: {units[line.StockId]}.");
+
+        var configurationIds=request.Transfer.Lines.Where(x=>x.YapCodeId.HasValue)
+            .Select(x=>x.YapCodeId!.Value).Distinct().ToArray();
+        if(configurationIds.Length==0)return;
+        var configurations=await uow.Repository<YapCodeEntity>().Query()
+            .Where(x=>x.BranchCode==branch&&configurationIds.Contains(x.Id))
+            .Select(x=>new{x.Id,x.StockId}).ToListAsync(ct);
+        if(configurations.Count!=configurationIds.Length)
+            throw AppException.BadRequest("Plansız üretim transferindeki yapılandırma kodlarından biri ERP aynasında bulunamadı.");
+        var configurationMap=configurations.ToDictionary(x=>x.Id);
+        if(request.Transfer.Lines.Any(x=>x.YapCodeId.HasValue&&configurationMap[x.YapCodeId.Value].StockId.HasValue&&
+               configurationMap[x.YapCodeId.Value].StockId!=x.StockId))
+            throw AppException.BadRequest("Seçilen yapılandırma kodu transfer satırındaki stoğa ait değil.");
+    }
+
     private static void Validate(CreateProductionTransferDraftRequest request)
     {
         if(request.Transfer is null)throw AppException.BadRequest("Transfer gövdesi zorunludur.");
@@ -248,7 +292,8 @@ public sealed class ProductionTransferService(
 
     private static void ValidatePolicy(CreateProductionTransferDraftRequest request,ProductionTransferPolicy policy)
     {
-        if(policy.RequireProductionOrderReference&&string.IsNullOrWhiteSpace(request.ProductionOrderNo)&&!request.ProductionOrderId.HasValue)
+        if(request.TriggeredByProduction&&policy.RequireProductionOrderReference&&
+           string.IsNullOrWhiteSpace(request.ProductionOrderNo)&&!request.ProductionOrderId.HasValue)
             throw AppException.BadRequest("Üretim emri referansı zorunludur.");
         if(!policy.AllowManualTransfer&&!request.TriggeredByProduction)
             throw AppException.BadRequest("Manuel üretim transferi politikada kapalıdır.");
@@ -285,7 +330,8 @@ public sealed class ProductionTransferService(
     private static ProductionTransferPolicy Default(string branch)=>new(){BranchCode=branch,PolicyKey="DEFAULT",CreatedDate=DateTime.UtcNow};
     private static ProductionTransferPolicyDto Map(ProductionTransferPolicy x)=>new(x.Id,x.BranchCode,Convert.ToBase64String(x.RowVersion),
         x.ProductionOrderSource,x.WmsSourceSystemCode,x.RequireProductionOrderReference,
-        x.AllowManualTransfer,x.AllowAutomaticGeneration,x.CheckMaterialAvailability,x.BlockOnShortage,x.RequireTaskAssignment,
+        x.AllowManualTransfer,x.RequireErpMasterDataForManualTransfer,x.AllowAutomaticGeneration,
+        x.CheckMaterialAvailability,x.BlockOnShortage,x.RequireTaskAssignment,
         x.RequireSourceProductionLocation,x.RequireTargetProductionLocation,x.AllowPartialSupply,x.AllowOverIssue,
         x.OverIssueTolerancePercent,x.RequireApproval,x.CancellationReturnPolicy,x.UpdatedBy,x.UpdatedDate);
     private static void EnsureRowVersion(byte[] current,string? supplied){

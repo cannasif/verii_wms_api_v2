@@ -88,6 +88,32 @@ public sealed class ProductionPlanningModelTests
             nameof(ProductionTransferLineLink.ProductionOutputId));
     }
 
+    [Fact]
+    public void Production_policy_supports_combined_sources_and_strict_manual_erp_validation()
+    {
+        using var context = CreateContext();
+        var model = context.GetService<IDesignTimeModel>().Model;
+        var policy = AssertEntity<ProductionTransferPolicy>(model);
+
+        Assert.Equal(3, (int)ProductionOrderSourceType.ErpAndWms);
+        Assert.Equal(true, policy
+            .FindProperty(nameof(ProductionTransferPolicy.RequireErpMasterDataForManualTransfer))!
+            .GetDefaultValue());
+
+        var operationalOrder = AssertEntity<ProductionOrder>(model);
+        Assert.Equal(50, operationalOrder
+            .FindProperty(nameof(ProductionOrder.ExternalSourceSystemCode))!
+            .GetMaxLength());
+        Assert.Contains(operationalOrder.GetIndexes(), candidate => candidate.Properties
+            .Select(x => x.Name)
+            .SequenceEqual(new[]
+            {
+                nameof(ProductionOrder.BranchCode),
+                nameof(ProductionOrder.ExternalSourceSystemCode),
+                nameof(ProductionOrder.ExternalOrderNo)
+            }));
+    }
+
     private static IEntityType AssertEntity<TEntity>(IModel model) =>
         model.FindEntityType(typeof(TEntity))
         ?? throw new InvalidOperationException($"{typeof(TEntity).Name} modelde bulunamadı.");

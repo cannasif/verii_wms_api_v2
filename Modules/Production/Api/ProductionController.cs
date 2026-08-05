@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using verii_wms_api_v2.Modules.AccessControl.Application;
 using verii_wms_api_v2.Modules.Production.Application;
+using verii_wms_api_v2.Modules.Production.Domain;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -41,11 +42,13 @@ public sealed class ProductionController(
     }
 
     [HttpGet("work-orders/{workOrderNumber}/prepare")]
-    public async Task<IActionResult>PrepareSourceWorkOrder(string workOrderNumber,CancellationToken ct)
+    public async Task<IActionResult>PrepareSourceWorkOrder(
+        string workOrderNumber,[FromQuery]ProductionOrderSourceType? sourceType,
+        [FromQuery]string? sourceSystemCode,CancellationToken ct)
     {
         await Require("WMS.PRODUCTION.VIEW",ct);
         return Ok(ApiResponse<PreparedNetsisProductionWorkOrder>.Ok(
-            await service.PrepareSourceWorkOrderAsync(workOrderNumber,BranchCode(),ct)));
+            await service.PrepareSourceWorkOrderAsync(workOrderNumber,sourceType,sourceSystemCode,BranchCode(),ct)));
     }
 
     [HttpPost("plans/paged")]

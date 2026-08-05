@@ -74,6 +74,7 @@ public sealed class ProductionTransferPolicy : BaseEntity
     public string WmsSourceSystemCode { get; set; } = "WINDBOX";
     public bool RequireProductionOrderReference { get; set; } = true;
     public bool AllowManualTransfer { get; set; } = true;
+    public bool RequireErpMasterDataForManualTransfer { get; set; } = true;
     public bool AllowAutomaticGeneration { get; set; } = true;
     public bool CheckMaterialAvailability { get; set; } = true;
     public bool BlockOnShortage { get; set; } = true;

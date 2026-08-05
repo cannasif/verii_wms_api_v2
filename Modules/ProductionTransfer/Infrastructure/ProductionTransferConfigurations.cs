@@ -59,6 +59,7 @@ public sealed class ProductionTransferPolicyConfiguration : BaseEntityConfigurat
             .HasDefaultValue(ProductionOrderSourceType.NetsisErpFunctions)
             .HasSentinel((ProductionOrderSourceType)0);
         b.Property(x=>x.WmsSourceSystemCode).HasMaxLength(50).IsRequired().HasDefaultValue("WINDBOX");
+        b.Property(x=>x.RequireErpMasterDataForManualTransfer).HasDefaultValue(true);
         b.Property(x=>x.OverIssueTolerancePercent).HasPrecision(9,4);
         b.Property(x=>x.CancellationReturnPolicy).HasConversion<string>().HasMaxLength(40)
             .HasDefaultValue(WarehouseTransferCancellationReturnPolicy.OriginalSourceLocation)

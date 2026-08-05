@@ -54,7 +54,8 @@ public enum ProductionDependencyType
 public enum ProductionOrderSourceType
 {
     NetsisErpFunctions = 1,
-    WmsIntegrationTables = 2
+    WmsIntegrationTables = 2,
+    ErpAndWms = 3
 }
 
 public enum ProductionSourceOrderStatus
@@ -144,6 +145,7 @@ public sealed class ProductionOrder : BaseEntity
     public int LineNo { get; set; }
     public string OrderNo { get; set; } = string.Empty;
     public string? ExternalOrderNo { get; set; }
+    public string? ExternalSourceSystemCode { get; set; }
     public ProductionOrderStatus Status { get; set; } = ProductionOrderStatus.Draft;
     public int SequenceNo { get; set; }
     public int? ParallelGroupNo { get; set; }

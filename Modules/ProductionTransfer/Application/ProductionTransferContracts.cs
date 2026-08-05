@@ -52,14 +52,14 @@ public sealed record ProductionTransferDetail(WarehouseTransferDetail Transfer,P
 
 public sealed record ProductionTransferPolicyDto(
     long Id,string BranchCode,string RowVersion,ProductionOrderSourceType ProductionOrderSource,string WmsSourceSystemCode,
-    bool RequireProductionOrderReference,bool AllowManualTransfer,bool AllowAutomaticGeneration,
+    bool RequireProductionOrderReference,bool AllowManualTransfer,bool RequireErpMasterDataForManualTransfer,bool AllowAutomaticGeneration,
     bool CheckMaterialAvailability,bool BlockOnShortage,bool RequireTaskAssignment,bool RequireSourceProductionLocation,
     bool RequireTargetProductionLocation,bool AllowPartialSupply,bool AllowOverIssue,decimal OverIssueTolerancePercent,
     bool RequireApproval,WarehouseTransferCancellationReturnPolicy CancellationReturnPolicy,long? UpdatedBy,DateTime? UpdatedDate);
 
 public sealed record UpdateProductionTransferPolicyRequest(
     string BranchCode,string? RowVersion,ProductionOrderSourceType ProductionOrderSource,string WmsSourceSystemCode,
-    bool RequireProductionOrderReference,bool AllowManualTransfer,bool AllowAutomaticGeneration,
+    bool RequireProductionOrderReference,bool AllowManualTransfer,bool RequireErpMasterDataForManualTransfer,bool AllowAutomaticGeneration,
     bool CheckMaterialAvailability,bool BlockOnShortage,bool RequireTaskAssignment,bool RequireSourceProductionLocation,
     bool RequireTargetProductionLocation,bool AllowPartialSupply,bool AllowOverIssue,decimal OverIssueTolerancePercent,
     bool RequireApproval,WarehouseTransferCancellationReturnPolicy CancellationReturnPolicy);

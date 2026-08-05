@@ -38,42 +38,59 @@ public sealed class ProductionService(
             throw AppException.BadRequest("Oturum şube kodu sayısal değildir.");
         var setting=await GetSourceSettingAsync(branch,ct);
         var boundedTake=Math.Clamp(take,1,500);
-        if(setting.Source==ProductionOrderSourceType.NetsisErpFunctions)
+        var result=new List<ProductionSourceWorkOrderRow>(boundedTake*2);
+        if(setting.Source is ProductionOrderSourceType.NetsisErpFunctions or ProductionOrderSourceType.ErpAndWms)
         {
             var rows=await netsisRead.GetProductionWorkOrdersAsync(search,branchNumber,false,boundedTake,ct);
-            return rows.Select(x=>new ProductionSourceWorkOrderRow(
-                setting.Source,"NETSIS",1,x.WorkOrderNumber,x.BranchCode??branchNumber,x.StockCode,x.StockName,
+            result.AddRange(rows.Select(x=>new ProductionSourceWorkOrderRow(
+                ProductionOrderSourceType.NetsisErpFunctions,"NETSIS",1,x.WorkOrderNumber,x.BranchCode??branchNumber,x.StockCode,x.StockName,
                 x.ConfigurationCode,x.WorkOrderQuantity,x.UnitCode,x.RecipeTotal,x.WorkOrderDate,x.DeliveryDate,
-                x.ProjectCode,x.WarehouseCode,x.IssueWarehouseCode,x.IsClosed)).ToArray();
+                x.ProjectCode,x.WarehouseCode,x.IssueWarehouseCode,x.IsClosed)));
         }
 
-        var query=uow.Repository<ProductionSourceWorkOrder>().Query()
-            .Where(x=>x.BranchCode==branch&&x.SourceSystemCode==setting.SourceSystemCode&&
-                (x.Status==ProductionSourceOrderStatus.Ready||x.Status==ProductionSourceOrderStatus.Released));
-        if(!string.IsNullOrWhiteSpace(search))
+        if(setting.Source is ProductionOrderSourceType.WmsIntegrationTables or ProductionOrderSourceType.ErpAndWms)
         {
-            var term=search.Trim();
-            query=query.Where(x=>x.WorkOrderNumber.Contains(term)||x.ProductCode.Contains(term)||
-                (x.ProductName!=null&&x.ProductName.Contains(term))||(x.ProjectCode!=null&&x.ProjectCode.Contains(term)));
+            var query=uow.Repository<ProductionSourceWorkOrder>().Query()
+                .Where(x=>x.BranchCode==branch&&x.SourceSystemCode==setting.SourceSystemCode&&
+                    (x.Status==ProductionSourceOrderStatus.Ready||x.Status==ProductionSourceOrderStatus.Released));
+            if(!string.IsNullOrWhiteSpace(search))
+            {
+                var term=search.Trim();
+                query=query.Where(x=>x.WorkOrderNumber.Contains(term)||x.ProductCode.Contains(term)||
+                    (x.ProductName!=null&&x.ProductName.Contains(term))||(x.ProjectCode!=null&&x.ProjectCode.Contains(term)));
+            }
+            var candidates=await query.Include(x=>x.RecipeLines)
+                .OrderByDescending(x=>x.SourceUpdatedAtUtc).ThenByDescending(x=>x.RevisionNumber)
+                .Take(Math.Min(1500,boundedTake*5)).ToListAsync(ct);
+            result.AddRange(candidates.GroupBy(x=>x.WorkOrderNumber,StringComparer.OrdinalIgnoreCase)
+                .Select(x=>x.OrderByDescending(v=>v.RevisionNumber).ThenByDescending(v=>v.SourceUpdatedAtUtc).First())
+                .Take(boundedTake)
+                .Select(x=>new ProductionSourceWorkOrderRow(
+                    ProductionOrderSourceType.WmsIntegrationTables,x.SourceSystemCode,x.RevisionNumber,x.WorkOrderNumber,
+                    branchNumber,x.ProductCode,x.ProductName??x.ProductCode,x.ConfigurationCode,x.PlannedQuantity,
+                    x.UnitCode,x.RecipeLines.Count,x.WorkOrderDate,x.DeliveryDate,x.ProjectCode,
+                    x.TargetWarehouseCode,x.SourceWarehouseCode,false)));
         }
-        var candidates=await query.Include(x=>x.RecipeLines)
-            .OrderByDescending(x=>x.SourceUpdatedAtUtc).ThenByDescending(x=>x.RevisionNumber)
-            .Take(Math.Min(1500,boundedTake*5)).ToListAsync(ct);
-        return candidates.GroupBy(x=>x.WorkOrderNumber,StringComparer.OrdinalIgnoreCase)
-            .Select(x=>x.OrderByDescending(v=>v.RevisionNumber).ThenByDescending(v=>v.SourceUpdatedAtUtc).First())
-            .Take(boundedTake)
-            .Select(x=>new ProductionSourceWorkOrderRow(
-                setting.Source,x.SourceSystemCode,x.RevisionNumber,x.WorkOrderNumber,branchNumber,x.ProductCode,
-                x.ProductName??x.ProductCode,x.ConfigurationCode,x.PlannedQuantity,x.UnitCode,x.RecipeLines.Count,
-                x.WorkOrderDate,x.DeliveryDate,x.ProjectCode,x.TargetWarehouseCode,x.SourceWarehouseCode,false))
-            .ToArray();
+        return result.OrderByDescending(x=>x.WorkOrderDate).ThenBy(x=>x.WorkOrderNumber)
+            .ThenBy(x=>x.SourceSystemCode).Take(boundedTake).ToArray();
     }
 
     public async Task<PreparedNetsisProductionWorkOrder> PrepareSourceWorkOrderAsync(
-        string workOrderNumber,string branchCode,CancellationToken ct=default)
+        string workOrderNumber,ProductionOrderSourceType? sourceType,string? sourceSystemCode,
+        string branchCode,CancellationToken ct=default)
     {
         var setting=await GetSourceSettingAsync(branchCode.Trim(),ct);
-        return setting.Source==ProductionOrderSourceType.NetsisErpFunctions
+        var selectedSource=setting.Source==ProductionOrderSourceType.ErpAndWms
+            ?sourceType??throw AppException.BadRequest("Birleşik kaynak modunda iş emri kaynağı zorunludur.")
+            :setting.Source;
+        if(selectedSource==ProductionOrderSourceType.ErpAndWms)
+            throw AppException.BadRequest("İş emri hazırlama kaynağı ERP veya WMS olmalıdır.");
+        if(setting.Source!=ProductionOrderSourceType.ErpAndWms&&sourceType.HasValue&&sourceType!=selectedSource)
+            throw AppException.Conflict("İstenen iş emri kaynağı şube politikasıyla uyuşmuyor.");
+        if(selectedSource==ProductionOrderSourceType.WmsIntegrationTables&&!string.IsNullOrWhiteSpace(sourceSystemCode)&&
+           !string.Equals(sourceSystemCode.Trim(),setting.SourceSystemCode,StringComparison.OrdinalIgnoreCase))
+            throw AppException.Conflict("İstenen WMS kaynak sistem kodu şube politikasıyla uyuşmuyor.");
+        return selectedSource==ProductionOrderSourceType.NetsisErpFunctions
             ?await PrepareNetsisWorkOrderAsync(workOrderNumber,branchCode,ct)
             :await PrepareWmsSourceWorkOrderAsync(workOrderNumber,branchCode,setting.SourceSystemCode,ct);
     }
@@ -144,10 +161,11 @@ public sealed class ProductionService(
         }).ToArray();
 
         var existing=await uow.Repository<ProductionOrder>().Query()
-            .Where(x=>x.BranchCode==branch&&x.ExternalOrderNo==externalNo)
+            .Where(x=>x.BranchCode==branch&&x.ExternalOrderNo==externalNo&&x.ExternalSourceSystemCode=="NETSIS")
             .OrderByDescending(x=>x.Id)
             .Select(x=>new{x.Id,x.ProductionHeaderId,x.Header.DocumentNo}).FirstOrDefaultAsync(ct);
         return new PreparedNetsisProductionWorkOrder(
+            ProductionOrderSourceType.NetsisErpFunctions,"NETSIS",
             workOrder.WorkOrderNumber,workOrder.BranchCode??branchNumber,workOrder.StockCode,workOrder.StockName,
             productStock?.BaseUnitCode??workOrder.UnitCode??"ADET",workOrder.WorkOrderQuantity,
             productStock?.Id,ResolveYap(workOrder.ConfigurationCode,productStock?.Id),workOrder.ConfigurationCode,
@@ -212,9 +230,12 @@ public sealed class ProductionService(
                 row.VariableWasteQuantity+row.FixedWasteQuantity,row.TotalRequiredQuantity,error);
         }).ToArray();
         var existing=await uow.Repository<ProductionOrder>().Query()
-            .Where(x=>x.BranchCode==branch&&x.ExternalOrderNo==externalNo).OrderByDescending(x=>x.Id)
+            .Where(x=>x.BranchCode==branch&&x.ExternalOrderNo==externalNo&&x.ExternalSourceSystemCode==source.SourceSystemCode)
+            .OrderByDescending(x=>x.Id)
             .Select(x=>new{x.Id,x.ProductionHeaderId,x.Header.DocumentNo}).FirstOrDefaultAsync(ct);
-        return new PreparedNetsisProductionWorkOrder(source.WorkOrderNumber,branchNumber,source.ProductCode,
+        return new PreparedNetsisProductionWorkOrder(
+            ProductionOrderSourceType.WmsIntegrationTables,source.SourceSystemCode,
+            source.WorkOrderNumber,branchNumber,source.ProductCode,
             source.ProductName??source.ProductCode,productStock?.BaseUnitCode??source.UnitCode,source.PlannedQuantity,
             productStock?.Id,ResolveYap(source.ConfigurationCode,productStock?.Id),source.ConfigurationCode,
             sourceWarehouse?.Id,source.SourceWarehouseCode,sourceWarehouse?.WarehouseName,
@@ -349,6 +370,7 @@ public sealed class ProductionService(
                 {
                     BranchCode=branch,CreatedBy=actor,CreatedDate=now,Header=header,LineNo=lineNo,
                     OrderNo=$"{allocated.DocumentNumber}-O{lineNo:00}",ExternalOrderNo=Clean(item.ExternalOrderNo,100),
+                    ExternalSourceSystemCode=Clean(item.ExternalSourceSystemCode,50)?.ToUpperInvariant(),
                     Status=ProductionOrderStatus.Draft,SequenceNo=item.SequenceNo,ParallelGroupNo=item.ParallelGroupNo,
                     BomReference=Clean(item.BomReference,100),RoutingReference=Clean(item.RoutingReference,100),
                     WorkCenterCode=Clean(item.WorkCenterCode,100),ProducedStockId=stock.Id,
@@ -481,7 +503,8 @@ public sealed class ProductionService(
                 x.DependencyType,x.LagMinutes,x.RequireOutputAvailable,x.RequireTransferCompleted))
             .ToListAsync(ct);
         var orderDtos=orders.Select(order=>new ProductionOrderDto(
-            order.Id,order.LineNo,order.OrderNo,order.ExternalOrderNo,order.Status,order.SequenceNo,
+            order.Id,order.LineNo,order.OrderNo,order.ExternalOrderNo,order.ExternalSourceSystemCode,
+            order.Status,order.SequenceNo,
             order.ParallelGroupNo,order.BomReference,order.RoutingReference,order.WorkCenterCode,
             order.ProducedStockId,order.ProducedStockCodeSnapshot,order.ProducedStockNameSnapshot,
             order.ProducedYapCodeId,order.ProducedYapCodeSnapshot,order.UnitCode,order.PlannedQuantity,

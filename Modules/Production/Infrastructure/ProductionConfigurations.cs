@@ -76,6 +76,7 @@ public sealed class ProductionOrderConfiguration : BaseEntityConfiguration<Produ
         b.ToTable("RII_PR_ORDER",t=>t.HasCheckConstraint("CK_RII_PR_ORDER_QTY","[PlannedQuantity] > 0 AND [CompletedQuantity] >= 0 AND [ScrapQuantity] >= 0"));
         b.Property(x=>x.OrderNo).HasMaxLength(70).IsRequired();
         b.Property(x=>x.ExternalOrderNo).HasMaxLength(100);
+        b.Property(x=>x.ExternalSourceSystemCode).HasMaxLength(50);
         b.Property(x=>x.Status).HasConversion<string>().HasMaxLength(30);
         b.Property(x=>x.BomReference).HasMaxLength(100);
         b.Property(x=>x.RoutingReference).HasMaxLength(100);
@@ -92,6 +93,8 @@ public sealed class ProductionOrderConfiguration : BaseEntityConfiguration<Produ
         b.HasOne(x=>x.Header).WithMany(x=>x.Orders).HasForeignKey(x=>x.ProductionHeaderId).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(x=>new{x.ProductionHeaderId,x.LineNo}).IsUnique();
         b.HasIndex(x=>new{x.BranchCode,x.OrderNo}).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x=>new{x.BranchCode,x.ExternalSourceSystemCode,x.ExternalOrderNo})
+            .HasFilter("[IsDeleted] = 0 AND [ExternalOrderNo] IS NOT NULL");
         b.HasIndex(x=>new{x.ProducedStockId,x.Status});
     }
 }

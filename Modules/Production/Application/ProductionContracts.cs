@@ -24,6 +24,7 @@ public sealed record ProductionOutputDraftRequest(
 public sealed record ProductionOrderDraftRequest(
     string LocalKey,
     string? ExternalOrderNo,
+    string? ExternalSourceSystemCode,
     int SequenceNo,
     int? ParallelGroupNo,
     string? BomReference,
@@ -87,6 +88,8 @@ public sealed record PreparedNetsisProductionMaterial(
     string? MappingError);
 
 public sealed record PreparedNetsisProductionWorkOrder(
+    ProductionOrderSourceType SourceType,
+    string SourceSystemCode,
     string WorkOrderNumber,
     int BranchCode,
     string ProductCode,
@@ -205,6 +208,7 @@ public sealed record ProductionOrderDto(
     int LineNo,
     string OrderNo,
     string? ExternalOrderNo,
+    string? ExternalSourceSystemCode,
     ProductionOrderStatus Status,
     int SequenceNo,
     int? ParallelGroupNo,
@@ -250,7 +254,9 @@ public sealed record ProductionTransitionRequest(string RowVersion,string? Reaso
 public interface IProductionService
 {
     Task<IReadOnlyList<ProductionSourceWorkOrderRow>> GetSourceWorkOrdersAsync(string? search,string branchCode,int take=200,CancellationToken ct=default);
-    Task<PreparedNetsisProductionWorkOrder> PrepareSourceWorkOrderAsync(string workOrderNumber,string branchCode,CancellationToken ct=default);
+    Task<PreparedNetsisProductionWorkOrder> PrepareSourceWorkOrderAsync(
+        string workOrderNumber,ProductionOrderSourceType? sourceType,string? sourceSystemCode,
+        string branchCode,CancellationToken ct=default);
     Task<PreparedNetsisProductionWorkOrder> PrepareNetsisWorkOrderAsync(string workOrderNumber,string branchCode,CancellationToken ct=default);
     Task<CreateProductionPlanResult> CreateAsync(CreateProductionPlanRequest request,long actor,CancellationToken ct=default);
     Task<PagedResponse<ProductionPlanGridRow>> GetPagedAsync(PagedRequest request,CancellationToken ct=default);

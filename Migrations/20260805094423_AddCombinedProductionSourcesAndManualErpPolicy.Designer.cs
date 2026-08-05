@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 
@@ -11,9 +12,11 @@ using verii_wms_api_v2.Modules.Identity.Infrastructure;
 namespace verii_wms_api_v2.Migrations
 {
     [DbContext(typeof(WmsDbContext))]
-    partial class WmsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260805094423_AddCombinedProductionSourcesAndManualErpPolicy")]
+    partial class AddCombinedProductionSourcesAndManualErpPolicy
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -12015,10 +12018,6 @@ namespace verii_wms_api_v2.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
-                    b.Property<string>("ExternalSourceSystemCode")
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
-
                     b.Property<bool>("IsDeleted")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bit")
@@ -12125,9 +12124,6 @@ namespace verii_wms_api_v2.Migrations
 
                     b.HasIndex("ProductionHeaderId", "LineNo")
                         .IsUnique();
-
-                    b.HasIndex("BranchCode", "ExternalSourceSystemCode", "ExternalOrderNo")
-                        .HasFilter("[IsDeleted] = 0 AND [ExternalOrderNo] IS NOT NULL");
 
                     b.ToTable("RII_PR_ORDER", null, t =>
                         {
