@@ -99,7 +99,20 @@ public sealed class StockBalanceService(IUnitOfWork unitOfWork) : IStockBalanceS
             foreach (var group in groups)
             {
                 if (!balances.TryGetValue(group.Key, out var balance))
-                    throw AppException.Conflict("Rezervasyon için stok/raf/lot/seri bakiyesi bulunamadı.");
+                {
+                    var nearMatches = candidates
+                        .Where(x => x.WarehouseId == group.Key.WarehouseId && x.LocationId == group.Key.LocationId && x.StockId == group.Key.StockId)
+                        .Select(x => $"[YapKod:{(x.YapCodeId.HasValue ? x.YapCodeId.Value.ToString() : "-")} Birim:{x.UnitCode} Lot:'{x.LotNo}' Seri:'{x.SerialNo}' Durum:{x.StockStatus} Kullanılabilir:{x.AvailableQuantity}]")
+                        .ToList();
+                    var detail = nearMatches.Count > 0
+                        ? $"Bu depo/rafta aynı stok için bulunan bakiyeler: {string.Join(" | ", nearMatches)}."
+                        : "Bu depo/rafta bu stoğa ait hiç bakiye kaydı yok.";
+                    throw AppException.Conflict(
+                        "Rezervasyon için stok/raf/lot/seri bakiyesi bulunamadı. " +
+                        $"Aranan: Depo:{group.Key.WarehouseId} Raf:{group.Key.LocationId} Stok:{group.Key.StockId} " +
+                        $"YapKod:{(group.Key.YapCodeId.HasValue ? group.Key.YapCodeId.Value.ToString() : "-")} Birim:{group.Key.UnitCode} " +
+                        $"Lot:'{group.Key.LotNo}' Seri:'{group.Key.SerialNo}' Durum:{group.Key.StockStatus}. " + detail);
+                }
                 var delta = group.Sum(x => x.QuantityDelta);
                 if (delta > 0 && balance.AvailableQuantity < delta)
                     throw AppException.Conflict($"Yetersiz kullanılabilir raf bakiyesi. Kullanılabilir: {balance.AvailableQuantity}, istenen: {delta}.");
@@ -285,12 +298,12 @@ public sealed class StockBalanceService(IUnitOfWork unitOfWork) : IStockBalanceS
                 .ToListAsync(ct);
             var reservationMap = reservationAggregates.ToDictionary(
                 x => new LocationDimensionKey(x.Key.WarehouseId, x.Key.LocationId, x.Key.StockId, x.Key.YapCodeId,
-                    x.Key.UnitCode, x.Key.LotNo, x.Key.SerialNo, x.Key.StockStatus),
+                    x.Key.UnitCode, NormalizeKeyPart(x.Key.LotNo), NormalizeKeyPart(x.Key.SerialNo), x.Key.StockStatus),
                 x => x.Quantity);
             var now = DateTime.UtcNow;
             var locationRows = aggregates.Select(x =>
             {
-                var key = new LocationDimensionKey(x.Key.WarehouseId, x.Key.LocationId, x.Key.StockId, x.Key.YapCodeId, x.Key.UnitCode, x.Key.LotNo ?? "", x.Key.SerialNo ?? "", x.Key.StockStatus);
+                var key = new LocationDimensionKey(x.Key.WarehouseId, x.Key.LocationId, x.Key.StockId, x.Key.YapCodeId, x.Key.UnitCode, NormalizeKeyPart(x.Key.LotNo), NormalizeKeyPart(x.Key.SerialNo), x.Key.StockStatus);
                 var reserved = reservationMap.GetValueOrDefault(key);
                 if (reserved < 0 || reserved > x.Quantity)
                     throw AppException.Conflict("Rezervasyon defteri ile stok hareket defteri arasında tutarsızlık bulundu.");
@@ -399,8 +412,8 @@ public sealed class StockBalanceService(IUnitOfWork unitOfWork) : IStockBalanceS
         var ledgerRows = await Entries.Query().GroupBy(x => new { x.WarehouseId, x.LocationId, x.StockId, x.YapCodeId, x.UnitCode, x.LotNo, x.SerialNo, x.StockStatus })
             .Select(x => new { x.Key, Quantity = x.Sum(v => v.QuantityDelta), LastId = x.Max(v => v.Id) }).ToListAsync(ct);
         var projectionRows = await Locations.Query().Select(x => new { x.WarehouseId, x.LocationId, x.StockId, x.YapCodeId, x.UnitCode, x.LotNo, x.SerialNo, x.StockStatus, x.Quantity, x.LastMovementEntryId }).ToListAsync(ct);
-        var ledger = ledgerRows.ToDictionary(x => new LocationDimensionKey(x.Key.WarehouseId, x.Key.LocationId, x.Key.StockId, x.Key.YapCodeId, x.Key.UnitCode, x.Key.LotNo ?? "", x.Key.SerialNo ?? "", x.Key.StockStatus), x => new LedgerAggregate(x.Quantity, x.LastId));
-        var projection = projectionRows.ToDictionary(x => new LocationDimensionKey(x.WarehouseId, x.LocationId, x.StockId, x.YapCodeId, x.UnitCode, x.LotNo, x.SerialNo, x.StockStatus), x => new ProjectionAggregate(x.Quantity, x.LastMovementEntryId));
+        var ledger = ledgerRows.ToDictionary(x => new LocationDimensionKey(x.Key.WarehouseId, x.Key.LocationId, x.Key.StockId, x.Key.YapCodeId, x.Key.UnitCode, NormalizeKeyPart(x.Key.LotNo), NormalizeKeyPart(x.Key.SerialNo), x.Key.StockStatus), x => new LedgerAggregate(x.Quantity, x.LastId));
+        var projection = projectionRows.ToDictionary(x => new LocationDimensionKey(x.WarehouseId, x.LocationId, x.StockId, x.YapCodeId, x.UnitCode, NormalizeKeyPart(x.LotNo), NormalizeKeyPart(x.SerialNo), x.StockStatus), x => new ProjectionAggregate(x.Quantity, x.LastMovementEntryId));
         return (ledger, projection);
     }
 
@@ -419,9 +432,12 @@ public sealed class StockBalanceService(IUnitOfWork unitOfWork) : IStockBalanceS
         return issues;
     }
 
-    private static LocationDimensionKey EntryKey(StockMovementEntry x) => new(x.WarehouseId, x.LocationId, x.StockId, x.YapCodeId, x.UnitCode, x.LotNo ?? "", x.SerialNo ?? "", x.StockStatus);
-    private static LocationDimensionKey ReservationKey(StockReservationLineRequest x) => new(x.WarehouseId, x.LocationId, x.StockId, x.YapCodeId, x.UnitCode, x.LotNo ?? "", x.SerialNo ?? "", x.StockStatus);
-    private static LocationDimensionKey BalanceKey(LocationStockBalance x) => new(x.WarehouseId, x.LocationId, x.StockId, x.YapCodeId, x.UnitCode, x.LotNo, x.SerialNo, x.StockStatus);
+    // Lot/Seri karşılaştırması boşluk ve büyük/küçük harf farkına duyarlı olmamalı — aksi halde aynı fiziksel
+    // birim, farklı ekranlarda (draft, sayım artışı, transfer) girilen değerler arasında eşleşme bulamıyor.
+    private static string NormalizeKeyPart(string? value) => (value ?? string.Empty).Trim().ToUpperInvariant();
+    private static LocationDimensionKey EntryKey(StockMovementEntry x) => new(x.WarehouseId, x.LocationId, x.StockId, x.YapCodeId, x.UnitCode, NormalizeKeyPart(x.LotNo), NormalizeKeyPart(x.SerialNo), x.StockStatus);
+    private static LocationDimensionKey ReservationKey(StockReservationLineRequest x) => new(x.WarehouseId, x.LocationId, x.StockId, x.YapCodeId, x.UnitCode, NormalizeKeyPart(x.LotNo), NormalizeKeyPart(x.SerialNo), x.StockStatus);
+    private static LocationDimensionKey BalanceKey(LocationStockBalance x) => new(x.WarehouseId, x.LocationId, x.StockId, x.YapCodeId, x.UnitCode, NormalizeKeyPart(x.LotNo), NormalizeKeyPart(x.SerialNo), x.StockStatus);
     private static WarehouseDimensionKey WarehouseKey(LocationDimensionKey x) => new(x.WarehouseId, x.StockId, x.YapCodeId, x.UnitCode, x.StockStatus);
     private static string HashLocationKey(LocationDimensionKey key) => Hash($"{key.WarehouseId}|{key.LocationId}|{key.StockId}|{key.YapCodeId?.ToString() ?? "0"}|{key.UnitCode}|{key.LotNo}|{key.SerialNo}|{key.StockStatus}");
     private static string HashWarehouseKey(WarehouseDimensionKey key) => Hash($"{key.WarehouseId}|{key.StockId}|{key.YapCodeId?.ToString() ?? "0"}|{key.UnitCode}|{key.StockStatus}");

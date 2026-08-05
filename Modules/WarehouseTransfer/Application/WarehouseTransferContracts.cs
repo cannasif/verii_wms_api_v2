@@ -79,11 +79,19 @@ public sealed record WarehouseTransferGridRow(
     byte Priority,DateTimeOffset? PlannedDispatchAtUtc,DateTimeOffset? PlannedArrivalAtUtc,
     long? CreatedBy,DateTime? CreatedDate,long? UpdatedBy,DateTime? UpdatedDate);
 
+public sealed record WarehouseTransferTrackingLineDto(
+    long Id,string? HandlingUnitNo,string? LotNo,string? SerialNo,DateOnly? ManufacturingDate,DateOnly? ExpirationDate,
+    decimal PlannedQuantity,decimal PickedQuantity,decimal ShippedQuantity,decimal ReceivedQuantity,decimal PutawayQuantity,
+    WarehouseTransferTrackingStatus Status);
+
 public sealed record WarehouseTransferDetailLine(
     long Id,int LineNo,long StockId,string StockCode,string? StockName,long? YapCodeId,string? YapCode,
     string UnitCode,decimal RequestedQuantity,decimal ReservedQuantity,decimal PickedQuantity,decimal ShippedQuantity,
     decimal ReceivedQuantity,decimal PutawayQuantity,decimal DamagedQuantity,decimal LostQuantity,
-    StockTrackingType TrackingType,WarehouseTransferLineStatus Status,int TrackingCount);
+    StockTrackingType TrackingType,WarehouseTransferLineStatus Status,int TrackingCount,
+    IReadOnlyList<WarehouseTransferTrackingLineDto> Trackings,
+    long? DefaultSourceLocationId,string? DefaultSourceLocationCode,string? DefaultSourceLocationName,
+    long? DefaultTargetLocationId,string? DefaultTargetLocationCode,string? DefaultTargetLocationName);
 
 public sealed record WarehouseTransferDraftMetadata(long? SourceStagingLocationId,long? TargetReceivingLocationId,long? TargetPutawayLocationId,
     string? ExternalReferenceNo,string? Description,string? ProjectCode);

@@ -1,16 +1,44 @@
-﻿using Microsoft.EntityFrameworkCore.Migrations;
+/*
+  HOTFIX: RII_FN_ISEMRI SUBE_KODU / OLCUBR hatasi
+  Netsis TBLISEMRI tablosunda kolon adi SUBEKODU'dur (SUBE_KODU degil).
 
-#nullable disable
+  HOTFIX 2 (2026-08-05): TBLISEMRI.SUBEKODU bazi is emirlerinde NULL geliyor
+  (subesiz/genel is emri). @SubeKodu = I.SUBEKODU esitligi NULL ile hicbir
+  zaman TRUE donmedigi icin bu kayitlar oturum subesi ne olursa olsun
+  filtreden dusuyordu. WHERE kosuluna "OR I.SUBEKODU IS NULL" eklendi.
 
-namespace verii_wms_api_v2.Migrations
-{
-    /// <inheritdoc />
-    public partial class AddNetsisProductionReadFunctions : Migration
-    {
-        /// <inheritdoc />
-        protected override void Up(MigrationBuilder migrationBuilder)
-        {
-            migrationBuilder.Sql(SqlServerMigrationSql.CreateOrAlterFunction("dbo.RII_FN_ISEMRI", """
+  HOTFIX 3 (2026-08-05, proje lideri karari): NULL-fallback musteride hala
+  sorunu cozmedi. @SubeKodu parametresi imzada kaldi (geriye donuk uyumluluk
+  icin) ama WHERE kosulundaki sube filtrelemesi tamamen kaldirildi. Fonksiyon
+  artik sube ayrimi yapmadan tum is emirlerini donduruyor.
+
+  SSMS'te once bu scripti calistirin, ardindan ana migration scriptini
+  tekrar calistirin (idempotent, kaldigi yerden devam eder).
+*/
+
+SET XACT_ABORT ON;
+
+BEGIN TRY
+    BEGIN TRANSACTION;
+
+    IF NOT EXISTS
+    (
+        SELECT 1 FROM dbo.__EFMigrationsHistory
+        WHERE MigrationId = N'20260804095239_AddNetsisProductionReadFunctions'
+    )
+    BEGIN
+        INSERT INTO dbo.__EFMigrationsHistory ([MigrationId], [ProductVersion])
+        VALUES (N'20260804095239_AddNetsisProductionReadFunctions', N'10.0.10');
+    END;
+
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF XACT_STATE() <> 0 ROLLBACK TRANSACTION;
+    THROW;
+END CATCH;
+GO
+
 CREATE OR ALTER FUNCTION [dbo].[RII_FN_ISEMRI]
 (
     @IsEmriNo NVARCHAR(50) = NULL,
@@ -49,12 +77,10 @@ RETURN
         ORDER BY CASE WHEN SX.SUBE_KODU = I.SUBEKODU THEN 0 ELSE 1 END
     ) AS S
     WHERE (@IsEmriNo IS NULL OR I.ISEMRINO = @IsEmriNo)
-      AND (@SubeKodu IS NULL OR I.SUBEKODU = @SubeKodu)
       AND (@KapaliDahil = 1 OR UPPER(LTRIM(RTRIM(ISNULL(I.KAPALI, '')))) NOT IN ('1', 'E', 'EVET', 'TRUE'))
 );
-"""));
+GO
 
-            migrationBuilder.Sql(SqlServerMigrationSql.CreateOrAlterFunction("dbo.RII_FN_STOK_RECETE", """
 CREATE OR ALTER FUNCTION [dbo].[RII_FN_STOK_RECETE]
 (
     @StokKodu NVARCHAR(50),
@@ -118,9 +144,8 @@ RETURN
       )
       AND UPPER(ISNULL(NULLIF(LTRIM(RTRIM(R.OPR_BIL)), ''), 'B')) <> 'O'
 );
-"""));
+GO
 
-            migrationBuilder.Sql(SqlServerMigrationSql.CreateOrAlterFunction("dbo.RII_FN_ISEMRI_RECETE", """
 CREATE OR ALTER FUNCTION [dbo].[RII_FN_ISEMRI_RECETE]
 (
     @IsEmriNo NVARCHAR(50),
@@ -154,15 +179,36 @@ RETURN
         END AS DegiskenFireMiktari
     ) AS F
 );
-"""));
-        }
+GO
 
-        /// <inheritdoc />
-        protected override void Down(MigrationBuilder migrationBuilder)
-        {
-            migrationBuilder.Sql(SqlServerMigrationSql.DropFunction("dbo.RII_FN_ISEMRI_RECETE"));
-            migrationBuilder.Sql(SqlServerMigrationSql.DropFunction("dbo.RII_FN_STOK_RECETE"));
-            migrationBuilder.Sql(SqlServerMigrationSql.DropFunction("dbo.RII_FN_ISEMRI"));
-        }
-    }
-}
+BEGIN TRY
+    BEGIN TRANSACTION;
+
+    IF NOT EXISTS
+    (
+        SELECT 1 FROM dbo.__EFMigrationsHistory
+        WHERE MigrationId = N'20260804121412_AddCompatibleNetsisProductionReadFunctions'
+    )
+    BEGIN
+        INSERT INTO dbo.__EFMigrationsHistory ([MigrationId], [ProductVersion])
+        VALUES (N'20260804121412_AddCompatibleNetsisProductionReadFunctions', N'10.0.10');
+    END;
+
+    COMMIT TRANSACTION;
+END TRY
+BEGIN CATCH
+    IF XACT_STATE() <> 0 ROLLBACK TRANSACTION;
+    THROW;
+END CATCH;
+GO
+
+SELECT
+    OBJECT_ID(N'dbo.RII_FN_ISEMRI') AS IsEmriFunctionId,
+    OBJECT_ID(N'dbo.RII_FN_STOK_RECETE') AS StokReceteFunctionId,
+    OBJECT_ID(N'dbo.RII_FN_ISEMRI_RECETE') AS IsEmriReceteFunctionId,
+    CASE WHEN EXISTS
+    (
+        SELECT 1 FROM dbo.__EFMigrationsHistory
+        WHERE MigrationId = N'20260804121412_AddCompatibleNetsisProductionReadFunctions'
+    ) THEN 1 ELSE 0 END AS CompatibleMigrationApplied;
+GO

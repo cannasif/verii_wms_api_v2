@@ -21,6 +21,9 @@ public sealed class NetsisProductionReadContractTests
         Assert.Contains(sql, x => x.Contains("RII_FN_ISEMRI", StringComparison.Ordinal));
         Assert.Contains(sql, x => x.Contains("RII_FN_STOK_RECETE", StringComparison.Ordinal));
         Assert.Contains(sql, x => x.Contains("RII_FN_ISEMRI_RECETE", StringComparison.Ordinal));
+        Assert.Contains(sql, x => x.Contains("I.SUBEKODU", StringComparison.Ordinal));
+        Assert.DoesNotContain(sql, x => x.Contains("I.SUBE_KODU", StringComparison.Ordinal));
+        Assert.DoesNotContain(sql, x => x.Contains("I.OLCUBR", StringComparison.Ordinal));
         Assert.Equal(2, sql.Count(x => x.Contains("V3RIICO", StringComparison.Ordinal)));
         Assert.DoesNotContain(sql, x =>
             x.Contains("INSERT ", StringComparison.OrdinalIgnoreCase)

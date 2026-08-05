@@ -239,10 +239,27 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
                 transferLines.Where(x=>x.WtHeaderId==h.Id).Sum(x=>(decimal?)x.ReceivedQuantity)??0,transferLines.Where(x=>x.WtHeaderId==h.Id).Sum(x=>(decimal?)x.PutawayQuantity)??0,
                 h.Priority,h.PlannedDispatchAtUtc,h.PlannedArrivalAtUtc,h.CreatedBy,h.CreatedDate,h.UpdatedBy,h.UpdatedDate))
             .SingleOrDefaultAsync(ct)??throw AppException.NotFound("Transfer kaydı bulunamadı.");
-        var lines=await uow.Repository<WarehouseTransferLine>().Query().Where(x=>x.WtHeaderId==id).OrderBy(x=>x.LineNo)
-            .Select(x=>new WarehouseTransferDetailLine(x.Id,x.LineNo,x.StockId,x.StockCodeSnapshot,x.StockNameSnapshot,x.YapCodeId,x.YapCodeSnapshot,
+        var lineRows=await uow.Repository<WarehouseTransferLine>().Query().Where(x=>x.WtHeaderId==id).OrderBy(x=>x.LineNo)
+            .Select(x=>new{
+                x.Id,x.LineNo,x.StockId,x.StockCodeSnapshot,x.StockNameSnapshot,x.YapCodeId,x.YapCodeSnapshot,
                 x.UnitCode,x.RequestedQuantity,x.ReservedQuantity,x.PickedQuantity,x.ShippedQuantity,x.ReceivedQuantity,x.PutawayQuantity,x.DamagedQuantity,x.LostQuantity,
-                x.TrackingType,x.Status,x.Trackings.Count)).ToListAsync(ct);
+                x.TrackingType,x.Status,TrackingCount=x.Trackings.Count,x.DefaultSourceLocationId,x.DefaultTargetLocationId,
+                Trackings=x.Trackings.Where(t=>t.Status!=WarehouseTransferTrackingStatus.Cancelled).Select(t=>new WarehouseTransferTrackingLineDto(
+                    t.Id,t.HandlingUnitNo,t.LotNo,t.SerialNo,t.ManufacturingDate,t.ExpirationDate,
+                    t.PlannedQuantity,t.PickedQuantity,t.ShippedQuantity,t.ReceivedQuantity,t.PutawayQuantity,t.Status)).ToList()})
+            .ToListAsync(ct);
+        var locationIds=lineRows.SelectMany(x=>new[]{x.DefaultSourceLocationId,x.DefaultTargetLocationId}).Where(x=>x.HasValue).Select(x=>x!.Value).Distinct().ToList();
+        var locationLookup=locationIds.Count==0?new Dictionary<long,WarehouseLocation>():await uow.Repository<WarehouseLocation>()
+            .Query(ignoreQueryFilters:true).Where(x=>locationIds.Contains(x.Id)).ToDictionaryAsync(x=>x.Id,ct);
+        (string? Code,string? Name) LocationLabel(long? locationId)=>locationId.HasValue&&locationLookup.TryGetValue(locationId.Value,out var loc)?(loc.Code,loc.Name):(null,null);
+        var lines=lineRows.Select(x=>{
+            var source=LocationLabel(x.DefaultSourceLocationId);
+            var target=LocationLabel(x.DefaultTargetLocationId);
+            return new WarehouseTransferDetailLine(x.Id,x.LineNo,x.StockId,x.StockCodeSnapshot,x.StockNameSnapshot,x.YapCodeId,x.YapCodeSnapshot,
+                x.UnitCode,x.RequestedQuantity,x.ReservedQuantity,x.PickedQuantity,x.ShippedQuantity,x.ReceivedQuantity,x.PutawayQuantity,x.DamagedQuantity,x.LostQuantity,
+                x.TrackingType,x.Status,x.TrackingCount,x.Trackings,
+                x.DefaultSourceLocationId,source.Code,source.Name,x.DefaultTargetLocationId,target.Code,target.Name);
+        }).ToList();
         var draft=await Headers.Query().Where(x=>x.Id==id).Select(x=>new{x.RowVersion,x.SourceStagingLocationId,x.TargetReceivingLocationId,x.TargetPutawayLocationId,x.ExternalReferenceNo,x.Description,x.ProjectCode}).SingleAsync(ct);
         return new(header,lines,Convert.ToBase64String(draft.RowVersion),new(draft.SourceStagingLocationId,draft.TargetReceivingLocationId,draft.TargetPutawayLocationId,draft.ExternalReferenceNo,draft.Description,draft.ProjectCode));
     }
