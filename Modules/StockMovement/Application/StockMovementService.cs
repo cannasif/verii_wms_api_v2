@@ -306,8 +306,12 @@ public sealed class StockMovementService(
             .GroupBy(x => (x.Key.StockId, x.Key.SerialNo))
             .FirstOrDefault(x => x.Count() > 1);
         if (splitSerial is not null)
+        {
+            var detail = string.Join(" | ", splitSerial.Select(x =>
+                $"[Depo:{x.Key.WarehouseId} Raf:{x.Key.LocationId} Yap:{x.Key.YapCodeId?.ToString() ?? "yok"} Birim:{x.Key.UnitCode} Lot:'{x.Key.LotNo}' Statü:{x.Key.StockStatus} Miktar:{x.Value}]"));
             throw AppException.Conflict(
-                $"Aynı levha/palet serisi birden fazla aktif raf veya stok statüsüne bölünemez. Seri: {splitSerial.Key.SerialNo}.");
+                $"Aynı levha/palet serisi birden fazla aktif raf veya stok statüsüne bölünemez. Seri: {splitSerial.Key.SerialNo}. Bulunan aktif kayıtlar: {detail}");
+        }
     }
 
     private async Task SynchronizeSerialRegistryAsync(
