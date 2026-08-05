@@ -144,11 +144,16 @@ public sealed class ProductionTransferService(
             throw AppException.BadRequest("Fazla sarf toleransı 0-100 arasında olmalıdır.");
         if(!request.AllowOverIssue&&request.OverIssueTolerancePercent!=0)
             throw AppException.BadRequest("Fazla sarf kapalıyken tolerans sıfır olmalıdır.");
+        var sourceSystemCode=Clean(request.WmsSourceSystemCode,50)?.ToUpperInvariant();
+        if(request.ProductionOrderSource==ProductionOrderSourceType.WmsIntegrationTables&&string.IsNullOrWhiteSpace(sourceSystemCode))
+            throw AppException.BadRequest("WMS entegrasyon tablosu seçildiğinde kaynak sistem kodu zorunludur.");
         var branch=Branch(request.BranchCode);
         var entity=await Policies.FirstOrDefaultAsync(x=>x.BranchCode==branch&&x.PolicyKey=="DEFAULT",true,ct);
         var before=entity is null?null:Map(entity);
         if(entity is null){entity=Default(branch);entity.CreatedBy=actor;await Policies.AddAsync(entity,ct);}
         else EnsureRowVersion(entity.RowVersion,request.RowVersion);
+        entity.ProductionOrderSource=request.ProductionOrderSource;
+        entity.WmsSourceSystemCode=sourceSystemCode??"WINDBOX";
         entity.RequireProductionOrderReference=request.RequireProductionOrderReference;
         entity.AllowManualTransfer=request.AllowManualTransfer;entity.AllowAutomaticGeneration=request.AllowAutomaticGeneration;
         entity.CheckMaterialAvailability=request.CheckMaterialAvailability;entity.BlockOnShortage=request.BlockOnShortage;
@@ -278,7 +283,8 @@ public sealed class ProductionTransferService(
         _=>ProductionTransferLineRole.ProductionOutput
     };
     private static ProductionTransferPolicy Default(string branch)=>new(){BranchCode=branch,PolicyKey="DEFAULT",CreatedDate=DateTime.UtcNow};
-    private static ProductionTransferPolicyDto Map(ProductionTransferPolicy x)=>new(x.Id,x.BranchCode,Convert.ToBase64String(x.RowVersion),x.RequireProductionOrderReference,
+    private static ProductionTransferPolicyDto Map(ProductionTransferPolicy x)=>new(x.Id,x.BranchCode,Convert.ToBase64String(x.RowVersion),
+        x.ProductionOrderSource,x.WmsSourceSystemCode,x.RequireProductionOrderReference,
         x.AllowManualTransfer,x.AllowAutomaticGeneration,x.CheckMaterialAvailability,x.BlockOnShortage,x.RequireTaskAssignment,
         x.RequireSourceProductionLocation,x.RequireTargetProductionLocation,x.AllowPartialSupply,x.AllowOverIssue,
         x.OverIssueTolerancePercent,x.RequireApproval,x.CancellationReturnPolicy,x.UpdatedBy,x.UpdatedDate);

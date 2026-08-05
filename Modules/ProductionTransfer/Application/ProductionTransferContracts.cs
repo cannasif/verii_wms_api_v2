@@ -1,3 +1,4 @@
+using verii_wms_api_v2.Modules.Production.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
@@ -50,13 +51,15 @@ public sealed record ProductionTransferContextDto(
 public sealed record ProductionTransferDetail(WarehouseTransferDetail Transfer,ProductionTransferContextDto Context);
 
 public sealed record ProductionTransferPolicyDto(
-    long Id,string BranchCode,string RowVersion,bool RequireProductionOrderReference,bool AllowManualTransfer,bool AllowAutomaticGeneration,
+    long Id,string BranchCode,string RowVersion,ProductionOrderSourceType ProductionOrderSource,string WmsSourceSystemCode,
+    bool RequireProductionOrderReference,bool AllowManualTransfer,bool AllowAutomaticGeneration,
     bool CheckMaterialAvailability,bool BlockOnShortage,bool RequireTaskAssignment,bool RequireSourceProductionLocation,
     bool RequireTargetProductionLocation,bool AllowPartialSupply,bool AllowOverIssue,decimal OverIssueTolerancePercent,
     bool RequireApproval,WarehouseTransferCancellationReturnPolicy CancellationReturnPolicy,long? UpdatedBy,DateTime? UpdatedDate);
 
 public sealed record UpdateProductionTransferPolicyRequest(
-    string BranchCode,string? RowVersion,bool RequireProductionOrderReference,bool AllowManualTransfer,bool AllowAutomaticGeneration,
+    string BranchCode,string? RowVersion,ProductionOrderSourceType ProductionOrderSource,string WmsSourceSystemCode,
+    bool RequireProductionOrderReference,bool AllowManualTransfer,bool AllowAutomaticGeneration,
     bool CheckMaterialAvailability,bool BlockOnShortage,bool RequireTaskAssignment,bool RequireSourceProductionLocation,
     bool RequireTargetProductionLocation,bool AllowPartialSupply,bool AllowOverIssue,decimal OverIssueTolerancePercent,
     bool RequireApproval,WarehouseTransferCancellationReturnPolicy CancellationReturnPolicy);

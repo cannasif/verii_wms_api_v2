@@ -112,6 +112,25 @@ public sealed record PreparedNetsisProductionWorkOrder(
     IReadOnlyList<string> MappingErrors,
     IReadOnlyList<PreparedNetsisProductionMaterial> Materials);
 
+public sealed record ProductionSourceWorkOrderRow(
+    ProductionOrderSourceType SourceType,
+    string SourceSystemCode,
+    int RevisionNumber,
+    string WorkOrderNumber,
+    int BranchCode,
+    string StockCode,
+    string StockName,
+    string? ConfigurationCode,
+    decimal WorkOrderQuantity,
+    string? UnitCode,
+    decimal RecipeTotal,
+    DateTime? WorkOrderDate,
+    DateTime? DeliveryDate,
+    string? ProjectCode,
+    int WarehouseCode,
+    int IssueWarehouseCode,
+    bool IsClosed);
+
 public sealed record ProductionPlanGridRow(
     long Id,
     string BranchCode,
@@ -230,6 +249,8 @@ public sealed record ProductionTransitionRequest(string RowVersion,string? Reaso
 
 public interface IProductionService
 {
+    Task<IReadOnlyList<ProductionSourceWorkOrderRow>> GetSourceWorkOrdersAsync(string? search,string branchCode,int take=200,CancellationToken ct=default);
+    Task<PreparedNetsisProductionWorkOrder> PrepareSourceWorkOrderAsync(string workOrderNumber,string branchCode,CancellationToken ct=default);
     Task<PreparedNetsisProductionWorkOrder> PrepareNetsisWorkOrderAsync(string workOrderNumber,string branchCode,CancellationToken ct=default);
     Task<CreateProductionPlanResult> CreateAsync(CreateProductionPlanRequest request,long actor,CancellationToken ct=default);
     Task<PagedResponse<ProductionPlanGridRow>> GetPagedAsync(PagedRequest request,CancellationToken ct=default);

@@ -31,6 +31,23 @@ public sealed class ProductionController(
             await service.PrepareNetsisWorkOrderAsync(workOrderNumber,BranchCode(),ct)));
     }
 
+    [HttpGet("work-orders")]
+    public async Task<IActionResult>SourceWorkOrders(
+        [FromQuery]string? search,[FromQuery]int take=200,CancellationToken ct=default)
+    {
+        await Require("WMS.PRODUCTION.VIEW",ct);
+        return Ok(ApiResponse<IReadOnlyList<ProductionSourceWorkOrderRow>>.Ok(
+            await service.GetSourceWorkOrdersAsync(search,BranchCode(),take,ct)));
+    }
+
+    [HttpGet("work-orders/{workOrderNumber}/prepare")]
+    public async Task<IActionResult>PrepareSourceWorkOrder(string workOrderNumber,CancellationToken ct)
+    {
+        await Require("WMS.PRODUCTION.VIEW",ct);
+        return Ok(ApiResponse<PreparedNetsisProductionWorkOrder>.Ok(
+            await service.PrepareSourceWorkOrderAsync(workOrderNumber,BranchCode(),ct)));
+    }
+
     [HttpPost("plans/paged")]
     public async Task<IActionResult> Paged(PagedRequest request,CancellationToken ct)
     {
