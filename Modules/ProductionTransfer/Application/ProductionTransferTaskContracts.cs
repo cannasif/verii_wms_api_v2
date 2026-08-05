@@ -31,8 +31,14 @@ public sealed record ProductionTransferTaskBoardDto(
 public sealed record AssignProductionTransferTaskRequest(long UserId, bool IsPrimary = false);
 public sealed record HandoffProductionTransferTaskRequest(long TargetUserId, string? Reason);
 public sealed record StartProductionTransferTaskRequest(Guid IdempotencyKey);
-public sealed record WarehouseTransferReturnSettingDto(long WarehouseId, long? DefaultTransferReturnLocationId);
-public sealed record UpdateWarehouseTransferReturnSettingRequest(long WarehouseId, long? DefaultTransferReturnLocationId);
+public sealed record WarehouseTransferReturnSettingDto(
+    long WarehouseId,
+    long? DefaultTransferReturnLocationId,
+    long? DefaultProductionTransferLocationId);
+public sealed record UpdateWarehouseTransferReturnSettingRequest(
+    long WarehouseId,
+    long? DefaultTransferReturnLocationId,
+    long? DefaultProductionTransferLocationId);
 
 public interface IProductionTransferTaskService
 {

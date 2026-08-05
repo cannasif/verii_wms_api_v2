@@ -1,6 +1,7 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
+using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Production.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
@@ -50,6 +51,8 @@ public sealed class ProductionTransferService(
             }
 
             var policy=await GetPolicyEntityAsync(request.Transfer.BranchCode,token);
+            request=await ApplyDefaultProductionTransferLocationAsync(
+                request,policy.RequireTargetProductionLocation,token);
             ValidatePolicy(request,policy);
             await ValidateProductionReferencesAsync(request,token);
             if(!request.TriggeredByProduction&&policy.RequireErpMasterDataForManualTransfer)
@@ -279,6 +282,38 @@ public sealed class ProductionTransferService(
         if(request.Transfer.Lines.Any(x=>x.YapCodeId.HasValue&&configurationMap[x.YapCodeId.Value].StockId.HasValue&&
                configurationMap[x.YapCodeId.Value].StockId!=x.StockId))
             throw AppException.BadRequest("Seçilen yapılandırma kodu transfer satırındaki stoğa ait değil.");
+    }
+
+    private async Task<CreateProductionTransferDraftRequest> ApplyDefaultProductionTransferLocationAsync(
+        CreateProductionTransferDraftRequest request,bool required,CancellationToken ct)
+    {
+        if(request.Transfer.Lines.All(x=>x.DefaultTargetLocationId.HasValue))return request;
+
+        var branch=Branch(request.Transfer.BranchCode);
+        var setting=await uow.Repository<WarehouseEntity>().Query()
+            .Where(x=>x.Id==request.Transfer.TargetWarehouseId&&x.BranchCode==branch)
+            .Select(x=>new{x.Id,x.WarehouseCode,x.DefaultProductionTransferLocationId})
+            .SingleOrDefaultAsync(ct)
+            ??throw AppException.BadRequest("Üretime transfer hedef deposu bulunamadı.");
+        if(!setting.DefaultProductionTransferLocationId.HasValue)
+        {
+            if(!required)return request;
+            throw AppException.Conflict($"{setting.WarehouseCode} hedef deposu için varsayılan üretim transfer rafı tanımlanmamış.");
+        }
+        var locationId=setting.DefaultProductionTransferLocationId.Value;
+        var valid=await uow.Repository<WarehouseLocation>().Query().AnyAsync(x=>
+            x.Id==locationId&&x.WarehouseId==setting.Id&&x.IsActive&&x.IsPutaway,ct);
+        if(!valid)
+            throw AppException.Conflict("Hedef deponun varsayılan üretim transfer rafı aktif ve yerleştirmeye uygun değil.");
+
+        var transfer=request.Transfer with
+        {
+            TargetPutawayLocationId=request.Transfer.TargetPutawayLocationId??locationId,
+            Lines=request.Transfer.Lines.Select(x=>x.DefaultTargetLocationId.HasValue
+                ?x
+                :x with{DefaultTargetLocationId=locationId}).ToArray()
+        };
+        return request with{Transfer=transfer};
     }
 
     private static void Validate(CreateProductionTransferDraftRequest request)

@@ -8,5 +8,6 @@ public sealed class Warehouse : BaseEntity
     public string WarehouseName { get; set; } = string.Empty;
     public long? DefaultGoodsReceiptLocationId { get; set; }
     public long? DefaultTransferReturnLocationId { get; set; }
+    public long? DefaultProductionTransferLocationId { get; set; }
     public DateTime? LastSyncDate { get; set; }
 }

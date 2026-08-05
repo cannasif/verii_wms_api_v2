@@ -104,7 +104,7 @@ public sealed class ProductionTransfersController(
     [HttpPut("warehouse-return-setting")]
     public async Task<IActionResult>UpdateReturnSetting(UpdateWarehouseTransferReturnSettingRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.SETTINGS.MANAGE",ct);
-        return Ok(ApiResponse<WarehouseTransferReturnSettingDto>.Ok(await tasks.UpdateReturnSettingAsync(request,UserId(),ct),"Varsayılan transfer iade rafı kaydedildi."));}
+        return Ok(ApiResponse<WarehouseTransferReturnSettingDto>.Ok(await tasks.UpdateReturnSettingAsync(request,UserId(),ct),"Depo üretim transfer ve iade rafı ayarları kaydedildi."));}
     [HttpGet("policy")]
     public async Task<IActionResult>Policy([FromQuery]string branchCode,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.SETTINGS.VIEW",ct);return Ok(ApiResponse<ProductionTransferPolicyDto>.Ok(await service.GetPolicyAsync(branchCode,ct)));}

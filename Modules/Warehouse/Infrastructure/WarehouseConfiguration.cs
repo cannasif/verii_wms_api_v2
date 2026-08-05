@@ -24,6 +24,12 @@ public sealed class WarehouseConfiguration : BaseEntityConfiguration<Domain.Ware
             .OnDelete(DeleteBehavior.SetNull);
         builder.HasIndex(x => x.DefaultTransferReturnLocationId)
             .HasDatabaseName("IX_RII_WAREHOUSE_DEFAULT_TRANSFER_RETURN_LOCATION");
+        builder.HasOne<WarehouseLocation>()
+            .WithMany()
+            .HasForeignKey(x => x.DefaultProductionTransferLocationId)
+            .OnDelete(DeleteBehavior.NoAction);
+        builder.HasIndex(x => x.DefaultProductionTransferLocationId)
+            .HasDatabaseName("IX_RII_WAREHOUSE_DEFAULT_PRODUCTION_TRANSFER_LOCATION");
         builder.HasIndex(x => new { x.BranchCode, x.WarehouseCode })
             .IsUnique().HasFilter("[IsDeleted] = 0")
             .HasDatabaseName("IX_Warehouse_BranchCode_WarehouseCode");

@@ -355,7 +355,9 @@ public sealed class ProductionTransferTaskService(IUnitOfWork uow, IAuditLogWrit
     public async Task<WarehouseTransferReturnSettingDto> GetReturnSettingAsync(long warehouseId, CancellationToken ct = default)
     {
         var row = await uow.Repository<WarehouseEntity>().Query().Where(x => x.Id == warehouseId)
-            .Select(x => new WarehouseTransferReturnSettingDto(x.Id, x.DefaultTransferReturnLocationId)).SingleOrDefaultAsync(ct);
+            .Select(x => new WarehouseTransferReturnSettingDto(
+                x.Id, x.DefaultTransferReturnLocationId, x.DefaultProductionTransferLocationId))
+            .SingleOrDefaultAsync(ct);
         return row ?? throw AppException.NotFound("Depo bulunamadı.");
     }
 
@@ -370,12 +372,25 @@ public sealed class ProductionTransferTaskService(IUnitOfWork uow, IAuditLogWrit
                     x.Id == request.DefaultTransferReturnLocationId && x.WarehouseId == warehouse.Id && x.IsActive && x.IsPutaway, token);
                 if (!valid) throw AppException.BadRequest("Varsayılan iade rafı depoya ait, aktif ve yerleştirmeye uygun olmalıdır.");
             }
+            if (request.DefaultProductionTransferLocationId.HasValue)
+            {
+                var valid = await uow.Repository<WarehouseLocation>().Query().AnyAsync(x =>
+                    x.Id == request.DefaultProductionTransferLocationId
+                    && x.WarehouseId == warehouse.Id
+                    && x.IsActive
+                    && x.IsPutaway, token);
+                if (!valid)
+                    throw AppException.BadRequest("Varsayılan üretim transfer rafı depoya ait, aktif ve yerleştirmeye uygun olmalıdır.");
+            }
             warehouse.DefaultTransferReturnLocationId = request.DefaultTransferReturnLocationId;
+            warehouse.DefaultProductionTransferLocationId = request.DefaultProductionTransferLocationId;
             warehouse.UpdatedBy = actor; warehouse.UpdatedDate = DateTime.UtcNow;
             await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("production-transfer.return-location.update", nameof(WarehouseEntity), warehouse.Id.ToString(), "Succeeded", "production-transfer",
-                NewValues: new { warehouse.DefaultTransferReturnLocationId }, ChangedFields: ["DefaultTransferReturnLocationId"]), token);
-            return new WarehouseTransferReturnSettingDto(warehouse.Id, warehouse.DefaultTransferReturnLocationId);
+                NewValues: new { warehouse.DefaultTransferReturnLocationId, warehouse.DefaultProductionTransferLocationId },
+                ChangedFields: ["DefaultTransferReturnLocationId", "DefaultProductionTransferLocationId"]), token);
+            return new WarehouseTransferReturnSettingDto(
+                warehouse.Id, warehouse.DefaultTransferReturnLocationId, warehouse.DefaultProductionTransferLocationId);
         }, ct, IsolationLevel.Serializable);
 
     private async Task<WarehouseTransferTask> LoadTaskAsync(long transferId, long taskId, CancellationToken ct) =>

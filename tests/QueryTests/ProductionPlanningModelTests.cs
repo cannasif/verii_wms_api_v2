@@ -4,6 +4,8 @@ using Microsoft.EntityFrameworkCore.Metadata;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Modules.Production.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
+using verii_wms_api_v2.Modules.Location.Domain;
+using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 using Xunit;
 
 namespace verii_wms_api_v2.QueryTests;
@@ -112,6 +114,20 @@ public sealed class ProductionPlanningModelTests
                 nameof(ProductionOrder.ExternalSourceSystemCode),
                 nameof(ProductionOrder.ExternalOrderNo)
             }));
+    }
+
+    [Fact]
+    public void Production_transfer_target_location_is_configured_per_warehouse()
+    {
+        using var context = CreateContext();
+        var model = context.GetService<IDesignTimeModel>().Model;
+        var warehouse = AssertEntity<WarehouseEntity>(model);
+        var foreignKey = Assert.Single(warehouse.GetForeignKeys(), candidate =>
+            candidate.Properties.Count == 1
+            && candidate.Properties[0].Name == nameof(WarehouseEntity.DefaultProductionTransferLocationId));
+
+        Assert.Equal(typeof(WarehouseLocation), foreignKey.PrincipalEntityType.ClrType);
+        Assert.Equal(DeleteBehavior.NoAction, foreignKey.DeleteBehavior);
     }
 
     private static IEntityType AssertEntity<TEntity>(IModel model) =>
