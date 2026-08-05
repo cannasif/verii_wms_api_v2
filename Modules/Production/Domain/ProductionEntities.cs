@@ -51,6 +51,67 @@ public enum ProductionDependencyType
     FinishToFinish = 3
 }
 
+public enum ProductionOrderSourceType
+{
+    NetsisErpFunctions = 1,
+    WmsIntegrationTables = 2
+}
+
+public enum ProductionSourceOrderStatus
+{
+    Draft = 1,
+    Ready = 2,
+    Released = 3,
+    OnHold = 4,
+    Closed = 5,
+    Cancelled = 6
+}
+
+/// <summary>
+/// Versioned inbound contract written by an approved planning system such as Windbox.
+/// It is intentionally separated from operational WMS production orders.
+/// </summary>
+public sealed class ProductionSourceWorkOrder : BaseEntity
+{
+    public string SourceSystemCode { get; set; } = "WINDBOX";
+    public string ExternalKey { get; set; } = string.Empty;
+    public string WorkOrderNumber { get; set; } = string.Empty;
+    public int RevisionNumber { get; set; } = 1;
+    public ProductionSourceOrderStatus Status { get; set; } = ProductionSourceOrderStatus.Draft;
+    public string ProductCode { get; set; } = string.Empty;
+    public string? ProductName { get; set; }
+    public string? ConfigurationCode { get; set; }
+    public decimal PlannedQuantity { get; set; }
+    public string UnitCode { get; set; } = "ADET";
+    public int SourceWarehouseCode { get; set; }
+    public int TargetWarehouseCode { get; set; }
+    public DateTime? WorkOrderDate { get; set; }
+    public DateTime? DeliveryDate { get; set; }
+    public string? ProjectCode { get; set; }
+    public DateTimeOffset SourceUpdatedAtUtc { get; set; }
+    public string? PayloadHash { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+    public ICollection<ProductionSourceRecipeLine> RecipeLines { get; set; } = [];
+}
+
+public sealed class ProductionSourceRecipeLine : BaseEntity
+{
+    public long ProductionSourceWorkOrderId { get; set; }
+    public ProductionSourceWorkOrder WorkOrder { get; set; } = null!;
+    public int LineNumber { get; set; }
+    public int OperationNumber { get; set; }
+    public string ComponentStockCode { get; set; } = string.Empty;
+    public string? ComponentStockName { get; set; }
+    public string? ComponentConfigurationCode { get; set; }
+    public string UnitCode { get; set; } = "ADET";
+    public decimal RecipeQuantity { get; set; }
+    public decimal VariableWasteQuantity { get; set; }
+    public decimal FixedWasteQuantity { get; set; }
+    public decimal TotalRequiredQuantity { get; set; }
+    public bool IsMandatory { get; set; } = true;
+    public byte[] RowVersion { get; set; } = [];
+}
+
 public sealed class ProductionHeader : BaseEntity
 {
     public long DocumentSeriesId { get; set; }

@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using verii_wms_api_v2.Modules.Production.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared.Infrastructure;
@@ -54,6 +55,10 @@ public sealed class ProductionTransferPolicyConfiguration : BaseEntityConfigurat
     {
         b.ToTable("RII_PT_POLICIES",t=>t.HasCheckConstraint("CK_RII_PT_POLICY_OVER_ISSUE","[OverIssueTolerancePercent] >= 0 AND [OverIssueTolerancePercent] <= 100"));
         b.Property(x=>x.PolicyKey).HasMaxLength(30).IsRequired();
+        b.Property(x=>x.ProductionOrderSource).HasConversion<string>().HasMaxLength(40)
+            .HasDefaultValue(ProductionOrderSourceType.NetsisErpFunctions)
+            .HasSentinel((ProductionOrderSourceType)0);
+        b.Property(x=>x.WmsSourceSystemCode).HasMaxLength(50).IsRequired().HasDefaultValue("WINDBOX");
         b.Property(x=>x.OverIssueTolerancePercent).HasPrecision(9,4);
         b.Property(x=>x.CancellationReturnPolicy).HasConversion<string>().HasMaxLength(40)
             .HasDefaultValue(WarehouseTransferCancellationReturnPolicy.OriginalSourceLocation)

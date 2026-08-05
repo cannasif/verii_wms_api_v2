@@ -179,6 +179,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<WarehouseTransferStatusHistory> WarehouseTransferStatusHistory => Set<WarehouseTransferStatusHistory>();
     public DbSet<WarehouseTransferPolicy> WarehouseTransferPolicies => Set<WarehouseTransferPolicy>();
     public DbSet<ProductionHeader> ProductionHeaders => Set<ProductionHeader>();
+    public DbSet<ProductionSourceWorkOrder> ProductionSourceWorkOrders => Set<ProductionSourceWorkOrder>();
+    public DbSet<ProductionSourceRecipeLine> ProductionSourceRecipeLines => Set<ProductionSourceRecipeLine>();
     public DbSet<ProcurementRequest> ProcurementRequests => Set<ProcurementRequest>();
     public DbSet<ProcurementRequestLine> ProcurementRequestLines => Set<ProcurementRequestLine>();
     public DbSet<ProcurementRfq> ProcurementRfqs => Set<ProcurementRfq>();
@@ -371,6 +373,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new WarehouseTransferTaskAssignmentConfiguration());
         modelBuilder.ApplyConfiguration(new WarehouseTransferStatusHistoryConfiguration());
         modelBuilder.ApplyConfiguration(new WarehouseTransferPolicyConfiguration());
+        modelBuilder.ApplyConfiguration(new ProductionSourceWorkOrderConfiguration());
+        modelBuilder.ApplyConfiguration(new ProductionSourceRecipeLineConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionHeaderConfiguration());
         modelBuilder.ApplyConfiguration(new ProcurementRequestConfiguration());
         modelBuilder.ApplyConfiguration(new ProcurementRequestLineConfiguration());

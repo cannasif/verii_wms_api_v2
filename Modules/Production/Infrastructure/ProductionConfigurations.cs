@@ -5,6 +5,51 @@ using verii_wms_api_v2.Shared.Infrastructure;
 
 namespace verii_wms_api_v2.Modules.Production.Infrastructure;
 
+public sealed class ProductionSourceWorkOrderConfiguration : BaseEntityConfiguration<ProductionSourceWorkOrder>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<ProductionSourceWorkOrder> b)
+    {
+        b.ToTable("RII_PR_SOURCE_ORDER",t=>t.HasCheckConstraint("CK_RII_PR_SOURCE_ORDER_QTY_REV","[PlannedQuantity] > 0 AND [RevisionNumber] > 0"));
+        b.Property(x=>x.SourceSystemCode).HasMaxLength(50).IsRequired();
+        b.Property(x=>x.ExternalKey).HasMaxLength(150).IsRequired();
+        b.Property(x=>x.WorkOrderNumber).HasMaxLength(100).IsRequired();
+        b.Property(x=>x.Status).HasConversion<string>().HasMaxLength(30);
+        b.Property(x=>x.ProductCode).HasMaxLength(100).IsRequired();
+        b.Property(x=>x.ProductName).HasMaxLength(300);
+        b.Property(x=>x.ConfigurationCode).HasMaxLength(100);
+        b.Property(x=>x.UnitCode).HasMaxLength(20).IsRequired();
+        b.Property(x=>x.ProjectCode).HasMaxLength(100);
+        b.Property(x=>x.PayloadHash).HasMaxLength(128);
+        b.Property(x=>x.PlannedQuantity).HasPrecision(20,6);
+        b.Property(x=>x.RowVersion).IsRowVersion();
+        b.HasIndex(x=>new{x.BranchCode,x.SourceSystemCode,x.ExternalKey}).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x=>new{x.BranchCode,x.SourceSystemCode,x.WorkOrderNumber,x.RevisionNumber}).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x=>new{x.BranchCode,x.SourceSystemCode,x.Status,x.SourceUpdatedAtUtc});
+    }
+}
+
+public sealed class ProductionSourceRecipeLineConfiguration : BaseEntityConfiguration<ProductionSourceRecipeLine>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<ProductionSourceRecipeLine> b)
+    {
+        b.ToTable("RII_PR_SOURCE_RECIPE",t=>t.HasCheckConstraint(
+            "CK_RII_PR_SOURCE_RECIPE_QTY",
+            "[LineNumber] > 0 AND [OperationNumber] >= 0 AND [RecipeQuantity] > 0 AND [TotalRequiredQuantity] > 0 AND [VariableWasteQuantity] >= 0 AND [FixedWasteQuantity] >= 0"));
+        b.Property(x=>x.ComponentStockCode).HasMaxLength(100).IsRequired();
+        b.Property(x=>x.ComponentStockName).HasMaxLength(300);
+        b.Property(x=>x.ComponentConfigurationCode).HasMaxLength(100);
+        b.Property(x=>x.UnitCode).HasMaxLength(20).IsRequired();
+        b.Property(x=>x.RecipeQuantity).HasPrecision(20,6);
+        b.Property(x=>x.VariableWasteQuantity).HasPrecision(20,6);
+        b.Property(x=>x.FixedWasteQuantity).HasPrecision(20,6);
+        b.Property(x=>x.TotalRequiredQuantity).HasPrecision(20,6);
+        b.Property(x=>x.RowVersion).IsRowVersion();
+        b.HasOne(x=>x.WorkOrder).WithMany(x=>x.RecipeLines).HasForeignKey(x=>x.ProductionSourceWorkOrderId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x=>new{x.ProductionSourceWorkOrderId,x.LineNumber}).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x=>new{x.ComponentStockCode,x.ComponentConfigurationCode});
+    }
+}
+
 public sealed class ProductionHeaderConfiguration : BaseEntityConfiguration<ProductionHeader>
 {
     protected override void ConfigureEntity(EntityTypeBuilder<ProductionHeader> b)

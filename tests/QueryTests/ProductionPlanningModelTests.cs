@@ -48,6 +48,29 @@ public sealed class ProductionPlanningModelTests
     }
 
     [Fact]
+    public void External_production_source_is_versioned_and_isolated_from_operational_orders()
+    {
+        using var context = CreateContext();
+        var model = context.GetService<IDesignTimeModel>().Model;
+        var order = AssertEntity<ProductionSourceWorkOrder>(model);
+        var recipe = AssertEntity<ProductionSourceRecipeLine>(model);
+
+        Assert.Equal("RII_PR_SOURCE_ORDER", order.GetTableName());
+        Assert.Equal("RII_PR_SOURCE_RECIPE", recipe.GetTableName());
+        AssertUniqueFilteredIndex(order,
+            nameof(ProductionSourceWorkOrder.BranchCode),
+            nameof(ProductionSourceWorkOrder.SourceSystemCode),
+            nameof(ProductionSourceWorkOrder.WorkOrderNumber),
+            nameof(ProductionSourceWorkOrder.RevisionNumber));
+        AssertUniqueFilteredIndex(recipe,
+            nameof(ProductionSourceRecipeLine.ProductionSourceWorkOrderId),
+            nameof(ProductionSourceRecipeLine.LineNumber));
+        AssertForeignKey<ProductionSourceWorkOrder>(recipe,nameof(ProductionSourceRecipeLine.ProductionSourceWorkOrderId));
+        Assert.True(order.FindProperty(nameof(ProductionSourceWorkOrder.RowVersion))!.IsConcurrencyToken);
+        Assert.True(recipe.FindProperty(nameof(ProductionSourceRecipeLine.RowVersion))!.IsConcurrencyToken);
+    }
+
+    [Fact]
     public void Production_transfer_links_have_real_foreign_keys_to_plan_order_material_and_output()
     {
         using var context = CreateContext();

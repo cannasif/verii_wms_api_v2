@@ -70,6 +70,8 @@ public sealed class ProductionTransferLineLink : BaseEntity
 public sealed class ProductionTransferPolicy : BaseEntity
 {
     public string PolicyKey { get; set; } = "DEFAULT";
+    public ProductionOrderSourceType ProductionOrderSource { get; set; } = ProductionOrderSourceType.NetsisErpFunctions;
+    public string WmsSourceSystemCode { get; set; } = "WINDBOX";
     public bool RequireProductionOrderReference { get; set; } = true;
     public bool AllowManualTransfer { get; set; } = true;
     public bool AllowAutomaticGeneration { get; set; } = true;
