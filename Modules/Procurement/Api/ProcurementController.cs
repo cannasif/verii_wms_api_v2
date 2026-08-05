@@ -42,8 +42,17 @@ public sealed class ProcurementController(IProcurementService service,IProcureme
     [HttpPost("rfqs/{rfqId:long}/quotes")]
     public async Task<IActionResult> CreateQuote(long rfqId,CreateSupplierQuoteRequest request,CancellationToken ct){await Require("WMS.PROCUREMENT.QUOTE.MANAGE",ct);var id=await service.CreateQuoteAsync(rfqId,request,UserId(),ct);return Ok(ApiResponse<object>.Ok(new{id},"Tedarikçi teklifi kaydedildi."));}
 
+    [HttpPost("rfqs/{rfqId:long}/invitations")]
+    public async Task<IActionResult> SendInvitation(long rfqId,SendProcurementInvitationRequest request,CancellationToken ct){await Require("WMS.PROCUREMENT.RFQ.MANAGE",ct);return Ok(ApiResponse<ProcurementInvitationResult>.Ok(await service.SendInvitationAsync(rfqId,request,UserId(),ct),"Tedarikçiye güvenli teklif bağlantısı gönderildi."));}
+
+    [HttpPost("rfqs/{rfqId:long}/invitations/{supplierId:long}/revoke")]
+    public async Task<IActionResult> RevokeInvitation(long rfqId,long supplierId,CancellationToken ct){await Require("WMS.PROCUREMENT.RFQ.MANAGE",ct);await service.RevokeInvitationAsync(rfqId,supplierId,UserId(),ct);return Ok(ApiResponse<bool>.Ok(true,"Teklif bağlantısı iptal edildi."));}
+
     [HttpPost("quotes/{id:long}/{action}")]
     public async Task<IActionResult> QuoteAction(long id,string action,ProcurementTransitionRequest request,CancellationToken ct){await Require(action.Equals("approve",StringComparison.OrdinalIgnoreCase)||action.Equals("reject",StringComparison.OrdinalIgnoreCase)?"WMS.PROCUREMENT.APPROVE":"WMS.PROCUREMENT.QUOTE.MANAGE",ct);await service.TransitionQuoteAsync(id,action,request,UserId(),ct);return Ok(ApiResponse<bool>.Ok(true,"Teklif durumu güncellendi."));}
+
+    [HttpPost("quotes/{id:long}/request-revision")]
+    public async Task<IActionResult> RequestRevision(long id,ProcurementTransitionRequest request,CancellationToken ct){await Require("WMS.PROCUREMENT.QUOTE.MANAGE",ct);await service.RequestQuoteRevisionAsync(id,request.Note,UserId(),ct);return Ok(ApiResponse<bool>.Ok(true,"Tedarikçiden teklif revizyonu istendi."));}
 
     [HttpPost("quotes/{id:long}/convert-to-order")]
     public async Task<IActionResult> ConvertQuote(long id,[FromBody]ConvertQuoteToOrderRequest? request,CancellationToken ct){await Require("WMS.PROCUREMENT.ORDER.MANAGE",ct);var orderId=await service.ConvertQuoteToOrderAsync(id,request??new ConvertQuoteToOrderRequest(),UserId(),ct);return Ok(ApiResponse<object>.Ok(new{orderId},"Satınalma siparişi oluşturuldu."));}

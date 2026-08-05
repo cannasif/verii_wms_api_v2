@@ -6,5 +6,6 @@ public static class ProcurementModule
 {
     public static IServiceCollection AddProcurementModule(this IServiceCollection services)=>services
         .AddScoped<IProcurementPolicyService,ProcurementPolicyService>()
+        .AddScoped<IProcurementSupplierPortalService,ProcurementSupplierPortalService>()
         .AddScoped<IProcurementService,ProcurementService>();
 }

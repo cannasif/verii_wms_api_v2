@@ -4,13 +4,14 @@ using Microsoft.AspNetCore.DataProtection;
 using verii_wms_api_v2.Modules.Identity.Application;
 using verii_wms_api_v2.Modules.Smtp.Application;
 using verii_wms_api_v2.Modules.Smtp.Domain;
+using verii_wms_api_v2.Modules.Procurement.Application;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 
 namespace verii_wms_api_v2.Modules.Smtp.Infrastructure;
 
 public sealed class SmtpSettingsService(IUnitOfWork unitOfWork, IDataProtectionProvider protection)
-    : ISmtpSettingsService, IIdentityEmailSender
+    : ISmtpSettingsService, IIdentityEmailSender, IProcurementEmailSender
 {
     private readonly IDataProtector protector = protection.CreateProtector("verii-wms-v2.smtp-password");
     private IGenericRepository<SmtpSetting> Settings => unitOfWork.Repository<SmtpSetting>();
@@ -75,6 +76,27 @@ public sealed class SmtpSettingsService(IUnitOfWork unitOfWork, IDataProtectionP
                 """
         };
         await client.SendMailAsync(message, cancellationToken);
+    }
+
+    public async Task SendQuoteInvitationAsync(string recipientEmail,string supplierName,string rfqNo,string subject,DateOnly responseDueDate,string portalUrl,CancellationToken cancellationToken=default)
+    {
+        if(!MailAddress.TryCreate(recipientEmail?.Trim(),out var recipient))
+            throw AppException.BadRequest("Geçerli bir tedarikçi e-posta adresi giriniz.");
+        var setting=await GetConfiguredSettingAsync(cancellationToken);
+        using var client=CreateClient(setting);
+        using var message=new MailMessage(new MailAddress(setting.FromEmail,setting.FromName),recipient)
+        {
+            Subject=$"{rfqNo} teklif talebi",
+            IsBodyHtml=true,
+            Body=$"""
+                <p>Sayın {WebUtility.HtmlEncode(supplierName)},</p>
+                <p><strong>{WebUtility.HtmlEncode(subject)}</strong> konusu için teklifinizi güvenli tedarikçi portalından iletebilirsiniz.</p>
+                <p>Teklif son tarihi: <strong>{responseDueDate:dd.MM.yyyy}</strong></p>
+                <p><a href="{WebUtility.HtmlEncode(portalUrl)}">Teklif talebini aç ve fiyatları gir</a></p>
+                <p>Bu bağlantı yalnız bu teklif talebi içindir. Yetkisiz kişilerle paylaşmayınız.</p>
+                """
+        };
+        await client.SendMailAsync(message,cancellationToken);
     }
 
     private async Task<SmtpSetting> GetConfiguredSettingAsync(CancellationToken cancellationToken)

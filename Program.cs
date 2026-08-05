@@ -225,6 +225,9 @@ builder.Services.AddRateLimiter(options =>
                 AutoReplenishment = true
             });
     });
+    options.AddPolicy("supplier-portal",context=>RateLimitPartition.GetFixedWindowLimiter(
+        $"{context.Connection.RemoteIpAddress}:{context.Request.RouteValues["token"]}",
+        _=>new FixedWindowRateLimiterOptions{PermitLimit=30,Window=TimeSpan.FromMinutes(1),QueueLimit=0,AutoReplenishment=true}));
 });
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
     .WithOrigins(builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? ["http://localhost:5173"])

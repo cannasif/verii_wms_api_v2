@@ -6,16 +6,19 @@ using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 using CustomerEntity = verii_wms_api_v2.Modules.Customer.Domain.Customer;
 using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
+using System.Net.Mail;
+using verii_wms_api_v2.Modules.Identity.Application;
 
 namespace verii_wms_api_v2.Modules.Procurement.Application;
 
-public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IProcurementPolicyService policyService) : IProcurementService
+public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IProcurementPolicyService policyService,IProcurementEmailSender emailSender,IConfiguration configuration) : IProcurementService
 {
     private IGenericRepository<ProcurementRequest> Requests=>uow.Repository<ProcurementRequest>();
     private IGenericRepository<ProcurementRfq> Rfqs=>uow.Repository<ProcurementRfq>();
     private IGenericRepository<ProcurementSupplierQuote> Quotes=>uow.Repository<ProcurementSupplierQuote>();
     private IGenericRepository<ProcurementPurchaseOrder> Orders=>uow.Repository<ProcurementPurchaseOrder>();
     private IGenericRepository<ProcurementStatusHistory> History=>uow.Repository<ProcurementStatusHistory>();
+    private IGenericRepository<ProcurementQuoteInvitation> Invitations=>uow.Repository<ProcurementQuoteInvitation>();
 
     public async Task<ProcurementWorkspaceSummary> GetSummaryAsync(CancellationToken ct=default)=>new(
         await Requests.CountAsync(x=>x.Status==ProcurementRequestStatus.Draft,ct),
@@ -46,7 +49,8 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
         if(type=="rfq")
         {
             var x=await Rfqs.Query().Include(x=>x.Lines).Include(x=>x.Suppliers).FirstOrDefaultAsync(x=>x.Id==id,ct)??throw AppException.NotFound("Teklif talebi bulunamadı.");
-            return new(x.Id,type,x.RfqNo,x.RfqDate,x.Status.ToString(),x.Subject,x.BuyerMessage,null,string.Join(", ",x.Suppliers.Select(s=>s.SupplierNameSnapshot)),"TRY",1,x.ResponseDueDate,x.Lines.OrderBy(l=>l.LineNo).Select(l=>new ProcurementLineDetail(l.Id,l.LineNo,l.StockId,l.StockCodeSnapshot,l.StockNameSnapshot,l.UnitCode,l.RequestedQuantity,0,0,0,0,l.RequiredDate,l.ProjectCode,l.RequestedQuantity)).ToList(),histories,x.Suppliers.OrderBy(s=>s.SupplierNameSnapshot).Select(s=>new ProcurementSupplierParticipant(s.SupplierId,s.SupplierCodeSnapshot,s.SupplierNameSnapshot)).ToList());
+            var invitations=await Invitations.Query().Where(i=>i.ProcurementRfqId==id).ToDictionaryAsync(i=>i.SupplierId,ct);
+            return new(x.Id,type,x.RfqNo,x.RfqDate,x.Status.ToString(),x.Subject,x.BuyerMessage,null,string.Join(", ",x.Suppliers.Select(s=>s.SupplierNameSnapshot)),"TRY",1,x.ResponseDueDate,x.Lines.OrderBy(l=>l.LineNo).Select(l=>new ProcurementLineDetail(l.Id,l.LineNo,l.StockId,l.StockCodeSnapshot,l.StockNameSnapshot,l.UnitCode,l.RequestedQuantity,0,0,0,0,l.RequiredDate,l.ProjectCode,l.RequestedQuantity)).ToList(),histories,x.Suppliers.OrderBy(s=>s.SupplierNameSnapshot).Select(s=>{invitations.TryGetValue(s.SupplierId,out var invitation);return new ProcurementSupplierParticipant(s.SupplierId,s.SupplierCodeSnapshot,s.SupplierNameSnapshot,invitation?.Status.ToString(),invitation?.RecipientEmail,invitation?.ExpiresAtUtc);}).ToList());
         }
         if(type=="quote")
         {
@@ -208,6 +212,55 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
     }
 
     public async Task<IReadOnlyList<ProcurementReceiptSourceLine>> GetOpenReceiptSourceLinesAsync(long? purchaseOrderId,CancellationToken ct=default)=>await Orders.Query().Where(x=>(!purchaseOrderId.HasValue||x.Id==purchaseOrderId)&&(x.Status==ProcurementOrderStatus.Approved||x.Status==ProcurementOrderStatus.SentToSupplier||x.Status==ProcurementOrderStatus.PartiallyReceived)).SelectMany(x=>x.Lines.Where(l=>l.OrderedQuantity-l.ReceivedQuantity-l.CancelledQuantity>0).Select(l=>new ProcurementReceiptSourceLine(x.Id,l.Id,x.OrderNo,l.LineNo,l.StockId,l.StockCodeSnapshot,l.StockNameSnapshot,l.UnitCode,x.SupplierId,x.SupplierCodeSnapshot,x.SupplierNameSnapshot,l.ProjectCode??x.ProjectCode,x.OrderDate,l.DeliveryDate??x.DeliveryDate,l.OrderedQuantity,l.ReceivedQuantity,l.OrderedQuantity-l.ReceivedQuantity-l.CancelledQuantity))).OrderBy(x=>x.OrderNo).ThenBy(x=>x.LineNo).ToListAsync(ct);
+
+    public async Task<ProcurementInvitationResult> SendInvitationAsync(long rfqId,SendProcurementInvitationRequest request,long actorUserId,CancellationToken ct=default)
+    {
+        if(!MailAddress.TryCreate(request.RecipientEmail?.Trim(),out var recipient))throw AppException.BadRequest("Geçerli bir tedarikçi e-posta adresi giriniz.");
+        if(request.ValidForDays is <1 or >30)throw AppException.BadRequest("Bağlantı geçerlilik süresi 1-30 gün arasında olmalıdır.");
+        var rfq=await Rfqs.Query(true).Include(x=>x.Suppliers).FirstOrDefaultAsync(x=>x.Id==rfqId,ct)??throw AppException.NotFound("Teklif talebi bulunamadı.");
+        if(rfq.Status is ProcurementRfqStatus.Closed or ProcurementRfqStatus.Cancelled)throw AppException.Conflict("Kapalı veya iptal edilmiş teklif talebi gönderilemez.");
+        var participant=rfq.Suppliers.SingleOrDefault(x=>x.SupplierId==request.SupplierId)??throw AppException.BadRequest("Tedarikçi bu teklif talebinin katılımcısı değil.");
+        var now=DateTimeOffset.UtcNow;var rawToken=IdentitySecurity.CreateOpaqueToken();var tokenHash=IdentitySecurity.HashToken(rawToken);
+        var invitation=await Invitations.Query(true).FirstOrDefaultAsync(x=>x.ProcurementRfqId==rfqId&&x.SupplierId==request.SupplierId,ct);
+        if(invitation?.Status==ProcurementInvitationStatus.Submitted)throw AppException.Conflict("Tedarikçi teklifini göndermiş. Yeni fiyat için revizyon isteyin.");
+        if(invitation is null)
+        {
+            invitation=new ProcurementQuoteInvitation{BranchCode=rfq.BranchCode,ProcurementRfqId=rfq.Id,ProcurementRfqSupplierId=participant.Id,SupplierId=participant.SupplierId};
+            await Invitations.AddAsync(invitation,ct);
+        }
+        invitation.RecipientEmail=recipient.Address.ToLowerInvariant();invitation.TokenHash=tokenHash;invitation.ExpiresAtUtc=now.AddDays(request.ValidForDays);invitation.LastSentAtUtc=now;invitation.RevokedAtUtc=null;
+        invitation.Status=invitation.CurrentQuoteId.HasValue?ProcurementInvitationStatus.DraftSaved:ProcurementInvitationStatus.Sent;
+        if(rfq.Status==ProcurementRfqStatus.Draft){rfq.Status=ProcurementRfqStatus.Sent;rfq.SentAtUtc=now;await AddHistory("rfq",rfq.Id,ProcurementRfqStatus.Draft.ToString(),rfq.Status.ToString(),actorUserId,"Tedarikçi portal daveti gönderildi.",ct);}
+        await uow.SaveChangesAsync(ct);
+        var baseUrl=configuration["FrontendSettings:BaseUrl"]?.TrimEnd('/')??throw new InvalidOperationException("FrontendSettings:BaseUrl is missing.");
+        var portalUrl=$"{baseUrl}/supplier/quotes/{Uri.EscapeDataString(rawToken)}";
+        try{await emailSender.SendQuoteInvitationAsync(invitation.RecipientEmail,participant.SupplierNameSnapshot,rfq.RfqNo,rfq.Subject,rfq.ResponseDueDate,portalUrl,ct);}
+        catch{invitation.Status=ProcurementInvitationStatus.Revoked;invitation.RevokedAtUtc=DateTimeOffset.UtcNow;invitation.TokenHash=IdentitySecurity.HashToken(IdentitySecurity.CreateOpaqueToken());await uow.SaveChangesAsync(CancellationToken.None);throw;}
+        await audit.WriteAsync(new("procurement.rfq.invitation.send","ProcurementQuoteInvitation",invitation.Id.ToString(),"Succeeded","procurement",NewValues:new{rfq.RfqNo,participant.SupplierCodeSnapshot,invitation.RecipientEmail,invitation.ExpiresAtUtc}),ct);
+        return new(invitation.Id,invitation.Status.ToString(),invitation.RecipientEmail,invitation.ExpiresAtUtc);
+    }
+
+    public async Task RevokeInvitationAsync(long rfqId,long supplierId,long actorUserId,CancellationToken ct=default)
+    {
+        var invitation=await Invitations.Query(true).FirstOrDefaultAsync(x=>x.ProcurementRfqId==rfqId&&x.SupplierId==supplierId,ct)??throw AppException.NotFound("Tedarikçi daveti bulunamadı.");
+        if(invitation.Status==ProcurementInvitationStatus.Submitted)throw AppException.Conflict("Gönderilmiş teklifin daveti iptal edilemez; teklif için karar işlemi uygulayın.");
+        invitation.Status=ProcurementInvitationStatus.Revoked;invitation.RevokedAtUtc=DateTimeOffset.UtcNow;invitation.TokenHash=IdentitySecurity.HashToken(IdentitySecurity.CreateOpaqueToken());invitation.UpdatedBy=actorUserId;invitation.UpdatedDate=DateTime.UtcNow;
+        await uow.SaveChangesAsync(ct);await audit.WriteAsync(new("procurement.rfq.invitation.revoke","ProcurementQuoteInvitation",invitation.Id.ToString(),"Succeeded","procurement"),ct);
+    }
+
+    public async Task RequestQuoteRevisionAsync(long quoteId,string? note,long actorUserId,CancellationToken ct=default)
+    {
+        var quote=await Quotes.Query(true).Include(x=>x.Lines).Include(x=>x.Rfq).FirstOrDefaultAsync(x=>x.Id==quoteId,ct)??throw AppException.NotFound("Tedarikçi teklifi bulunamadı.");
+        if(quote.Status!=ProcurementQuoteStatus.Submitted)throw AppException.Conflict("Yalnız sunulmuş teklif için revizyon istenebilir.");
+        var invitation=await Invitations.Query(true).FirstOrDefaultAsync(x=>x.CurrentQuoteId==quoteId,ct)??throw AppException.Conflict("Bu teklif tedarikçi portalından oluşturulmamış.");
+        var rawToken=IdentitySecurity.CreateOpaqueToken();var now=DateTimeOffset.UtcNow;
+        var revision=new ProcurementSupplierQuote{BranchCode=quote.BranchCode,ProcurementRfqId=quote.ProcurementRfqId,SupplierId=quote.SupplierId,SupplierCodeSnapshot=quote.SupplierCodeSnapshot,SupplierNameSnapshot=quote.SupplierNameSnapshot,QuoteNo=$"{quote.QuoteNo}-R{quote.RevisionNo+1}",QuoteDate=DateOnly.FromDateTime(DateTime.UtcNow),ValidUntil=quote.ValidUntil,CurrencyCode=quote.CurrencyCode,ExchangeRate=quote.ExchangeRate,Status=ProcurementQuoteStatus.Draft,Note=Norm(note)??quote.Note,RevisionNo=quote.RevisionNo+1,PreviousQuoteId=quote.Id,Lines=quote.Lines.OrderBy(x=>x.LineNo).Select(x=>new ProcurementSupplierQuoteLine{BranchCode=quote.BranchCode,LineNo=x.LineNo,ProcurementRfqLineId=x.ProcurementRfqLineId,QuotedQuantity=x.QuotedQuantity,UnitPrice=x.UnitPrice,DiscountRate=x.DiscountRate,VatRate=x.VatRate,DeliveryDate=x.DeliveryDate}).ToList()};
+        await Quotes.AddAsync(revision,ct);await uow.SaveChangesAsync(ct);
+        quote.Status=ProcurementQuoteStatus.Rejected;invitation.CurrentQuoteId=revision.Id;invitation.Status=ProcurementInvitationStatus.RevisionRequested;invitation.SubmittedAtUtc=null;invitation.TokenHash=IdentitySecurity.HashToken(rawToken);invitation.ExpiresAtUtc=now.AddDays(7);invitation.LastSentAtUtc=now;
+        await AddHistory("quote",quote.Id,ProcurementQuoteStatus.Submitted.ToString(),quote.Status.ToString(),actorUserId,Norm(note)??"Revizyon istendi.",ct);await AddHistory("quote",revision.Id,"",revision.Status.ToString(),actorUserId,$"{quote.QuoteNo} teklifinin revizyonu",ct);await uow.SaveChangesAsync(ct);
+        var baseUrl=configuration["FrontendSettings:BaseUrl"]?.TrimEnd('/')??throw new InvalidOperationException("FrontendSettings:BaseUrl is missing.");
+        await emailSender.SendQuoteInvitationAsync(invitation.RecipientEmail,quote.SupplierNameSnapshot,quote.Rfq.RfqNo,quote.Rfq.Subject,quote.Rfq.ResponseDueDate,$"{baseUrl}/supplier/quotes/{Uri.EscapeDataString(rawToken)}",ct);
+    }
 
     private IQueryable<ProcurementGridRow> RequestRows(PagedRequest r){var s=r.Search?.Trim();return Requests.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.RequestNo.Contains(s)||x.Subject.Contains(s)).Select(x=>new ProcurementGridRow(x.Id,"request",x.RequestNo,x.RequestDate,x.Status.ToString(),x.Subject,null,x.Lines.Count,0,"TRY",x.RequiredDate,x.CreatedDate)).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
     private IQueryable<ProcurementGridRow> RfqRows(PagedRequest r){var s=r.Search?.Trim();return Rfqs.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.RfqNo.Contains(s)||x.Subject.Contains(s)).Select(x=>new ProcurementGridRow(x.Id,"rfq",x.RfqNo,x.RfqDate,x.Status.ToString(),x.Subject,x.Suppliers.OrderBy(y=>y.Id).Select(y=>y.SupplierNameSnapshot).FirstOrDefault(),x.Lines.Count,0,"TRY",x.ResponseDueDate,x.CreatedDate)).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}

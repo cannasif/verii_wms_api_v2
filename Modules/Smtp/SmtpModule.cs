@@ -1,6 +1,7 @@
 using verii_wms_api_v2.Modules.Identity.Application;
 using verii_wms_api_v2.Modules.Smtp.Application;
 using verii_wms_api_v2.Modules.Smtp.Infrastructure;
+using verii_wms_api_v2.Modules.Procurement.Application;
 
 namespace verii_wms_api_v2.Modules.Smtp;
 
@@ -11,6 +12,7 @@ public static class SmtpModule
         services.AddScoped<SmtpSettingsService>();
         services.AddScoped<ISmtpSettingsService>(provider => provider.GetRequiredService<SmtpSettingsService>());
         services.AddScoped<IIdentityEmailSender>(provider => provider.GetRequiredService<SmtpSettingsService>());
+        services.AddScoped<IProcurementEmailSender>(provider => provider.GetRequiredService<SmtpSettingsService>());
         return services;
     }
 }

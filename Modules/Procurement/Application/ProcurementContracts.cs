@@ -20,9 +20,18 @@ public sealed record UpdateProcurementPolicyRequest(bool AllowMultipleRfqsPerReq
 public sealed record ProcurementWorkspaceSummary(int DraftRequests,int PendingRequests,int OpenRfqs,int SubmittedQuotes,int PendingOrders,int ApprovedOpenOrders);
 public sealed record ProcurementGridRow(long Id,string DocumentType,string DocumentNo,DateOnly DocumentDate,string Status,string Subject,string? Counterparty,int LineCount,decimal TotalAmount,string CurrencyCode,DateOnly? DueDate,DateTime? CreatedDate);
 public sealed record ProcurementLineDetail(long Id,int LineNo,long? StockId,string? StockCode,string StockName,string UnitCode,decimal Quantity,decimal SecondaryQuantity,decimal UnitPrice,decimal DiscountRate,decimal VatRate,DateOnly? RequiredDate,string? ProjectCode,decimal OpenQuantity);
-public sealed record ProcurementSupplierParticipant(long SupplierId,string SupplierCode,string SupplierName);
+public sealed record ProcurementSupplierParticipant(long SupplierId,string SupplierCode,string SupplierName,string? InvitationStatus=null,string? RecipientEmail=null,DateTimeOffset? InvitationExpiresAtUtc=null);
 public sealed record ProcurementDocumentDetail(long Id,string DocumentType,string DocumentNo,DateOnly DocumentDate,string Status,string Subject,string? Description,string? CounterpartyCode,string? CounterpartyName,string CurrencyCode,decimal ExchangeRate,DateOnly? DueDate,IReadOnlyList<ProcurementLineDetail> Lines,IReadOnlyList<ProcurementHistoryRow> History,IReadOnlyList<ProcurementSupplierParticipant>? Suppliers=null);
 public sealed record ProcurementHistoryRow(string FromStatus,string ToStatus,long ActorUserId,string? Note,DateTimeOffset ChangedAtUtc);
+public sealed record SendProcurementInvitationRequest(long SupplierId,string RecipientEmail,int ValidForDays=7);
+public sealed record ProcurementInvitationResult(long InvitationId,string Status,string RecipientEmail,DateTimeOffset ExpiresAtUtc);
+public sealed record SupplierPortalLine(long RfqLineId,int LineNo,string? StockCode,string StockName,string UnitCode,decimal RequestedQuantity,DateOnly? RequiredDate,decimal QuotedQuantity,decimal UnitPrice,decimal DiscountRate,decimal VatRate,DateOnly? DeliveryDate);
+public sealed record SupplierPortalQuote(string RfqNo,string Subject,string? BuyerMessage,string SupplierCode,string SupplierName,string Status,DateOnly ResponseDueDate,DateTimeOffset ExpiresAtUtc,string? QuoteNo,DateOnly? QuoteDate,DateOnly? ValidUntil,string CurrencyCode,decimal ExchangeRate,string? Note,int RevisionNo,IReadOnlyList<SupplierPortalLine> Lines);
+public sealed record SaveSupplierPortalQuoteRequest(string? QuoteNo,DateOnly? QuoteDate,DateOnly? ValidUntil,string CurrencyCode,decimal ExchangeRate,string? Note,IReadOnlyList<SupplierQuoteLineInput> Lines);
+public interface IProcurementEmailSender
+{
+    Task SendQuoteInvitationAsync(string recipientEmail,string supplierName,string rfqNo,string subject,DateOnly responseDueDate,string portalUrl,CancellationToken cancellationToken=default);
+}
 
 // Bu sözleşme Procurement tablosunu GoodsReceipt tablolarına bağlamadan, onaylı siparişleri
 // ileride IGoodsReceiptOrderSource adaptörüne sunar.
@@ -43,6 +52,16 @@ public interface IProcurementService
     Task<long> CreateOrderAsync(CreatePurchaseOrderRequest request,long actorUserId,CancellationToken ct=default);
     Task TransitionOrderAsync(long id,string action,ProcurementTransitionRequest request,long actorUserId,CancellationToken ct=default);
     Task<IReadOnlyList<ProcurementReceiptSourceLine>> GetOpenReceiptSourceLinesAsync(long? purchaseOrderId,CancellationToken ct=default);
+    Task<ProcurementInvitationResult> SendInvitationAsync(long rfqId,SendProcurementInvitationRequest request,long actorUserId,CancellationToken ct=default);
+    Task RevokeInvitationAsync(long rfqId,long supplierId,long actorUserId,CancellationToken ct=default);
+    Task RequestQuoteRevisionAsync(long quoteId,string? note,long actorUserId,CancellationToken ct=default);
+}
+
+public interface IProcurementSupplierPortalService
+{
+    Task<SupplierPortalQuote> GetAsync(string token,CancellationToken ct=default);
+    Task SaveDraftAsync(string token,SaveSupplierPortalQuoteRequest request,CancellationToken ct=default);
+    Task SubmitAsync(string token,SaveSupplierPortalQuoteRequest request,CancellationToken ct=default);
 }
 
 public interface IProcurementPolicyService
