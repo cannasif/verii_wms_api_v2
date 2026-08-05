@@ -118,6 +118,12 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
 
     public async Task TransitionRfqAsync(long id,string action,ProcurementTransitionRequest request,long actorUserId,CancellationToken ct=default)
     {
+        if(action.Trim().Equals("send",StringComparison.OrdinalIgnoreCase))
+        {
+            var candidate=await Rfqs.FindByIdAsync(id,false,ct)??throw AppException.NotFound("Teklif talebi bulunamadı.");
+            var procurementPolicy=await policyService.GetAsync(candidate.BranchCode,ct);
+            if(procurementPolicy.SupplierQuoteChannelMode==SupplierQuoteChannelMode.PortalRequired.ToString())throw AppException.Conflict("Portal zorunlu: RFQ'yu tedarikçi kartlarındaki e-posta davetiyle gönderin.");
+        }
         var x=await Rfqs.FindByIdAsync(id,true,ct)??throw AppException.NotFound("Teklif talebi bulunamadı.");var from=x.Status;x.Status=action.Trim().ToLowerInvariant() switch{"send" when from==ProcurementRfqStatus.Draft=>ProcurementRfqStatus.Sent,"close" when from is ProcurementRfqStatus.Sent or ProcurementRfqStatus.Quoted=>ProcurementRfqStatus.Closed,"cancel" when from is ProcurementRfqStatus.Draft or ProcurementRfqStatus.Sent or ProcurementRfqStatus.Quoted=>ProcurementRfqStatus.Cancelled,_=>throw AppException.Conflict("Teklif talebi mevcut durumunda bu işleme uygun değil.")};if(x.Status==ProcurementRfqStatus.Sent)x.SentAtUtc=DateTimeOffset.UtcNow;await AddHistory("rfq",id,from.ToString(),x.Status.ToString(),actorUserId,request.Note,ct);await uow.SaveChangesAsync(ct);
     }
 
@@ -128,6 +134,7 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
         var supplier=rfq.Suppliers.FirstOrDefault(x=>x.SupplierId==request.SupplierId)??throw AppException.BadRequest("Tedarikçi bu teklif talebinin katılımcısı değil.");
         if(string.IsNullOrWhiteSpace(request.QuoteNo)||request.ExchangeRate<=0||request.Lines.Count==0)throw AppException.BadRequest("Teklif numarası, kur ve satırlar zorunludur.");
         var policy=await policyService.GetAsync(rfq.BranchCode,ct);
+        if(policy.SupplierQuoteChannelMode==SupplierQuoteChannelMode.PortalRequired.ToString())throw AppException.Conflict("Satınalma politikası tekliflerin yalnız tedarikçi portalından gönderilmesini zorunlu tutuyor.");
         if(!policy.AllowMultipleQuotesPerSupplier&&await Quotes.Query().AnyAsync(x=>x.ProcurementRfqId==rfqId&&x.SupplierId==request.SupplierId&&x.Status!=ProcurementQuoteStatus.Cancelled&&x.Status!=ProcurementQuoteStatus.Rejected,ct))throw AppException.Conflict("Satınalma politikası aynı tedarikçinin bu teklif talebine birden fazla teklif vermesine izin vermiyor.");
         var rfqLines=rfq.Lines.ToDictionary(x=>x.Id);
         if(request.Lines.Select(x=>x.RfqLineId).Distinct().Count()!=request.Lines.Count||request.Lines.Any(x=>!rfqLines.TryGetValue(x.RfqLineId,out var line)||x.Quantity<=0||x.Quantity>line.RequestedQuantity||x.UnitPrice<0||x.DiscountRate is <0 or >100||x.VatRate<0))throw AppException.BadRequest("Teklif satırları geçersiz veya teklif miktarı istenen miktarı aşıyor.");
@@ -216,8 +223,9 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
     public async Task<ProcurementInvitationResult> SendInvitationAsync(long rfqId,SendProcurementInvitationRequest request,long actorUserId,CancellationToken ct=default)
     {
         if(!MailAddress.TryCreate(request.RecipientEmail?.Trim(),out var recipient))throw AppException.BadRequest("Geçerli bir tedarikçi e-posta adresi giriniz.");
-        if(request.ValidForDays is <1 or >30)throw AppException.BadRequest("Bağlantı geçerlilik süresi 1-30 gün arasında olmalıdır.");
         var rfq=await Rfqs.Query(true).Include(x=>x.Suppliers).FirstOrDefaultAsync(x=>x.Id==rfqId,ct)??throw AppException.NotFound("Teklif talebi bulunamadı.");
+        var procurementPolicy=await policyService.GetAsync(rfq.BranchCode,ct);
+        if(procurementPolicy.SupplierQuoteChannelMode==SupplierQuoteChannelMode.InternalOnly.ToString())throw AppException.Conflict("Tedarikçi portalı satınalma politikasında kapalı.");
         if(rfq.Status is ProcurementRfqStatus.Closed or ProcurementRfqStatus.Cancelled)throw AppException.Conflict("Kapalı veya iptal edilmiş teklif talebi gönderilemez.");
         var participant=rfq.Suppliers.SingleOrDefault(x=>x.SupplierId==request.SupplierId)??throw AppException.BadRequest("Tedarikçi bu teklif talebinin katılımcısı değil.");
         var now=DateTimeOffset.UtcNow;var rawToken=IdentitySecurity.CreateOpaqueToken();var tokenHash=IdentitySecurity.HashToken(rawToken);
@@ -228,7 +236,7 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
             invitation=new ProcurementQuoteInvitation{BranchCode=rfq.BranchCode,ProcurementRfqId=rfq.Id,ProcurementRfqSupplierId=participant.Id,SupplierId=participant.SupplierId};
             await Invitations.AddAsync(invitation,ct);
         }
-        invitation.RecipientEmail=recipient.Address.ToLowerInvariant();invitation.TokenHash=tokenHash;invitation.ExpiresAtUtc=now.AddDays(request.ValidForDays);invitation.LastSentAtUtc=now;invitation.RevokedAtUtc=null;
+        invitation.RecipientEmail=recipient.Address.ToLowerInvariant();invitation.TokenHash=tokenHash;invitation.ExpiresAtUtc=now.AddDays(procurementPolicy.InvitationValidityDays);invitation.LastSentAtUtc=now;invitation.RevokedAtUtc=null;
         invitation.Status=invitation.CurrentQuoteId.HasValue?ProcurementInvitationStatus.DraftSaved:ProcurementInvitationStatus.Sent;
         if(rfq.Status==ProcurementRfqStatus.Draft){rfq.Status=ProcurementRfqStatus.Sent;rfq.SentAtUtc=now;await AddHistory("rfq",rfq.Id,ProcurementRfqStatus.Draft.ToString(),rfq.Status.ToString(),actorUserId,"Tedarikçi portal daveti gönderildi.",ct);}
         await uow.SaveChangesAsync(ct);
@@ -252,11 +260,14 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
     {
         var quote=await Quotes.Query(true).Include(x=>x.Lines).Include(x=>x.Rfq).FirstOrDefaultAsync(x=>x.Id==quoteId,ct)??throw AppException.NotFound("Tedarikçi teklifi bulunamadı.");
         if(quote.Status!=ProcurementQuoteStatus.Submitted)throw AppException.Conflict("Yalnız sunulmuş teklif için revizyon istenebilir.");
+        var procurementPolicy=await policyService.GetAsync(quote.BranchCode,ct);
+        if(!procurementPolicy.AllowSupplierRevisions||procurementPolicy.MaximumSupplierRevisionCount==0)throw AppException.Conflict("Satınalma politikası tedarikçi teklif revizyonuna izin vermiyor.");
+        if(quote.RevisionNo>=procurementPolicy.MaximumSupplierRevisionCount+1)throw AppException.Conflict("Teklif için izin verilen azami revizyon sayısına ulaşıldı.");
         var invitation=await Invitations.Query(true).FirstOrDefaultAsync(x=>x.CurrentQuoteId==quoteId,ct)??throw AppException.Conflict("Bu teklif tedarikçi portalından oluşturulmamış.");
         var rawToken=IdentitySecurity.CreateOpaqueToken();var now=DateTimeOffset.UtcNow;
         var revision=new ProcurementSupplierQuote{BranchCode=quote.BranchCode,ProcurementRfqId=quote.ProcurementRfqId,SupplierId=quote.SupplierId,SupplierCodeSnapshot=quote.SupplierCodeSnapshot,SupplierNameSnapshot=quote.SupplierNameSnapshot,QuoteNo=$"{quote.QuoteNo}-R{quote.RevisionNo+1}",QuoteDate=DateOnly.FromDateTime(DateTime.UtcNow),ValidUntil=quote.ValidUntil,CurrencyCode=quote.CurrencyCode,ExchangeRate=quote.ExchangeRate,Status=ProcurementQuoteStatus.Draft,Note=Norm(note)??quote.Note,RevisionNo=quote.RevisionNo+1,PreviousQuoteId=quote.Id,Lines=quote.Lines.OrderBy(x=>x.LineNo).Select(x=>new ProcurementSupplierQuoteLine{BranchCode=quote.BranchCode,LineNo=x.LineNo,ProcurementRfqLineId=x.ProcurementRfqLineId,QuotedQuantity=x.QuotedQuantity,UnitPrice=x.UnitPrice,DiscountRate=x.DiscountRate,VatRate=x.VatRate,DeliveryDate=x.DeliveryDate}).ToList()};
         await Quotes.AddAsync(revision,ct);await uow.SaveChangesAsync(ct);
-        quote.Status=ProcurementQuoteStatus.Rejected;invitation.CurrentQuoteId=revision.Id;invitation.Status=ProcurementInvitationStatus.RevisionRequested;invitation.SubmittedAtUtc=null;invitation.TokenHash=IdentitySecurity.HashToken(rawToken);invitation.ExpiresAtUtc=now.AddDays(7);invitation.LastSentAtUtc=now;
+        quote.Status=ProcurementQuoteStatus.Rejected;invitation.CurrentQuoteId=revision.Id;invitation.Status=ProcurementInvitationStatus.RevisionRequested;invitation.SubmittedAtUtc=null;invitation.TokenHash=IdentitySecurity.HashToken(rawToken);invitation.ExpiresAtUtc=now.AddDays(procurementPolicy.InvitationValidityDays);invitation.LastSentAtUtc=now;
         await AddHistory("quote",quote.Id,ProcurementQuoteStatus.Submitted.ToString(),quote.Status.ToString(),actorUserId,Norm(note)??"Revizyon istendi.",ct);await AddHistory("quote",revision.Id,"",revision.Status.ToString(),actorUserId,$"{quote.QuoteNo} teklifinin revizyonu",ct);await uow.SaveChangesAsync(ct);
         var baseUrl=configuration["FrontendSettings:BaseUrl"]?.TrimEnd('/')??throw new InvalidOperationException("FrontendSettings:BaseUrl is missing.");
         await emailSender.SendQuoteInvitationAsync(invitation.RecipientEmail,quote.SupplierNameSnapshot,quote.Rfq.RfqNo,quote.Rfq.Subject,quote.Rfq.ResponseDueDate,$"{baseUrl}/supplier/quotes/{Uri.EscapeDataString(rawToken)}",ct);

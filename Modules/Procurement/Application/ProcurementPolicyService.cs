@@ -30,6 +30,17 @@ public sealed class ProcurementPolicyService(IUnitOfWork uow,IAuditLogWriter aud
         entity.AllowMultipleOrdersPerQuote=request.AllowMultipleOrdersPerQuote;
         entity.AllowPartialOrderLines=request.AllowPartialOrderLines;
         entity.AllowSplitAwardsAcrossSuppliers=request.AllowSplitAwardsAcrossSuppliers;
+        if(!Enum.TryParse<SupplierQuoteChannelMode>(request.SupplierQuoteChannelMode,true,out var channelMode)||!Enum.IsDefined(channelMode))throw AppException.BadRequest("Geçersiz tedarikçi teklif kanalı.");
+        if(request.InvitationValidityDays is <1 or >30)throw AppException.BadRequest("Teklif bağlantısı süresi 1-30 gün arasında olmalıdır.");
+        if(request.MaximumSupplierRevisionCount is <0 or >20)throw AppException.BadRequest("Azami teklif revizyon sayısı 0-20 arasında olmalıdır.");
+        entity.SupplierQuoteChannelMode=channelMode;
+        entity.InvitationValidityDays=request.InvitationValidityDays;
+        entity.AllowSupplierDraftSave=request.AllowSupplierDraftSave;
+        entity.AllowSupplierQuantityChange=request.AllowSupplierQuantityChange;
+        entity.AllowSupplierRevisions=request.AllowSupplierRevisions;
+        entity.MaximumSupplierRevisionCount=request.MaximumSupplierRevisionCount;
+        entity.RequireSupplierDeliveryDate=request.RequireSupplierDeliveryDate;
+        entity.AllowZeroUnitPrice=request.AllowZeroUnitPrice;
         entity.UpdatedBy=actorUserId;entity.UpdatedDate=DateTime.UtcNow;
         try{await uow.SaveChangesAsync(ct);}
         catch(DbUpdateConcurrencyException){throw AppException.Conflict("Satınalma politikası başka bir kullanıcı tarafından güncellendi. Ekranı yenileyip tekrar deneyin.");}
@@ -40,5 +51,5 @@ public sealed class ProcurementPolicyService(IUnitOfWork uow,IAuditLogWriter aud
 
     private static ProcurementPolicy Default(string branch)=>new(){BranchCode=branch,PolicyKey=DefaultKey};
     private static string Branch(string? value)=>string.IsNullOrWhiteSpace(value)?"0":value.Trim();
-    private static ProcurementPolicyDto Map(ProcurementPolicy x)=>new(x.Id,x.BranchCode,x.AllowMultipleRfqsPerRequest,x.AllowPartialRfqLines,x.AllowMultipleQuotesPerSupplier,x.AllowMultipleOrdersPerQuote,x.AllowPartialOrderLines,x.AllowSplitAwardsAcrossSuppliers,x.UpdatedBy,x.UpdatedDate);
+    private static ProcurementPolicyDto Map(ProcurementPolicy x)=>new(x.Id,x.BranchCode,x.AllowMultipleRfqsPerRequest,x.AllowPartialRfqLines,x.AllowMultipleQuotesPerSupplier,x.AllowMultipleOrdersPerQuote,x.AllowPartialOrderLines,x.AllowSplitAwardsAcrossSuppliers,x.SupplierQuoteChannelMode.ToString(),x.InvitationValidityDays,x.AllowSupplierDraftSave,x.AllowSupplierQuantityChange,x.AllowSupplierRevisions,x.MaximumSupplierRevisionCount,x.RequireSupplierDeliveryDate,x.AllowZeroUnitPrice,x.UpdatedBy,x.UpdatedDate);
 }
