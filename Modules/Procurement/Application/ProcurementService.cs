@@ -101,6 +101,8 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
     public async Task<long> CreateRequestAsync(CreateProcurementRequest request,long actorUserId,CancellationToken ct=default)
     {
         ValidateHeader(request.Subject,request.Lines);
+        if(!request.RequiredDate.HasValue||request.Lines.Any(l=>!l.RequiredDate.HasValue))
+            throw AppException.BadRequest("Termin tarihi zorunludur.");
         var lines=await ResolveLines(request.Lines,ct);
         var requestedNo=Norm(request.RequestNo);
         if(!string.IsNullOrWhiteSpace(requestedNo))await EnsureUniqueDocumentNoAsync("request",requestedNo,ct);
