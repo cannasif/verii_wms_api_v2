@@ -1057,7 +1057,8 @@ public sealed class ErpPostingService(
         if (header.ErpPostingPolicy is GoodsReceiptErpPostingPolicy.AfterQualityApproval
             or GoodsReceiptErpPostingPolicy.AfterAllApprovals
             && header.QualityStatus is not (OperationQualityStatus.NotRequired
-                or OperationQualityStatus.Passed))
+                or OperationQualityStatus.Passed
+                or OperationQualityStatus.Failed))
             throw AppException.Conflict("Kalite kararı tamamlanmadan ERP irsaliyesi oluşturulamaz.");
     }
 

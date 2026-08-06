@@ -54,7 +54,7 @@ public sealed class GoodsReceiptErpPostingPolicyEvaluatorTests
     [Theory]
     [InlineData(GoodsReceiptErpPostingPolicy.AfterQualityApproval)]
     [InlineData(GoodsReceiptErpPostingPolicy.AfterAllApprovals)]
-    public void Rejected_quality_never_creates_a_normal_purchase_receipt(
+    public void Rejected_quality_is_a_completed_decision_for_purchase_receipt_posting(
         GoodsReceiptErpPostingPolicy postingPolicy)
     {
         var eligible = GoodsReceiptErpPostingPolicyEvaluator.IsEligible(
@@ -63,7 +63,22 @@ public sealed class GoodsReceiptErpPostingPolicyEvaluatorTests
             OperationQualityStatus.Failed,
             postingPolicy);
 
-        Assert.False(eligible);
+        Assert.True(eligible);
+    }
+
+    [Fact]
+    public void Any_quality_plan_releases_erp_after_a_failed_terminal_decision()
+    {
+        var eligible = GoodsReceiptErpPostingPolicyEvaluator.IsEligible(
+            WarehouseOperationStatus.Processed,
+            OperationApprovalStatus.NotRequired,
+            OperationQualityStatus.Failed,
+            GoodsReceiptErpPostingPolicy.AfterReceipt,
+            GoodsReceiptErpQualityGatePolicy.AnyQualityPlan,
+            hasRuleBasedQualityPlan: false,
+            hasManualQualityPlan: true);
+
+        Assert.True(eligible);
     }
 
     [Fact]

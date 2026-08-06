@@ -110,9 +110,6 @@ public static class GoodsReceiptErpPostingPolicyEvaluator
         if (operationStatus is not (WarehouseOperationStatus.Processed or WarehouseOperationStatus.Completed))
             return false;
 
-        if (qualityStatus == OperationQualityStatus.Failed)
-            return false;
-
         var qualityGateApplies = qualityGatePolicy switch
         {
             GoodsReceiptErpQualityGatePolicy.None => false,
@@ -121,14 +118,18 @@ public static class GoodsReceiptErpPostingPolicyEvaluator
                 hasRuleBasedQualityPlan || hasManualQualityPlan,
             _ => true
         };
-        if (qualityGateApplies && qualityStatus != OperationQualityStatus.Passed)
+        var qualityDecisionCompleted = qualityStatus is
+            OperationQualityStatus.Passed
+            or OperationQualityStatus.Failed;
+        if (qualityGateApplies && !qualityDecisionCompleted)
             return false;
 
         var receiptApprovalCompleted = approvalStatus is
             OperationApprovalStatus.NotRequired or OperationApprovalStatus.Approved;
         var qualityApprovalCompleted = qualityStatus is
             OperationQualityStatus.NotRequired
-            or OperationQualityStatus.Passed;
+            or OperationQualityStatus.Passed
+            or OperationQualityStatus.Failed;
 
         return postingPolicy switch
         {
