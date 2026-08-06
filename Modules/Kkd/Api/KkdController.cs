@@ -53,6 +53,10 @@ public sealed class KkdController(
     public async Task<IActionResult> StockGroupsPaged(PagedRequest request, CancellationToken ct)
     { await Require("WMS.KKD.DEFINITIONS.VIEW", ct); return Ok(ApiResponse<PagedResponse<KkdStockGroupLookupRow>>.Ok(await definitions.GetStockGroupsPagedAsync(request, ct))); }
 
+    [HttpPost("lookups/entitlement-groups/paged")]
+    public async Task<IActionResult> EntitlementGroupsPaged(PagedRequest request, CancellationToken ct)
+    { await Require("WMS.KKD.DEFINITIONS.VIEW", ct); return Ok(ApiResponse<PagedResponse<KkdEntitlementGroupLookupRow>>.Ok(await definitions.GetEntitlementGroupsPagedAsync(request, ct))); }
+
     [HttpPost("roles")]
     [HttpPut("roles/{id:long}")]
     public async Task<IActionResult> UpsertRole(long? id, KkdRoleUpsertRequest request, CancellationToken ct)
@@ -74,6 +78,10 @@ public sealed class KkdController(
     [HttpGet("matrices")]
     public async Task<IActionResult> Matrices(CancellationToken ct)
     { await Require("WMS.KKD.MATRICES.VIEW", ct); return Ok(ApiResponse<IReadOnlyList<KkdMatrixRow>>.Ok(await definitions.GetMatricesAsync(ct))); }
+
+    [HttpGet("matrices/{id:long}")]
+    public async Task<IActionResult> Matrix(long id, CancellationToken ct)
+    { await Require("WMS.KKD.MATRICES.VIEW", ct); return Ok(ApiResponse<KkdMatrixDetail>.Ok(await definitions.GetMatrixAsync(id, ct))); }
 
     [HttpPost("matrices")]
     [HttpPut("matrices/{id:long}")]

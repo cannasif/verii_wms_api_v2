@@ -45,11 +45,22 @@ public sealed record KkdLookupRow(long Id, string Code, string Name, bool IsActi
 public sealed record KkdCustomerLookupRow(long Id, string Code, string Name);
 public sealed record KkdStockLookupRow(long Id, string Code, string Name, string UnitCode, string? GroupCode);
 public sealed record KkdStockGroupLookupRow(string Code, int StockCount);
+public sealed record KkdEntitlementGroupLookupRow(string Code, string Name, int RuleCount);
 public sealed record KkdEmployeeRow(long Id, string EmployeeCode, string FullName, string QrCode, long CustomerId,
     long DepartmentId, string DepartmentName, long RoleId, string RoleName, DateOnly EmploymentStartDate, bool IsActive);
 public sealed record KkdEmployeeQrResolveRequest(string QrCode);
 public sealed record KkdMatrixRow(long Id, string Code, string Name, long CustomerId, long DepartmentId, long RoleId,
     DateOnly? EffectiveFrom, DateOnly? EffectiveTo, bool IsActive, int RuleCount);
+public sealed record KkdPhaseDetail(long Id, string PhaseType, int OffsetMonths, decimal Quantity, bool AllowBulkIssue,
+    int? FrequencyDays, decimal? QuantityPerFrequency, string? PeriodType, int? PeriodInterval, int SortOrder,
+    bool IsActive, string? Description);
+public sealed record KkdRuleDetail(long Id, string GroupCode, string? GroupName, long? StockId,
+    string? StockCode, string? StockName, string? StandardCode, string? StandardName, int? AnnualIssueCount,
+    decimal? AnnualQuantity, decimal? MaxCarryQuantity, bool AllowBulkIssue, bool IsMandatory, int SortOrder,
+    bool IsActive, string? Description, IReadOnlyList<KkdPhaseDetail> Phases);
+public sealed record KkdMatrixDetail(long Id, long CustomerId, long DepartmentId, long RoleId, string Code, string Name,
+    DateOnly? EffectiveFrom, DateOnly? EffectiveTo, bool IsActive, string? Description,
+    IReadOnlyList<KkdRuleDetail> Rules);
 
 public interface IKkdDefinitionService
 {
@@ -58,9 +69,11 @@ public interface IKkdDefinitionService
     Task<PagedResponse<KkdCustomerLookupRow>> GetCustomersPagedAsync(PagedRequest request, CancellationToken ct = default);
     Task<PagedResponse<KkdStockLookupRow>> GetStocksPagedAsync(PagedRequest request, string? groupCode, CancellationToken ct = default);
     Task<PagedResponse<KkdStockGroupLookupRow>> GetStockGroupsPagedAsync(PagedRequest request, CancellationToken ct = default);
+    Task<PagedResponse<KkdEntitlementGroupLookupRow>> GetEntitlementGroupsPagedAsync(PagedRequest request, CancellationToken ct = default);
     Task<IReadOnlyList<KkdEmployeeRow>> GetEmployeesAsync(CancellationToken ct = default);
     Task<KkdEmployeeRow> ResolveEmployeeByQrAsync(string qrCode, CancellationToken ct = default);
     Task<IReadOnlyList<KkdMatrixRow>> GetMatricesAsync(CancellationToken ct = default);
+    Task<KkdMatrixDetail> GetMatrixAsync(long id, CancellationToken ct = default);
     Task<long> UpsertDepartmentAsync(long? id, KkdDepartmentUpsertRequest request, long actor, CancellationToken ct = default);
     Task<long> UpsertRoleAsync(long? id, KkdRoleUpsertRequest request, long actor, CancellationToken ct = default);
     Task<long> UpsertEmployeeAsync(long? id, KkdEmployeeUpsertRequest request, long actor, CancellationToken ct = default);
