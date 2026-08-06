@@ -84,6 +84,12 @@ public sealed record WarehouseTransferTrackingLineDto(
     decimal PlannedQuantity,decimal PickedQuantity,decimal ShippedQuantity,decimal ReceivedQuantity,decimal PutawayQuantity,
     WarehouseTransferTrackingStatus Status);
 
+public sealed record WarehouseTransferPickedSourceLocationDto(
+    long LocationId,
+    string LocationCode,
+    string LocationName,
+    decimal Quantity);
+
 public sealed record WarehouseTransferDetailLine(
     long Id,int LineNo,long StockId,string StockCode,string? StockName,long? YapCodeId,string? YapCode,
     string UnitCode,decimal RequestedQuantity,decimal ReservedQuantity,decimal PickedQuantity,decimal ShippedQuantity,
@@ -91,7 +97,8 @@ public sealed record WarehouseTransferDetailLine(
     StockTrackingType TrackingType,WarehouseTransferLineStatus Status,int TrackingCount,
     IReadOnlyList<WarehouseTransferTrackingLineDto> Trackings,
     long? DefaultSourceLocationId,string? DefaultSourceLocationCode,string? DefaultSourceLocationName,
-    long? DefaultTargetLocationId,string? DefaultTargetLocationCode,string? DefaultTargetLocationName);
+    long? DefaultTargetLocationId,string? DefaultTargetLocationCode,string? DefaultTargetLocationName,
+    IReadOnlyList<WarehouseTransferPickedSourceLocationDto>? PickedSourceLocations = null);
 
 public sealed record WarehouseTransferDraftMetadata(long? SourceStagingLocationId,long? TargetReceivingLocationId,long? TargetPutawayLocationId,
     string? ExternalReferenceNo,string? Description,string? ProjectCode);

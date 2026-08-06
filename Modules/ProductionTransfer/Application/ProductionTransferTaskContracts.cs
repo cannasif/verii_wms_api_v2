@@ -1,3 +1,4 @@
+using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 
 namespace verii_wms_api_v2.Modules.ProductionTransfer.Application;
@@ -32,7 +33,18 @@ public sealed record ProductionTransferTaskBoardDto(
     IReadOnlyList<ProductionTransferAssigneeOptionDto> EligibleAssignees);
 public sealed record AssignProductionTransferTaskRequest(long UserId, bool IsPrimary = false);
 public sealed record HandoffProductionTransferTaskRequest(long TargetUserId, string? Reason);
-public sealed record StartProductionTransferTaskRequest(Guid IdempotencyKey);
+public sealed record StartProductionTransferTaskRequest(Guid IdempotencyKey, bool AllowPartialStart = false);
+
+public sealed record ProductionTaskStockShortageDto(
+    long TaskLineId,
+    long TransferLineId,
+    string StockCode,
+    string? StockName,
+    decimal RequestedQuantity,
+    decimal AvailableQuantity,
+    decimal ShortageQuantity);
+
+public sealed record ProductionTaskStartCheckDto(bool CanStartFully, IReadOnlyList<ProductionTaskStockShortageDto> Shortages);
 public sealed record WarehouseTransferReturnSettingDto(
     long WarehouseId,
     long? DefaultTransferReturnLocationId,
@@ -52,7 +64,9 @@ public interface IProductionTransferTaskService
     Task<ProductionTransferTaskBoardDto> CompleteAssignmentReturnAsync(long transferId, long taskId, Guid idempotencyKey, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> HandoffAsync(long transferId, long taskId, HandoffProductionTransferTaskRequest request, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> RefreshRouteAsync(long transferId, long taskId, long actor, CancellationToken ct = default);
-    Task<ProductionTransferTaskBoardDto> AcceptAndStartAsync(long transferId, long taskId, long actor, CancellationToken ct = default);
+    Task<ProductionTaskStartCheckDto> CheckStartAsync(long transferId, long taskId, long actor, CancellationToken ct = default);
+    Task<ProductionTransferTaskBoardDto> AcceptAndStartAsync(long transferId, long taskId, long actor, bool allowPartialStart = false, CancellationToken ct = default);
+    Task<IReadOnlyList<WarehouseTransferPickedSourceLocationDto>> GetLinePickedSourcesAsync(long transferId, long lineId, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> CompleteCancellationReturnAsync(long transferId, long taskId, Guid idempotencyKey, long actor, CancellationToken ct = default);
     Task<WarehouseTransferReturnSettingDto> GetReturnSettingAsync(long warehouseId, CancellationToken ct = default);
     Task<WarehouseTransferReturnSettingDto> UpdateReturnSettingAsync(UpdateWarehouseTransferReturnSettingRequest request, long actor, CancellationToken ct = default);

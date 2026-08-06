@@ -4,6 +4,7 @@ using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
+using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Application;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
@@ -424,10 +425,9 @@ public sealed class ProductionTransferTaskService(
             if (task.Status is WarehouseTransferTaskStatus.Completed or WarehouseTransferTaskStatus.Cancelled)
                 throw AppException.Conflict("Tamamlanmış veya iptal edilmiş görevin rotası yenilenemez.");
 
-            var movable = task.Lines.Where(x => !x.IsDeleted && x.ProcessedQuantity == 0
-                && x.Line.PickedQuantity == 0 && x.Line.ReservedQuantity == 0).ToArray();
+            var movable = task.Lines.Where(x => !x.IsDeleted && x.PlannedQuantity - x.ProcessedQuantity > 0).ToArray();
             if (movable.Length == 0)
-                throw AppException.Conflict("Rotası değiştirilebilecek, henüz rezerve edilmemiş ve toplanmamış kalem bulunamadı.");
+                throw AppException.Conflict("Rotası değiştirilebilecek açık kalem bulunamadı.");
 
             var stockIds = movable.Select(x => x.Line.StockId).Distinct().ToArray();
             var locations = await uow.Repository<WarehouseLocation>().Query()
@@ -504,7 +504,18 @@ public sealed class ProductionTransferTaskService(
             return await MapAsync(transferId, token);
         }, ct, IsolationLevel.Serializable);
 
-    public Task<ProductionTransferTaskBoardDto> AcceptAndStartAsync(long transferId, long taskId, long actor, CancellationToken ct = default) =>
+    public async Task<ProductionTaskStartCheckDto> CheckStartAsync(
+        long transferId, long taskId, long actor, CancellationToken ct = default)
+    {
+        var task = await LoadTaskAsync(transferId, taskId, ct);
+        if (!task.Assignments.Any(x => !x.IsDeleted && x.UserId == actor))
+            throw AppException.Forbidden("Bu görev size atanmamış.");
+        var shortages = await CheckStartInternalAsync(task, ct);
+        return new(shortages.Count == 0, shortages);
+    }
+
+    public Task<ProductionTransferTaskBoardDto> AcceptAndStartAsync(
+        long transferId, long taskId, long actor, bool allowPartialStart = false, CancellationToken ct = default) =>
         uow.ExecuteInTransactionAsync(async token =>
         {
             var task = await LoadTaskAsync(transferId, taskId, token);
@@ -512,17 +523,96 @@ public sealed class ProductionTransferTaskService(
                 throw AppException.Conflict("Tamamlanmış veya iptal edilmiş görev başlatılamaz.");
             var assignment = task.Assignments.SingleOrDefault(x => !x.IsDeleted && x.UserId == actor)
                 ?? throw AppException.Forbidden("Bu görev size atanmamış.");
+
+            var check = await CheckStartInternalAsync(task, token);
+            if (check.Count > 0 && !allowPartialStart)
+                throw AppException.Conflict("Görevde eksik stok var. Ön toplama onayı olmadan başlatılamaz.");
+
             var now = DateTimeOffset.UtcNow;
             assignment.AcceptedAtUtc ??= now;
             task.AcceptedAtUtc ??= now; task.AcceptedBy ??= actor;
             task.StartedAtUtc ??= now; task.StartedBy ??= actor;
             task.Status = WarehouseTransferTaskStatus.InProgress;
             task.UpdatedBy = actor; task.UpdatedDate = DateTime.UtcNow;
+
+            if (allowPartialStart || check.Count > 0)
+            {
+                var header = await LoadTransferHeaderAsync(transferId, token);
+                await RestoreOpenLineReservationsAsync(
+                    header,
+                    $"WT:{transferId}:RESERVE:START:{taskId}:{actor}",
+                    actor,
+                    token);
+            }
+
             await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("production-transfer.task.start", nameof(WarehouseTransferTask), task.Id.ToString(), "Succeeded", "production-transfer",
-                NewValues: new { TransferId = transferId, TaskId = task.Id, UserId = actor, StartedAtUtc = now }, ChangedFields: ["AcceptedAtUtc", "StartedAtUtc", "Status"]), token);
+                NewValues: new { TransferId = transferId, TaskId = task.Id, UserId = actor, StartedAtUtc = now, allowPartialStart },
+                ChangedFields: ["AcceptedAtUtc", "StartedAtUtc", "Status"]), token);
             return await MapAsync(transferId, token);
         }, ct, IsolationLevel.Serializable);
+
+    public async Task<IReadOnlyList<WarehouseTransferPickedSourceLocationDto>> GetLinePickedSourcesAsync(
+        long transferId, long lineId, CancellationToken ct = default)
+    {
+        var line = await uow.Repository<WarehouseTransferLine>().Query()
+            .Include(x => x.Trackings)
+            .SingleOrDefaultAsync(x => x.Id == lineId && x.WtHeaderId == transferId, ct)
+            ?? throw AppException.NotFound("Transfer satırı bulunamadı.");
+
+        var sources = new Dictionary<long, decimal>();
+
+        foreach (var tracking in line.Trackings.Where(x => x.PickedQuantity > 0 && x.SourceLocationId.HasValue))
+        {
+            sources[tracking.SourceLocationId!.Value] =
+                sources.GetValueOrDefault(tracking.SourceLocationId!.Value) + tracking.PickedQuantity;
+        }
+
+        if (line.TrackingType == StockTrackingType.None && line.PickedQuantity > 0)
+        {
+            var pickPrefix = $"WT:{transferId}:Pick:";
+            var reversedIds = uow.Repository<StockMovementOperation>().Query()
+                .Where(x => x.ReversalOfOperationId.HasValue)
+                .Select(x => x.ReversalOfOperationId!.Value);
+            var operationIds = await uow.Repository<StockMovementOperation>().Query()
+                .Where(x => x.ReferenceType == "WarehouseTransfer"
+                    && x.ReferenceId == transferId
+                    && x.IdempotencyKey.StartsWith(pickPrefix)
+                    && x.Status == StockMovementStatuses.Posted
+                    && !reversedIds.Contains(x.Id))
+                .Select(x => x.Id)
+                .ToListAsync(ct);
+            if (operationIds.Count > 0)
+            {
+                var movementSources = await uow.Repository<StockMovementEntry>().Query()
+                    .Where(x => operationIds.Contains(x.OperationId)
+                        && x.StockId == line.StockId
+                        && x.YapCodeId == line.YapCodeId
+                        && x.QuantityDelta < 0)
+                    .GroupBy(x => x.LocationId)
+                    .Select(g => new { LocationId = g.Key, Quantity = -g.Sum(x => x.QuantityDelta) })
+                    .ToListAsync(ct);
+                foreach (var row in movementSources)
+                    sources[row.LocationId] = sources.GetValueOrDefault(row.LocationId) + row.Quantity;
+            }
+        }
+
+        if (sources.Count == 0) return [];
+
+        var locations = await uow.Repository<WarehouseLocation>().Query()
+            .Where(x => sources.Keys.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, x => new { x.Code, x.Name }, ct);
+
+        return sources
+            .Where(x => locations.ContainsKey(x.Key))
+            .OrderBy(x => locations[x.Key].Code, StringComparer.OrdinalIgnoreCase)
+            .Select(x => new WarehouseTransferPickedSourceLocationDto(
+                x.Key,
+                locations[x.Key].Code,
+                locations[x.Key].Name,
+                x.Value))
+            .ToArray();
+    }
 
     public Task<ProductionTransferTaskBoardDto> CompleteCancellationReturnAsync(
         long transferId, long taskId, Guid idempotencyKey, long actor, CancellationToken ct = default) =>
@@ -813,5 +903,55 @@ public sealed class ProductionTransferTaskService(
         if (header.ReservationPolicy == WarehouseTransferReservationPolicy.None) return;
         if (header.Status is WarehouseTransferStatus.Cancelled or WarehouseTransferStatus.Completed) return;
         await reservations.ReserveAsync(header, idempotencyKey, actor, token);
+    }
+
+    private async Task<List<ProductionTaskStockShortageDto>> CheckStartInternalAsync(
+        WarehouseTransferTask task,
+        CancellationToken ct)
+    {
+        if (task.TaskType is WarehouseTransferTaskType.CancellationReturn or WarehouseTransferTaskType.AssignmentReturn)
+            return [];
+        var stockIds = task.Lines.Where(x => !x.IsDeleted).Select(x => x.Line.StockId).Distinct().ToArray();
+        var warehouseAvailable = await LoadWarehouseAvailableAsync(task.WarehouseId, stockIds, ct);
+        var shortages = new List<ProductionTaskStockShortageDto>();
+        foreach (var taskLine in task.Lines.Where(x => !x.IsDeleted))
+        {
+            var needed = taskLine.PlannedQuantity - taskLine.ProcessedQuantity;
+            if (needed <= 0) continue;
+            var line = taskLine.Line;
+            var available = warehouseAvailable.GetValueOrDefault((line.StockId, line.YapCodeId, line.UnitCode));
+            if (available + 0.000001m >= needed) continue;
+            shortages.Add(new ProductionTaskStockShortageDto(
+                taskLine.Id,
+                line.Id,
+                line.StockCodeSnapshot,
+                line.StockNameSnapshot,
+                needed,
+                available,
+                Math.Max(0, needed - available)));
+        }
+        return shortages;
+    }
+
+    private async Task<Dictionary<(long StockId, long? YapCodeId, string UnitCode), decimal>> LoadWarehouseAvailableAsync(
+        long warehouseId,
+        long[] stockIds,
+        CancellationToken ct)
+    {
+        if (stockIds.Length == 0) return [];
+        var locationIds = await uow.Repository<WarehouseLocation>().Query()
+            .Where(x => x.WarehouseId == warehouseId && x.IsActive && x.IsPickable && !x.IsQuarantine)
+            .Select(x => x.Id)
+            .ToArrayAsync(ct);
+        var balances = await uow.Repository<LocationStockBalance>().Query()
+            .Where(x => x.WarehouseId == warehouseId
+                && stockIds.Contains(x.StockId)
+                && locationIds.Contains(x.LocationId)
+                && x.StockStatus == "Available"
+                && x.AvailableQuantity > 0)
+            .ToListAsync(ct);
+        return balances
+            .GroupBy(x => (x.StockId, x.YapCodeId, x.UnitCode))
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.AvailableQuantity));
     }
 }

@@ -115,10 +115,18 @@ public sealed class ProductionTransfersController(
     public async Task<IActionResult>RefreshRoute(long id,long taskId,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
         return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.RefreshRouteAsync(id,taskId,UserId(),ct),"Toplanmamış kalemlerin rotası güncel stok bakiyesine göre yenilendi."));}
-    [HttpPost("{id:long}/tasks/{taskId:long}/start")]
-    public async Task<IActionResult>StartTask(long id,long taskId,CancellationToken ct){
+    [HttpGet("{id:long}/tasks/{taskId:long}/start-check")]
+    public async Task<IActionResult>CheckTaskStart(long id,long taskId,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
-        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.AcceptAndStartAsync(id,taskId,UserId(),ct),"Görev başlatıldı."));}
+        return Ok(ApiResponse<ProductionTaskStartCheckDto>.Ok(await tasks.CheckStartAsync(id,taskId,UserId(),ct)));}
+    [HttpPost("{id:long}/tasks/{taskId:long}/start")]
+    public async Task<IActionResult>StartTask(long id,long taskId,[FromBody]StartProductionTransferTaskRequest? request,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.AcceptAndStartAsync(id,taskId,UserId(),request?.AllowPartialStart??false,ct),"Görev başlatıldı."));}
+    [HttpGet("{id:long}/lines/{lineId:long}/picked-sources")]
+    public async Task<IActionResult>LinePickedSources(long id,long lineId,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.VIEW",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<IReadOnlyList<WarehouseTransferPickedSourceLocationDto>>.Ok(await tasks.GetLinePickedSourcesAsync(id,lineId,ct)));}
     [HttpPost("{id:long}/tasks/{taskId:long}/complete-cancellation-return")]
     public async Task<IActionResult>CompleteCancellationReturn(long id,long taskId,StartProductionTransferTaskRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
