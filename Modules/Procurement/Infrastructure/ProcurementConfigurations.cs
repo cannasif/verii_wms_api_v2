@@ -77,3 +77,16 @@ public sealed class ProcurementStatusHistoryConfiguration : BaseEntityConfigurat
 {
     protected override void ConfigureEntity(EntityTypeBuilder<ProcurementStatusHistory> b) { b.ToTable("RII_PC_STATUS_HISTORY"); b.Property(x=>x.DocumentType).HasMaxLength(30).IsRequired(); b.Property(x=>x.FromStatus).HasMaxLength(30).IsRequired(); b.Property(x=>x.ToStatus).HasMaxLength(30).IsRequired(); b.Property(x=>x.Note).HasMaxLength(1000); b.HasIndex(x=>new{x.DocumentType,x.DocumentId,x.ChangedAtUtc}); }
 }
+public sealed class ProcurementAttachmentConfiguration : BaseEntityConfiguration<ProcurementAttachment>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<ProcurementAttachment> b)
+    {
+        b.ToTable("RII_PC_ATTACHMENT");
+        b.Property(x => x.OwnerType).HasConversion<string>().HasMaxLength(30).IsRequired();
+        b.Property(x => x.FileName).HasMaxLength(260).IsRequired();
+        b.Property(x => x.ContentType).HasMaxLength(100).IsRequired();
+        b.Property(x => x.StoragePath).HasMaxLength(500).IsRequired();
+        b.Property(x => x.Caption).HasMaxLength(500);
+        b.HasIndex(x => new { x.OwnerType, x.OwnerId, x.CreatedDate });
+    }
+}

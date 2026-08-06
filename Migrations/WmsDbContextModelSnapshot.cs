@@ -10919,7 +10919,7 @@ namespace verii_wms_api_v2.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
-                    b.Property<long>("SupplierId")
+                    b.Property<long?>("SupplierId")
                         .HasColumnType("bigint");
 
                     b.Property<string>("SupplierNameSnapshot")
@@ -11585,7 +11585,7 @@ namespace verii_wms_api_v2.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
-                    b.Property<long>("SupplierId")
+                    b.Property<long?>("SupplierId")
                         .HasColumnType("bigint");
 
                     b.Property<string>("SupplierNameSnapshot")
@@ -11766,7 +11766,7 @@ namespace verii_wms_api_v2.Migrations
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
 
-                    b.Property<long>("SupplierId")
+                    b.Property<long?>("SupplierId")
                         .HasColumnType("bigint");
 
                     b.Property<string>("SupplierNameSnapshot")

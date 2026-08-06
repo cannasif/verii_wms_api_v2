@@ -1,9 +1,11 @@
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.Procurement.Domain;
+using verii_wms_api_v2.Modules.Procurement.Infrastructure;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
+using verii_wms_api_v2.Shared.Infrastructure.Files;
 using CustomerEntity = verii_wms_api_v2.Modules.Customer.Domain.Customer;
 using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
 using System.Net.Mail;
@@ -11,7 +13,7 @@ using verii_wms_api_v2.Modules.Identity.Application;
 
 namespace verii_wms_api_v2.Modules.Procurement.Application;
 
-public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IProcurementPolicyService policyService,IProcurementEmailSender emailSender,IConfiguration configuration) : IProcurementService
+public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IProcurementPolicyService policyService,IProcurementEmailSender emailSender,IConfiguration configuration,IProcurementAttachmentStorage attachmentStorage) : IProcurementService
 {
     private IGenericRepository<ProcurementRequest> Requests=>uow.Repository<ProcurementRequest>();
     private IGenericRepository<ProcurementRfq> Rfqs=>uow.Repository<ProcurementRfq>();
@@ -19,6 +21,7 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
     private IGenericRepository<ProcurementPurchaseOrder> Orders=>uow.Repository<ProcurementPurchaseOrder>();
     private IGenericRepository<ProcurementStatusHistory> History=>uow.Repository<ProcurementStatusHistory>();
     private IGenericRepository<ProcurementQuoteInvitation> Invitations=>uow.Repository<ProcurementQuoteInvitation>();
+    private IGenericRepository<ProcurementAttachment> Attachments=>uow.Repository<ProcurementAttachment>();
 
     public async Task<ProcurementWorkspaceSummary> GetSummaryAsync(CancellationToken ct=default)=>new(
         await Requests.CountAsync(x=>x.Status==ProcurementRequestStatus.Draft,ct),
@@ -44,19 +47,26 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
         if(type=="request")
         {
             var x=await Requests.Query().Include(x=>x.Lines).FirstOrDefaultAsync(x=>x.Id==id,ct)??throw AppException.NotFound("Satınalma talebi bulunamadı.");
-            return new(x.Id,type,x.RequestNo,x.RequestDate,x.Status.ToString(),x.Subject,x.Description,null,null,"TRY",1,x.RequiredDate,x.Lines.OrderBy(l=>l.LineNo).Select(l=>new ProcurementLineDetail(l.Id,l.LineNo,l.StockId,l.StockCodeSnapshot,l.StockNameSnapshot,l.UnitCode,l.RequestedQuantity,l.ConvertedQuantity,0,0,0,l.RequiredDate,l.ProjectCode,l.RequestedQuantity-l.ConvertedQuantity)).ToList(),histories);
+            var lines=x.Lines.OrderBy(l=>l.LineNo).Select(l=>new ProcurementLineDetail(l.Id,l.LineNo,l.StockId,l.StockCodeSnapshot,l.StockNameSnapshot,l.UnitCode,l.RequestedQuantity,l.ConvertedQuantity,0,0,0,l.RequiredDate,l.ProjectCode,l.RequestedQuantity-l.ConvertedQuantity,l.Id)).ToList();
+            var (headerAttachments,lineAttachments)=await LoadAttachmentBundleAsync(ProcurementAttachmentOwnerType.Request,id,ProcurementAttachmentOwnerType.RequestLine,lines.Select(l=>l.Id),ct);
+            lines=lines.Select(l=>l with{Attachments=lineAttachments.GetValueOrDefault(l.Id,[])}).ToList();
+            return new(x.Id,type,x.RequestNo,x.RequestDate,x.Status.ToString(),x.Subject,x.Description,null,null,"TRY",1,x.RequiredDate,lines,histories,null,x.Id,x.RequestNo,headerAttachments);
         }
         if(type=="rfq")
         {
-            var x=await Rfqs.Query().Include(x=>x.Lines).Include(x=>x.Suppliers).FirstOrDefaultAsync(x=>x.Id==id,ct)??throw AppException.NotFound("Teklif talebi bulunamadı.");
-            var invitations=await Invitations.Query().Where(i=>i.ProcurementRfqId==id).ToDictionaryAsync(i=>i.SupplierId,ct);
-            return new(x.Id,type,x.RfqNo,x.RfqDate,x.Status.ToString(),x.Subject,x.BuyerMessage,null,string.Join(", ",x.Suppliers.Select(s=>s.SupplierNameSnapshot)),"TRY",1,x.ResponseDueDate,x.Lines.OrderBy(l=>l.LineNo).Select(l=>new ProcurementLineDetail(l.Id,l.LineNo,l.StockId,l.StockCodeSnapshot,l.StockNameSnapshot,l.UnitCode,l.RequestedQuantity,0,0,0,0,l.RequiredDate,l.ProjectCode,l.RequestedQuantity)).ToList(),histories,x.Suppliers.OrderBy(s=>s.SupplierNameSnapshot).Select(s=>{invitations.TryGetValue(s.SupplierId,out var invitation);return new ProcurementSupplierParticipant(s.SupplierId,s.SupplierCodeSnapshot,s.SupplierNameSnapshot,invitation?.Status.ToString(),invitation?.RecipientEmail,invitation?.ExpiresAtUtc);}).ToList());
+            var x=await Rfqs.Query().Include(x=>x.Lines).Include(x=>x.Suppliers).Include(x=>x.Request).FirstOrDefaultAsync(x=>x.Id==id,ct)??throw AppException.NotFound("Teklif talebi bulunamadı.");
+            var invitations=await Invitations.Query().Where(i=>i.ProcurementRfqId==id).ToListAsync(ct);
+            return new(x.Id,type,x.RfqNo,x.RfqDate,x.Status.ToString(),x.Subject,x.BuyerMessage,null,string.Join(", ",x.Suppliers.Select(s=>s.SupplierNameSnapshot)),"TRY",1,x.ResponseDueDate,x.Lines.OrderBy(l=>l.LineNo).Select(l=>new ProcurementLineDetail(l.Id,l.LineNo,l.StockId,l.StockCodeSnapshot,l.StockNameSnapshot,l.UnitCode,l.RequestedQuantity,0,0,0,0,l.RequiredDate,l.ProjectCode,l.RequestedQuantity,l.ProcurementRequestLineId)).ToList(),histories,x.Suppliers.OrderBy(s=>s.SupplierNameSnapshot).Select(s=>{var invitation=s.SupplierId is long sid?invitations.FirstOrDefault(i=>i.SupplierId==sid):null;return new ProcurementSupplierParticipant(s.SupplierId,s.SupplierCodeSnapshot,s.SupplierNameSnapshot,invitation?.Status.ToString(),invitation?.RecipientEmail,invitation?.ExpiresAtUtc);}).ToList(),x.ProcurementRequestId,x.Request?.RequestNo);
         }
         if(type=="quote")
         {
-            var x=await Quotes.Query().Include(x=>x.Lines).ThenInclude(l=>l.Quote).FirstOrDefaultAsync(x=>x.Id==id,ct)??throw AppException.NotFound("Tedarikçi teklifi bulunamadı.");
+            var x=await Quotes.Query().Include(x=>x.Lines).Include(x=>x.Rfq).ThenInclude(r=>r.Request).FirstOrDefaultAsync(x=>x.Id==id,ct)??throw AppException.NotFound("Tedarikçi teklifi bulunamadı.");
             var rfqLines=await uow.Repository<ProcurementRfqLine>().Query().Where(l=>l.ProcurementRfqId==x.ProcurementRfqId).ToDictionaryAsync(l=>l.Id,ct);
-            return new(x.Id,type,x.QuoteNo,x.QuoteDate,x.Status.ToString(),"Tedarikçi teklifi",x.Note,x.SupplierCodeSnapshot,x.SupplierNameSnapshot,x.CurrencyCode,x.ExchangeRate,x.ValidUntil,x.Lines.OrderBy(l=>l.LineNo).Select(l=>{var r=rfqLines[l.ProcurementRfqLineId];return new ProcurementLineDetail(l.Id,l.LineNo,r.StockId,r.StockCodeSnapshot,r.StockNameSnapshot,r.UnitCode,l.QuotedQuantity,l.ConvertedQuantity,l.UnitPrice,l.DiscountRate,l.VatRate,l.DeliveryDate,r.ProjectCode,l.QuotedQuantity-l.ConvertedQuantity);}).ToList(),histories);
+            var subject=x.Rfq.Request?.Subject??x.Rfq.Subject;
+            var lines=x.Lines.OrderBy(l=>l.LineNo).Select(l=>{var r=rfqLines[l.ProcurementRfqLineId];return new ProcurementLineDetail(l.Id,l.LineNo,r.StockId,r.StockCodeSnapshot,r.StockNameSnapshot,r.UnitCode,l.QuotedQuantity,l.ConvertedQuantity,l.UnitPrice,l.DiscountRate,l.VatRate,l.DeliveryDate,r.ProjectCode,l.QuotedQuantity-l.ConvertedQuantity,r.ProcurementRequestLineId);}).ToList();
+            var (headerAttachments,lineAttachments)=await LoadAttachmentBundleAsync(ProcurementAttachmentOwnerType.Quote,id,ProcurementAttachmentOwnerType.QuoteLine,lines.Select(l=>l.Id),ct);
+            lines=lines.Select(l=>l with{Attachments=lineAttachments.GetValueOrDefault(l.Id,[])}).ToList();
+            return new(x.Id,type,x.QuoteNo,x.QuoteDate,x.Status.ToString(),subject,x.Note,x.SupplierCodeSnapshot,x.SupplierNameSnapshot,x.CurrencyCode,x.ExchangeRate,x.ValidUntil,lines,histories,null,x.Rfq.ProcurementRequestId,x.Rfq.Request?.RequestNo,headerAttachments);
         }
         if(type=="order")
         {
@@ -66,13 +76,30 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
         throw AppException.BadRequest("Geçersiz satınalma belge türü.");
     }
 
+    public async Task<ProcurementNextDocumentNo> PeekNextDocumentNoAsync(string documentType,CancellationToken ct=default)
+    {
+        var type=NormalizeType(documentType);
+        var (prefix,maxId)=type switch
+        {
+            "request"=>("REQ",await Requests.Query(false,true).MaxAsync(x=>(long?)x.Id,ct)??0),
+            "rfq"=>("RFQ",await Rfqs.Query(false,true).MaxAsync(x=>(long?)x.Id,ct)??0),
+            "quote"=>("QT",await Quotes.Query(false,true).MaxAsync(x=>(long?)x.Id,ct)??0),
+            "order"=>("PO",await Orders.Query(false,true).MaxAsync(x=>(long?)x.Id,ct)??0),
+            _=>throw AppException.BadRequest("Geçersiz satınalma belge türü.")
+        };
+        return new(type,Number(prefix,maxId+1));
+    }
+
     public async Task<long> CreateRequestAsync(CreateProcurementRequest request,long actorUserId,CancellationToken ct=default)
     {
         ValidateHeader(request.Subject,request.Lines);
         var lines=await ResolveLines(request.Lines,ct);
-        var entity=new ProcurementRequest{RequestNo=TemporaryNo("REQ"),RequestDate=request.RequestDate??DateOnly.FromDateTime(DateTime.Today),RequiredDate=request.RequiredDate,DepartmentCode=Norm(request.DepartmentCode),ProjectCode=Norm(request.ProjectCode),Subject=request.Subject.Trim(),Description=Norm(request.Description),Status=ProcurementRequestStatus.Draft};
+        var requestedNo=Norm(request.RequestNo);
+        if(!string.IsNullOrWhiteSpace(requestedNo))await EnsureUniqueDocumentNoAsync("request",requestedNo,ct);
+        var entity=new ProcurementRequest{RequestNo=requestedNo??TemporaryNo("REQ"),RequestDate=request.RequestDate??DateOnly.FromDateTime(DateTime.Today),RequiredDate=request.RequiredDate,DepartmentCode=Norm(request.DepartmentCode),ProjectCode=Norm(request.ProjectCode),Subject=request.Subject.Trim(),Description=Norm(request.Description),Status=ProcurementRequestStatus.Draft};
         entity.Lines=lines.Select((l,i)=>new ProcurementRequestLine{LineNo=i+1,StockId=l.StockId,StockCodeSnapshot=l.StockCode,StockNameSnapshot=l.StockName,UnitCode=l.UnitCode,RequestedQuantity=l.Quantity,RequiredDate=l.RequiredDate??request.RequiredDate,ProjectCode=l.ProjectCode??Norm(request.ProjectCode),Description=l.Description}).ToList();
-        await Requests.AddAsync(entity,ct); await uow.SaveChangesAsync(ct); entity.RequestNo=Number("REQ",entity.Id); await uow.SaveChangesAsync(ct);
+        await Requests.AddAsync(entity,ct); await uow.SaveChangesAsync(ct);
+        if(string.IsNullOrWhiteSpace(requestedNo)){entity.RequestNo=Number("REQ",entity.Id); await uow.SaveChangesAsync(ct);}
         await audit.WriteAsync(new("procurement.request.create","ProcurementRequest",entity.Id.ToString(),"Succeeded","procurement",NewValues:new{entity.RequestNo,entity.Subject,LineCount=entity.Lines.Count}),ct);
         return entity.Id;
     }
@@ -93,15 +120,16 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
             if(source.Status is not (ProcurementRequestStatus.Approved or ProcurementRequestStatus.PartiallyConverted))throw AppException.Conflict("Yalnızca sipariş bakiyesi açık onaylı talep için teklif talebi oluşturulabilir.");
             var policy=await policyService.GetAsync(source.BranchCode,token);
             if(!policy.AllowMultipleRfqsPerRequest&&await Rfqs.Query().AnyAsync(x=>x.ProcurementRequestId==id&&x.Status!=ProcurementRfqStatus.Cancelled,token))throw AppException.Conflict("Satınalma politikası aynı talepten birden fazla teklif talebi oluşturulmasına izin vermiyor.");
-            var suppliers=await ResolveSuppliers(request.SupplierIds,token);
-            if(suppliers.Count==0)throw AppException.BadRequest("En az bir tedarikçi seçilmelidir.");
+            var suppliers=await ResolveSuppliers(request.SupplierIds??[],token);
 
             var openLines=source.Lines.Where(x=>x.RequestedQuantity-x.ConvertedQuantity>0).OrderBy(x=>x.LineNo).ToList();
             if(openLines.Count==0)throw AppException.Conflict("Talebin siparişe bağlanmamış açık miktarı bulunmuyor.");
             var selections=ResolveRfqSelections(openLines,request.Lines,policy.AllowPartialRfqLines);
+            var requestedNo=Norm(request.RfqNo);
+            if(!string.IsNullOrWhiteSpace(requestedNo)&&await Rfqs.Query().AnyAsync(x=>x.RfqNo==requestedNo,token))throw AppException.Conflict("Bu teklif talebi numarası zaten kullanılıyor.");
             var rfq=new ProcurementRfq
             {
-                RfqNo=TemporaryNo("RFQ"),RfqDate=DateOnly.FromDateTime(DateTime.Today),ResponseDueDate=request.ResponseDueDate,
+                RfqNo=requestedNo??TemporaryNo("RFQ"),RfqDate=DateOnly.FromDateTime(DateTime.Today),ResponseDueDate=request.ResponseDueDate,
                 ProcurementRequestId=source.Id,Subject=source.Subject,BuyerMessage=Norm(request.BuyerMessage),Status=ProcurementRfqStatus.Draft,
                 Lines=selections.Select((selection,index)=>
                 {
@@ -110,7 +138,8 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
                 }).ToList(),
                 Suppliers=suppliers.Select(s=>new ProcurementRfqSupplier{SupplierId=s.Id,SupplierCodeSnapshot=s.CustomerCode,SupplierNameSnapshot=s.CustomerName}).ToList()
             };
-            await Rfqs.AddAsync(rfq,token);await uow.SaveChangesAsync(token);rfq.RfqNo=Number("RFQ",rfq.Id);
+            await Rfqs.AddAsync(rfq,token);await uow.SaveChangesAsync(token);
+            if(string.IsNullOrWhiteSpace(requestedNo))rfq.RfqNo=Number("RFQ",rfq.Id);
             await AddHistory("rfq",rfq.Id,"",rfq.Status.ToString(),actorUserId,$"{rfq.Lines.Count} kalem, {rfq.Suppliers.Count} tedarikçi",token);
             await uow.SaveChangesAsync(token);return rfq.Id;
         },ct);
@@ -131,15 +160,50 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
     {
         var rfq=await Rfqs.Query(true).Include(x=>x.Lines).Include(x=>x.Suppliers).FirstOrDefaultAsync(x=>x.Id==rfqId,ct)??throw AppException.NotFound("Teklif talebi bulunamadı.");
         if(rfq.Status is not (ProcurementRfqStatus.Sent or ProcurementRfqStatus.Quoted))throw AppException.Conflict("Teklif kaydı için teklif talebi gönderilmiş olmalıdır.");
-        var supplier=rfq.Suppliers.FirstOrDefault(x=>x.SupplierId==request.SupplierId)??throw AppException.BadRequest("Tedarikçi bu teklif talebinin katılımcısı değil.");
-        if(string.IsNullOrWhiteSpace(request.QuoteNo)||request.ExchangeRate<=0||request.Lines.Count==0)throw AppException.BadRequest("Teklif numarası, kur ve satırlar zorunludur.");
+        var manualName=Norm(request.SupplierName);
+        ProcurementRfqSupplier? supplier;
+        if(request.SupplierId is long supplierId and >0)
+        {
+            supplier=rfq.Suppliers.FirstOrDefault(x=>x.SupplierId==supplierId);
+            if(supplier is null)
+            {
+                // Allow additional suppliers on an existing RFQ so one request can collect competing quotes.
+                var resolved=(await ResolveSuppliers([supplierId],ct)).Single();
+                supplier=new ProcurementRfqSupplier{SupplierId=resolved.Id,SupplierCodeSnapshot=resolved.CustomerCode,SupplierNameSnapshot=resolved.CustomerName};
+                rfq.Suppliers.Add(supplier);
+                await uow.SaveChangesAsync(ct);
+            }
+        }
+        else
+        {
+            if(string.IsNullOrWhiteSpace(manualName))throw AppException.BadRequest("Tedarikçi seçilmeli veya tedarikçi adı girilmelidir.");
+            supplier=rfq.Suppliers.FirstOrDefault(x=>x.SupplierId==null&&string.Equals(x.SupplierNameSnapshot,manualName,StringComparison.OrdinalIgnoreCase));
+            if(supplier is null)
+            {
+                supplier=new ProcurementRfqSupplier{SupplierId=null,SupplierCodeSnapshot=string.Empty,SupplierNameSnapshot=manualName};
+                rfq.Suppliers.Add(supplier);
+                await uow.SaveChangesAsync(ct);
+            }
+        }
+        if(request.ExchangeRate<=0||request.Lines.Count==0)throw AppException.BadRequest("Kur ve satırlar zorunludur.");
         var policy=await policyService.GetAsync(rfq.BranchCode,ct);
         if(policy.SupplierQuoteChannelMode==SupplierQuoteChannelMode.PortalRequired.ToString())throw AppException.Conflict("Satınalma politikası tekliflerin yalnız tedarikçi portalından gönderilmesini zorunlu tutuyor.");
-        if(!policy.AllowMultipleQuotesPerSupplier&&await Quotes.Query().AnyAsync(x=>x.ProcurementRfqId==rfqId&&x.SupplierId==request.SupplierId&&x.Status!=ProcurementQuoteStatus.Cancelled&&x.Status!=ProcurementQuoteStatus.Rejected,ct))throw AppException.Conflict("Satınalma politikası aynı tedarikçinin bu teklif talebine birden fazla teklif vermesine izin vermiyor.");
+        if(!policy.AllowMultipleQuotesPerSupplier)
+        {
+            var duplicate=request.SupplierId is long sid and >0
+                ?await Quotes.Query().AnyAsync(x=>x.ProcurementRfqId==rfqId&&x.SupplierId==sid&&x.Status!=ProcurementQuoteStatus.Cancelled&&x.Status!=ProcurementQuoteStatus.Rejected,ct)
+                :await Quotes.Query().AnyAsync(x=>x.ProcurementRfqId==rfqId&&x.SupplierId==null&&x.SupplierNameSnapshot==supplier.SupplierNameSnapshot&&x.Status!=ProcurementQuoteStatus.Cancelled&&x.Status!=ProcurementQuoteStatus.Rejected,ct);
+            if(duplicate)throw AppException.Conflict("Satınalma politikası aynı tedarikçinin bu teklif talebine birden fazla teklif vermesine izin vermiyor.");
+        }
         var rfqLines=rfq.Lines.ToDictionary(x=>x.Id);
         if(request.Lines.Select(x=>x.RfqLineId).Distinct().Count()!=request.Lines.Count||request.Lines.Any(x=>!rfqLines.TryGetValue(x.RfqLineId,out var line)||x.Quantity<=0||x.Quantity>line.RequestedQuantity||x.UnitPrice<0||x.DiscountRate is <0 or >100||x.VatRate<0))throw AppException.BadRequest("Teklif satırları geçersiz veya teklif miktarı istenen miktarı aşıyor.");
-        var quote=new ProcurementSupplierQuote{ProcurementRfqId=rfqId,SupplierId=supplier.SupplierId,SupplierCodeSnapshot=supplier.SupplierCodeSnapshot,SupplierNameSnapshot=supplier.SupplierNameSnapshot,QuoteNo=request.QuoteNo.Trim(),QuoteDate=request.QuoteDate??DateOnly.FromDateTime(DateTime.Today),ValidUntil=request.ValidUntil,CurrencyCode=Currency(request.CurrencyCode),ExchangeRate=request.ExchangeRate,Note=Norm(request.Note),Status=ProcurementQuoteStatus.Submitted,Lines=request.Lines.Select((l,i)=>new ProcurementSupplierQuoteLine{LineNo=i+1,ProcurementRfqLineId=l.RfqLineId,QuotedQuantity=l.Quantity,UnitPrice=l.UnitPrice,DiscountRate=l.DiscountRate,VatRate=l.VatRate,DeliveryDate=l.DeliveryDate}).ToList()};
-        await Quotes.AddAsync(quote,ct);rfq.Status=ProcurementRfqStatus.Quoted;await uow.SaveChangesAsync(ct);await AddHistory("quote",quote.Id,"",quote.Status.ToString(),actorUserId,null,ct);await uow.SaveChangesAsync(ct);return quote.Id;
+        var requestedQuoteNo=Norm(request.QuoteNo);
+        if(!string.IsNullOrWhiteSpace(requestedQuoteNo)&&await Quotes.Query().AnyAsync(x=>x.ProcurementRfqId==rfqId&&x.SupplierId==supplier.SupplierId&&x.QuoteNo==requestedQuoteNo,ct))throw AppException.Conflict("Bu teklif numarası aynı tedarikçi için zaten kullanılıyor.");
+        var quoteNo=requestedQuoteNo??TemporaryNo("QT");
+        var quote=new ProcurementSupplierQuote{ProcurementRfqId=rfqId,SupplierId=supplier.SupplierId,SupplierCodeSnapshot=supplier.SupplierCodeSnapshot,SupplierNameSnapshot=supplier.SupplierNameSnapshot,QuoteNo=quoteNo,QuoteDate=request.QuoteDate??DateOnly.FromDateTime(DateTime.Today),ValidUntil=request.ValidUntil,CurrencyCode=Currency(request.CurrencyCode),ExchangeRate=request.ExchangeRate,Note=Norm(request.Note),Status=ProcurementQuoteStatus.Submitted,Lines=request.Lines.Select((l,i)=>new ProcurementSupplierQuoteLine{LineNo=i+1,ProcurementRfqLineId=l.RfqLineId,QuotedQuantity=l.Quantity,UnitPrice=l.UnitPrice,DiscountRate=l.DiscountRate,VatRate=l.VatRate,DeliveryDate=l.DeliveryDate}).ToList()};
+        await Quotes.AddAsync(quote,ct);await uow.SaveChangesAsync(ct);
+        if(string.IsNullOrWhiteSpace(requestedQuoteNo))quote.QuoteNo=Number("QT",quote.Id);
+        rfq.Status=ProcurementRfqStatus.Quoted;await AddHistory("quote",quote.Id,"",quote.Status.ToString(),actorUserId,null,ct);await uow.SaveChangesAsync(ct);return quote.Id;
     }
 
     public async Task TransitionQuoteAsync(long id,string action,ProcurementTransitionRequest request,long actorUserId,CancellationToken ct=default)
@@ -165,7 +229,7 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
         {
             var rfqIds=await Rfqs.Query().Where(x=>x.ProcurementRequestId.HasValue&&requestIds.Contains(x.ProcurementRequestId.Value)).Select(x=>x.Id).ToListAsync(token);
             var quoteIds=await Quotes.Query().Where(x=>rfqIds.Contains(x.ProcurementRfqId)).Select(x=>x.Id).ToListAsync(token);
-            if(await Orders.Query().AnyAsync(x=>x.SourceQuoteId.HasValue&&quoteIds.Contains(x.SourceQuoteId.Value)&&x.SupplierId!=quote.SupplierId&&x.Status!=ProcurementOrderStatus.Cancelled,token))throw AppException.Conflict("Satınalma politikası aynı talep için birden fazla tedarikçiye sipariş bölünmesine izin vermiyor.");
+            if(await Orders.Query().AnyAsync(x=>x.SourceQuoteId.HasValue&&quoteIds.Contains(x.SourceQuoteId.Value)&&x.Status!=ProcurementOrderStatus.Cancelled&&(quote.SupplierId.HasValue?x.SupplierId!=quote.SupplierId:x.SupplierId.HasValue||x.SupplierNameSnapshot!=quote.SupplierNameSnapshot),token))throw AppException.Conflict("Satınalma politikası aynı talep için birden fazla tedarikçiye sipariş bölünmesine izin vermiyor.");
         }
 
         foreach(var selection in selections)
@@ -186,8 +250,11 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
             return new ProcurementPurchaseOrderLine{LineNo=index+1,SourceQuoteLineId=quoteLine.Id,StockId=rfqLine.StockId,StockCodeSnapshot=rfqLine.StockCodeSnapshot,StockNameSnapshot=rfqLine.StockNameSnapshot,UnitCode=rfqLine.UnitCode,OrderedQuantity=selection.Quantity,UnitPrice=quoteLine.UnitPrice,DiscountRate=quoteLine.DiscountRate,VatRate=quoteLine.VatRate,DeliveryDate=quoteLine.DeliveryDate,ProjectCode=rfqLine.ProjectCode};
         }).ToList();
         var deliveryDates=selectedLines.Where(x=>x.DeliveryDate.HasValue).Select(x=>x.DeliveryDate!.Value).ToList();
-        var order=new ProcurementPurchaseOrder{OrderNo=TemporaryNo("PO"),OrderDate=request.OrderDate??DateOnly.FromDateTime(DateTime.Today),DeliveryDate=request.DeliveryDate??(deliveryDates.Count>0?deliveryDates.Min():null),SupplierId=quote.SupplierId,SupplierCodeSnapshot=quote.SupplierCodeSnapshot,SupplierNameSnapshot=quote.SupplierNameSnapshot,SourceQuoteId=quote.Id,CurrencyCode=quote.CurrencyCode,ExchangeRate=quote.ExchangeRate,ProjectCode=Norm(request.ProjectCode),Description=Norm(request.Description),Status=ProcurementOrderStatus.Draft,Lines=selectedLines};
-        await Orders.AddAsync(order,token);await uow.SaveChangesAsync(token);order.OrderNo=Number("PO",order.Id);
+        var requestedNo=Norm(request.OrderNo);
+        if(!string.IsNullOrWhiteSpace(requestedNo)&&await Orders.Query().AnyAsync(x=>x.OrderNo==requestedNo,token))throw AppException.Conflict("Bu sipariş numarası zaten kullanılıyor.");
+        var order=new ProcurementPurchaseOrder{OrderNo=requestedNo??TemporaryNo("PO"),OrderDate=request.OrderDate??DateOnly.FromDateTime(DateTime.Today),DeliveryDate=request.DeliveryDate??(deliveryDates.Count>0?deliveryDates.Min():null),SupplierId=quote.SupplierId,SupplierCodeSnapshot=quote.SupplierCodeSnapshot,SupplierNameSnapshot=quote.SupplierNameSnapshot,SourceQuoteId=quote.Id,CurrencyCode=quote.CurrencyCode,ExchangeRate=quote.ExchangeRate,ProjectCode=Norm(request.ProjectCode),Description=Norm(request.Description),Status=ProcurementOrderStatus.Draft,Lines=selectedLines};
+        await Orders.AddAsync(order,token);await uow.SaveChangesAsync(token);
+        if(string.IsNullOrWhiteSpace(requestedNo))order.OrderNo=Number("PO",order.Id);
         var quoteFrom=quote.Status;quote.Status=quote.Lines.All(x=>x.ConvertedQuantity>=x.QuotedQuantity)?ProcurementQuoteStatus.Converted:ProcurementQuoteStatus.PartiallyConverted;
         if(quoteFrom!=quote.Status)await AddHistory("quote",quote.Id,quoteFrom.ToString(),quote.Status.ToString(),actorUserId,$"{order.OrderNo} siparişi oluşturuldu.",token);
         foreach(var sourceRequest in sourceRequests.Values)
@@ -201,7 +268,15 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
 
     public async Task<long> CreateOrderAsync(CreatePurchaseOrderRequest request,long actorUserId,CancellationToken ct=default)
     {
-        if(request.SupplierId<=0||request.ExchangeRate<=0||request.Lines.Count==0)throw AppException.BadRequest("Tedarikçi, kur ve sipariş satırları zorunludur.");var supplier=(await ResolveSuppliers([request.SupplierId],ct)).Single();var lines=await ResolveOrderLines(request.Lines,ct);var order=new ProcurementPurchaseOrder{OrderNo=TemporaryNo("PO"),OrderDate=request.OrderDate??DateOnly.FromDateTime(DateTime.Today),DeliveryDate=request.DeliveryDate,SupplierId=supplier.Id,SupplierCodeSnapshot=supplier.CustomerCode,SupplierNameSnapshot=supplier.CustomerName,CurrencyCode=Currency(request.CurrencyCode),ExchangeRate=request.ExchangeRate,ProjectCode=Norm(request.ProjectCode),Description=Norm(request.Description),Status=ProcurementOrderStatus.Draft,Lines=lines.Select((l,i)=>new ProcurementPurchaseOrderLine{LineNo=i+1,StockId=l.StockId,StockCodeSnapshot=l.StockCode,StockNameSnapshot=l.StockName,UnitCode=l.UnitCode,OrderedQuantity=l.Quantity,UnitPrice=l.UnitPrice,DiscountRate=l.DiscountRate,VatRate=l.VatRate,DeliveryDate=l.DeliveryDate??request.DeliveryDate,ProjectCode=l.ProjectCode??Norm(request.ProjectCode)}).ToList()};await Orders.AddAsync(order,ct);await uow.SaveChangesAsync(ct);order.OrderNo=Number("PO",order.Id);await AddHistory("order",order.Id,"",order.Status.ToString(),actorUserId,null,ct);await uow.SaveChangesAsync(ct);return order.Id;
+        if(request.SupplierId<=0||request.ExchangeRate<=0||request.Lines.Count==0)throw AppException.BadRequest("Tedarikçi, kur ve sipariş satırları zorunludur.");
+        var supplier=(await ResolveSuppliers([request.SupplierId],ct)).Single();
+        var lines=await ResolveOrderLines(request.Lines,ct);
+        var requestedNo=Norm(request.OrderNo);
+        if(!string.IsNullOrWhiteSpace(requestedNo))await EnsureUniqueDocumentNoAsync("order",requestedNo,ct);
+        var order=new ProcurementPurchaseOrder{OrderNo=requestedNo??TemporaryNo("PO"),OrderDate=request.OrderDate??DateOnly.FromDateTime(DateTime.Today),DeliveryDate=request.DeliveryDate,SupplierId=supplier.Id,SupplierCodeSnapshot=supplier.CustomerCode,SupplierNameSnapshot=supplier.CustomerName,CurrencyCode=Currency(request.CurrencyCode),ExchangeRate=request.ExchangeRate,ProjectCode=Norm(request.ProjectCode),Description=Norm(request.Description),Status=ProcurementOrderStatus.Draft,Lines=lines.Select((l,i)=>new ProcurementPurchaseOrderLine{LineNo=i+1,StockId=l.StockId,StockCodeSnapshot=l.StockCode,StockNameSnapshot=l.StockName,UnitCode=l.UnitCode,OrderedQuantity=l.Quantity,UnitPrice=l.UnitPrice,DiscountRate=l.DiscountRate,VatRate=l.VatRate,DeliveryDate=l.DeliveryDate??request.DeliveryDate,ProjectCode=l.ProjectCode??Norm(request.ProjectCode)}).ToList()};
+        await Orders.AddAsync(order,ct);await uow.SaveChangesAsync(ct);
+        if(string.IsNullOrWhiteSpace(requestedNo))order.OrderNo=Number("PO",order.Id);
+        await AddHistory("order",order.Id,"",order.Status.ToString(),actorUserId,null,ct);await uow.SaveChangesAsync(ct);return order.Id;
     }
 
     public async Task TransitionOrderAsync(long id,string action,ProcurementTransitionRequest request,long actorUserId,CancellationToken ct=default)
@@ -228,12 +303,13 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
         if(procurementPolicy.SupplierQuoteChannelMode==SupplierQuoteChannelMode.InternalOnly.ToString())throw AppException.Conflict("Tedarikçi portalı satınalma politikasında kapalı.");
         if(rfq.Status is ProcurementRfqStatus.Closed or ProcurementRfqStatus.Cancelled)throw AppException.Conflict("Kapalı veya iptal edilmiş teklif talebi gönderilemez.");
         var participant=rfq.Suppliers.SingleOrDefault(x=>x.SupplierId==request.SupplierId)??throw AppException.BadRequest("Tedarikçi bu teklif talebinin katılımcısı değil.");
+        if(participant.SupplierId is not long participantSupplierId)throw AppException.BadRequest("Manuel tedarikçiye portal daveti gönderilemez.");
         var now=DateTimeOffset.UtcNow;var rawToken=IdentitySecurity.CreateOpaqueToken();var tokenHash=IdentitySecurity.HashToken(rawToken);
         var invitation=await Invitations.Query(true).FirstOrDefaultAsync(x=>x.ProcurementRfqId==rfqId&&x.SupplierId==request.SupplierId,ct);
         if(invitation?.Status==ProcurementInvitationStatus.Submitted)throw AppException.Conflict("Tedarikçi teklifini göndermiş. Yeni fiyat için revizyon isteyin.");
         if(invitation is null)
         {
-            invitation=new ProcurementQuoteInvitation{BranchCode=rfq.BranchCode,ProcurementRfqId=rfq.Id,ProcurementRfqSupplierId=participant.Id,SupplierId=participant.SupplierId};
+            invitation=new ProcurementQuoteInvitation{BranchCode=rfq.BranchCode,ProcurementRfqId=rfq.Id,ProcurementRfqSupplierId=participant.Id,SupplierId=participantSupplierId};
             await Invitations.AddAsync(invitation,ct);
         }
         invitation.RecipientEmail=recipient.Address.ToLowerInvariant();invitation.TokenHash=tokenHash;invitation.ExpiresAtUtc=now.AddDays(procurementPolicy.InvitationValidityDays);invitation.LastSentAtUtc=now;invitation.RevokedAtUtc=null;
@@ -273,10 +349,10 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
         await emailSender.SendQuoteInvitationAsync(invitation.RecipientEmail,quote.SupplierNameSnapshot,quote.Rfq.RfqNo,quote.Rfq.Subject,quote.Rfq.ResponseDueDate,$"{baseUrl}/supplier/quotes/{Uri.EscapeDataString(rawToken)}",ct);
     }
 
-    private IQueryable<ProcurementGridRow> RequestRows(PagedRequest r){var s=r.Search?.Trim();return Requests.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.RequestNo.Contains(s)||x.Subject.Contains(s)).Select(x=>new ProcurementGridRow(x.Id,"request",x.RequestNo,x.RequestDate,x.Status.ToString(),x.Subject,null,x.Lines.Count,0,"TRY",x.RequiredDate,x.CreatedDate)).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
-    private IQueryable<ProcurementGridRow> RfqRows(PagedRequest r){var s=r.Search?.Trim();return Rfqs.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.RfqNo.Contains(s)||x.Subject.Contains(s)).Select(x=>new ProcurementGridRow(x.Id,"rfq",x.RfqNo,x.RfqDate,x.Status.ToString(),x.Subject,x.Suppliers.OrderBy(y=>y.Id).Select(y=>y.SupplierNameSnapshot).FirstOrDefault(),x.Lines.Count,0,"TRY",x.ResponseDueDate,x.CreatedDate)).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
-    private IQueryable<ProcurementGridRow> QuoteRows(PagedRequest r){var s=r.Search?.Trim();return Quotes.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.QuoteNo.Contains(s)||x.SupplierNameSnapshot.Contains(s)).Select(x=>new ProcurementGridRow(x.Id,"quote",x.QuoteNo,x.QuoteDate,x.Status.ToString(),"Tedarikçi teklifi",x.SupplierNameSnapshot,x.Lines.Count,x.Lines.Sum(l=>l.QuotedQuantity*l.UnitPrice*(1-l.DiscountRate/100)*(1+l.VatRate/100)),x.CurrencyCode,x.ValidUntil,x.CreatedDate)).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
-    private IQueryable<ProcurementGridRow> OrderRows(PagedRequest r){var s=r.Search?.Trim();return Orders.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.OrderNo.Contains(s)||x.SupplierNameSnapshot.Contains(s)).Select(x=>new ProcurementGridRow(x.Id,"order",x.OrderNo,x.OrderDate,x.Status.ToString(),"Satınalma siparişi",x.SupplierNameSnapshot,x.Lines.Count,x.Lines.Sum(l=>l.OrderedQuantity*l.UnitPrice*(1-l.DiscountRate/100)*(1+l.VatRate/100)),x.CurrencyCode,x.DeliveryDate,x.CreatedDate)).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
+    private IQueryable<ProcurementGridRow> RequestRows(PagedRequest r){var s=r.Search?.Trim();return Requests.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.RequestNo.Contains(s)||x.Subject.Contains(s)).Select(x=>new ProcurementGridRow(x.Id,"request",x.RequestNo,x.RequestDate,x.Status.ToString(),x.Subject,null,x.Lines.Count,0,"TRY",x.RequiredDate,x.CreatedDate,x.Id,x.RequestNo,null)).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
+    private IQueryable<ProcurementGridRow> RfqRows(PagedRequest r){var s=r.Search?.Trim();return Rfqs.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.RfqNo.Contains(s)||x.Subject.Contains(s)).Select(x=>new ProcurementGridRow(x.Id,"rfq",x.RfqNo,x.RfqDate,x.Status.ToString(),x.Subject,x.Suppliers.OrderBy(y=>y.Id).Select(y=>y.SupplierNameSnapshot).FirstOrDefault(),x.Lines.Count,0,"TRY",x.ResponseDueDate,x.CreatedDate,x.ProcurementRequestId,x.Request!=null?x.Request.RequestNo:null,x.Id)).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
+    private IQueryable<ProcurementGridRow> QuoteRows(PagedRequest r){var s=r.Search?.Trim();return Quotes.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.QuoteNo.Contains(s)||x.SupplierNameSnapshot.Contains(s)||(x.Rfq.Request!=null&&(x.Rfq.Request.RequestNo.Contains(s)||x.Rfq.Request.Subject.Contains(s)))).Select(x=>new ProcurementGridRow(x.Id,"quote",x.QuoteNo,x.QuoteDate,x.Status.ToString(),x.Rfq.Request!=null?x.Rfq.Request.Subject:x.Rfq.Subject,x.SupplierNameSnapshot,x.Lines.Count,x.Lines.Sum(l=>l.QuotedQuantity*l.UnitPrice*(1-l.DiscountRate/100)*(1+l.VatRate/100)),x.CurrencyCode,x.Lines.Where(l=>l.DeliveryDate.HasValue).Select(l=>l.DeliveryDate).Min()??x.ValidUntil,x.CreatedDate,x.Rfq.ProcurementRequestId,x.Rfq.Request!=null?x.Rfq.Request.RequestNo:null,x.ProcurementRfqId)).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
+    private IQueryable<ProcurementGridRow> OrderRows(PagedRequest r){var s=r.Search?.Trim();return Orders.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.OrderNo.Contains(s)||x.SupplierNameSnapshot.Contains(s)).Select(x=>new ProcurementGridRow(x.Id,"order",x.OrderNo,x.OrderDate,x.Status.ToString(),"Satınalma siparişi",x.SupplierNameSnapshot,x.Lines.Count,x.Lines.Sum(l=>l.OrderedQuantity*l.UnitPrice*(1-l.DiscountRate/100)*(1+l.VatRate/100)),x.CurrencyCode,x.DeliveryDate,x.CreatedDate,null,null,null)).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
 
     private async Task AddHistory(string type,long id,string from,string to,long actor,string? note,CancellationToken ct)=>await History.AddAsync(new ProcurementStatusHistory{DocumentType=type,DocumentId=id,FromStatus=from,ToStatus=to,ActorUserId=actor,Note=Norm(note),ChangedAtUtc=DateTimeOffset.UtcNow},ct);
     private async Task<T> ExecuteAllocationAsync<T>(Func<CancellationToken,Task<T>> operation,CancellationToken ct)
@@ -335,10 +411,136 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
     private async Task<List<ResolvedOrderLine>> ResolveOrderLines(IReadOnlyList<PurchaseOrderLineInput> lines,CancellationToken ct){if(lines.Any(x=>x.Quantity<=0||x.UnitPrice<0||x.DiscountRate is <0 or >100||x.VatRate<0))throw AppException.BadRequest("Sipariş satırları geçersiz.");var baseLines=await ResolveLines(lines.Select(x=>new ProcurementLineInput(x.StockId,x.StockCode,x.StockName,x.UnitCode,x.Quantity,x.DeliveryDate,x.ProjectCode,null)).ToList(),ct);return baseLines.Select((x,i)=>new ResolvedOrderLine(x.StockId,x.StockCode,x.StockName,x.UnitCode,x.Quantity,lines[i].UnitPrice,lines[i].DiscountRate,lines[i].VatRate,lines[i].DeliveryDate,x.ProjectCode)).ToList();}
     private static void ValidateHeader(string subject,IReadOnlyList<ProcurementLineInput> lines){if(string.IsNullOrWhiteSpace(subject)||subject.Trim().Length>250||lines.Count==0)throw AppException.BadRequest("Talep konusu ve en az bir satır zorunludur.");}
     private static string NormalizeType(string value)=>value.Trim().ToLowerInvariant() switch{"requests"=>"request","rfqs"=>"rfq","quotes"=>"quote","orders"=>"order",var x=>x};
+    private async Task EnsureUniqueDocumentNoAsync(string documentType,string documentNo,CancellationToken ct)
+    {
+        var exists=documentType switch
+        {
+            "request"=>await Requests.Query().AnyAsync(x=>x.RequestNo==documentNo,ct),
+            "rfq"=>await Rfqs.Query().AnyAsync(x=>x.RfqNo==documentNo,ct),
+            "order"=>await Orders.Query().AnyAsync(x=>x.OrderNo==documentNo,ct),
+            _=>false
+        };
+        if(exists)throw AppException.Conflict("Bu belge numarası zaten kullanılıyor.");
+    }
     private static string TemporaryNo(string prefix)=>$"{prefix}-TMP-{Guid.NewGuid():N}"[..Math.Min(50,prefix.Length+36)];
     private static string Number(string prefix,long id)=>$"{prefix}-{DateTime.Today:yyyy}-{id:00000000}";
     private static string? Norm(string? value)=>string.IsNullOrWhiteSpace(value)?null:value.Trim();
+    private static string? Truncate(string? value,int max)=>value is null?null:value.Length<=max?value:value[..max];
     private static string Currency(string? value)=>string.IsNullOrWhiteSpace(value)?"TRY":value.Trim().ToUpperInvariant();
+
+    public Task<IReadOnlyList<ProcurementAttachmentRow>> ListAttachmentsAsync(string ownerType,long ownerId,CancellationToken ct=default)
+        => ListAttachmentsInternalAsync(ParseOwnerType(ownerType),ownerId,ct);
+
+    public async Task<ProcurementAttachmentRow> AddAttachmentAsync(string ownerType,long ownerId,ProcurementAttachmentUpload upload,string? caption,long actorUserId,CancellationToken ct=default)
+    {
+        var parsed=ParseOwnerType(ownerType);
+        await EnsureAttachmentOwnerExistsAsync(parsed,ownerId,ct);
+        var path=await attachmentStorage.SaveAsync(ownerId,upload.Content,upload.ContentType,upload.FileName,upload.Length,ct);
+        try
+        {
+            var entity=new ProcurementAttachment
+            {
+                OwnerType=parsed,
+                OwnerId=ownerId,
+                FileName=PrivateUploadFileName.ForDisplay(upload.FileName),
+                ContentType=upload.ContentType??"application/octet-stream",
+                StoragePath=path,
+                Caption=Truncate(Norm(caption),500),
+                FileSize=upload.Length,
+                CreatedBy=actorUserId,
+                CreatedDate=DateTime.UtcNow,
+            };
+            await Attachments.AddAsync(entity,ct);
+            await uow.SaveChangesAsync(ct);
+            await audit.WriteAsync(new("procurement.attachment.add",nameof(ProcurementAttachment),entity.Id.ToString(),"Succeeded","procurement",
+                NewValues:new{entity.OwnerType,entity.OwnerId,entity.FileName,entity.ContentType,entity.FileSize},ChangedFields:["Attachment"]),ct);
+            return ToAttachmentRow(entity);
+        }
+        catch
+        {
+            attachmentStorage.Delete(path);
+            throw;
+        }
+    }
+
+    public async Task<ProcurementAttachmentDownload> DownloadAttachmentAsync(long attachmentId,CancellationToken ct=default)
+    {
+        var entity=await Attachments.FindByIdAsync(attachmentId,false,ct)??throw AppException.NotFound("Satınalma eki bulunamadı.");
+        return new(await attachmentStorage.OpenReadAsync(entity.StoragePath,ct),entity.FileName,entity.ContentType);
+    }
+
+    public async Task RemoveAttachmentAsync(long attachmentId,long actorUserId,CancellationToken ct=default)
+    {
+        var entity=await Attachments.Query(true).FirstOrDefaultAsync(x=>x.Id==attachmentId,ct)??throw AppException.NotFound("Satınalma eki bulunamadı.");
+        entity.IsDeleted=true;
+        entity.DeletedBy=actorUserId;
+        entity.DeletedDate=DateTime.UtcNow;
+        await uow.SaveChangesAsync(ct);
+        attachmentStorage.Delete(entity.StoragePath);
+        await audit.WriteAsync(new("procurement.attachment.remove",nameof(ProcurementAttachment),entity.Id.ToString(),"Succeeded","procurement",
+            OldValues:new{entity.OwnerType,entity.OwnerId,entity.FileName},ChangedFields:["Attachment"]),ct);
+    }
+
+    private async Task<(IReadOnlyList<ProcurementAttachmentRow> Header,Dictionary<long,IReadOnlyList<ProcurementAttachmentRow>> Lines)> LoadAttachmentBundleAsync(
+        ProcurementAttachmentOwnerType headerType,long headerId,ProcurementAttachmentOwnerType lineType,IEnumerable<long> lineIds,CancellationToken ct)
+    {
+        var ids=lineIds.Distinct().ToList();
+        var rows=await Attachments.Query()
+            .Where(x=>(x.OwnerType==headerType&&x.OwnerId==headerId)||(x.OwnerType==lineType&&ids.Contains(x.OwnerId)))
+            .OrderByDescending(x=>x.CreatedDate)
+            .ToListAsync(ct);
+        var header=rows.Where(x=>x.OwnerType==headerType).Select(ToAttachmentRow).ToList();
+        var lines=rows.Where(x=>x.OwnerType==lineType)
+            .GroupBy(x=>x.OwnerId)
+            .ToDictionary(g=>(long)g.Key,g=>(IReadOnlyList<ProcurementAttachmentRow>)g.Select(ToAttachmentRow).ToList());
+        return (header,lines);
+    }
+
+    private async Task<IReadOnlyList<ProcurementAttachmentRow>> ListAttachmentsInternalAsync(ProcurementAttachmentOwnerType ownerType,long ownerId,CancellationToken ct)
+    {
+        await EnsureAttachmentOwnerExistsAsync(ownerType,ownerId,ct);
+        var rows=await Attachments.Query()
+            .Where(x=>x.OwnerType==ownerType&&x.OwnerId==ownerId)
+            .OrderByDescending(x=>x.CreatedDate)
+            .ToListAsync(ct);
+        return rows.Select(ToAttachmentRow).ToList();
+    }
+
+    private async Task EnsureAttachmentOwnerExistsAsync(ProcurementAttachmentOwnerType ownerType,long ownerId,CancellationToken ct)
+    {
+        var exists=ownerType switch
+        {
+            ProcurementAttachmentOwnerType.Request=>await Requests.Query().AnyAsync(x=>x.Id==ownerId,ct),
+            ProcurementAttachmentOwnerType.RequestLine=>await uow.Repository<ProcurementRequestLine>().Query().AnyAsync(x=>x.Id==ownerId,ct),
+            ProcurementAttachmentOwnerType.Quote=>await Quotes.Query().AnyAsync(x=>x.Id==ownerId,ct),
+            ProcurementAttachmentOwnerType.QuoteLine=>await uow.Repository<ProcurementSupplierQuoteLine>().Query().AnyAsync(x=>x.Id==ownerId,ct),
+            _=>false
+        };
+        if(!exists)throw AppException.NotFound("Ek dosya sahibi bulunamadı.");
+    }
+
+    private static ProcurementAttachmentOwnerType ParseOwnerType(string ownerType)=>ownerType.Trim().ToLowerInvariant() switch
+    {
+        "request"=>ProcurementAttachmentOwnerType.Request,
+        "request-line" or "requestline"=>ProcurementAttachmentOwnerType.RequestLine,
+        "quote"=>ProcurementAttachmentOwnerType.Quote,
+        "quote-line" or "quoteline"=>ProcurementAttachmentOwnerType.QuoteLine,
+        _=>throw AppException.BadRequest("Geçersiz ek dosya sahibi türü.")
+    };
+
+    private static string OwnerTypeKey(ProcurementAttachmentOwnerType ownerType)=>ownerType switch
+    {
+        ProcurementAttachmentOwnerType.Request=>"request",
+        ProcurementAttachmentOwnerType.RequestLine=>"request-line",
+        ProcurementAttachmentOwnerType.Quote=>"quote",
+        ProcurementAttachmentOwnerType.QuoteLine=>"quote-line",
+        _=>ownerType.ToString().ToLowerInvariant()
+    };
+
+    private static ProcurementAttachmentRow ToAttachmentRow(ProcurementAttachment entity)=>
+        new(entity.Id,OwnerTypeKey(entity.OwnerType),entity.OwnerId,entity.FileName,entity.ContentType,
+            $"/api/procurement/attachments/{entity.Id}/file",entity.FileSize,entity.Caption,entity.CreatedDate);
+
     private sealed record ResolvedLine(long? StockId,string? StockCode,string StockName,string UnitCode,decimal Quantity,DateOnly? RequiredDate,string? ProjectCode,string? Description);
     private sealed record ResolvedOrderLine(long? StockId,string? StockCode,string StockName,string UnitCode,decimal Quantity,decimal UnitPrice,decimal DiscountRate,decimal VatRate,DateOnly? DeliveryDate,string? ProjectCode);
 }
