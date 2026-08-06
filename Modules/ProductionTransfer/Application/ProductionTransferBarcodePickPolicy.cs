@@ -12,7 +12,8 @@ internal static class ProductionTransferBarcodePickPolicy
         decimal alreadyAcceptedFromBarcode,
         decimal remainingLineQuantity,
         decimal sourceAvailableQuantity,
-        bool quantityBoundBarcode)
+        bool quantityBoundBarcode,
+        decimal? plannedTrackingRemaining = null)
     {
         if (remainingLineQuantity <= 0 || sourceAvailableQuantity <= 0) return 0;
 
@@ -26,7 +27,10 @@ internal static class ProductionTransferBarcodePickPolicy
             && policy.SerialQuantityRule == SerialQuantityRule.OneSerialPerBaseUnit
                 ? 1m
                 : barcodeCapacity;
-        return Math.Min(quantity, Math.Min(remainingLineQuantity, sourceAvailableQuantity));
+        var accepted = Math.Min(quantity, Math.Min(remainingLineQuantity, sourceAvailableQuantity));
+        return plannedTrackingRemaining.HasValue
+            ? Math.Min(accepted, Math.Max(0, plannedTrackingRemaining.Value))
+            : accepted;
     }
 
     internal static bool IsQuantityBoundSource(string source) =>

@@ -89,12 +89,14 @@ public sealed class ProductionTransferExecutionService(
         var waitingLocationId = aggregate.Header.SourceStagingLocationId
             ?? throw AppException.Conflict("Kaynak depo için üretim transfer bekleme rafı tanımlanmamış.");
 
+        var expectedSourceLocationId = request.SourceLocationId ?? line.DefaultSourceLocationId;
         var resolved = await barcodeResolver.ResolveAsync(new(
             request.Barcode.Trim(),
             aggregate.Header.BranchCode,
             WarehouseBarcodePurpose.Outbound,
             aggregate.Header.SourceWarehouseId,
-            line.StockId), ct);
+            line.StockId,
+            expectedSourceLocationId), ct);
         if (!resolved.CanExecute || resolved.MissingFields.Count > 0)
             throw AppException.Conflict($"Barkod toplama için uygun değil: {string.Join(", ", resolved.MissingFields)}.");
         ValidateDimensions(line, resolved);
@@ -111,9 +113,21 @@ public sealed class ProductionTransferExecutionService(
                     && x.NormalizedBarcode == normalizedBarcode)
                 .SumAsync(x => (decimal?)x.Quantity, ct) ?? 0
             : 0;
+        decimal? plannedTrackingRemaining = null;
+        if (line.Trackings.Count > 0)
+        {
+            var plannedTracking = line.Trackings.FirstOrDefault(x =>
+                SameTrackingValue(x.LotNo, resolved.LotNo)
+                && SameTrackingValue(x.SerialNo, resolved.SerialNo));
+            if (plannedTracking is null)
+                throw AppException.Conflict(
+                    $"{line.LineNo}. satırın seri/lot bilgisi planlanan takip kaydıyla eşleşmiyor.");
+            plannedTrackingRemaining = plannedTracking.PlannedQuantity - plannedTracking.PickedQuantity;
+        }
         var policy = await trackingPolicies.ResolveAsync(aggregate.Header.BranchCode, line.StockId, ct);
         var quantity = ProductionTransferBarcodePickPolicy.CalculateQuantity(
-            policy, resolved.Quantity, alreadyAccepted, remaining, sourceBalance.AvailableQuantity, quantityBound);
+            policy, resolved.Quantity, alreadyAccepted, remaining, sourceBalance.AvailableQuantity,
+            quantityBound, plannedTrackingRemaining);
         if (quantity <= 0) throw AppException.Conflict("Okutulan barkod için toplanabilir miktar bulunamadı.");
         try
         {
@@ -173,6 +187,12 @@ public sealed class ProductionTransferExecutionService(
             resolved.Source, sourceLocationId, sourceBalance.LocationCode, sourceBalance.LocationName,
             remainingBarcodeQuantity);
     }
+
+    private static bool SameTrackingValue(string? left, string? right) =>
+        string.Equals(
+            string.IsNullOrWhiteSpace(left) ? null : left.Trim(),
+            string.IsNullOrWhiteSpace(right) ? null : right.Trim(),
+            StringComparison.OrdinalIgnoreCase);
 
     public Task<ProductionTransferExecutionDto> CompletePickingAsync(
         long transferId,

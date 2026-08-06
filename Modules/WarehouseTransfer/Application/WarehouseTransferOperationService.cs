@@ -26,7 +26,6 @@ public sealed class WarehouseTransferOperationService(
         long id, WarehouseTransferTransitionRequest request, long actor, CancellationToken ct = default) =>
         TransitionAsync(id, request, actor, "Approval", async (header, token) =>
         {
-            EnsureProductionPickingComplete(header);
             if (!header.RequireApproval)
                 throw AppException.Conflict("Bu transfer için onay gerekmiyor.");
             if (header.ApprovalStatus == OperationApprovalStatus.Rejected)
@@ -39,7 +38,6 @@ public sealed class WarehouseTransferOperationService(
         long id, WarehouseTransferTransitionRequest request, long actor, CancellationToken ct = default) =>
         TransitionAsync(id, request, actor, "Release", async (header, token) =>
         {
-            EnsureProductionPickingComplete(header);
             if (header.RequireApproval && header.ApprovalStatus != OperationApprovalStatus.Approved)
                 throw AppException.Conflict("Transfer serbest bırakılmadan önce onaylanmalıdır.");
             if (header.Status != WarehouseTransferStatus.Draft)
@@ -898,24 +896,6 @@ public sealed class WarehouseTransferOperationService(
             header.Lines.Sum(x => x.ReceivedQuantity),
             header.Lines.Sum(x => x.PutawayQuantity),
             replayed);
-
-    private static void EnsureProductionPickingComplete(WarehouseTransferHeader header)
-    {
-        if (header.BusinessContext is not (
-            WarehouseTransferBusinessContext.ProductionMaterialSupply
-            or WarehouseTransferBusinessContext.ProductionWipMove
-            or WarehouseTransferBusinessContext.ProductionOutputMove))
-            return;
-
-        if (header.Tasks.Any(x => x.TaskType == WarehouseTransferTaskType.Pick
-                && x.Status == WarehouseTransferTaskStatus.PartiallyCompleted))
-            throw AppException.Conflict(
-                "Toplama görevi kısmen tamamlandı. Transfer onay/sevk adımına geçmeden önce eksik kalemleri 'Rotayı güncelle' ile tamamlayın.");
-
-        if (header.Lines.Any(x => x.PickedQuantity + 0.000001m < x.RequestedQuantity))
-            throw AppException.Conflict(
-                "Tüm transfer kalemleri toplanmadan onay/sevk adımına geçilemez. Eksik stok için toplamayı tamamlayın.");
-    }
 
     private static void ValidateRequest(long id, WarehouseTransferOperationRequest request)
     {

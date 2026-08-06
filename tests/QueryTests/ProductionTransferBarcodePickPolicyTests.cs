@@ -44,6 +44,15 @@ public sealed class ProductionTransferBarcodePickPolicyTests
         Assert.Equal(1, quantity);
     }
 
+    [Fact]
+    public void Planned_serial_tracking_caps_pallet_barcode_to_the_ordered_serial_quantity()
+    {
+        var quantity = ProductionTransferBarcodePickPolicy.CalculateQuantity(
+            Policy(SerialQuantityRule.OneSerialPerLine), 41, 0, 5, 41, true, 1);
+
+        Assert.Equal(1, quantity);
+    }
+
     private static EffectiveStockTrackingPolicy Policy(
         SerialQuantityRule rule,
         bool requireSerial = true) => new(
