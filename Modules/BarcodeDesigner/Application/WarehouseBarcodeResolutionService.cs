@@ -69,13 +69,23 @@ public sealed class WarehouseBarcodeResolutionService(
             ?? parsed?.ExpirationDate;
 
         LocationStockBalance? serialBalance = null;
-        if (!stockId.HasValue && request.Purpose == WarehouseBarcodePurpose.Outbound)
+        // Outbound callers normally provide ExpectedStockId so the scanned value can only
+        // satisfy the selected transfer line. That stock context must narrow serial lookup;
+        // it must not disable it. Otherwise a plain serial barcode is incorrectly treated as
+        // a stock alias and serial-required lines fail with "Seri" missing.
+        if (serial is null
+            && request.Purpose == WarehouseBarcodePurpose.Outbound
+            && generated is null
+            && goodsReceiptLabel is null
+            && warehouseInboundLabel is null)
         {
             var serialRows = await uow.Repository<LocationStockBalance>().Query()
                 .Where(x => x.BranchCode == branch
                     && x.AvailableQuantity > 0
                     && x.SerialNo == raw
-                    && (!request.WarehouseId.HasValue || x.WarehouseId == request.WarehouseId.Value))
+                    && (!stockId.HasValue || x.StockId == stockId.Value)
+                    && (!request.WarehouseId.HasValue || x.WarehouseId == request.WarehouseId.Value)
+                    && (!request.ExpectedLocationId.HasValue || x.LocationId == request.ExpectedLocationId.Value))
                 .OrderBy(x => x.Id)
                 .Take(3)
                 .ToListAsync(cancellationToken);
@@ -87,7 +97,10 @@ public sealed class WarehouseBarcodeResolutionService(
                 stockId = serialBalance.StockId;
                 serial = raw;
                 lot = EmptyToNull(serialBalance.LotNo);
-                quantity = 1;
+                // For an item-level serial this is 1. For a pallet/plate serial it is the
+                // movable quantity represented by that serial; the effective tracking policy
+                // and remaining transfer quantity cap the accepted amount later.
+                quantity = serialBalance.AvailableQuantity;
             }
         }
         var unitCode = Clean(goodsReceiptLabel?.UnitCode
@@ -96,6 +109,18 @@ public sealed class WarehouseBarcodeResolutionService(
 
         var stock = await ResolveStock(branch, stockId, stockCode, raw, request.Purpose, cancellationToken);
         unitCode ??= Clean(stock.BaseUnitCode, 20) ?? "ADET";
+        if (request.Purpose == WarehouseBarcodePurpose.Outbound
+            && request.ExpectedStockId.HasValue
+            && generated is null
+            && goodsReceiptLabel is null
+            && warehouseInboundLabel is null
+            && serialBalance is null)
+        {
+            var scannedStockAlias = Clean(parsed?.ProductCode, 100) ?? raw;
+            if (!MatchesStockAlias(stock, scannedStockAlias))
+                throw AppException.Conflict(
+                    $"Okutulan barkod beklenen stokla uyuşmuyor. Beklenen: {stock.ErpStockCode}.");
+        }
         if (request.ExpectedStockId.HasValue && stock.Id != request.ExpectedStockId.Value)
             throw AppException.Conflict($"Okutulan barkod beklenen stokla uyuşmuyor. Barkod: {stock.ErpStockCode}.");
 
@@ -128,7 +153,7 @@ public sealed class WarehouseBarcodeResolutionService(
         if (serial is not null) quantity ??= 1;
 
         var balances = request.Purpose == WarehouseBarcodePurpose.Outbound
-            ? await FindBalances(branch, request.WarehouseId, stock.Id, yap?.Id, lot, serial, cancellationToken)
+            ? await FindBalances(branch, request.WarehouseId, request.ExpectedLocationId, stock.Id, yap?.Id, lot, serial, cancellationToken)
             : [];
 
         var missing = new List<string>();
@@ -229,6 +254,7 @@ public sealed class WarehouseBarcodeResolutionService(
     private async Task<IReadOnlyList<WarehouseBarcodeBalanceCandidate>> FindBalances(
         string branch,
         long? warehouseId,
+        long? expectedLocationId,
         long stockId,
         long? yapCodeId,
         string? lot,
@@ -245,6 +271,7 @@ public sealed class WarehouseBarcodeResolutionService(
                 && balance.AvailableQuantity > 0
                 && balance.StockStatus == "Available"
                 && (!warehouseId.HasValue || balance.WarehouseId == warehouseId.Value)
+                && (!expectedLocationId.HasValue || balance.LocationId == expectedLocationId.Value)
                 && (!yapCodeId.HasValue || balance.YapCodeId == yapCodeId)
                 && (lot == null || balance.LotNo == lot)
                 && (serial == null || balance.SerialNo == serial)
@@ -301,6 +328,18 @@ public sealed class WarehouseBarcodeResolutionService(
 
     private static string? EmptyToNull(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static bool MatchesStockAlias(StockEntity stock, string value) =>
+        new[]
+        {
+            stock.ErpStockCode,
+            stock.ManufacturerCode,
+            stock.Code1,
+            stock.Code2,
+            stock.Code3,
+            stock.Code4,
+            stock.Code5
+        }.Any(alias => string.Equals(alias?.Trim(), value, StringComparison.OrdinalIgnoreCase));
 
     private static string? Clean(string? value, int max)
     {
