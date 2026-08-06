@@ -38,7 +38,7 @@ namespace verii_wms_api_v2.Migrations
                 unique: true,
                 filter: "[TemplateKey] IS NOT NULL AND [IsDeleted] = 0");
 
-            migrationBuilder.Sql("""
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute("""
                 INSERT INTO RII_PERMISSION_GROUPS
                     (BranchCode, CreatedDate, IsDeleted, Name, Description, IsSystemAdmin, IsProtected, TemplateKey, IsActive)
                 SELECT '0', SYSUTCDATETIME(), 0, seed.Name, seed.Description, 0, 1, seed.TemplateKey, 1
@@ -127,7 +127,7 @@ namespace verii_wms_api_v2.Migrations
                       AND groups.IsActive = 1
                       AND groups.IsSystemAdmin = 1
                   );
-                """);
+                """));
         }
 
         /// <inheritdoc />

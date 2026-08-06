@@ -10,7 +10,7 @@ namespace verii_wms_api_v2.Migrations
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
         {
-            migrationBuilder.Sql("""
+            migrationBuilder.Sql(SqlServerMigrationSql.Execute("""
                 INSERT INTO RII_PERMISSION_GROUPS
                     (BranchCode, CreatedDate, IsDeleted, Name, Description, IsSystemAdmin, IsProtected, TemplateKey, IsActive)
                 SELECT '0', SYSUTCDATETIME(), 0, seed.Name, seed.Description, 0, 1, seed.TemplateKey, 1
@@ -137,7 +137,7 @@ namespace verii_wms_api_v2.Migrations
                         OR permissions.Code LIKE N'WMS.%.VIEW'
                         OR permissions.Code IN (N'ERP.MIRROR.VIEW', N'ERP.NETSIS_READ.VIEW')))
                   );
-                """);
+                """));
         }
 
         /// <inheritdoc />
