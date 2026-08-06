@@ -20,6 +20,7 @@ public interface INetsisReadService
     Task<IReadOnlyList<WarehouseTransferOpenOrderLineDto>> GetWarehouseTransferOpenOrderLinesAsync(string orderNumbersCsv,string? branchCode,CancellationToken cancellationToken);
     Task<IReadOnlyList<ShipmentOpenOrderHeaderDto>> GetShipmentOpenOrderHeadersAsync(string customerCode,string? branchCode,CancellationToken cancellationToken);
     Task<IReadOnlyList<ShipmentOpenOrderLineDto>> GetShipmentOpenOrderLinesAsync(string orderNumbersCsv,string? branchCode,CancellationToken cancellationToken);
+    Task<IReadOnlyList<KkdCustomerOpenOrderDto>> GetKkdCustomerOpenOrdersAsync(string customerCode, CancellationToken cancellationToken);
     Task<IReadOnlyList<ProductionWorkOrderDto>> GetProductionWorkOrdersAsync(
         string? workOrderNumber,
         int branchCode,

@@ -73,6 +73,20 @@ public sealed record ShipmentOpenOrderLineDto(
     decimal? OrderedQuantity,decimal? DeliveredQuantity,decimal? RemainingQuantity,
     decimal? PlannedQuantity,decimal? AvailableQuantity);
 
+/// <summary>V1 uyumlu KKD cari açık sipariş satırı (RII_FN_KKD_CARIACIKSIPARISGETIR).</summary>
+public sealed record KkdCustomerOpenOrderDto(
+    string StockCode,
+    string? GroupCode,
+    string OrderNumber,
+    DateTime? OrderDate,
+    decimal RemainingQuantity,
+    string? CustomerCode,
+    int? WarehouseCode,
+    long? OrderId,
+    string? StockName,
+    string? UnitCode,
+    string? ProjectCode);
+
 /// <summary>Read-only Netsis production work-order projection. No ERP row is tracked by EF.</summary>
 public sealed record ProductionWorkOrderDto(
     string WorkOrderNumber,

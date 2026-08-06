@@ -146,6 +146,49 @@ public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INet
             ct,Parameter("@orderNumbersCsv",orderNumbersCsv),Parameter("@branchCode",Normalize(branchCode)));
     }
 
+    public async Task<IReadOnlyList<KkdCustomerOpenOrderDto>> GetKkdCustomerOpenOrdersAsync(string customerCode, CancellationToken ct)
+    {
+        customerCode = Normalize(customerCode) ?? throw new ArgumentException("Müşteri kodu zorunludur.", nameof(customerCode));
+        // V1 ile aynı kaynak: sevk RII_FN_SH_HEADER değil, KKD HTUR='H' açık siparişleri.
+        return await queryExecutor.QueryAsync<KkdCustomerOpenOrderDto>(
+            "RII_FN_KKD_CARIACIKSIPARISGETIR",
+            """
+            SELECT
+                A.STOK_KODU AS StockCode,
+                B.GRUP_KODU AS GroupCode,
+                A.FISNO AS OrderNumber,
+                A.STHAR_TARIH AS OrderDate,
+                CAST((A.STHAR_GCMIK - ISNULL(A.FIRMA_DOVTUT, 0)) AS decimal(18,4)) AS RemainingQuantity,
+                A.STHAR_ACIKLAMA AS CustomerCode,
+                CONVERT(int, A.DEPO_KODU) AS WarehouseCode,
+                CONVERT(bigint, A.INCKEYNO) AS OrderId,
+                ISNULL(B.STOK_ADI, A.STOK_KODU) AS StockName,
+                NULLIF(LTRIM(RTRIM(B.OLCU_BR1)), '') AS UnitCode,
+                NULLIF(LTRIM(RTRIM(A.PROJE_KODU)), '') AS ProjectCode
+            FROM V3RIICO.dbo.TBLSIPATRA AS A WITH (NOLOCK)
+            LEFT JOIN V3RIICO.dbo.TBLSTSABIT AS B WITH (NOLOCK)
+                ON A.STOK_KODU = B.STOK_KODU
+            WHERE A.STHAR_FTIRSIP = '6'
+              AND A.STHAR_HTUR = 'H'
+              AND (A.STHAR_GCMIK - ISNULL(A.FIRMA_DOVTUT, 0)) > 0
+              AND A.STHAR_ACIKLAMA = @customerCode
+            """,
+            r => new KkdCustomerOpenOrderDto(
+                String(r, "StockCode"),
+                NullableString(r, "GroupCode"),
+                String(r, "OrderNumber"),
+                Nullable<DateTime>(r, "OrderDate"),
+                Nullable<decimal>(r, "RemainingQuantity") ?? 0m,
+                NullableString(r, "CustomerCode"),
+                Nullable<int>(r, "WarehouseCode"),
+                Nullable<long>(r, "OrderId"),
+                NullableString(r, "StockName"),
+                NullableString(r, "UnitCode"),
+                NullableString(r, "ProjectCode")),
+            ct,
+            Parameter("@customerCode", customerCode));
+    }
+
     public async Task<IReadOnlyList<ProductionWorkOrderDto>> GetProductionWorkOrdersAsync(
         string? workOrderNumber,
         int branchCode,
