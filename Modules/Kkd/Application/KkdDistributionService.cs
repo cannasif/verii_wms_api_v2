@@ -32,15 +32,15 @@ public sealed class KkdDistributionService(
         var customer = await uow.Repository<verii_wms_api_v2.Modules.Customer.Domain.Customer>().Query()
             .SingleOrDefaultAsync(x => x.Id == employee.CustomerId, ct)
             ?? throw AppException.Conflict("KKD personelinin bağlı olduğu cari bulunamadı.");
-        var headers = await netsis.GetShipmentOpenOrderHeadersAsync(customer.CustomerCode, employee.BranchCode, ct);
+        var openOrderRows = await ReadKkdOpenOrdersAsync(customer.CustomerCode, ct);
         var policy = await policies.GetAsync(employee.BranchCode, ct);
-        var preferredStocks = await uow.Repository<KkdEmployeeStockPreference>().Query()
-            .Where(x => x.EmployeeId == employee.Id)
-            .Join(uow.Repository<StockEntity>().Query(), preference => preference.StockId, stock => stock.Id,
-                (preference, stock) => new KkdPreferredStock(
-                    preference.GroupCode, stock.Id, stock.ErpStockCode, stock.StockName))
-            .OrderBy(x => x.GroupCode)
-            .ToListAsync(ct);
+        var preferredStocks = await (
+            from preference in uow.Repository<KkdEmployeeStockPreference>().Query()
+            where preference.EmployeeId == employee.Id
+            join stock in uow.Repository<StockEntity>().Query() on preference.StockId equals stock.Id
+            orderby preference.GroupCode
+            select new KkdPreferredStock(preference.GroupCode, stock.Id, stock.ErpStockCode, stock.StockName)
+        ).ToListAsync(ct);
         return new(
             employee.Id,
             employee.EmployeeCode,
@@ -50,14 +50,15 @@ public sealed class KkdDistributionService(
             customer.CustomerCode,
             customer.CustomerName,
             policy,
-            headers
-                .Where(x => (x.AvailableQuantity ?? x.RemainingQuantity ?? 0) > 0)
+            openOrderRows
+                .Where(x => x.RemainingQuantity > 0 && !string.IsNullOrWhiteSpace(x.OrderNumber))
+                .GroupBy(x => x.OrderNumber, StringComparer.OrdinalIgnoreCase)
+                .Select(group => new KkdOpenOrderHeader(
+                    group.Key,
+                    group.Min(x => x.OrderDate) is { } orderDate ? DateOnly.FromDateTime(orderDate) : null,
+                    group.Select(x => x.ProjectCode).FirstOrDefault(x => !string.IsNullOrWhiteSpace(x)),
+                    group.Sum(x => x.RemainingQuantity)))
                 .OrderBy(x => x.OrderDate).ThenBy(x => x.OrderNumber, StringComparer.OrdinalIgnoreCase)
-                .Select(x => new KkdOpenOrderHeader(
-                    x.OrderNumber,
-                    x.OrderDate.HasValue ? DateOnly.FromDateTime(x.OrderDate.Value) : null,
-                    x.ProjectCode,
-                    x.AvailableQuantity ?? x.RemainingQuantity ?? 0))
                 .ToArray(),
             preferredStocks);
     }
@@ -73,9 +74,12 @@ public sealed class KkdDistributionService(
 
         var employee = await ActiveEmployeeAsync(employeeId, ct);
         var customerCode = await CustomerCodeAsync(employee.CustomerId, ct);
-        var rows = await netsis.GetShipmentOpenOrderLinesAsync(string.Join(',', numbers), employee.BranchCode, ct);
-        if (rows.Any(x => !string.Equals(x.CustomerCode, customerCode, StringComparison.OrdinalIgnoreCase)))
-            throw AppException.Conflict("Seçilen siparişlerden biri personelin bağlı olduğu cariye ait değil.");
+        var rows = (await ReadKkdOpenOrdersAsync(customerCode, ct))
+            .Where(x => numbers.Contains(x.OrderNumber, StringComparer.OrdinalIgnoreCase))
+            .Where(x => x.RemainingQuantity > 0)
+            .ToArray();
+        if (rows.Length == 0)
+            return [];
 
         var stockCodes = rows.Select(x => x.StockCode?.Trim()).Where(x => !string.IsNullOrWhiteSpace(x))
             .Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -88,18 +92,24 @@ public sealed class KkdDistributionService(
             .ToDictionary(x => x.Key, x => x.OrderBy(y => y.Id).First(), StringComparer.OrdinalIgnoreCase);
 
         return rows
-            .Where(x => (x.AvailableQuantity ?? x.RemainingQuantity ?? 0) > 0)
-            .OrderBy(x => x.OrderDate).ThenBy(x => x.OrderNumber, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.OrderLineSequence)
-            .Select(x =>
+            .OrderBy(x => x.OrderDate).ThenBy(x => x.OrderNumber, StringComparer.OrdinalIgnoreCase).ThenBy(x => x.OrderId)
+            .Select((x, index) =>
             {
                 var code = x.StockCode?.Trim() ?? string.Empty;
                 var mapped = stocksByCode.TryGetValue(code, out var stock);
                 return new KkdOpenOrderLine(
-                    x.OrderNumber, x.OrderId, x.OrderLineSequence, stock?.Id, code,
-                    stock?.StockName ?? x.StockName ?? code, x.UnitCode, x.YapCode, x.ProjectCode,
+                    x.OrderNumber,
+                    x.OrderId ?? index + 1,
+                    index + 1,
+                    stock?.Id,
+                    code,
+                    stock?.StockName ?? x.StockName ?? code,
+                    x.UnitCode,
+                    null,
+                    x.ProjectCode,
                     x.OrderDate.HasValue ? DateOnly.FromDateTime(x.OrderDate.Value) : null,
-                    x.DeliveryDate.HasValue ? DateOnly.FromDateTime(x.DeliveryDate.Value) : null,
-                    x.AvailableQuantity ?? x.RemainingQuantity ?? 0,
+                    null,
+                    x.RemainingQuantity,
                     mapped,
                     mapped ? null : $"{code} stok kodu WMS stok aynasında bulunamadı; ERP stok senkronizasyonu gereklidir.");
             })
@@ -148,17 +158,19 @@ public sealed class KkdDistributionService(
         if (!request.CreateWarehouseTask && assignedUserIds.Length > 0)
             throw AppException.BadRequest("Doğrudan KKD dağıtımına görev sorumlusu atanamaz.");
         var openRows = orderBased
-            ? await netsis.GetShipmentOpenOrderLinesAsync(string.Join(',', orderNumbers), employee.BranchCode, ct)
+            ? await ReadKkdOpenOrdersAsync(await CustomerCodeAsync(employee.CustomerId, ct), ct)
             : [];
-        var openByKey = openRows.ToDictionary(
-            x => OrderKey(x.OrderNumber, x.OrderId), StringComparer.OrdinalIgnoreCase);
+        var openByKey = openRows
+            .Where(x => x.OrderId.HasValue && x.OrderId.Value > 0)
+            .GroupBy(x => OrderKey(x.OrderNumber, x.OrderId!.Value), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
         var customerCode = await CustomerCodeAsync(employee.CustomerId, ct);
 
         var prepared = new List<PreparedLine>(request.Lines.Count);
         foreach (var item in request.Lines)
         {
             var stock = stocks[item.StockId];
-            ShipmentOpenOrderLineDto? order = null;
+            KkdCustomerOpenOrderDto? order = null;
             if (orderBased)
             {
                 var key = OrderKey(item.OrderNumber!, item.OrderLineId!.Value);
@@ -168,9 +180,8 @@ public sealed class KkdDistributionService(
                     throw AppException.Conflict($"{item.OrderNumber} personelin bağlı olduğu cariye ait değil.");
                 if (!string.Equals(stock.ErpStockCode, order.StockCode, StringComparison.OrdinalIgnoreCase))
                     throw AppException.Conflict($"{item.OrderNumber}/{item.OrderLineId} stok eşleşmesi geçersiz.");
-                var available = order.AvailableQuantity ?? order.RemainingQuantity ?? 0;
-                if (item.Quantity > available)
-                    throw AppException.Conflict($"{item.OrderNumber}/{item.OrderLineId} açık sipariş bakiyesi {available}; {item.Quantity} çıkış yapılamaz.");
+                if (item.Quantity > order.RemainingQuantity)
+                    throw AppException.Conflict($"{item.OrderNumber}/{item.OrderLineId} açık sipariş bakiyesi {order.RemainingQuantity}; {item.Quantity} çıkış yapılamaz.");
             }
 
             var check = await entitlements.CheckAsync(new(employee.Id, stock.Id, item.Quantity, request.DocumentDate), ct);
@@ -532,14 +543,33 @@ public sealed class KkdDistributionService(
             x.ManufacturingDate, x.ExpirationDate, x.SourceLocationId ?? item.Request.SourceLocationId)).ToArray(),
         item.Order is null ? null : new WarehouseOutboundSourceRequest(
             item.Order.OrderNumber,
-            item.Order.OrderId.ToString(),
-            item.Order.OrderLineSequence,
+            (item.Order.OrderId ?? 0).ToString(),
+            0,
             item.Order.StockCode ?? item.Stock.ErpStockCode,
-            item.Order.YapCode,
+            null,
             item.Order.OrderDate.HasValue ? DateOnly.FromDateTime(item.Order.OrderDate.Value) : null,
-            item.Order.OrderedQuantity ?? 0,
-            item.Order.DeliveredQuantity ?? 0,
-            item.Order.RemainingQuantity ?? 0));
+            item.Order.RemainingQuantity,
+            0,
+            item.Order.RemainingQuantity));
+
+    private async Task<IReadOnlyList<KkdCustomerOpenOrderDto>> ReadKkdOpenOrdersAsync(
+        string customerCode,
+        CancellationToken ct)
+    {
+        try
+        {
+            return await netsis.GetKkdCustomerOpenOrdersAsync(customerCode, ct);
+        }
+        catch (AppException)
+        {
+            throw;
+        }
+        catch (Exception)
+        {
+            throw AppException.BadGateway(
+                "Netsis açık KKD siparişleri okunamadı. V3RIICO erişimi veya personelin bağlı carisi kontrol edilmelidir.");
+        }
+    }
 
     private async Task<string> CustomerCodeAsync(long customerId, CancellationToken ct) =>
         await uow.Repository<verii_wms_api_v2.Modules.Customer.Domain.Customer>().Query()
@@ -641,7 +671,7 @@ public sealed class KkdDistributionService(
     private sealed record PreparedLine(
         KkdDistributionLineCreateRequest Request,
         StockEntity Stock,
-        ShipmentOpenOrderLineDto? Order,
+        KkdCustomerOpenOrderDto? Order,
         EffectiveStockTrackingPolicy TrackingPolicy,
         string GroupCode,
         decimal Entitled,
