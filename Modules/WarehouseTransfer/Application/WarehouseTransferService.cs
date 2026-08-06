@@ -348,8 +348,14 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
         if(r.SourceWarehouseId<=0||r.TargetWarehouseId<=0)throw AppException.BadRequest("Kaynak ve hedef depo zorunludur.");
         if(r.BusinessContext==WarehouseTransferBusinessContext.InterWarehouse&&r.SourceWarehouseId==r.TargetWarehouseId)
             throw AppException.BadRequest("Depolar arası transferde kaynak ve hedef depo farklı olmalıdır.");
-        if(r.SourceWarehouseId==r.TargetWarehouseId&&r.Lines.Any(x=>!x.DefaultSourceLocationId.HasValue||!x.DefaultTargetLocationId.HasValue||x.DefaultSourceLocationId==x.DefaultTargetLocationId))
-            throw AppException.BadRequest("Aynı depo içindeki üretim/fason transferinde kaynak ve hedef raf farklı ve zorunlu olmalıdır.");
+        if(r.SourceWarehouseId==r.TargetWarehouseId){
+            if(r.Lines.Any(x=>!x.DefaultSourceLocationId.HasValue))
+                throw AppException.BadRequest("Aynı depo içindeki üretim/fason transferinde kaynak raf seçimi zorunludur.");
+            if(r.Lines.Any(x=>!x.DefaultTargetLocationId.HasValue))
+                throw AppException.BadRequest("Aynı depo içindeki üretim/fason transferinde hedef raf seçimi zorunludur.");
+            if(r.Lines.Any(x=>x.DefaultSourceLocationId==x.DefaultTargetLocationId))
+                throw AppException.BadRequest("Aynı depo içindeki üretim/fason transferinde kaynak ve hedef raf farklı olmalıdır.");
+        }
         if(r.DocumentSeriesId<=0)throw AppException.BadRequest("Transfer belge serisi zorunludur.");
         if(r.Priority is <1 or >9)throw AppException.BadRequest("Öncelik 1-9 arasında olmalıdır.");
         if(r.Lines.Count==0)throw AppException.BadRequest("En az bir transfer satırı zorunludur.");

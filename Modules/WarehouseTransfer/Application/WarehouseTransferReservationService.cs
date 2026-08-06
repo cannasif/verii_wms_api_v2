@@ -23,7 +23,11 @@ public sealed class WarehouseTransferReservationService(IStockBalanceService bal
             {
                 foreach (var tracking in line.Trackings)
                 {
-                    var quantity = tracking.PlannedQuantity - tracking.ReservedQuantity;
+                    // Planlanandan, hâlihazırda rezerve olanı VE zaten fiziksel olarak toplanmış
+                    // (henüz iade edilmemiş) miktarı da düşmek gerekir — aksi halde bu fonksiyon
+                    // ilk yayınlamadan sonra tekrar çağrıldığında (iade/rota yenileme sonrası),
+                    // kısmen toplanmış bir satırın kalanından fazlasını rezerve etmeye çalışır.
+                    var quantity = tracking.PlannedQuantity - tracking.ReservedQuantity - tracking.PickedQuantity;
                     if (quantity <= 0) continue;
                     var locationId = tracking.SourceLocationId ?? line.DefaultSourceLocationId
                         ?? throw AppException.Conflict($"{line.LineNo}. satır için rezervasyon rafı bulunamadı.");
@@ -32,7 +36,7 @@ public sealed class WarehouseTransferReservationService(IStockBalanceService bal
             }
             else
             {
-                var quantity = line.RequestedQuantity - line.ReservedQuantity;
+                var quantity = line.RequestedQuantity - line.ReservedQuantity - line.PickedQuantity;
                 if (quantity <= 0) continue;
                 var locationId = line.DefaultSourceLocationId
                     ?? throw AppException.Conflict($"{line.LineNo}. satır için rezervasyon rafı bulunamadı.");
@@ -67,7 +71,10 @@ public sealed class WarehouseTransferReservationService(IStockBalanceService bal
         {
             var item = lines[line.Id];
             if (line.ReservedQuantity < item.Quantity)
-                throw AppException.Conflict($"{line.LineNo}. satırın rezervasyonu toplama miktarını karşılamıyor.");
+                throw AppException.Conflict(
+                    $"{line.LineNo}. satırın rezervasyonu toplama miktarını karşılamıyor. " +
+                    $"İstenen:{line.RequestedQuantity} Toplanan:{line.PickedQuantity} Rezerve:{line.ReservedQuantity} " +
+                    $"İstenenToplama:{item.Quantity} Durum:{line.Status}");
             WarehouseTransferTracking? tracking = null;
             if (line.Trackings.Count > 0)
             {

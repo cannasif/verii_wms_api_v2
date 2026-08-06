@@ -6,6 +6,7 @@ using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Application;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
+using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -13,7 +14,11 @@ using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 
 namespace verii_wms_api_v2.Modules.ProductionTransfer.Application;
 
-public sealed class ProductionTransferTaskService(IUnitOfWork uow, IAuditLogWriter audit, IStockMovementService movements) : IProductionTransferTaskService
+public sealed class ProductionTransferTaskService(
+    IUnitOfWork uow,
+    IAuditLogWriter audit,
+    IStockMovementService movements,
+    IWarehouseTransferReservationService reservations) : IProductionTransferTaskService
 {
     private static readonly WarehouseTransferBusinessContext[] Contexts =
     [
@@ -244,25 +249,71 @@ public sealed class ProductionTransferTaskService(IUnitOfWork uow, IAuditLogWrit
                 operationId = movement.OperationId;
             }
             var now = DateTimeOffset.UtcNow;
+            var utcNow = DateTime.UtcNow;
             foreach (var line in task.Lines) line.ProcessedQuantity = line.PlannedQuantity;
             task.Status = WarehouseTransferTaskStatus.Completed;
             task.CompletedAtUtc = now; task.CompletedBy = actor;
-            task.UpdatedBy = actor; task.UpdatedDate = DateTime.UtcNow;
+            task.UpdatedBy = actor; task.UpdatedDate = utcNow;
+
+            // İade edilen stok fiziksel olarak eski rafına döndü, ama iş emri hâlâ tüm miktarın
+            // teslim edilmesini bekliyor — bu yüzden (a) satırın toplanan miktarı geri düşürülmeli
+            // ki iş emrinin gerçek ilerlemesi doğru görünsün, (b) bu miktar tekrar birine atanabilsin
+            // diye kaynak (origin) görevin kendisine yeni, işlenmemiş satırlar eklenmeli. Origin görev
+            // zaten atama kaldırılınca "Open" durumuna dönüyor, böylece tek bir konsolide görev olarak
+            // (mevcut hiç toplanmamış satırlarıyla birlikte) tekrar Görev Havuzu'nda görünür.
+            foreach (var returnedLine in task.Lines)
+            {
+                var wtLine = returnedLine.Line;
+                ApplyReturnedQuantityToTransferLine(wtLine, returnedLine.PlannedQuantity, actor);
+            }
 
             if (task.OriginTaskId.HasValue && task.OriginUserId.HasValue)
             {
                 var originTask = await LoadTaskAsync(transferId, task.OriginTaskId.Value, token);
-                var originAssignment = originTask.Assignments.SingleOrDefault(x => !x.IsDeleted && x.UserId == task.OriginUserId.Value);
-                if (originAssignment is not null)
+                foreach (var returnedLine in task.Lines)
                 {
-                    RemoveAssignmentCore(originTask, originAssignment, actor);
-                    originTask.UpdatedBy = actor; originTask.UpdatedDate = DateTime.UtcNow;
+                    // Devir olmadan (aynı görevde) iade edilmişse, o satır için görevde zaten bir
+                    // kayıt var (WtTaskId+WtLineId üzerinde benzersizlik kısıtı var) — yeni satır
+                    // eklemek yerine mevcut kaydı sıfırlamak gerekir. Devir zincirinden gelen
+                    // satırlar için ise (o görevde hiç kaydı yoktur) yeni satır eklenir.
+                    var existing = originTask.Lines.FirstOrDefault(x => !x.IsDeleted && x.WtLineId == returnedLine.WtLineId);
+                    if (existing is not null)
+                    {
+                        existing.ProcessedQuantity = 0;
+                        existing.UpdatedBy = actor; existing.UpdatedDate = utcNow;
+                    }
+                    else
+                        originTask.Lines.Add(new WarehouseTransferTaskLine
+                        {
+                            BranchCode = originTask.BranchCode, CreatedBy = actor, CreatedDate = utcNow,
+                            Task = originTask, Line = returnedLine.Line,
+                            PlannedQuantity = returnedLine.PlannedQuantity, ProcessedQuantity = 0,
+                            SourceLocationId = returnedLine.TargetLocationId,
+                        });
                 }
+                var originAssignment = originTask.Assignments.SingleOrDefault(x => !x.IsDeleted && x.UserId == task.OriginUserId.Value);
+                if (originAssignment is not null) RemoveAssignmentCore(originTask, originAssignment, actor);
+                originTask.UpdatedBy = actor; originTask.UpdatedDate = utcNow;
             }
+
+            // NOT: ReducePickTaskProcessedForLine buradan bilerek çağrılmıyor — origin görev
+            // konsolidasyonu (yukarıda) zaten iade edilen satırı doğru şekilde tek bir (güncel)
+            // göreve taşıyıp sıfırlıyor. ReducePickTaskProcessedForLine TÜM Pick görevlerini (geçmiş/
+            // tamamlanmış olanlar dahil) tarayıp aynı satırı bulduğu her yerde ayrıca sıfırlayıp
+            // gerekirse o eski görevi de yeniden "InProgress" açıyor — bu, yukarıdaki konsolidasyonla
+            // çakışıp aynı işi iki farklı görevde (biri güncel, biri yanlışlıkla yeniden açılmış eski
+            // görev) aktif gösteriyor ve tamamlanma yüzdesi/atanan-tamamlanan sayaçlarını bozuyordu.
+            var header = await LoadTransferHeaderAsync(transferId, token);
+            await RestoreOpenLineReservationsAsync(
+                header,
+                $"WT:{transferId}:RESERVE:ASSIGN-RETURN:{idempotencyKey:N}",
+                actor,
+                token);
+
             await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("production-transfer.task.assignment-return.complete", nameof(WarehouseTransferTask), task.Id.ToString(), "Succeeded", "production-transfer",
                 NewValues: new { TransferId = transferId, TaskId = task.Id, StockMovementOperationId = operationId, OriginTaskId = task.OriginTaskId, OriginUserId = task.OriginUserId },
-                ChangedFields: ["ProcessedQuantity", "Status", "OriginTask.Assignments"]), token);
+                ChangedFields: ["ProcessedQuantity", "Status", "OriginTask.Lines", "OriginTask.Assignments", "Line.PickedQuantity"]), token);
             return await MapAsync(transferId, token);
         }, ct, IsolationLevel.Serializable);
 
@@ -438,6 +489,15 @@ public sealed class ProductionTransferTaskService(IUnitOfWork uow, IAuditLogWrit
 
             task.UpdatedBy = actor; task.UpdatedDate = DateTime.UtcNow;
             await uow.SaveChangesAsync(token);
+
+            var header = await LoadTransferHeaderAsync(transferId, token);
+            await RestoreOpenLineReservationsAsync(
+                header,
+                $"WT:{transferId}:RESERVE:ROUTE-REFRESH:{taskId}",
+                actor,
+                token);
+            await uow.SaveChangesAsync(token);
+
             await audit.WriteAsync(new("production-transfer.task.route.refresh", nameof(WarehouseTransferTask), task.Id.ToString(), "Succeeded", "production-transfer",
                 NewValues: new { TransferId = transferId, TaskId = task.Id, ChangedRouteCount = changed },
                 ChangedFields: ["SourceLocationId"]), token);
@@ -489,13 +549,27 @@ public sealed class ProductionTransferTaskService(IUnitOfWork uow, IAuditLogWrit
                 operationId = movement.OperationId;
             }
             var now = DateTimeOffset.UtcNow;
-            foreach (var line in task.Lines) line.ProcessedQuantity = line.PlannedQuantity;
+            foreach (var returnedLine in task.Lines)
+            {
+                ApplyReturnedQuantityToTransferLine(returnedLine.Line, returnedLine.PlannedQuantity, actor);
+                returnedLine.ProcessedQuantity = returnedLine.PlannedQuantity;
+            }
             task.Status = WarehouseTransferTaskStatus.Completed;
             task.CompletedAtUtc = now; task.CompletedBy = actor;
             task.UpdatedBy = actor; task.UpdatedDate = DateTime.UtcNow;
+
+            var header = await LoadTransferHeaderAsync(transferId, token);
+            foreach (var returnedLine in task.Lines)
+                ReducePickTaskProcessedForLine(header, returnedLine.WtLineId, returnedLine.PlannedQuantity, actor);
+            await RestoreOpenLineReservationsAsync(
+                header,
+                $"WT:{transferId}:RESERVE:CANCEL-RETURN:{idempotencyKey:N}",
+                actor,
+                token);
+
             await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("production-transfer.task.cancellation-return.complete", nameof(WarehouseTransferTask), task.Id.ToString(), "Succeeded", "production-transfer",
-                NewValues: new { TransferId = transferId, TaskId = task.Id, StockMovementOperationId = operationId }, ChangedFields: ["ProcessedQuantity", "Status"]), token);
+                NewValues: new { TransferId = transferId, TaskId = task.Id, StockMovementOperationId = operationId }, ChangedFields: ["ProcessedQuantity", "Status", "Line.PickedQuantity", "Line.ReservedQuantity"]), token);
             return await MapAsync(transferId, token);
         }, ct, IsolationLevel.Serializable);
 
@@ -668,5 +742,76 @@ public sealed class ProductionTransferTaskService(IUnitOfWork uow, IAuditLogWrit
             }
         }
         return rows;
+    }
+
+    private async Task<WarehouseTransferHeader> LoadTransferHeaderAsync(long transferId, CancellationToken ct) =>
+        await uow.Repository<WarehouseTransferHeader>().Query(true)
+            .Include(x => x.Lines).ThenInclude(x => x.Trackings)
+            .Include(x => x.Tasks).ThenInclude(x => x.Lines)
+            .SingleAsync(x => x.Id == transferId && Contexts.Contains(x.BusinessContext), ct);
+
+    private static void ApplyReturnedQuantityToTransferLine(WarehouseTransferLine wtLine, decimal returnedQuantity, long actor)
+    {
+        if (returnedQuantity <= 0) return;
+        var utcNow = DateTime.UtcNow;
+        wtLine.PickedQuantity = Math.Max(0, wtLine.PickedQuantity - returnedQuantity);
+        wtLine.Status = wtLine.PickedQuantity <= 0
+            ? WarehouseTransferLineStatus.Open
+            : WarehouseTransferLineStatus.PartiallyPicked;
+        wtLine.UpdatedBy = actor;
+        wtLine.UpdatedDate = utcNow;
+
+        var remaining = returnedQuantity;
+        foreach (var tracking in wtLine.Trackings.Where(x => x.PickedQuantity > 0).OrderByDescending(x => x.PickedQuantity))
+        {
+            if (remaining <= 0) break;
+            var delta = Math.Min(tracking.PickedQuantity, remaining);
+            tracking.PickedQuantity -= delta;
+            remaining -= delta;
+            tracking.UpdatedBy = actor;
+            tracking.UpdatedDate = utcNow;
+        }
+    }
+
+    private static void ReducePickTaskProcessedForLine(
+        WarehouseTransferHeader header,
+        long wtLineId,
+        decimal returnedQuantity,
+        long actor)
+    {
+        if (returnedQuantity <= 0) return;
+        var remaining = returnedQuantity;
+        foreach (var pickTask in header.Tasks
+                     .Where(x => x.TaskType == WarehouseTransferTaskType.Pick && x.Status != WarehouseTransferTaskStatus.Cancelled)
+                     .OrderByDescending(x => x.Id))
+        {
+            foreach (var taskLine in pickTask.Lines.Where(x => !x.IsDeleted && x.WtLineId == wtLineId && x.ProcessedQuantity > 0))
+            {
+                if (remaining <= 0) return;
+                var delta = Math.Min(taskLine.ProcessedQuantity, remaining);
+                taskLine.ProcessedQuantity -= delta;
+                remaining -= delta;
+                taskLine.UpdatedBy = actor;
+                taskLine.UpdatedDate = DateTime.UtcNow;
+            }
+            if (pickTask.Lines.Where(x => !x.IsDeleted).All(x => x.ProcessedQuantity <= 0)
+                && pickTask.Status is WarehouseTransferTaskStatus.PartiallyCompleted or WarehouseTransferTaskStatus.Completed)
+            {
+                pickTask.Status = WarehouseTransferTaskStatus.InProgress;
+                pickTask.CompletedAtUtc = null;
+                pickTask.CompletedBy = null;
+            }
+        }
+    }
+
+    private async Task RestoreOpenLineReservationsAsync(
+        WarehouseTransferHeader header,
+        string idempotencyKey,
+        long actor,
+        CancellationToken token)
+    {
+        if (header.ReservationPolicy == WarehouseTransferReservationPolicy.None) return;
+        if (header.Status is WarehouseTransferStatus.Cancelled or WarehouseTransferStatus.Completed) return;
+        await reservations.ReserveAsync(header, idempotencyKey, actor, token);
     }
 }

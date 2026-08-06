@@ -122,7 +122,7 @@ public sealed class WarehouseTransferTaskAssignmentConfiguration : BaseEntityCon
     {
         b.ToTable("RII_WT_TASK_ASSIGNMENT");
         b.HasOne(x=>x.Task).WithMany(x=>x.Assignments).HasForeignKey(x=>x.WtTaskId).OnDelete(DeleteBehavior.Restrict);
-        b.HasIndex(x=>new{x.WtTaskId,x.UserId}).IsUnique(); b.HasIndex(x=>new{x.UserId,x.AcceptedAtUtc});
+        b.HasIndex(x=>new{x.WtTaskId,x.UserId}).IsUnique().HasFilter("[IsDeleted] = 0"); b.HasIndex(x=>new{x.UserId,x.AcceptedAtUtc});
     }
 }
 
