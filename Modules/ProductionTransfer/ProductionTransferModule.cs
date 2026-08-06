@@ -6,5 +6,6 @@ public static class ProductionTransferModule
 {
     public static IServiceCollection AddProductionTransferModule(this IServiceCollection services) =>
         services.AddScoped<IProductionTransferService,ProductionTransferService>()
-            .AddScoped<IProductionTransferTaskService,ProductionTransferTaskService>();
+            .AddScoped<IProductionTransferTaskService,ProductionTransferTaskService>()
+            .AddScoped<IProductionTransferExecutionService,ProductionTransferExecutionService>();
 }

@@ -53,7 +53,9 @@ public enum WarehouseTransferStatus
     PartiallyPutaway = 9,
     Completed = 10,
     Cancelled = 11,
-    PartiallyShipped = 12
+    PartiallyShipped = 12,
+    AwaitingHandover = 13,
+    CompletedWithShortage = 14
 }
 
 public enum WarehouseTransferLineStatus

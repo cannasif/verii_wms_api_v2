@@ -14,11 +14,16 @@ public sealed class ProductionTransferHeaderLinkConfiguration : BaseEntityConfig
         b.ToTable("RII_PT_HEADER_LINK");
         b.Property(x=>x.Purpose).HasConversion<string>().HasMaxLength(30);
         b.Property(x=>x.MaterialAvailabilityStatus).HasConversion<string>().HasMaxLength(30);
+        b.Property(x=>x.WorkflowStatus).HasConversion<string>().HasMaxLength(40)
+            .HasDefaultValue(ProductionTransferWorkflowStatus.Planned)
+            .HasSentinel((ProductionTransferWorkflowStatus)0);
         b.Property(x=>x.ProductionPlanNo).HasMaxLength(100);
         b.Property(x=>x.ProductionOrderNo).HasMaxLength(100);
         b.Property(x=>x.ProductionOperationCode).HasMaxLength(100);
         b.Property(x=>x.SourceWorkCenterCode).HasMaxLength(100);
         b.Property(x=>x.TargetWorkCenterCode).HasMaxLength(100);
+        b.Property(x=>x.RequestedByNameSnapshot).HasMaxLength(200);
+        b.Property(x=>x.HandoverShortageReason).HasMaxLength(1000);
         b.Property(x=>x.RowVersion).IsRowVersion();
         b.HasOne(x=>x.WarehouseTransferHeader).WithOne()
             .HasForeignKey<ProductionTransferHeaderLink>(x=>x.WarehouseTransferHeaderId).OnDelete(DeleteBehavior.Restrict);
@@ -28,6 +33,8 @@ public sealed class ProductionTransferHeaderLinkConfiguration : BaseEntityConfig
             .HasForeignKey(x=>x.ProductionOrderId).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(x=>x.WarehouseTransferHeaderId).IsUnique().HasFilter("[IsDeleted] = 0");
         b.HasIndex(x=>new{x.BranchCode,x.ProductionOrderNo,x.Purpose});
+        b.HasIndex(x=>x.ParentWarehouseTransferHeaderId);
+        b.HasIndex(x=>x.ResidualWarehouseTransferHeaderId);
     }
 }
 
@@ -39,6 +46,8 @@ public sealed class ProductionTransferLineLinkConfiguration : BaseEntityConfigur
         b.Property(x=>x.LineRole).HasConversion<string>().HasMaxLength(30);
         b.Property(x=>x.RequirementReference).HasMaxLength(150);
         b.Property(x=>x.RequiredQuantity).HasPrecision(20,6);
+        b.Property(x=>x.HandedOverQuantity).HasPrecision(20,6);
+        b.Property(x=>x.ShortClosedQuantity).HasPrecision(20,6);
         b.HasOne(x=>x.HeaderLink).WithMany(x=>x.Lines).HasForeignKey(x=>x.ProductionTransferHeaderLinkId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne(x=>x.WarehouseTransferLine).WithOne().HasForeignKey<ProductionTransferLineLink>(x=>x.WarehouseTransferLineId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne(x=>x.ProductionConsumption).WithMany()

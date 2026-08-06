@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 
@@ -11,9 +12,11 @@ using verii_wms_api_v2.Modules.Identity.Infrastructure;
 namespace verii_wms_api_v2.Migrations
 {
     [DbContext(typeof(WmsDbContext))]
-    partial class WmsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260806114448_BackfillProductionTransferWorkflowStatus")]
+    partial class BackfillProductionTransferWorkflowStatus
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -12827,34 +12830,15 @@ namespace verii_wms_api_v2.Migrations
                     b.Property<DateTime?>("DeletedDate")
                         .HasColumnType("datetime2");
 
-                    b.Property<DateTimeOffset?>("HandoverConfirmedAtUtc")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<long?>("HandoverConfirmedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("HandoverShortageReason")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
                     b.Property<bool>("IsDeleted")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bit")
                         .HasDefaultValue(false);
 
-                    b.Property<Guid?>("LastHandoverIdempotencyKey")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<Guid?>("LastPickingCompletionIdempotencyKey")
-                        .HasColumnType("uniqueidentifier");
-
                     b.Property<string>("MaterialAvailabilityStatus")
                         .IsRequired()
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
-
-                    b.Property<long?>("ParentWarehouseTransferHeaderId")
-                        .HasColumnType("bigint");
 
                     b.Property<long?>("ProductionHeaderId")
                         .HasColumnType("bigint");
@@ -12882,13 +12866,6 @@ namespace verii_wms_api_v2.Migrations
                         .HasMaxLength(30)
                         .HasColumnType("nvarchar(30)");
 
-                    b.Property<string>("RequestedByNameSnapshot")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<long?>("RequestedByUserId")
-                        .HasColumnType("bigint");
-
                     b.Property<bool>("RequiredForOrderCompletion")
                         .HasColumnType("bit");
 
@@ -12897,9 +12874,6 @@ namespace verii_wms_api_v2.Migrations
 
                     b.Property<DateTimeOffset?>("RequirementCalculatedAtUtc")
                         .HasColumnType("datetimeoffset");
-
-                    b.Property<long?>("ResidualWarehouseTransferHeaderId")
-                        .HasColumnType("bigint");
 
                     b.Property<byte[]>("RowVersion")
                         .IsConcurrencyToken()
@@ -12927,24 +12901,13 @@ namespace verii_wms_api_v2.Migrations
                     b.Property<long>("WarehouseTransferHeaderId")
                         .HasColumnType("bigint");
 
-                    b.Property<string>("WorkflowStatus")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(40)
-                        .HasColumnType("nvarchar(40)")
-                        .HasDefaultValue("Planned");
-
                     b.HasKey("Id");
 
                     b.HasIndex("IsDeleted");
 
-                    b.HasIndex("ParentWarehouseTransferHeaderId");
-
                     b.HasIndex("ProductionHeaderId");
 
                     b.HasIndex("ProductionOrderId");
-
-                    b.HasIndex("ResidualWarehouseTransferHeaderId");
 
                     b.HasIndex("WarehouseTransferHeaderId")
                         .IsUnique()
@@ -12982,10 +12945,6 @@ namespace verii_wms_api_v2.Migrations
                     b.Property<DateTime?>("DeletedDate")
                         .HasColumnType("datetime2");
 
-                    b.Property<decimal>("HandedOverQuantity")
-                        .HasPrecision(20, 6)
-                        .HasColumnType("decimal(20,6)");
-
                     b.Property<bool>("IsDeleted")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("bit")
@@ -13012,10 +12971,6 @@ namespace verii_wms_api_v2.Migrations
                     b.Property<string>("RequirementReference")
                         .HasMaxLength(150)
                         .HasColumnType("nvarchar(150)");
-
-                    b.Property<decimal>("ShortClosedQuantity")
-                        .HasPrecision(20, 6)
-                        .HasColumnType("decimal(20,6)");
 
                     b.Property<long?>("UpdatedBy")
                         .HasColumnType("bigint");
@@ -21569,8 +21524,7 @@ namespace verii_wms_api_v2.Migrations
                     b.HasIndex("UserId", "AcceptedAtUtc");
 
                     b.HasIndex("WtTaskId", "UserId")
-                        .IsUnique()
-                        .HasFilter("[IsDeleted] = 0");
+                        .IsUnique();
 
                     b.ToTable("RII_WT_TASK_ASSIGNMENT", (string)null);
                 });

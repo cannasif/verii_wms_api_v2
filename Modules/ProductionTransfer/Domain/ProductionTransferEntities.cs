@@ -27,6 +27,16 @@ public enum ProductionMaterialAvailabilityStatus
     Shortage = 4
 }
 
+public enum ProductionTransferWorkflowStatus
+{
+    Planned = 1,
+    Picking = 2,
+    AwaitingHandover = 3,
+    Completed = 4,
+    CompletedWithShortage = 5,
+    Cancelled = 6
+}
+
 public sealed class ProductionTransferHeaderLink : BaseEntity
 {
     public long WarehouseTransferHeaderId { get; set; }
@@ -48,6 +58,16 @@ public sealed class ProductionTransferHeaderLink : BaseEntity
     public bool RequiredForOrderCompletion { get; set; }
     public ProductionMaterialAvailabilityStatus MaterialAvailabilityStatus { get; set; } = ProductionMaterialAvailabilityStatus.NotChecked;
     public DateTimeOffset? RequirementCalculatedAtUtc { get; set; }
+    public ProductionTransferWorkflowStatus WorkflowStatus { get; set; } = ProductionTransferWorkflowStatus.Planned;
+    public long? RequestedByUserId { get; set; }
+    public string? RequestedByNameSnapshot { get; set; }
+    public long? HandoverConfirmedBy { get; set; }
+    public DateTimeOffset? HandoverConfirmedAtUtc { get; set; }
+    public string? HandoverShortageReason { get; set; }
+    public Guid? LastPickingCompletionIdempotencyKey { get; set; }
+    public Guid? LastHandoverIdempotencyKey { get; set; }
+    public long? ParentWarehouseTransferHeaderId { get; set; }
+    public long? ResidualWarehouseTransferHeaderId { get; set; }
     public byte[] RowVersion { get; set; } = [];
     public ICollection<ProductionTransferLineLink> Lines { get; set; } = [];
 }
@@ -65,6 +85,8 @@ public sealed class ProductionTransferLineLink : BaseEntity
     public ProductionOutputExpectation? ProductionOutput { get; set; }
     public string? RequirementReference { get; set; }
     public decimal RequiredQuantity { get; set; }
+    public decimal HandedOverQuantity { get; set; }
+    public decimal ShortClosedQuantity { get; set; }
 }
 
 public sealed class ProductionTransferPolicy : BaseEntity

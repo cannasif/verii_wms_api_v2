@@ -26,7 +26,31 @@ public sealed class ProductionAndSubcontractingTransferModelTests
         Assert.Equal(40, property!.GetMaxLength());
         Assert.Equal(50, entity.FindProperty(nameof(WarehouseTransferHeader.ProjectCode))?.GetMaxLength());
         Assert.Contains(nameof(WarehouseTransferStatus.PartiallyShipped), Enum.GetNames<WarehouseTransferStatus>());
+        Assert.Contains(nameof(WarehouseTransferStatus.AwaitingHandover), Enum.GetNames<WarehouseTransferStatus>());
+        Assert.Contains(nameof(WarehouseTransferStatus.CompletedWithShortage), Enum.GetNames<WarehouseTransferStatus>());
         Assert.DoesNotContain(entity.GetCheckConstraints(), x => x.Name == "CK_RII_WT_HEADER_WAREHOUSE");
+    }
+
+    [Fact]
+    public void Production_transfer_persists_two_step_handover_and_residual_lineage()
+    {
+        using var context = CreateContext();
+        var model = context.GetService<IDesignTimeModel>().Model;
+        var header = AssertEntity<ProductionTransferHeaderLink>(model);
+        var line = AssertEntity<ProductionTransferLineLink>(model);
+
+        Assert.Equal(40, header.FindProperty(nameof(ProductionTransferHeaderLink.WorkflowStatus))?.GetMaxLength());
+        Assert.Equal(ProductionTransferWorkflowStatus.Planned,
+            header.FindProperty(nameof(ProductionTransferHeaderLink.WorkflowStatus))?.GetDefaultValue());
+        Assert.Equal(1000, header.FindProperty(nameof(ProductionTransferHeaderLink.HandoverShortageReason))?.GetMaxLength());
+        Assert.NotNull(header.FindProperty(nameof(ProductionTransferHeaderLink.LastHandoverIdempotencyKey)));
+        Assert.NotNull(header.FindProperty(nameof(ProductionTransferHeaderLink.ParentWarehouseTransferHeaderId)));
+        Assert.NotNull(header.FindProperty(nameof(ProductionTransferHeaderLink.ResidualWarehouseTransferHeaderId)));
+        Assert.Equal(20, line.FindProperty(nameof(ProductionTransferLineLink.HandedOverQuantity))?.GetPrecision());
+        Assert.Equal(6, line.FindProperty(nameof(ProductionTransferLineLink.HandedOverQuantity))?.GetScale());
+        Assert.Equal(20, line.FindProperty(nameof(ProductionTransferLineLink.ShortClosedQuantity))?.GetPrecision());
+        Assert.Equal(new[] { "Planned", "Picking", "AwaitingHandover", "Completed", "CompletedWithShortage", "Cancelled" },
+            Enum.GetNames<ProductionTransferWorkflowStatus>());
     }
 
     [Fact]

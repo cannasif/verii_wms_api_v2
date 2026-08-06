@@ -17,6 +17,7 @@ public sealed class ProductionTransfersController(
     IWarehouseTransferService transfers,
     IWarehouseTransferOperationService operations,
     IProductionTransferTaskService tasks,
+    IProductionTransferExecutionService execution,
     IOperationCancellationCoordinator cancellationCoordinator,
     IPermissionAuthorizationService permissions) : ControllerBase
 {
@@ -69,6 +70,23 @@ public sealed class ProductionTransfersController(
     public async Task<IActionResult>Tasks(long id,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.VIEW",ct);await Ensure(id,ct);
         return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.GetBoardAsync(id,ct)));}
+    [HttpGet("{id:long}/execution")]
+    public async Task<IActionResult>Execution(long id,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.VIEW",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferExecutionDto>.Ok(await execution.GetAsync(id,ct)));}
+    [HttpPost("{id:long}/scan-pick")]
+    public async Task<IActionResult>ScanPick(long id,ProductionTransferScanPickRequest request,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferScanPickResult>.Ok(await execution.ScanPickAsync(id,request,UserId(),ct),"Barkod doğrulandı ve stok bekleme rafına alındı."));}
+    [HttpPost("{id:long}/complete-picking")]
+    public async Task<IActionResult>CompletePicking(long id,CompleteProductionPickingRequest request,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferExecutionDto>.Ok(await execution.CompletePickingAsync(id,request,UserId(),ct),"Toplama tamamlandı; transfer teslim onayı bekliyor."));}
+    [HttpPost("{id:long}/confirm-handover")]
+    public async Task<IActionResult>ConfirmHandover(long id,ConfirmProductionHandoverRequest request,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
+        var canOverrideRequester=await permissions.HasPermissionAsync(User,"WMS.PRODUCTION_TRANSFER.APPROVE",ct);
+        return Ok(ApiResponse<ProductionTransferExecutionDto>.Ok(await execution.ConfirmHandoverAsync(id,request,UserId(),canOverrideRequester,ct),"Üretim transferi teslim onayı tamamlandı."));}
     [HttpGet("task-pool")]
     public async Task<IActionResult>TaskPool(CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);
