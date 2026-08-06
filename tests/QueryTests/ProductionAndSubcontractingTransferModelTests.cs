@@ -38,6 +38,7 @@ public sealed class ProductionAndSubcontractingTransferModelTests
         var model = context.GetService<IDesignTimeModel>().Model;
         var header = AssertEntity<ProductionTransferHeaderLink>(model);
         var line = AssertEntity<ProductionTransferLineLink>(model);
+        var barcodeScan = AssertEntity<ProductionTransferBarcodeScan>(model);
 
         Assert.Equal(40, header.FindProperty(nameof(ProductionTransferHeaderLink.WorkflowStatus))?.GetMaxLength());
         Assert.Equal(ProductionTransferWorkflowStatus.Planned,
@@ -49,6 +50,10 @@ public sealed class ProductionAndSubcontractingTransferModelTests
         Assert.Equal(20, line.FindProperty(nameof(ProductionTransferLineLink.HandedOverQuantity))?.GetPrecision());
         Assert.Equal(6, line.FindProperty(nameof(ProductionTransferLineLink.HandedOverQuantity))?.GetScale());
         Assert.Equal(20, line.FindProperty(nameof(ProductionTransferLineLink.ShortClosedQuantity))?.GetPrecision());
+        Assert.Equal(20, barcodeScan.FindProperty(nameof(ProductionTransferBarcodeScan.Quantity))?.GetPrecision());
+        Assert.Equal(6, barcodeScan.FindProperty(nameof(ProductionTransferBarcodeScan.Quantity))?.GetScale());
+        Assert.Contains(barcodeScan.GetIndexes(), x => x.IsUnique
+            && x.Properties.Single().Name == nameof(ProductionTransferBarcodeScan.IdempotencyKey));
         Assert.Equal(new[] { "Planned", "Picking", "AwaitingHandover", "Completed", "CompletedWithShortage", "Cancelled" },
             Enum.GetNames<ProductionTransferWorkflowStatus>());
     }

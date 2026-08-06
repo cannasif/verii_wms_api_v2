@@ -201,6 +201,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<ProductionTransferHeaderLink> ProductionTransferHeaderLinks => Set<ProductionTransferHeaderLink>();
     public DbSet<ProductionTransferLineLink> ProductionTransferLineLinks => Set<ProductionTransferLineLink>();
     public DbSet<ProductionTransferPolicy> ProductionTransferPolicies => Set<ProductionTransferPolicy>();
+    public DbSet<ProductionTransferBarcodeScan> ProductionTransferBarcodeScans => Set<ProductionTransferBarcodeScan>();
     public DbSet<SubcontractingTransferHeaderLink> SubcontractingTransferHeaderLinks => Set<SubcontractingTransferHeaderLink>();
     public DbSet<SubcontractingTransferLineLink> SubcontractingTransferLineLinks => Set<SubcontractingTransferLineLink>();
     public DbSet<SubcontractingTransferPolicy> SubcontractingTransferPolicies => Set<SubcontractingTransferPolicy>();
@@ -396,6 +397,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new ProductionOrderDependencyConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionTransferHeaderLinkConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionTransferLineLinkConfiguration());
+        modelBuilder.ApplyConfiguration(new ProductionTransferBarcodeScanConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionTransferPolicyConfiguration());
         modelBuilder.ApplyConfiguration(new SubcontractingTransferHeaderLinkConfiguration());
         modelBuilder.ApplyConfiguration(new SubcontractingTransferLineLinkConfiguration());
@@ -679,6 +681,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             throw new InvalidOperationException("Ambar çıkış durum geçmişi değiştirilemez veya silinemez.");
         if (ChangeTracker.Entries<WarehouseTransferStatusHistory>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Depolar arası transfer durum geçmişi immutable yapıdadır; kayıtlar güncellenemez veya silinemez.");
+        if (ChangeTracker.Entries<ProductionTransferBarcodeScan>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Üretim transfer barkod okutma günlüğü değiştirilemez veya silinemez.");
         if (ChangeTracker.Entries<KkdEntitlementConsumption>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("KKD hak tüketim kayıtları değiştirilemez veya silinemez; ters tüketim kaydı kullanın.");
         if (ChangeTracker.Entries<KkdDistributionEntitlementAllocation>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))

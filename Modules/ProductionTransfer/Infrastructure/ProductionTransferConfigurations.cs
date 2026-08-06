@@ -58,6 +58,31 @@ public sealed class ProductionTransferLineLinkConfiguration : BaseEntityConfigur
     }
 }
 
+public sealed class ProductionTransferBarcodeScanConfiguration : BaseEntityConfiguration<ProductionTransferBarcodeScan>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<ProductionTransferBarcodeScan> b)
+    {
+        b.ToTable("RII_PT_BARCODE_SCAN", t =>
+        {
+            t.HasCheckConstraint("CK_RII_PT_BARCODE_SCAN_QTY", "[Quantity] > 0");
+        });
+        b.Property(x => x.BarcodeValue).HasMaxLength(250).IsRequired();
+        b.Property(x => x.NormalizedBarcode).HasMaxLength(250).IsRequired();
+        b.Property(x => x.BarcodeSource).HasMaxLength(40).IsRequired();
+        b.Property(x => x.UnitCode).HasMaxLength(20).IsRequired();
+        b.Property(x => x.LotNo).HasMaxLength(100);
+        b.Property(x => x.SerialNo).HasMaxLength(100);
+        b.Property(x => x.Quantity).HasPrecision(20, 6);
+        b.HasOne(x => x.HeaderLink).WithMany()
+            .HasForeignKey(x => x.ProductionTransferHeaderLinkId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.LineLink).WithMany()
+            .HasForeignKey(x => x.ProductionTransferLineLinkId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => x.IdempotencyKey).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x => new { x.ProductionTransferHeaderLinkId, x.NormalizedBarcode });
+        b.HasIndex(x => new { x.ProductionTransferHeaderLinkId, x.ProductionTransferLineLinkId, x.ScannedAtUtc });
+    }
+}
+
 public sealed class ProductionTransferPolicyConfiguration : BaseEntityConfiguration<ProductionTransferPolicy>
 {
     protected override void ConfigureEntity(EntityTypeBuilder<ProductionTransferPolicy> b)

@@ -6,6 +6,7 @@ using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Application;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
+using verii_wms_api_v2.Modules.StockTracking.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
@@ -21,6 +22,7 @@ public sealed class ProductionTransferExecutionService(
     IWarehouseTransferService transfers,
     IWarehouseTransferReservationService reservations,
     IStockMovementService stockMovements,
+    IStockTrackingPolicyResolver trackingPolicies,
     IAuditLogWriter audit) : IProductionTransferExecutionService
 {
     private static readonly WarehouseTransferBusinessContext[] Contexts =
@@ -36,7 +38,17 @@ public sealed class ProductionTransferExecutionService(
         return await MapAsync(aggregate.Header, aggregate.Link, ct);
     }
 
-    public async Task<ProductionTransferScanPickResult> ScanPickAsync(
+    public Task<ProductionTransferScanPickResult> ScanPickAsync(
+        long transferId,
+        ProductionTransferScanPickRequest request,
+        long actor,
+        CancellationToken ct = default) =>
+        uow.ExecuteInTransactionAsync(
+            token => ScanPickCoreAsync(transferId, request, actor, token),
+            ct,
+            IsolationLevel.Serializable);
+
+    private async Task<ProductionTransferScanPickResult> ScanPickCoreAsync(
         long transferId,
         ProductionTransferScanPickRequest request,
         long actor,
@@ -44,11 +56,34 @@ public sealed class ProductionTransferExecutionService(
     {
         if (request.IdempotencyKey == Guid.Empty) throw AppException.BadRequest("İşlem anahtarı zorunludur.");
         if (string.IsNullOrWhiteSpace(request.Barcode)) throw AppException.BadRequest("Barkod zorunludur.");
+        var normalizedBarcode = request.Barcode.Trim().ToUpperInvariant();
+
+        var replay = await uow.Repository<ProductionTransferBarcodeScan>().Query()
+            .FirstOrDefaultAsync(x => x.IdempotencyKey == request.IdempotencyKey, ct);
+        if (replay is not null)
+        {
+            var replayHeaderLink = await uow.Repository<ProductionTransferHeaderLink>().Query()
+                .SingleAsync(x => x.Id == replay.ProductionTransferHeaderLinkId, ct);
+            var replayLineLink = await uow.Repository<ProductionTransferLineLink>().Query()
+                .SingleAsync(x => x.Id == replay.ProductionTransferLineLinkId, ct);
+            if (replayHeaderLink.WarehouseTransferHeaderId != transferId
+                || replayLineLink.WarehouseTransferLineId != request.ExpectedLineId
+                || replay.NormalizedBarcode != normalizedBarcode)
+                throw AppException.Conflict("Aynı işlem anahtarı farklı bir barkod toplama isteğinde kullanılamaz.");
+            var replayLocation = await uow.Repository<WarehouseLocation>().Query()
+                .SingleAsync(x => x.Id == replay.SourceLocationId, ct);
+            var replayExecution = await GetAsync(transferId, ct);
+            var replayLine = replayExecution.Lines.Single(x => x.LineId == request.ExpectedLineId);
+            return new(replayExecution, replayLine.LineId, replayLine.StockCode, replay.Quantity,
+                replay.SerialNo, replay.LotNo, replay.BarcodeSource, replay.SourceLocationId,
+                replayLocation.Code, replayLocation.Name, null);
+        }
 
         var aggregate = await LoadAsync(transferId, false, ct);
         EnsurePickingAllowed(aggregate.Link);
         var line = aggregate.Header.Lines.SingleOrDefault(x => x.Id == request.ExpectedLineId)
             ?? throw AppException.BadRequest("Beklenen toplama kalemi bu üretim transferine ait değil.");
+        var lineLink = aggregate.Link.Lines.Single(x => x.WarehouseTransferLineId == line.Id);
         var remaining = line.RequestedQuantity - line.PickedQuantity;
         if (remaining <= 0) throw AppException.Conflict("Seçilen stok kalemi daha önce tamamen toplandı.");
         var waitingLocationId = aggregate.Header.SourceStagingLocationId
@@ -62,19 +97,33 @@ public sealed class ProductionTransferExecutionService(
             line.StockId), ct);
         if (!resolved.CanExecute || resolved.MissingFields.Count > 0)
             throw AppException.Conflict($"Barkod toplama için uygun değil: {string.Join(", ", resolved.MissingFields)}.");
-        if (line.YapCodeId.HasValue && resolved.YapCodeId != line.YapCodeId)
-            throw AppException.Conflict("Okutulan barkodun yapılandırma kodu beklenen kalemle uyuşmuyor.");
+        ValidateDimensions(line, resolved);
 
-        var sourceLocationId = request.SourceLocationId ?? resolved.SuggestedLocationId
-            ?? resolved.BalanceCandidates.OrderByDescending(x => x.AvailableQuantity).ThenBy(x => x.LocationCode).FirstOrDefault()?.LocationId;
-        if (!sourceLocationId.HasValue)
-            throw AppException.Conflict("Barkod birden fazla kaynak rafla eşleşiyor. Kaynak rafı seçip tekrar okutun.");
-        var sourceBalance = resolved.BalanceCandidates.FirstOrDefault(x => x.LocationId == sourceLocationId.Value)
+        var sourceLocationId = ResolveSourceLocation(request.SourceLocationId, line.DefaultSourceLocationId, resolved);
+        var sourceBalance = resolved.BalanceCandidates.FirstOrDefault(x => x.LocationId == sourceLocationId)
             ?? throw AppException.Conflict("Seçilen kaynak rafta okutulan barkoda ait kullanılabilir stok bulunamadı.");
+        ValidateSourceBalance(line, resolved, sourceBalance);
 
-        var quantity = resolved.SerialNo is not null ? 1m : Math.Min(resolved.Quantity ?? 1m, remaining);
-        quantity = Math.Min(quantity, sourceBalance.AvailableQuantity);
+        var quantityBound = ProductionTransferBarcodePickPolicy.IsQuantityBoundSource(resolved.Source);
+        var alreadyAccepted = quantityBound
+            ? await uow.Repository<ProductionTransferBarcodeScan>().Query()
+                .Where(x => x.ProductionTransferHeaderLinkId == aggregate.Link.Id
+                    && x.NormalizedBarcode == normalizedBarcode)
+                .SumAsync(x => (decimal?)x.Quantity, ct) ?? 0
+            : 0;
+        var policy = await trackingPolicies.ResolveAsync(aggregate.Header.BranchCode, line.StockId, ct);
+        var quantity = ProductionTransferBarcodePickPolicy.CalculateQuantity(
+            policy, resolved.Quantity, alreadyAccepted, remaining, sourceBalance.AvailableQuantity, quantityBound);
         if (quantity <= 0) throw AppException.Conflict("Okutulan barkod için toplanabilir miktar bulunamadı.");
+        try
+        {
+            StockTrackingPolicyGuard.ValidateSerialMovementQuantity(
+                policy, quantity, sourceBalance.AvailableQuantity, resolved.SerialNo);
+        }
+        catch (StockTrackingPolicyViolationException exception)
+        {
+            throw AppException.Conflict(exception.Message);
+        }
 
         await operations.PickAsync(transferId, new(
             request.IdempotencyKey,
@@ -91,12 +140,38 @@ public sealed class ProductionTransferExecutionService(
                 link.WorkflowStatus = ProductionTransferWorkflowStatus.Picking;
             link.UpdatedBy = actor;
             link.UpdatedDate = DateTime.UtcNow;
+            await uow.Repository<ProductionTransferBarcodeScan>().AddAsync(new()
+            {
+                BranchCode = aggregate.Header.BranchCode,
+                CreatedBy = actor,
+                CreatedDate = DateTime.UtcNow,
+                ProductionTransferHeaderLinkId = aggregate.Link.Id,
+                ProductionTransferLineLinkId = lineLink.Id,
+                IdempotencyKey = request.IdempotencyKey,
+                BarcodeValue = resolved.RawBarcode,
+                NormalizedBarcode = normalizedBarcode,
+                BarcodeSource = resolved.Source,
+                StockId = resolved.StockId,
+                YapCodeId = resolved.YapCodeId,
+                UnitCode = sourceBalance.UnitCode,
+                LotNo = resolved.LotNo,
+                SerialNo = resolved.SerialNo,
+                Quantity = quantity,
+                SourceLocationId = sourceLocationId,
+                TargetLocationId = waitingLocationId,
+                ScannedAtUtc = DateTimeOffset.UtcNow
+            }, token);
             await uow.SaveChangesAsync(token);
             return true;
         }, ct);
 
         var execution = await GetAsync(transferId, ct);
-        return new(execution, line.Id, line.StockCodeSnapshot, quantity, resolved.SerialNo, resolved.LotNo);
+        decimal? remainingBarcodeQuantity = quantityBound
+            ? Math.Max(0, (resolved.Quantity ?? 0) - alreadyAccepted - quantity)
+            : null;
+        return new(execution, line.Id, line.StockCodeSnapshot, quantity, resolved.SerialNo, resolved.LotNo,
+            resolved.Source, sourceLocationId, sourceBalance.LocationCode, sourceBalance.LocationName,
+            remainingBarcodeQuantity);
     }
 
     public Task<ProductionTransferExecutionDto> CompletePickingAsync(
@@ -420,6 +495,13 @@ public sealed class ProductionTransferExecutionService(
                 .Where(x => x.Id == header.SourceStagingLocationId.Value)
                 .Select(x => new { x.Id, x.Code, x.Name }).SingleOrDefaultAsync(ct)
             : null;
+        var routedLocationIds = header.Lines.Where(x => x.DefaultSourceLocationId.HasValue)
+            .Select(x => x.DefaultSourceLocationId!.Value).Distinct().ToArray();
+        var routedLocations = routedLocationIds.Length == 0
+            ? new Dictionary<long, WarehouseLocation>()
+            : await uow.Repository<WarehouseLocation>().Query()
+                .Where(x => routedLocationIds.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, ct);
         string? residualDocumentNo = null;
         if (link.ResidualWarehouseTransferHeaderId.HasValue)
             residualDocumentNo = await uow.Repository<WarehouseTransferHeader>().Query()
@@ -430,12 +512,16 @@ public sealed class ProductionTransferExecutionService(
         var lines = header.Lines.OrderBy(x => x.LineNo).Select(x =>
         {
             lineLinks.TryGetValue(x.Id, out var lineLink);
+            var routedLocation = x.DefaultSourceLocationId.HasValue
+                && routedLocations.TryGetValue(x.DefaultSourceLocationId.Value, out var location)
+                    ? location
+                    : null;
             return new ProductionTransferExecutionLineDto(
                 x.Id, x.LineNo, x.StockId, x.StockCodeSnapshot, x.StockNameSnapshot, x.UnitCode,
                 x.RequestedQuantity, x.PickedQuantity, lineLink?.HandedOverQuantity ?? 0,
                 Math.Max(0, x.RequestedQuantity - x.PickedQuantity),
                 Math.Max(0, x.RequestedQuantity - x.PickedQuantity),
-                x.TrackingType.ToString(), x.DefaultSourceLocationId, null, null);
+                x.TrackingType.ToString(), x.DefaultSourceLocationId, routedLocation?.Code, routedLocation?.Name);
         }).ToArray();
         var requested = lines.Sum(x => x.RequestedQuantity);
         var picked = lines.Sum(x => x.PickedQuantity);
@@ -458,6 +544,46 @@ public sealed class ProductionTransferExecutionService(
     {
         if (link.WorkflowStatus is not (ProductionTransferWorkflowStatus.Planned or ProductionTransferWorkflowStatus.Picking))
             throw AppException.Conflict("Bu üretim transferi toplama aşamasında değil.");
+    }
+
+    private static long ResolveSourceLocation(
+        long? requestedLocationId,
+        long? routedLocationId,
+        ResolvedWarehouseBarcode resolved)
+    {
+        if (requestedLocationId.HasValue) return requestedLocationId.Value;
+        if (routedLocationId.HasValue
+            && resolved.BalanceCandidates.Any(x => x.LocationId == routedLocationId.Value))
+            return routedLocationId.Value;
+        if (resolved.SuggestedLocationId.HasValue) return resolved.SuggestedLocationId.Value;
+        if (resolved.BalanceCandidates.Count == 1) return resolved.BalanceCandidates[0].LocationId;
+        throw AppException.Conflict(
+            "Barkod birden fazla kaynak rafla eşleşiyor. Fiziksel olarak topladığınız kaynak rafı seçip tekrar okutun.");
+    }
+
+    private static void ValidateDimensions(WarehouseTransferLine line, ResolvedWarehouseBarcode resolved)
+    {
+        if (!string.Equals(line.UnitCode.Trim(), resolved.UnitCode.Trim(), StringComparison.OrdinalIgnoreCase))
+            throw AppException.Conflict(
+                $"Okutulan etiketin birimi ({resolved.UnitCode}) emir kalemi birimiyle ({line.UnitCode}) uyuşmuyor.");
+        if (line.YapCodeId != resolved.YapCodeId)
+            throw AppException.Conflict(
+                "Okutulan barkodun Yapılandırma Kodu beklenen emir kalemiyle uyuşmuyor. " +
+                "Yapılandırma Kodu olmayan ve olan stok boyutları birbirinin yerine kullanılamaz.");
+    }
+
+    private static void ValidateSourceBalance(
+        WarehouseTransferLine line,
+        ResolvedWarehouseBarcode resolved,
+        WarehouseBarcodeBalanceCandidate balance)
+    {
+        if (balance.StockId != line.StockId
+            || balance.YapCodeId != line.YapCodeId
+            || !string.Equals(balance.UnitCode, line.UnitCode, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(balance.LotNo ?? string.Empty, resolved.LotNo ?? string.Empty, StringComparison.OrdinalIgnoreCase)
+            || !string.Equals(balance.SerialNo ?? string.Empty, resolved.SerialNo ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+            throw AppException.Conflict(
+                "Seçilen kaynak raf bakiyesi emir kaleminin stok/birim/Yapılandırma Kodu/lot/seri boyutlarıyla uyuşmuyor.");
     }
 
     private static void AddHistory(WarehouseTransferHeader header, WarehouseTransferStatus status, Guid correlationId, string? reason, long actor)

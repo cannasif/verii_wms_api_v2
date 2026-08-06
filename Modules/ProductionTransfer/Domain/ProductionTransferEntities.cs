@@ -89,6 +89,31 @@ public sealed class ProductionTransferLineLink : BaseEntity
     public decimal ShortClosedQuantity { get; set; }
 }
 
+/// <summary>
+/// Accepted physical barcode scans for a production transfer. This is an append-only
+/// operational journal used for idempotency, label-capacity control and traceability.
+/// </summary>
+public sealed class ProductionTransferBarcodeScan : BaseEntity
+{
+    public long ProductionTransferHeaderLinkId { get; set; }
+    public ProductionTransferHeaderLink HeaderLink { get; set; } = null!;
+    public long ProductionTransferLineLinkId { get; set; }
+    public ProductionTransferLineLink LineLink { get; set; } = null!;
+    public Guid IdempotencyKey { get; set; }
+    public string BarcodeValue { get; set; } = string.Empty;
+    public string NormalizedBarcode { get; set; } = string.Empty;
+    public string BarcodeSource { get; set; } = string.Empty;
+    public long StockId { get; set; }
+    public long? YapCodeId { get; set; }
+    public string UnitCode { get; set; } = string.Empty;
+    public string? LotNo { get; set; }
+    public string? SerialNo { get; set; }
+    public decimal Quantity { get; set; }
+    public long SourceLocationId { get; set; }
+    public long TargetLocationId { get; set; }
+    public DateTimeOffset ScannedAtUtc { get; set; }
+}
+
 public sealed class ProductionTransferPolicy : BaseEntity
 {
     public string PolicyKey { get; set; } = "DEFAULT";

@@ -90,8 +90,12 @@ public sealed class WarehouseBarcodeResolutionService(
                 quantity = 1;
             }
         }
+        var unitCode = Clean(goodsReceiptLabel?.UnitCode
+            ?? warehouseInboundLabel?.UnitCode
+            ?? serialBalance?.UnitCode, 20);
 
         var stock = await ResolveStock(branch, stockId, stockCode, raw, request.Purpose, cancellationToken);
+        unitCode ??= Clean(stock.BaseUnitCode, 20) ?? "ADET";
         if (request.ExpectedStockId.HasValue && stock.Id != request.ExpectedStockId.Value)
             throw AppException.Conflict($"Okutulan barkod beklenen stokla uyuşmuyor. Barkod: {stock.ErpStockCode}.");
 
@@ -114,7 +118,12 @@ public sealed class WarehouseBarcodeResolutionService(
             && parsed is null)
             serial = raw;
 
-        var yap = await ResolveYapCode(branch, stock.Id, yapCode, serialBalance?.YapCodeId, cancellationToken);
+        var yap = await ResolveYapCode(
+            branch,
+            stock.Id,
+            yapCode,
+            goodsReceiptLabel?.YapCodeId ?? warehouseInboundLabel?.YapCodeId ?? serialBalance?.YapCodeId,
+            cancellationToken);
         var policy = await trackingPolicies.ResolveAsync(branch, stock.Id, cancellationToken);
         if (serial is not null) quantity ??= 1;
 
@@ -146,7 +155,7 @@ public sealed class WarehouseBarcodeResolutionService(
             yap?.Id,
             yap?.ConfigurationCode,
             quantity,
-            serialBalance?.UnitCode ?? "ADET",
+            unitCode,
             lot,
             serial,
             manufacturingDate,

@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
+using verii_wms_api_v2.Modules.StockTracking.Application;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -15,7 +16,9 @@ using YapCodeEntity = verii_wms_api_v2.Modules.YapCode.Domain.YapCode;
 
 namespace verii_wms_api_v2.Modules.StockBalance.Application;
 
-public sealed class StockBalanceService(IUnitOfWork unitOfWork) : IStockBalanceService
+public sealed class StockBalanceService(
+    IUnitOfWork unitOfWork,
+    IStockTrackingPolicyResolver trackingPolicies) : IStockBalanceService
 {
     private IGenericRepository<LocationStockBalance> Locations => unitOfWork.Repository<LocationStockBalance>();
     private IGenericRepository<WarehouseStockBalance> Warehouses => unitOfWork.Repository<WarehouseStockBalance>();
@@ -84,6 +87,8 @@ public sealed class StockBalanceService(IUnitOfWork unitOfWork) : IStockBalanceS
                     .SumAsync(x => (decimal?)x.QuantityDelta, ct) ?? 0;
                 return new StockReservationPostResult(replay.Id, true, replayTotal);
             }
+
+            await ValidateReservationTrackingPoliciesAsync(normalized, ct);
 
             var groups = normalized.Lines.GroupBy(ReservationKey).ToList();
             var warehouseIds = groups.Select(x => x.Key.WarehouseId).Distinct().ToArray();
@@ -514,8 +519,37 @@ public sealed class StockBalanceService(IUnitOfWork unitOfWork) : IStockBalanceS
         if (request.Lines.Count is < 1 or > 500 || request.Lines.Any(x => x.ReferenceLineId <= 0 || x.QuantityDelta == 0
             || x.WarehouseId <= 0 || x.LocationId <= 0 || x.StockId <= 0))
             throw AppException.BadRequest("Rezervasyon satırları geçersiz.");
-        if (request.Lines.Any(x => !string.IsNullOrWhiteSpace(x.SerialNo) && Math.Abs(x.QuantityDelta) != 1))
-            throw AppException.BadRequest("Seri bazlı rezervasyon miktarı 1 olmalıdır.");
+    }
+
+    private async Task ValidateReservationTrackingPoliciesAsync(
+        PostStockReservationRequest request,
+        CancellationToken cancellationToken)
+    {
+        var serializedLines = request.Lines.Where(x => !string.IsNullOrWhiteSpace(x.SerialNo)).ToArray();
+        if (serializedLines.Length == 0) return;
+
+        var stockIds = serializedLines.Select(x => x.StockId).Distinct().ToArray();
+        var branches = await Stocks.Query()
+            .Where(x => stockIds.Contains(x.Id))
+            .Select(x => new { x.Id, x.BranchCode })
+            .ToDictionaryAsync(x => x.Id, x => x.BranchCode, cancellationToken);
+        if (branches.Count != stockIds.Length)
+            throw AppException.BadRequest("Seri rezervasyonu için stok kartlarından biri bulunamadı.");
+
+        var policies = new Dictionary<long, EffectiveStockTrackingPolicy>();
+        foreach (var stockId in stockIds)
+            policies[stockId] = await trackingPolicies.ResolveAsync(branches[stockId], stockId, cancellationToken);
+
+        try
+        {
+            foreach (var line in serializedLines)
+                StockTrackingPolicyGuard.ValidateSerialQuantity(
+                    policies[line.StockId], Math.Abs(line.QuantityDelta), line.SerialNo);
+        }
+        catch (StockTrackingPolicyViolationException exception)
+        {
+            throw AppException.BadRequest(exception.Message);
+        }
     }
     private sealed record LocationDimensionKey(long WarehouseId, long LocationId, long StockId, long? YapCodeId, string UnitCode, string LotNo, string SerialNo, string StockStatus);
     private sealed record WarehouseDimensionKey(long WarehouseId, long StockId, long? YapCodeId, string UnitCode, string StockStatus);

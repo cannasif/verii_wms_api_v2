@@ -71,7 +71,12 @@ public sealed record ProductionTransferScanPickResult(
     string StockCode,
     decimal AcceptedQuantity,
     string? SerialNo,
-    string? LotNo);
+    string? LotNo,
+    string BarcodeSource,
+    long SourceLocationId,
+    string SourceLocationCode,
+    string SourceLocationName,
+    decimal? RemainingBarcodeQuantity);
 
 public interface IProductionTransferExecutionService
 {
