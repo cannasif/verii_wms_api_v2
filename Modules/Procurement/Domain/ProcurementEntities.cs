@@ -8,6 +8,7 @@ public enum ProcurementQuoteStatus { Draft=1, Submitted=2, Approved=3, Rejected=
 public enum ProcurementOrderStatus { Draft=1, PendingApproval=2, Approved=3, SentToSupplier=4, PartiallyReceived=5, Received=6, Cancelled=7 }
 public enum ProcurementInvitationStatus { Sent=1, Opened=2, DraftSaved=3, Submitted=4, RevisionRequested=5, Revoked=6, Expired=7 }
 public enum SupplierQuoteChannelMode { InternalOnly=1, PortalOptional=2, PortalRequired=3 }
+public enum ProcurementAttachmentOwnerType { Request=1, RequestLine=2, Quote=3, QuoteLine=4 }
 
 public sealed class ProcurementRequest : BaseEntity
 {
@@ -80,7 +81,7 @@ public sealed class ProcurementRfqSupplier : BaseEntity
 {
     public long ProcurementRfqId { get; set; }
     public ProcurementRfq Rfq { get; set; } = null!;
-    public long SupplierId { get; set; }
+    public long? SupplierId { get; set; }
     public string SupplierCodeSnapshot { get; set; } = string.Empty;
     public string SupplierNameSnapshot { get; set; } = string.Empty;
 }
@@ -89,7 +90,7 @@ public sealed class ProcurementSupplierQuote : BaseEntity
 {
     public long ProcurementRfqId { get; set; }
     public ProcurementRfq Rfq { get; set; } = null!;
-    public long SupplierId { get; set; }
+    public long? SupplierId { get; set; }
     public string SupplierCodeSnapshot { get; set; } = string.Empty;
     public string SupplierNameSnapshot { get; set; } = string.Empty;
     public string QuoteNo { get; set; } = string.Empty;
@@ -167,7 +168,7 @@ public sealed class ProcurementPurchaseOrder : BaseEntity
     public string OrderNo { get; set; } = string.Empty;
     public DateOnly OrderDate { get; set; }
     public DateOnly? DeliveryDate { get; set; }
-    public long SupplierId { get; set; }
+    public long? SupplierId { get; set; }
     public string SupplierCodeSnapshot { get; set; } = string.Empty;
     public string SupplierNameSnapshot { get; set; } = string.Empty;
     public long? SourceQuoteId { get; set; }
@@ -213,4 +214,15 @@ public sealed class ProcurementStatusHistory : BaseEntity
     public long ActorUserId { get; set; }
     public string? Note { get; set; }
     public DateTimeOffset ChangedAtUtc { get; set; }
+}
+
+public sealed class ProcurementAttachment : BaseEntity
+{
+    public ProcurementAttachmentOwnerType OwnerType { get; set; }
+    public long OwnerId { get; set; }
+    public string FileName { get; set; } = string.Empty;
+    public string ContentType { get; set; } = string.Empty;
+    public string StoragePath { get; set; } = string.Empty;
+    public string? Caption { get; set; }
+    public long FileSize { get; set; }
 }

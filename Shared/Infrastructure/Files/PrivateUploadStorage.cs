@@ -7,7 +7,8 @@ public enum PrivateUploadArea
 {
     SacMalKabul,
     SacPanel,
-    IncomingInvoice
+    IncomingInvoice,
+    Procurement
 }
 
 public sealed record PrivateUploadPolicy(
@@ -129,6 +130,7 @@ public sealed class PrivateUploadStorage(IWebHostEnvironment environment):IPriva
         PrivateUploadArea.SacMalKabul=>"SacMalKabul",
         PrivateUploadArea.SacPanel=>"SacPanel",
         PrivateUploadArea.IncomingInvoice=>"IncomingInvoice",
+        PrivateUploadArea.Procurement=>"Procurement",
         _=>throw AppException.BadRequest("Dosya alanı geçersiz.")
     };
 
