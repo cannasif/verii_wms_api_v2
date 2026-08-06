@@ -49,6 +49,10 @@ public sealed class KkdController(
     public async Task<IActionResult> StocksPaged(PagedRequest request, [FromQuery] string? groupCode, CancellationToken ct)
     { await Require("WMS.KKD.DEFINITIONS.VIEW", ct); return Ok(ApiResponse<PagedResponse<KkdStockLookupRow>>.Ok(await definitions.GetStocksPagedAsync(request, groupCode, ct))); }
 
+    [HttpPost("lookups/stocks/resolve")]
+    public async Task<IActionResult> ResolveStocks(KkdStockBulkResolveRequest request, CancellationToken ct)
+    { await Require("WMS.KKD.DEFINITIONS.VIEW", ct); return Ok(ApiResponse<IReadOnlyList<KkdStockBulkResolveRow>>.Ok(await definitions.ResolveStocksAsync(request, ct))); }
+
     [HttpPost("lookups/stock-groups/paged")]
     public async Task<IActionResult> StockGroupsPaged(PagedRequest request, CancellationToken ct)
     { await Require("WMS.KKD.DEFINITIONS.VIEW", ct); return Ok(ApiResponse<PagedResponse<KkdStockGroupLookupRow>>.Ok(await definitions.GetStockGroupsPagedAsync(request, ct))); }
@@ -87,6 +91,14 @@ public sealed class KkdController(
     [HttpPut("matrices/{id:long}")]
     public async Task<IActionResult> UpsertMatrix(long? id, KkdMatrixUpsertRequest request, CancellationToken ct)
     { await Require("WMS.KKD.MATRICES.MANAGE", ct); return Ok(ApiResponse<long>.Ok(await definitions.UpsertMatrixAsync(id, request, UserId(), ct), "KKD hak matrisi kaydedildi.")); }
+
+    [HttpPost("matrices/validate")]
+    [HttpPost("matrices/{id:long}/validate")]
+    public async Task<IActionResult> ValidateMatrix(long? id, KkdMatrixUpsertRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.MATRICES.MANAGE", ct);
+        return Ok(ApiResponse<KkdMatrixValidationResult>.Ok(await definitions.ValidateMatrixAsync(id, request, ct)));
+    }
 
     [HttpPost("overrides")]
     public async Task<IActionResult> CreateOverride(KkdOverrideCreateRequest request, CancellationToken ct)

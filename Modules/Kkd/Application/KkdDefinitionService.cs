@@ -47,6 +47,22 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
         return query.ToPagedResponseAsync(request, ct);
     }
 
+    public async Task<IReadOnlyList<KkdStockBulkResolveRow>> ResolveStocksAsync(KkdStockBulkResolveRequest request, CancellationToken ct = default)
+    {
+        if (request.Codes.Count > 5000) throw AppException.BadRequest("Tek işlemde en fazla 5.000 stok kodu çözümlenebilir.");
+        var requested = request.Codes.Select(Normalize).Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var found = new Dictionary<string, KkdStockLookupRow>(StringComparer.OrdinalIgnoreCase);
+        foreach (var chunk in requested.Chunk(1000))
+        {
+            var rows = await uow.Repository<StockEntity>().Query().Where(x => chunk.Contains(x.ErpStockCode))
+                .Select(x => new KkdStockLookupRow(x.Id, x.ErpStockCode, x.StockName, x.BaseUnitCode, x.GroupCode)).ToListAsync(ct);
+            foreach (var row in rows) found[row.Code] = row;
+        }
+        return requested.Select(code => found.TryGetValue(code, out var stock)
+            ? new KkdStockBulkResolveRow(code, stock.Id, stock.Code, stock.Name, stock.UnitCode, stock.GroupCode, true)
+            : new KkdStockBulkResolveRow(code, null, null, null, null, null, false)).ToArray();
+    }
+
     public Task<PagedResponse<KkdStockGroupLookupRow>> GetStockGroupsPagedAsync(PagedRequest request, CancellationToken ct = default)
     {
         var groups = uow.Repository<StockEntity>().Query()
@@ -114,9 +130,77 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
                     r.Phases.Where(p => !p.IsDeleted).OrderBy(p => p.SortOrder).Select(p => new KkdPhaseDetail(
                         p.Id, p.PhaseType.ToString(), p.OffsetMonths, p.Quantity, p.AllowBulkIssue,
                         p.FrequencyDays, p.QuantityPerFrequency, p.PeriodType == null ? null : p.PeriodType.ToString(),
-                        p.PeriodInterval, p.SortOrder, p.IsActive, p.Description)).ToList())).ToList()))
+                        p.PeriodInterval, p.SortOrder, p.IsActive, p.Description)).ToList())).ToList(), x.RowVersion))
             .SingleOrDefaultAsync(ct);
         return matrix ?? throw AppException.NotFound("KKD hak matrisi bulunamadı.");
+    }
+
+    public async Task<KkdMatrixValidationResult> ValidateMatrixAsync(long? id, KkdMatrixUpsertRequest request, CancellationToken ct = default)
+    {
+        const int maxRules = 5000;
+        const int maxIssues = 500;
+        var issues = new List<KkdMatrixValidationIssue>();
+        void Add(int row, string field, string code, string message)
+        {
+            if (issues.Count < maxIssues) issues.Add(new(row, field, code, message));
+        }
+
+        if (request.Rules.Count == 0) Add(0, "rules", "REQUIRED", "Hak matrisi en az bir kural içermelidir.");
+        if (request.Rules.Count > maxRules) Add(0, "rules", "LIMIT_EXCEEDED", $"Tek işlemde en fazla {maxRules:N0} kural işlenebilir.");
+        if (request.EffectiveTo.HasValue && request.EffectiveFrom.HasValue && request.EffectiveTo < request.EffectiveFrom)
+            Add(0, "effectiveTo", "INVALID_RANGE", "Matris bitiş tarihi başlangıç tarihinden önce olamaz.");
+        if (!await uow.Repository<KkdDepartment>().AnyAsync(x => x.Id == request.DepartmentId && x.IsActive, ct))
+            Add(0, "departmentId", "NOT_FOUND", "Aktif departman bulunamadı.");
+        if (!await uow.Repository<KkdRole>().AnyAsync(x => x.Id == request.RoleId && x.IsActive, ct))
+            Add(0, "roleId", "NOT_FOUND", "Aktif rol bulunamadı.");
+        if (!await uow.Repository<CustomerEntity>().AnyAsync(x => x.Id == request.CustomerId, ct))
+            Add(0, "customerId", "NOT_FOUND", "Seçilen entegre cari bulunamadı.");
+
+        var stockIds = request.Rules.Where(x => x.StockId.HasValue).Select(x => x.StockId!.Value).Distinct().ToArray();
+        var stocks = await LoadStocksAsync(stockIds, ct);
+        var groupCodes = request.Rules.Where(x => !x.StockId.HasValue).Select(x => Normalize(x.GroupCode))
+            .Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var knownGroups = await LoadStockGroupsAsync(groupCodes, ct);
+        var seen = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        for (var index = 0; index < request.Rules.Count; index++)
+        {
+            var row = index + 1;
+            var rule = request.Rules[index];
+            stocks.TryGetValue(rule.StockId ?? 0, out var stock);
+            if (rule.StockId.HasValue && stock is null)
+                Add(row, "stockId", "NOT_FOUND", $"{rule.StockId} numaralı stok bulunamadı.");
+            var groupCode = Normalize(rule.GroupCode);
+            if (groupCode.Length == 0 && stock is not null) groupCode = Normalize(stock.GroupCode);
+            if (groupCode.Length == 0)
+                Add(row, "groupCode", "REQUIRED", "Stok seçilmediğinde hakediş grubu zorunludur.");
+            else if (stock is null && !rule.StockId.HasValue && !knownGroups.Contains(groupCode))
+                Add(row, "groupCode", "NOT_FOUND", $"{groupCode} kodlu ERP stok grubu bulunamadı.");
+
+            var key = $"{rule.StockId?.ToString() ?? "GROUP"}|{groupCode}";
+            if (seen.TryGetValue(key, out var firstRow))
+                Add(row, "stockId", "DUPLICATE", $"Aynı stok/grup kuralı {firstRow}. satırda zaten tanımlı.");
+            else seen[key] = row;
+
+            if (rule.AnnualIssueCount is <= 0) Add(row, "annualIssueCount", "INVALID", "Yıllık teslim sayısı sıfırdan büyük olmalıdır.");
+            if (rule.AnnualQuantity is < 0) Add(row, "annualQuantity", "INVALID", "Yıllık miktar negatif olamaz.");
+            if (rule.MaxCarryQuantity is < 0) Add(row, "maxCarryQuantity", "INVALID", "Devreden üst sınır negatif olamaz.");
+            if (rule.Phases.Count == 0) Add(row, "phases", "REQUIRED", "En az bir dönem tanımlanmalıdır.");
+            foreach (var phase in rule.Phases)
+            {
+                if (!Enum.TryParse<KkdEntitlementPhaseType>(phase.PhaseType, true, out _))
+                    Add(row, "phaseType", "INVALID_ENUM", $"Geçersiz dönem tipi: {phase.PhaseType}");
+                if (phase.Quantity < 0 || phase.OffsetMonths < 0)
+                    Add(row, "quantity", "INVALID", "Dönem miktarı ve ay ofseti negatif olamaz.");
+                if (phase.FrequencyDays is <= 0 || phase.PeriodInterval is <= 0)
+                    Add(row, "period", "INVALID", "Sıklık ve periyot aralığı sıfırdan büyük olmalıdır.");
+                if (!string.IsNullOrWhiteSpace(phase.PeriodType) && !Enum.TryParse<KkdPeriodType>(phase.PeriodType, true, out _))
+                    Add(row, "periodType", "INVALID_ENUM", $"Geçersiz periyot tipi: {phase.PeriodType}");
+            }
+        }
+
+        return new(issues.Count == 0, request.Rules.Count, request.Rules.Sum(x => x.Phases.Count),
+            request.Rules.Count(x => x.StockId.HasValue), request.Rules.Count(x => !x.StockId.HasValue), issues);
     }
 
     public async Task<long> UpsertDepartmentAsync(long? id, KkdDepartmentUpsertRequest request, long actor, CancellationToken ct = default)
@@ -185,14 +269,9 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
 
     private async Task<long> UpsertMatrixCoreAsync(long? id, KkdMatrixUpsertRequest request, long actor, CancellationToken ct)
     {
-        if (request.Rules.Count == 0) throw AppException.BadRequest("Hak matrisi en az bir kural içermelidir.");
-        if (request.EffectiveTo.HasValue && request.EffectiveFrom.HasValue && request.EffectiveTo < request.EffectiveFrom)
-            throw AppException.BadRequest("Matris bitiş tarihi başlangıç tarihinden önce olamaz.");
-        if (!await uow.Repository<KkdDepartment>().AnyAsync(x => x.Id == request.DepartmentId && x.IsActive, ct)
-            || !await uow.Repository<KkdRole>().AnyAsync(x => x.Id == request.RoleId && x.IsActive, ct))
-            throw AppException.BadRequest("Aktif departman ve rol seçilmelidir.");
-        if (!await uow.Repository<CustomerEntity>().AnyAsync(x => x.Id == request.CustomerId, ct))
-            throw AppException.BadRequest("Seçilen entegre cari bulunamadı.");
+        var validation = await ValidateMatrixAsync(id, request, ct);
+        if (!validation.IsValid)
+            throw AppException.BadRequest($"{validation.Issues[0].Message} Toplam {validation.Issues.Count} doğrulama hatası bulundu.");
 
         var code = RequiredCode(request.Code, "Matris kodu", 80);
         var repository = uow.Repository<KkdEntitlementMatrix>();
@@ -209,14 +288,15 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
             ? await repository.Query(true).Include(x => x.Rules).ThenInclude(x => x.Phases).SingleOrDefaultAsync(x => x.Id == id, ct)
                 ?? throw AppException.NotFound("KKD matrisi bulunamadı.")
             : new KkdEntitlementMatrix();
-        var now = DateTime.UtcNow;
-        foreach (var oldRule in entity.Rules.Where(x => !x.IsDeleted))
+        if (id.HasValue && !string.IsNullOrWhiteSpace(request.ExpectedRowVersion))
         {
-            oldRule.IsDeleted = true; oldRule.DeletedBy = actor; oldRule.DeletedDate = now;
-            foreach (var oldPhase in oldRule.Phases.Where(x => !x.IsDeleted))
-            { oldPhase.IsDeleted = true; oldPhase.DeletedBy = actor; oldPhase.DeletedDate = now; }
+            byte[] expected;
+            try { expected = Convert.FromBase64String(request.ExpectedRowVersion); }
+            catch (FormatException) { throw AppException.BadRequest("Matris sürüm bilgisi geçersiz."); }
+            if (!entity.RowVersion.SequenceEqual(expected))
+                throw AppException.Conflict("Hak matrisi başka bir kullanıcı tarafından değiştirildi. Güncel veriyi yükleyip tekrar deneyin.");
         }
-
+        var now = DateTime.UtcNow;
         entity.CustomerId = request.CustomerId; entity.DepartmentId = request.DepartmentId; entity.RoleId = request.RoleId;
         entity.Code = code; entity.Name = RequiredText(request.Name, "Matris adı", 200);
         entity.EffectiveFrom = request.EffectiveFrom; entity.EffectiveTo = request.EffectiveTo;
@@ -224,36 +304,41 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
         Touch(entity, actor, id.HasValue);
         if (!id.HasValue) await repository.AddAsync(entity, ct);
 
-        var duplicateKeys = request.Rules.GroupBy(x => $"{x.StockId?.ToString() ?? "GROUP"}|{Normalize(x.GroupCode)}")
-            .Where(x => x.Count() > 1).Select(x => x.Key).ToArray();
-        if (duplicateKeys.Length > 0) throw AppException.BadRequest("Matris içinde aynı stok/grup kuralı birden fazla kez tanımlanamaz.");
+        var stockIds = request.Rules.Where(x => x.StockId.HasValue).Select(x => x.StockId!.Value).Distinct().ToArray();
+        var stocks = await LoadStocksAsync(stockIds, ct);
+        var existingRules = entity.Rules.Where(x => !x.IsDeleted)
+            .ToDictionary(x => MatrixRuleKey(x.StockId, x.GroupCode), StringComparer.OrdinalIgnoreCase);
+        var requestedRuleKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var item in request.Rules)
         {
-            StockEntity? stock = null;
-            if (item.StockId.HasValue)
-                stock = await uow.Repository<StockEntity>().FindByIdAsync(item.StockId.Value, false, ct)
-                    ?? throw AppException.BadRequest($"{item.StockId} numaralı stok bulunamadı.");
+            stocks.TryGetValue(item.StockId ?? 0, out var stock);
             var groupCode = Normalize(item.GroupCode);
             var stockGroupCode = Normalize(stock?.GroupCode);
             if (stock is not null && groupCode.Length == 0)
                 groupCode = stockGroupCode;
             if (groupCode.Length == 0)
                 throw AppException.BadRequest("Stok seçilmediğinde hakediş grubu zorunludur.");
-            // Stok-özel kuralda GroupCode, ERP stok grubundan bağımsız bir KKD hakediş kategorisi olabilir.
-            // Grup bazlı kuralda ise kodun gerçekten ERP stok kartlarında karşılığı bulunmalıdır.
-            if (stock is null && !await uow.Repository<StockEntity>().AnyAsync(x => x.GroupCode == groupCode, ct))
-                throw AppException.BadRequest($"{groupCode} kodlu stok grubu bulunamadı.");
-            var rule = new KkdEntitlementRule
+            var ruleKey = MatrixRuleKey(stock?.Id, groupCode);
+            requestedRuleKeys.Add(ruleKey);
+            var isNewRule = !existingRules.TryGetValue(ruleKey, out var rule);
+            rule ??= new KkdEntitlementRule
             {
                 BranchCode = entity.BranchCode,
-                Matrix = entity, GroupCode = groupCode, GroupName = Clean(item.GroupName, 200) ?? groupCode,
-                StockId = stock?.Id, StockCodeSnapshot = stock?.ErpStockCode, StockNameSnapshot = stock?.StockName,
-                StandardCode = Clean(item.StandardCode, 80), StandardName = Clean(item.StandardName, 200),
-                AnnualIssueCount = item.AnnualIssueCount, AnnualQuantity = item.AnnualQuantity, MaxCarryQuantity = item.MaxCarryQuantity,
-                AllowBulkIssue = item.AllowBulkIssue, IsMandatory = item.IsMandatory, SortOrder = item.SortOrder,
-                IsActive = item.IsActive, Description = Clean(item.Description, 1000), CreatedBy = actor, CreatedDate = now
+                Matrix = entity, CreatedBy = actor, CreatedDate = now
             };
+            rule.GroupCode = groupCode; rule.GroupName = Clean(item.GroupName, 200) ?? groupCode;
+            rule.StockId = stock?.Id; rule.StockCodeSnapshot = stock?.ErpStockCode; rule.StockNameSnapshot = stock?.StockName;
+            rule.StandardCode = Clean(item.StandardCode, 80); rule.StandardName = Clean(item.StandardName, 200);
+            rule.AnnualIssueCount = item.AnnualIssueCount; rule.AnnualQuantity = item.AnnualQuantity;
+            rule.MaxCarryQuantity = item.MaxCarryQuantity; rule.AllowBulkIssue = item.AllowBulkIssue;
+            rule.IsMandatory = item.IsMandatory; rule.SortOrder = item.SortOrder; rule.IsActive = item.IsActive;
+            rule.Description = Clean(item.Description, 1000);
+            if (!isNewRule) Touch(rule, actor, true);
+
+            var existingPhases = rule.Phases.Where(x => !x.IsDeleted)
+                .ToDictionary(x => MatrixPhaseKey(x.PhaseType, x.OffsetMonths), StringComparer.OrdinalIgnoreCase);
+            var requestedPhaseKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (item.Phases.Count == 0) throw AppException.BadRequest($"{rule.GroupCode} kuralında en az bir dönem olmalıdır.");
             foreach (var phaseRequest in item.Phases)
             {
@@ -266,18 +351,35 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
                         throw AppException.BadRequest($"Geçersiz KKD periyot tipi: {phaseRequest.PeriodType}");
                     periodType = parsed;
                 }
-                rule.Phases.Add(new KkdEntitlementPhase
+                var phaseKey = MatrixPhaseKey(phaseType, phaseRequest.OffsetMonths);
+                requestedPhaseKeys.Add(phaseKey);
+                var isNewPhase = !existingPhases.TryGetValue(phaseKey, out var phase);
+                phase ??= new KkdEntitlementPhase
                 {
                     BranchCode = entity.BranchCode,
-                    Rule = rule, PhaseType = phaseType, OffsetMonths = phaseRequest.OffsetMonths,
-                    Quantity = phaseRequest.Quantity, AllowBulkIssue = phaseRequest.AllowBulkIssue,
-                    FrequencyDays = phaseRequest.FrequencyDays, QuantityPerFrequency = phaseRequest.QuantityPerFrequency,
-                    PeriodType = periodType, PeriodInterval = phaseRequest.PeriodInterval, SortOrder = phaseRequest.SortOrder,
-                    IsActive = phaseRequest.IsActive, Description = Clean(phaseRequest.Description, 1000),
-                    CreatedBy = actor, CreatedDate = now
-                });
+                    Rule = rule, CreatedBy = actor, CreatedDate = now
+                };
+                phase.PhaseType = phaseType; phase.OffsetMonths = phaseRequest.OffsetMonths;
+                phase.Quantity = phaseRequest.Quantity; phase.AllowBulkIssue = phaseRequest.AllowBulkIssue;
+                phase.FrequencyDays = phaseRequest.FrequencyDays; phase.QuantityPerFrequency = phaseRequest.QuantityPerFrequency;
+                phase.PeriodType = periodType; phase.PeriodInterval = phaseRequest.PeriodInterval;
+                phase.SortOrder = phaseRequest.SortOrder; phase.IsActive = phaseRequest.IsActive;
+                phase.Description = Clean(phaseRequest.Description, 1000);
+                if (isNewPhase) rule.Phases.Add(phase); else Touch(phase, actor, true);
             }
-            entity.Rules.Add(rule);
+            foreach (var removedPhase in existingPhases.Where(x => !requestedPhaseKeys.Contains(x.Key)).Select(x => x.Value))
+            {
+                removedPhase.IsDeleted = true; removedPhase.DeletedBy = actor; removedPhase.DeletedDate = now;
+            }
+            if (isNewRule) entity.Rules.Add(rule);
+        }
+        foreach (var removedRule in existingRules.Where(x => !requestedRuleKeys.Contains(x.Key)).Select(x => x.Value))
+        {
+            removedRule.IsDeleted = true; removedRule.DeletedBy = actor; removedRule.DeletedDate = now;
+            foreach (var removedPhase in removedRule.Phases.Where(x => !x.IsDeleted))
+            {
+                removedPhase.IsDeleted = true; removedPhase.DeletedBy = actor; removedPhase.DeletedDate = now;
+            }
         }
         await uow.SaveChangesAsync(ct);
         return entity.Id;
@@ -303,6 +405,30 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
         return entity.Id;
     }
 
+    private async Task<Dictionary<long, StockEntity>> LoadStocksAsync(IReadOnlyCollection<long> ids, CancellationToken ct)
+    {
+        var result = new Dictionary<long, StockEntity>();
+        foreach (var chunk in ids.Chunk(1000))
+        {
+            var rows = await uow.Repository<StockEntity>().Query().Where(x => chunk.Contains(x.Id)).ToListAsync(ct);
+            foreach (var row in rows) result[row.Id] = row;
+        }
+        return result;
+    }
+
+    private async Task<HashSet<string>> LoadStockGroupsAsync(IReadOnlyCollection<string> codes, CancellationToken ct)
+    {
+        var result = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var chunk in codes.Chunk(1000))
+        {
+            var rows = await uow.Repository<StockEntity>().Query()
+                .Where(x => x.GroupCode != null && chunk.Contains(x.GroupCode))
+                .Select(x => x.GroupCode!).Distinct().ToListAsync(ct);
+            result.UnionWith(rows);
+        }
+        return result;
+    }
+
     private static string RequiredText(string? value, string field, int max)
     {
         var result = value?.Trim();
@@ -313,6 +439,8 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
     private static string RequiredCode(string? value, string field, int max) =>
         RequiredText(value, field, max).ToUpperInvariant();
     private static string Normalize(string? value) => value?.Trim().ToUpperInvariant() ?? string.Empty;
+    private static string MatrixRuleKey(long? stockId, string? groupCode) => $"{stockId?.ToString() ?? "GROUP"}|{Normalize(groupCode)}";
+    private static string MatrixPhaseKey(KkdEntitlementPhaseType phaseType, int offsetMonths) => $"{phaseType}|{offsetMonths}";
     private static string? Clean(string? value, int max) => string.IsNullOrWhiteSpace(value) ? null : value.Trim()[..Math.Min(value.Trim().Length, max)];
     private static void Touch(verii_wms_api_v2.Shared.Domain.BaseEntity entity, long actor, bool exists)
     {
