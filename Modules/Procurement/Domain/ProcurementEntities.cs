@@ -2,7 +2,7 @@ using verii_wms_api_v2.Shared.Domain;
 
 namespace verii_wms_api_v2.Modules.Procurement.Domain;
 
-public enum ProcurementRequestStatus { Draft=1, PendingApproval=2, Approved=3, Rejected=4, Converted=5, Cancelled=6, PartiallyConverted=7 }
+public enum ProcurementRequestStatus { Draft=1, PendingApproval=2, Approved=3, Rejected=4, Converted=5, Cancelled=6, PartiallyConverted=7, PartiallyApproved=8 }
 public enum ProcurementRfqStatus { Draft=1, Sent=2, Quoted=3, Closed=4, Cancelled=5 }
 public enum ProcurementQuoteStatus { Draft=1, Submitted=2, Approved=3, Rejected=4, Converted=5, Cancelled=6, PartiallyConverted=7 }
 public enum ProcurementOrderStatus { Draft=1, PendingApproval=2, Approved=3, SentToSupplier=4, PartiallyReceived=5, Received=6, Cancelled=7 }
@@ -39,6 +39,7 @@ public sealed class ProcurementRequestLine : BaseEntity
     public string UnitCode { get; set; } = "ADET";
     public decimal RequestedQuantity { get; set; }
     public decimal ConvertedQuantity { get; set; }
+    public ProcurementRequestStatus Status { get; set; } = ProcurementRequestStatus.Draft;
     public DateOnly? RequiredDate { get; set; }
     public string? ProjectCode { get; set; }
     public string? Description { get; set; }

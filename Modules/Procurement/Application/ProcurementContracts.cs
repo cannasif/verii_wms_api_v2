@@ -4,7 +4,7 @@ namespace verii_wms_api_v2.Modules.Procurement.Application;
 
 public sealed record ProcurementLineInput(long? StockId,string? StockCode,string StockName,string UnitCode,decimal Quantity,DateOnly? RequiredDate,string? ProjectCode,string? Description);
 public sealed record CreateProcurementRequest(DateOnly? RequestDate,DateOnly? RequiredDate,string? DepartmentCode,string? ProjectCode,string Subject,string? Description,IReadOnlyList<ProcurementLineInput> Lines,string? RequestNo=null);
-public sealed record ProcurementTransitionRequest(string? Note);
+public sealed record ProcurementTransitionRequest(string? Note,IReadOnlyList<long>? RequestLineIds=null);
 public sealed record RfqRequestLineInput(long RequestLineId,decimal Quantity);
 public sealed record ConvertRequestToRfqRequest(DateOnly ResponseDueDate,IReadOnlyList<long>? SupplierIds,string? BuyerMessage,IReadOnlyList<RfqRequestLineInput>? Lines=null,string? RfqNo=null);
 public sealed record CreateSupplierQuoteRequest(long? SupplierId,string QuoteNo,DateOnly? QuoteDate,DateOnly? ValidUntil,string CurrencyCode,decimal ExchangeRate,string? Note,IReadOnlyList<SupplierQuoteLineInput> Lines,string? SupplierName=null);
@@ -23,7 +23,7 @@ public sealed record ProcurementGridRow(long Id,string DocumentType,string Docum
 public sealed record ProcurementAttachmentRow(long Id,string OwnerType,long OwnerId,string FileName,string ContentType,string Url,long FileSize,string? Caption,DateTime? CreatedDate);
 public sealed record ProcurementAttachmentDownload(Stream Content,string FileName,string ContentType);
 public sealed record ProcurementAttachmentUpload(Stream Content,string FileName,string? ContentType,long Length);
-public sealed record ProcurementLineDetail(long Id,int LineNo,long? StockId,string? StockCode,string StockName,string UnitCode,decimal Quantity,decimal SecondaryQuantity,decimal UnitPrice,decimal DiscountRate,decimal VatRate,DateOnly? RequiredDate,string? ProjectCode,decimal OpenQuantity,long? SourceRequestLineId=null,IReadOnlyList<ProcurementAttachmentRow>? Attachments=null);
+public sealed record ProcurementLineDetail(long Id,int LineNo,long? StockId,string? StockCode,string StockName,string UnitCode,decimal Quantity,decimal SecondaryQuantity,decimal UnitPrice,decimal DiscountRate,decimal VatRate,DateOnly? RequiredDate,string? ProjectCode,decimal OpenQuantity,long? SourceRequestLineId=null,IReadOnlyList<ProcurementAttachmentRow>? Attachments=null,string? Status=null);
 public sealed record ProcurementSupplierParticipant(long? SupplierId,string SupplierCode,string SupplierName,string? InvitationStatus=null,string? RecipientEmail=null,DateTimeOffset? InvitationExpiresAtUtc=null);
 public sealed record ProcurementDocumentDetail(long Id,string DocumentType,string DocumentNo,DateOnly DocumentDate,string Status,string Subject,string? Description,string? CounterpartyCode,string? CounterpartyName,string CurrencyCode,decimal ExchangeRate,DateOnly? DueDate,IReadOnlyList<ProcurementLineDetail> Lines,IReadOnlyList<ProcurementHistoryRow> History,IReadOnlyList<ProcurementSupplierParticipant>? Suppliers=null,long? RequestId=null,string? RequestNo=null,IReadOnlyList<ProcurementAttachmentRow>? Attachments=null);
 public sealed record ProcurementHistoryRow(string FromStatus,string ToStatus,long ActorUserId,string? Note,DateTimeOffset ChangedAtUtc);
