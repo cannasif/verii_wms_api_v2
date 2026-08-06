@@ -4,7 +4,7 @@ using verii_wms_api_v2.Shared.Host.Serialization;
 
 namespace verii_wms_api_v2.Shared.Host.Middleware;
 
-public sealed class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger)
+public sealed class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<ExceptionHandlingMiddleware> logger, IHostEnvironment environment)
 {
     public async Task InvokeAsync(HttpContext context)
     {
@@ -13,7 +13,10 @@ public sealed class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<Ex
         catch (Exception exception)
         {
             logger.LogError(exception, "Unhandled request error. TraceId: {TraceId}", context.TraceIdentifier);
-            await WriteError(context, StatusCodes.Status500InternalServerError, "Beklenmeyen bir sunucu hatası oluştu.");
+            var message = environment.IsDevelopment()
+                ? $"{exception.GetType().Name}: {exception.Message}"
+                : "Beklenmeyen bir sunucu hatası oluştu.";
+            await WriteError(context, StatusCodes.Status500InternalServerError, message);
         }
     }
 
