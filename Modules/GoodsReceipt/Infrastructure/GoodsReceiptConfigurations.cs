@@ -45,9 +45,11 @@ public sealed class GoodsReceiptHeaderConfiguration : BaseEntityConfiguration<Go
         Enum(builder.Property(x => x.OverReceiptPolicy), 30);
         Enum(builder.Property(x => x.InventoryAvailabilityPolicy), 40);
         Enum(builder.Property(x => x.ErpPostingPolicy), 40);
+        Enum(builder.Property(x => x.ErpQualityGatePolicy), 40);
         builder.Property(x => x.OverReceiptPolicy).HasDefaultValue(OverReceiptPolicy.NotAllowed).HasSentinel((OverReceiptPolicy)0);
         builder.Property(x => x.InventoryAvailabilityPolicy).HasDefaultValue(InventoryAvailabilityPolicy.AfterQualityApproval).HasSentinel((InventoryAvailabilityPolicy)0);
         builder.Property(x => x.ErpPostingPolicy).HasDefaultValue(GoodsReceiptErpPostingPolicy.AfterAllApprovals).HasSentinel((GoodsReceiptErpPostingPolicy)0);
+        builder.Property(x => x.ErpQualityGatePolicy).HasDefaultValue(GoodsReceiptErpQualityGatePolicy.AnyQualityPlan).HasSentinel((GoodsReceiptErpQualityGatePolicy)0);
 
         Utc(builder.Property(x => x.PlannedArrivalAtUtc));
         Utc(builder.Property(x => x.ActualArrivalAtUtc));
@@ -169,6 +171,9 @@ public sealed class GoodsReceiptLineConfiguration : BaseEntityConfiguration<Good
         Quantity(builder.Property(x => x.PutawayQuantity));
         Quantity(builder.Property(x => x.ShortClosedQuantity));
         builder.Property(x => x.TrackingType).HasConversion<string>().HasMaxLength(30).IsRequired();
+        builder.Property(x => x.QualityRoutingSource).HasConversion<string>().HasMaxLength(30)
+            .HasDefaultValue(GoodsReceiptQualityRoutingSource.None)
+            .HasSentinel((GoodsReceiptQualityRoutingSource)0);
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
         builder.Property(x => x.OverReceiptTolerancePercent).HasPrecision(9, 4);
         builder.Property(x => x.Description).HasMaxLength(500);

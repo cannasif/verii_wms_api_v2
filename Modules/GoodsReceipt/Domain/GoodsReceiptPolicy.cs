@@ -5,6 +5,8 @@ namespace verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 public enum OverReceiptPolicy { NotAllowed = 1, WithinTolerance = 2, ApprovalRequired = 3 }
 public enum InventoryAvailabilityPolicy { Immediate = 1, AfterReceiptApproval = 2, AfterQualityApproval = 3, AfterAllApprovals = 4 }
 public enum GoodsReceiptErpPostingPolicy { AfterReceipt = 1, AfterReceiptApproval = 2, AfterQualityApproval = 3, AfterAllApprovals = 4 }
+public enum GoodsReceiptErpQualityGatePolicy { None = 1, RuleBasedOnly = 2, AnyQualityPlan = 3 }
+public enum GoodsReceiptQualityRoutingSource { None = 1, StockRule = 2, StockGroupRule = 3, GlobalDefault = 4, ManualReceipt = 5 }
 public enum GoodsReceiptLocationSelectionPolicy
 {
     ReceivingOrStagingOnly = 1,
@@ -25,6 +27,7 @@ public sealed class GoodsReceiptPolicy : BaseEntity
     public bool BlockPutawayUntilQualityDecision { get; set; } = true;
     public InventoryAvailabilityPolicy InventoryAvailabilityPolicy { get; set; } = InventoryAvailabilityPolicy.AfterQualityApproval;
     public GoodsReceiptErpPostingPolicy ErpPostingPolicy { get; set; } = GoodsReceiptErpPostingPolicy.AfterAllApprovals;
+    public GoodsReceiptErpQualityGatePolicy ErpQualityGatePolicy { get; set; } = GoodsReceiptErpQualityGatePolicy.AnyQualityPlan;
     public bool AllowOrderlessReceipt { get; set; } = true;
     public bool AllowUnplannedReceipt { get; set; } = true;
     public bool ShowAllocatedOpenOrderLines { get; set; }

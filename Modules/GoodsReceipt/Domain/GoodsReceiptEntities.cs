@@ -139,6 +139,7 @@ public sealed class GoodsReceiptHeader : BaseEntity, IWarehouseOperationHeader
     public bool BlockPutawayUntilQualityDecision { get; set; }
     public InventoryAvailabilityPolicy InventoryAvailabilityPolicy { get; set; } = InventoryAvailabilityPolicy.AfterQualityApproval;
     public GoodsReceiptErpPostingPolicy ErpPostingPolicy { get; set; } = GoodsReceiptErpPostingPolicy.AfterAllApprovals;
+    public GoodsReceiptErpQualityGatePolicy ErpQualityGatePolicy { get; set; } = GoodsReceiptErpQualityGatePolicy.AnyQualityPlan;
     public byte Priority { get; set; } = 3;
     public string? Description { get; set; }
     public byte[] RowVersion { get; set; } = [];
@@ -198,6 +199,7 @@ public sealed class GoodsReceiptLine : BaseEntity, IWarehouseOperationLine
     public bool RequireExpirationDate { get; set; }
     public int? MinimumShelfLifeDays { get; set; }
     public bool RequireQualityControl { get; set; }
+    public GoodsReceiptQualityRoutingSource QualityRoutingSource { get; set; } = GoodsReceiptQualityRoutingSource.None;
     public bool RequireHandlingUnit { get; set; }
 
     /// <summary>Header deposu varsayılandır; gerçek operasyon hedefi satırda saklanır.</summary>

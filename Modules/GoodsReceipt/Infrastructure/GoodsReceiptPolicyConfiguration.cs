@@ -12,6 +12,9 @@ public sealed class GoodsReceiptPolicyConfiguration : BaseEntityConfiguration<Go
         b.ToTable("RII_GR_POLICIES"); b.Property(x => x.PolicyKey).HasMaxLength(30).IsRequired(); b.Property(x => x.OverReceiptPolicy).HasConversion<string>().HasMaxLength(30);
         b.Property(x => x.OverReceiptTolerancePercent).HasPrecision(9, 4); b.Property(x => x.InventoryAvailabilityPolicy).HasConversion<string>().HasMaxLength(40);
         b.Property(x => x.ErpPostingPolicy).HasConversion<string>().HasMaxLength(40);
+        b.Property(x => x.ErpQualityGatePolicy).HasConversion<string>().HasMaxLength(40)
+            .HasDefaultValue(GoodsReceiptErpQualityGatePolicy.AnyQualityPlan)
+            .HasSentinel((GoodsReceiptErpQualityGatePolicy)0);
         b.Property(x => x.LocationSelectionPolicy)
             .HasConversion<string>()
             .HasMaxLength(50)
