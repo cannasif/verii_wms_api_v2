@@ -183,6 +183,7 @@ public sealed class GoodsReceiptService(
                 RequireErpApproval = receiptPolicy.RequireErpApproval, HoldInventoryUntilQualityDecision = receiptPolicy.HoldInventoryUntilQualityDecision,
                 BlockPutawayUntilQualityDecision = receiptPolicy.BlockPutawayUntilQualityDecision,
                 InventoryAvailabilityPolicy = receiptPolicy.InventoryAvailabilityPolicy, ErpPostingPolicy = receiptPolicy.ErpPostingPolicy,
+                ErpQualityGatePolicy = receiptPolicy.ErpQualityGatePolicy,
                 ApprovalStatus = receiptPolicy.RequireReceiptApproval ? OperationApprovalStatus.Pending : OperationApprovalStatus.NotRequired,
                 QualityStatus = requiresQuality ? OperationQualityStatus.Pending : OperationQualityStatus.NotRequired,
                 RequireQualityControl = requiresQuality, RequirePutaway = request.RequirePutaway,
@@ -243,6 +244,8 @@ public sealed class GoodsReceiptService(
                     RequireQualityControl = GoodsReceiptOperationsService.RequiresQualityForLine(
                         false, qualityPolicies[stock.Id],
                         request.ForceQualityControl || item.Request.ForceQualityControl),
+                    QualityRoutingSource = GoodsReceiptOperationsService.ResolveQualityRoutingSource(
+                        qualityPolicies[stock.Id], request.ForceQualityControl || item.Request.ForceQualityControl),
                     DefaultReceivingLocationId = item.Request.ReceivingLocationId, Status = GoodsReceiptLineStatus.Open }, actorUserId, now);
                 header.Lines.Add(line);
                 line.Sources.Add(Stamp(new GoodsReceiptLineSource { BranchCode = branch, Line = line, SourceDocument = documents[source.OrderNumber],

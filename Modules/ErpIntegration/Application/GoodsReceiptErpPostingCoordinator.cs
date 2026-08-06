@@ -37,11 +37,27 @@ public sealed class GoodsReceiptErpPostingCoordinator(
         if (header.ErpIntegrationStatus == ErpIntegrationStatus.CommitUncertain)
             throw CommitUncertain(header.DocumentNo);
 
+        var qualitySources = await unitOfWork.Repository<GoodsReceiptLine>().Query()
+            .Where(x => x.GrHeaderId == header.Id && x.RequireQualityControl)
+            .Select(x => x.QualityRoutingSource)
+            .ToListAsync(cancellationToken);
+        var hasManualQualityPlan = qualitySources.Contains(GoodsReceiptQualityRoutingSource.ManualReceipt);
+        var hasRuleBasedQualityPlan = qualitySources.Any(x => x is
+            GoodsReceiptQualityRoutingSource.StockRule
+            or GoodsReceiptQualityRoutingSource.StockGroupRule
+            or GoodsReceiptQualityRoutingSource.GlobalDefault);
+        if (header.RequireQualityControl && qualitySources.Count > 0
+            && !hasManualQualityPlan && !hasRuleBasedQualityPlan)
+            hasRuleBasedQualityPlan = true;
+
         if (!GoodsReceiptErpPostingPolicyEvaluator.IsEligible(
                 header.Status,
                 header.ApprovalStatus,
                 header.QualityStatus,
-                header.ErpPostingPolicy))
+                header.ErpPostingPolicy,
+                header.ErpQualityGatePolicy,
+                hasRuleBasedQualityPlan,
+                hasManualQualityPlan))
         {
             return null;
         }

@@ -220,7 +220,8 @@ public sealed class GoodsReceiptExecutionService(
                 ScannedBarcode = Clean(request.Barcode, 250),
                 WarehouseId = task.WarehouseId,
                 LocationId = locationId,
-                StockStatus = requiresQuality && task.Header.HoldInventoryUntilQualityDecision ? "QualityHold" : "Available",
+                StockStatus = GoodsReceiptOperationsService.ShouldHoldInventoryForQuality(taskLine.Line, task.Header)
+                    ? "QualityHold" : "Available",
                 GoodsReceiptLabelId = label?.Id,
                 QualityInspectionLineId = inspectionLine?.Id
             }, actor));
@@ -240,7 +241,7 @@ public sealed class GoodsReceiptExecutionService(
             taskLine.Status = taskLine.ProcessedQuantity >= taskLine.PlannedQuantity
                 ? GoodsReceiptTaskStatus.Completed : GoodsReceiptTaskStatus.PartiallyCompleted;
             taskLine.Line.ReceivedQuantity += quantity;
-            if (requiresQuality && task.Header.HoldInventoryUntilQualityDecision)
+            if (GoodsReceiptOperationsService.ShouldHoldInventoryForQuality(taskLine.Line, task.Header))
                 taskLine.Line.QuarantineQuantity += quantity;
             else
                 taskLine.Line.AcceptedQuantity += quantity;

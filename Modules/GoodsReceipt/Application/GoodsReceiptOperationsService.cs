@@ -342,7 +342,7 @@ public sealed class GoodsReceiptOperationsService(
             var requiresQuality = RequiresQuality(
                 qualityAlreadyApproved,
                 resolved.Values.Any(x => x.InspectionMode != QualityInspectionMode.NoCheck),
-                request.ForceQualityControl);
+                request.ForceQualityControl || request.Lines.Any(x => x.ForceQualityControl));
             foreach (var input in request.Lines)
             {
                 var lineRequiresQuality = RequiresQualityForLine(
@@ -413,6 +413,7 @@ public sealed class GoodsReceiptOperationsService(
                 HoldInventoryUntilQualityDecision = policy.HoldInventoryUntilQualityDecision,
                 BlockPutawayUntilQualityDecision = policy.BlockPutawayUntilQualityDecision,
                 InventoryAvailabilityPolicy = policy.InventoryAvailabilityPolicy, ErpPostingPolicy = policy.ErpPostingPolicy,
+                ErpQualityGatePolicy = policy.ErpQualityGatePolicy,
                 RequireQualityControl = requiresQuality, RequirePutaway = true, Priority = request.Priority,
                 Description = Clean(request.Description, 1000)
             }, actor);
@@ -486,6 +487,8 @@ public sealed class GoodsReceiptOperationsService(
                     RequireLot = trackingPolicy.RequireLot, RequireSerial = trackingPolicy.RequireSerial,
                     RequireExpirationDate = trackingPolicy.RequireExpirationDate,
                     MinimumShelfLifeDays = qp.MinimumRemainingShelfLifeDays, RequireQualityControl = qualityRequired,
+                    QualityRoutingSource = ResolveQualityRoutingSource(
+                        qp, request.ForceQualityControl || input.ForceQualityControl, qualityAlreadyApproved),
                     Status = direct ? GoodsReceiptLineStatus.Received : GoodsReceiptLineStatus.Open,
                     AllowOverReceipt = policy.OverReceiptPolicy != OverReceiptPolicy.NotAllowed,
                     OverReceiptTolerancePercent = policy.OverReceiptTolerancePercent, AllowUnderReceipt = policy.AllowUnderReceipt,
@@ -621,7 +624,7 @@ public sealed class GoodsReceiptOperationsService(
                 ManufacturingDate = input.ManufacturingDate, ExpirationDate = input.ExpirationDate,
                 ScannedBarcode = Clean(input.ScannedBarcode, 250), WarehouseId = line.TargetWarehouseId,
                 LocationId = line.DefaultReceivingLocationId ?? header.ReceivingLocationId,
-                StockStatus = line.RequireQualityControl && header.HoldInventoryUntilQualityDecision ? "QualityHold" : "Available",
+                StockStatus = ShouldHoldInventoryForQuality(line, header) ? "QualityHold" : "Available",
                 GoodsReceiptLabelId = input.GoodsReceiptLabelId,
                 QualityInspectionLineId = inspectionLineByGrLine.GetValueOrDefault(line.Id)?.Id }, actor));
         }
@@ -746,6 +749,32 @@ public sealed class GoodsReceiptOperationsService(
         bool forceQualityControl = false) =>
         !qualityAlreadyApproved
         && (qualityPolicy.InspectionMode != QualityInspectionMode.NoCheck || forceQualityControl);
+
+    internal static GoodsReceiptQualityRoutingSource ResolveQualityRoutingSource(
+        ResolvedQualityPolicy qualityPolicy,
+        bool forceQualityControl,
+        bool qualityAlreadyApproved = false)
+    {
+        if (qualityAlreadyApproved) return GoodsReceiptQualityRoutingSource.None;
+        if (qualityPolicy.InspectionMode != QualityInspectionMode.NoCheck)
+            return qualityPolicy.Source switch
+            {
+                "StockRule" => GoodsReceiptQualityRoutingSource.StockRule,
+                "StockGroupRule" => GoodsReceiptQualityRoutingSource.StockGroupRule,
+                "GlobalDefault" => GoodsReceiptQualityRoutingSource.GlobalDefault,
+                _ => GoodsReceiptQualityRoutingSource.GlobalDefault
+            };
+        return forceQualityControl
+            ? GoodsReceiptQualityRoutingSource.ManualReceipt
+            : GoodsReceiptQualityRoutingSource.None;
+    }
+
+    internal static bool ShouldHoldInventoryForQuality(
+        GoodsReceiptLine line,
+        GoodsReceiptHeader header) =>
+        line.RequireQualityControl
+        && (header.HoldInventoryUntilQualityDecision
+            || line.QualityRoutingSource == GoodsReceiptQualityRoutingSource.ManualReceipt);
 
     internal static string ResolveNextAction(bool requiresQualityControl) =>
         requiresQualityControl ? "SendToQuality" : "CreateWaybill";

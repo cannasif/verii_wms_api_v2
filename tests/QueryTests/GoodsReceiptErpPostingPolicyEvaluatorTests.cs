@@ -54,7 +54,7 @@ public sealed class GoodsReceiptErpPostingPolicyEvaluatorTests
     [Theory]
     [InlineData(GoodsReceiptErpPostingPolicy.AfterQualityApproval)]
     [InlineData(GoodsReceiptErpPostingPolicy.AfterAllApprovals)]
-    public void Rejected_quality_is_a_completed_decision_for_erp_posting(
+    public void Rejected_quality_never_creates_a_normal_purchase_receipt(
         GoodsReceiptErpPostingPolicy postingPolicy)
     {
         var eligible = GoodsReceiptErpPostingPolicyEvaluator.IsEligible(
@@ -63,7 +63,59 @@ public sealed class GoodsReceiptErpPostingPolicyEvaluatorTests
             OperationQualityStatus.Failed,
             postingPolicy);
 
+        Assert.False(eligible);
+    }
+
+    [Fact]
+    public void Any_quality_plan_blocks_manual_quality_even_when_posting_policy_is_after_receipt()
+    {
+        var eligible = GoodsReceiptErpPostingPolicyEvaluator.IsEligible(
+            WarehouseOperationStatus.Processed,
+            OperationApprovalStatus.NotRequired,
+            OperationQualityStatus.Pending,
+            GoodsReceiptErpPostingPolicy.AfterReceipt,
+            GoodsReceiptErpQualityGatePolicy.AnyQualityPlan,
+            hasRuleBasedQualityPlan: false,
+            hasManualQualityPlan: true);
+
+        Assert.False(eligible);
+    }
+
+    [Fact]
+    public void Rule_based_gate_does_not_block_a_manual_plan_by_itself()
+    {
+        var eligible = GoodsReceiptErpPostingPolicyEvaluator.IsEligible(
+            WarehouseOperationStatus.Processed,
+            OperationApprovalStatus.NotRequired,
+            OperationQualityStatus.Pending,
+            GoodsReceiptErpPostingPolicy.AfterReceipt,
+            GoodsReceiptErpQualityGatePolicy.RuleBasedOnly,
+            hasRuleBasedQualityPlan: false,
+            hasManualQualityPlan: true);
+
         Assert.True(eligible);
+    }
+
+    [Fact]
+    public void Rule_based_gate_blocks_stock_quality_until_it_passes()
+    {
+        Assert.False(GoodsReceiptErpPostingPolicyEvaluator.IsEligible(
+            WarehouseOperationStatus.Processed,
+            OperationApprovalStatus.NotRequired,
+            OperationQualityStatus.InProgress,
+            GoodsReceiptErpPostingPolicy.AfterReceipt,
+            GoodsReceiptErpQualityGatePolicy.RuleBasedOnly,
+            hasRuleBasedQualityPlan: true,
+            hasManualQualityPlan: false));
+
+        Assert.True(GoodsReceiptErpPostingPolicyEvaluator.IsEligible(
+            WarehouseOperationStatus.Processed,
+            OperationApprovalStatus.NotRequired,
+            OperationQualityStatus.Passed,
+            GoodsReceiptErpPostingPolicy.AfterReceipt,
+            GoodsReceiptErpQualityGatePolicy.RuleBasedOnly,
+            hasRuleBasedQualityPlan: true,
+            hasManualQualityPlan: false));
     }
 
     [Fact]

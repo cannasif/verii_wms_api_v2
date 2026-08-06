@@ -146,6 +146,19 @@ public sealed class QualityRuleResolutionTests
     }
 
     [Fact]
+    public void Manual_quality_always_holds_inventory_even_when_general_hold_is_disabled()
+    {
+        var header = new GoodsReceiptHeader { HoldInventoryUntilQualityDecision = false };
+        var line = new GoodsReceiptLine
+        {
+            RequireQualityControl = true,
+            QualityRoutingSource = GoodsReceiptQualityRoutingSource.ManualReceipt
+        };
+
+        Assert.True(GoodsReceiptOperationsService.ShouldHoldInventoryForQuality(line, header));
+    }
+
+    [Fact]
     public void Receipt_waits_until_every_matching_quality_line_has_a_final_decision()
     {
         var partiallyDecided = QualityService.ResolveDecisionState(
