@@ -391,11 +391,21 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
         if (request.ValidTo.HasValue && request.ValidTo < request.ValidFrom) throw AppException.BadRequest("Ek hak tarih aralığı geçersiz.");
         if (!await uow.Repository<KkdEmployee>().AnyAsync(x => x.Id == request.EmployeeId && x.IsActive, ct))
             throw AppException.BadRequest("Aktif KKD personeli bulunamadı.");
-        if (request.RuleId.HasValue && !await uow.Repository<KkdEntitlementRule>().AnyAsync(x => x.Id == request.RuleId && x.IsActive, ct))
-            throw AppException.BadRequest("Aktif KKD kuralı bulunamadı.");
+        var groupCode = Normalize(request.GroupCode);
+        if (groupCode.Length == 0) throw AppException.BadRequest("KKD grup kodu zorunludur.");
+        if (request.RuleId.HasValue)
+        {
+            var ruleGroup = await uow.Repository<KkdEntitlementRule>().Query()
+                .Where(x => x.Id == request.RuleId && x.IsActive)
+                .Select(x => x.GroupCode)
+                .SingleOrDefaultAsync(ct)
+                ?? throw AppException.BadRequest("Aktif KKD kuralı bulunamadı.");
+            if (!string.Equals(Normalize(ruleGroup), groupCode, StringComparison.Ordinal))
+                throw AppException.BadRequest("Seçilen KKD kuralı ile grup kodu eşleşmiyor.");
+        }
         var entity = new KkdEmployeeEntitlementOverride
         {
-            EmployeeId = request.EmployeeId, RuleId = request.RuleId, GroupCode = Normalize(request.GroupCode),
+            EmployeeId = request.EmployeeId, RuleId = request.RuleId, GroupCode = groupCode,
             Quantity = request.Quantity, ValidFrom = request.ValidFrom, ValidTo = request.ValidTo,
             Reason = RequiredText(request.Reason, "Ek hak gerekçesi", 1000), ApprovedByUserId = actor,
             IsActive = request.IsActive, CreatedBy = actor, CreatedDate = DateTime.UtcNow
@@ -403,6 +413,79 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
         await uow.Repository<KkdEmployeeEntitlementOverride>().AddAsync(entity, ct);
         await uow.SaveChangesAsync(ct);
         return entity.Id;
+    }
+
+    public Task<PagedResponse<KkdOverrideRow>> GetOverridesPagedAsync(PagedRequest request, CancellationToken ct = default)
+    {
+        var query = uow.Repository<KkdEmployeeEntitlementOverride>().Query()
+            .Select(x => new KkdOverrideRow(
+                x.Id, x.EmployeeId, x.Employee.EmployeeCode, x.Employee.FirstName + " " + x.Employee.LastName,
+                x.RuleId, x.GroupCode, x.Quantity, x.ConsumedQuantity,
+                x.Quantity > x.ConsumedQuantity ? x.Quantity - x.ConsumedQuantity : 0,
+                x.ValidFrom, x.ValidTo, x.Reason, x.ApprovedByUserId, x.IsActive,
+                x.CreatedDate, x.UpdatedDate, x.RowVersion))
+            .ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["employeeCode"] = nameof(KkdOverrideRow.EmployeeCode),
+                ["employeeName"] = nameof(KkdOverrideRow.EmployeeName),
+                ["groupCode"] = nameof(KkdOverrideRow.GroupCode),
+                ["reason"] = nameof(KkdOverrideRow.Reason)
+            }, ["employeeCode", "employeeName", "groupCode", "reason"])
+            .ApplySort(request, nameof(KkdOverrideRow.UpdatedDate));
+        return query.ToPagedResponseAsync(request, ct);
+    }
+
+    public async Task<long> UpdateOverrideAsync(long id, KkdOverrideUpdateRequest request, long actor, CancellationToken ct = default)
+    {
+        if (request.Quantity <= 0) throw AppException.BadRequest("Ek hak miktarı sıfırdan büyük olmalıdır.");
+        if (request.ValidTo.HasValue && request.ValidTo < request.ValidFrom)
+            throw AppException.BadRequest("Ek hak tarih aralığı geçersiz.");
+        var entity = await uow.Repository<KkdEmployeeEntitlementOverride>().FindByIdAsync(id, true, ct)
+            ?? throw AppException.NotFound("Personel ek hakkı bulunamadı.");
+        if (request.Quantity < entity.ConsumedQuantity)
+            throw AppException.Conflict($"Ek hak miktarı tüketilmiş {entity.ConsumedQuantity:0.######} miktarın altına indirilemez.");
+        byte[] expected;
+        try { expected = Convert.FromBase64String(request.ExpectedRowVersion); }
+        catch (FormatException) { throw AppException.BadRequest("Ek hak satır sürümü geçersiz."); }
+        if (!entity.RowVersion.SequenceEqual(expected))
+            throw AppException.Conflict("Ek hak başka bir kullanıcı tarafından değiştirildi. Listeyi yenileyip tekrar deneyin.");
+
+        var groupCode = Normalize(request.GroupCode);
+        if (groupCode.Length == 0) throw AppException.BadRequest("KKD grup kodu zorunludur.");
+        if (request.RuleId.HasValue)
+        {
+            var ruleGroup = await uow.Repository<KkdEntitlementRule>().Query()
+                .Where(x => x.Id == request.RuleId && x.IsActive)
+                .Select(x => x.GroupCode)
+                .SingleOrDefaultAsync(ct)
+                ?? throw AppException.BadRequest("Aktif KKD kuralı bulunamadı.");
+            if (!string.Equals(Normalize(ruleGroup), groupCode, StringComparison.Ordinal))
+                throw AppException.BadRequest("Seçilen KKD kuralı ile grup kodu eşleşmiyor.");
+        }
+        entity.RuleId = request.RuleId;
+        entity.GroupCode = groupCode;
+        entity.Quantity = request.Quantity;
+        entity.ValidFrom = request.ValidFrom;
+        entity.ValidTo = request.ValidTo;
+        entity.Reason = RequiredText(request.Reason, "Ek hak gerekçesi", 1000);
+        entity.IsActive = request.IsActive;
+        entity.UpdatedBy = actor;
+        entity.UpdatedDate = DateTime.UtcNow;
+        await uow.SaveChangesAsync(ct);
+        return entity.Id;
+    }
+
+    public async Task DeleteOverrideAsync(long id, long actor, CancellationToken ct = default)
+    {
+        var entity = await uow.Repository<KkdEmployeeEntitlementOverride>().FindByIdAsync(id, true, ct)
+            ?? throw AppException.NotFound("Personel ek hakkı bulunamadı.");
+        if (entity.ConsumedQuantity > 0)
+            throw AppException.Conflict("Tüketilmiş ek hak silinemez; geçmiş izlenebilirliği için pasife alınmalıdır.");
+        entity.IsDeleted = true;
+        entity.IsActive = false;
+        entity.DeletedBy = actor;
+        entity.DeletedDate = DateTime.UtcNow;
+        await uow.SaveChangesAsync(ct);
     }
 
     private async Task<Dictionary<long, StockEntity>> LoadStocksAsync(IReadOnlyCollection<long> ids, CancellationToken ct)

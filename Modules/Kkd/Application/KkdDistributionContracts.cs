@@ -1,4 +1,5 @@
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
+using verii_wms_api_v2.Shared;
 
 namespace verii_wms_api_v2.Modules.Kkd.Application;
 
@@ -83,6 +84,18 @@ public sealed record KkdDistributionRow(
     DateTime? CreatedDate,
     DateTimeOffset? CompletedAtUtc);
 
+public sealed record KkdDistributionLineDetail(
+    long Id, int LineNo, long StockId, string StockCode, string StockName, string GroupCode,
+    decimal Quantity, decimal EntitledQuantity, decimal ExcessQuantity, long SourceLocationId,
+    string? LotNo, string? SerialNo, string? OpenOrderNo, string? OpenOrderLineId);
+
+public sealed record KkdDistributionDetail(
+    long Id, Guid CorrelationId, string DocumentNo, string Status,
+    long EmployeeId, string EmployeeCode, string EmployeeName, long CustomerId, long WarehouseId,
+    long? WarehouseOutboundId, string ExcessApprovalStatus, string? ExcessApprovalReason,
+    string? FailureReason, DateTime? CreatedDate, DateTimeOffset? CompletedAtUtc,
+    IReadOnlyList<KkdDistributionLineDetail> Lines);
+
 public sealed record KkdDistributionContext(
     long EmployeeId,
     string EmployeeCode,
@@ -125,6 +138,8 @@ public interface IKkdDistributionService
     Task<IReadOnlyList<KkdOpenOrderLine>> GetOpenOrderLinesAsync(long employeeId, string orderNumbersCsv, CancellationToken ct = default);
     Task<KkdDistributionCreateResult> CreateAsync(KkdDistributionCreateRequest request, long actor, CancellationToken ct = default);
     Task<IReadOnlyList<KkdDistributionRow>> GetRecentAsync(long actor, CancellationToken ct = default);
+    Task<PagedResponse<KkdDistributionRow>> GetPagedAsync(PagedRequest request, long actor, CancellationToken ct = default);
+    Task<KkdDistributionDetail> GetDetailAsync(long id, long actor, CancellationToken ct = default);
     Task<KkdDistributionCompleteResult> CompleteAsync(long id, KkdDistributionCompleteRequest request, long actor, CancellationToken ct = default);
     Task<KkdDistributionRow> DecideExcessApprovalAsync(long id, KkdExcessApprovalRequest request, long actor, CancellationToken ct = default);
     Task<KkdDistributionCompleteResult?> CompleteByWarehouseOutboundAsync(long warehouseOutboundId, Guid idempotencyKey, long actor, CancellationToken ct = default);

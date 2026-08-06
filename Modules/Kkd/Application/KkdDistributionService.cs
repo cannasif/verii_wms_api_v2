@@ -9,6 +9,7 @@ using verii_wms_api_v2.Modules.StockTracking.Application;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.WarehouseOutbound.Application;
 using verii_wms_api_v2.Modules.WarehouseOutbound.Domain;
+using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
@@ -334,6 +335,54 @@ public sealed class KkdDistributionService(
                 x.ExcessApprovalReason, x.ExcessApprovedBy, x.ExcessApprovedAtUtc,
                 x.CreatedDate, x.CompletedAtUtc))
             .ToListAsync(ct);
+    }
+
+    public async Task<PagedResponse<KkdDistributionRow>> GetPagedAsync(PagedRequest request, long actor, CancellationToken ct = default)
+    {
+        var query = await AuthorizedDistributionsAsync(actor, ct);
+        var projected = query.Select(x => new KkdDistributionRow(
+                x.Id, x.DocumentNo, x.Status.ToString(), x.EmployeeId, x.Employee.EmployeeCode,
+                x.Employee.FirstName + " " + x.Employee.LastName, x.WarehouseId, x.WarehouseOutboundId,
+                x.Lines.Sum(l => l.Quantity), x.Lines.Sum(l => l.EntitledQuantity),
+                x.Lines.Sum(l => l.ExcessQuantity), x.ExcessApprovalStatus.ToString(),
+                x.ExcessApprovalReason, x.ExcessApprovedBy, x.ExcessApprovedAtUtc,
+                x.CreatedDate, x.CompletedAtUtc))
+            .ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["documentNo"] = nameof(KkdDistributionRow.DocumentNo),
+                ["employeeCode"] = nameof(KkdDistributionRow.EmployeeCode),
+                ["employeeName"] = nameof(KkdDistributionRow.EmployeeName)
+            }, ["documentNo", "employeeCode", "employeeName"])
+            .ApplySort(request, nameof(KkdDistributionRow.Id));
+        return await projected.ToPagedResponseAsync(request, ct);
+    }
+
+    public async Task<KkdDistributionDetail> GetDetailAsync(long id, long actor, CancellationToken ct = default)
+    {
+        var query = await AuthorizedDistributionsAsync(actor, ct);
+        return await query.Where(x => x.Id == id)
+            .Select(x => new KkdDistributionDetail(
+                x.Id, x.CorrelationId, x.DocumentNo, x.Status.ToString(),
+                x.EmployeeId, x.Employee.EmployeeCode, x.Employee.FirstName + " " + x.Employee.LastName,
+                x.CustomerId, x.WarehouseId, x.WarehouseOutboundId, x.ExcessApprovalStatus.ToString(),
+                x.ExcessApprovalReason, x.FailureReason, x.CreatedDate, x.CompletedAtUtc,
+                x.Lines.OrderBy(l => l.LineNo).Select(l => new KkdDistributionLineDetail(
+                    l.Id, l.LineNo, l.StockId, l.StockCodeSnapshot, l.StockNameSnapshot ?? string.Empty,
+                    l.GroupCode, l.Quantity, l.EntitledQuantity, l.ExcessQuantity, l.SourceLocationId,
+                    l.LotNo, l.SerialNo, l.OpenOrderNo, l.OpenOrderLineId)).ToArray()))
+            .SingleOrDefaultAsync(ct)
+            ?? throw AppException.NotFound("KKD dağıtım kaydı bulunamadı veya bu depoya erişiminiz yok.");
+    }
+
+    private async Task<IQueryable<KkdDistribution>> AuthorizedDistributionsAsync(long actor, CancellationToken ct)
+    {
+        var warehouseIds = await uow.Repository<UserWarehouseAssignment>().Query()
+            .Where(x => x.UserId == actor)
+            .Select(x => x.WarehouseId)
+            .Distinct()
+            .ToArrayAsync(ct);
+        var query = uow.Repository<KkdDistribution>().Query();
+        return warehouseIds.Length == 0 ? query : query.Where(x => warehouseIds.Contains(x.WarehouseId));
     }
 
     public async Task<KkdDistributionRow> DecideExcessApprovalAsync(

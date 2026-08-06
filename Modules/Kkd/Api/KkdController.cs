@@ -100,9 +100,21 @@ public sealed class KkdController(
         return Ok(ApiResponse<KkdMatrixValidationResult>.Ok(await definitions.ValidateMatrixAsync(id, request, ct)));
     }
 
+    [HttpPost("overrides/paged")]
+    public async Task<IActionResult> OverridesPaged(PagedRequest request, CancellationToken ct)
+    { await Require("WMS.KKD.OVERRIDES.MANAGE", ct); return Ok(ApiResponse<PagedResponse<KkdOverrideRow>>.Ok(await definitions.GetOverridesPagedAsync(request, ct))); }
+
     [HttpPost("overrides")]
     public async Task<IActionResult> CreateOverride(KkdOverrideCreateRequest request, CancellationToken ct)
     { await Require("WMS.KKD.OVERRIDES.MANAGE", ct); return Ok(ApiResponse<long>.Ok(await definitions.CreateOverrideAsync(request, UserId(), ct), "Personel ek hakkı kaydedildi.")); }
+
+    [HttpPut("overrides/{id:long}")]
+    public async Task<IActionResult> UpdateOverride(long id, KkdOverrideUpdateRequest request, CancellationToken ct)
+    { await Require("WMS.KKD.OVERRIDES.MANAGE", ct); return Ok(ApiResponse<long>.Ok(await definitions.UpdateOverrideAsync(id, request, UserId(), ct), "Personel ek hakkı güncellendi.")); }
+
+    [HttpDelete("overrides/{id:long}")]
+    public async Task<IActionResult> DeleteOverride(long id, CancellationToken ct)
+    { await Require("WMS.KKD.OVERRIDES.MANAGE", ct); await definitions.DeleteOverrideAsync(id, UserId(), ct); return Ok(ApiResponse<object?>.Ok(null, "Personel ek hakkı silindi.")); }
 
     [HttpPost("entitlements/check")]
     public async Task<IActionResult> Check(KkdEntitlementCheckRequest request, CancellationToken ct)
@@ -111,6 +123,14 @@ public sealed class KkdController(
     [HttpGet("distributions")]
     public async Task<IActionResult> Distributions(CancellationToken ct)
     { await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct); return Ok(ApiResponse<IReadOnlyList<KkdDistributionRow>>.Ok(await distributions.GetRecentAsync(UserId(), ct))); }
+
+    [HttpPost("distributions/paged")]
+    public async Task<IActionResult> DistributionsPaged(PagedRequest request, CancellationToken ct)
+    { await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct); return Ok(ApiResponse<PagedResponse<KkdDistributionRow>>.Ok(await distributions.GetPagedAsync(request, UserId(), ct))); }
+
+    [HttpGet("distributions/{id:long}")]
+    public async Task<IActionResult> DistributionDetail(long id, CancellationToken ct)
+    { await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct); return Ok(ApiResponse<KkdDistributionDetail>.Ok(await distributions.GetDetailAsync(id, UserId(), ct))); }
 
     [HttpGet("distributions/context/{employeeId:long}")]
     public async Task<IActionResult> DistributionContext(long employeeId, CancellationToken ct)
@@ -174,6 +194,11 @@ public sealed class KkdController(
     [HttpGet("reports/validation-logs")]
     public async Task<IActionResult> ValidationLogs([FromQuery] int take = 250, CancellationToken ct = default)
     { await Require("WMS.KKD.REPORTS.VIEW", ct); return Ok(ApiResponse<IReadOnlyList<KkdValidationLogRow>>.Ok(await reports.GetValidationLogsAsync(take, ct))); }
+
+    [HttpGet("reports/remaining-entitlements/{employeeId:long}")]
+    public async Task<IActionResult> RemainingEntitlements(long employeeId, [FromQuery] DateOnly? atDate = null,
+        CancellationToken ct = default)
+    { await Require("WMS.KKD.ENTITLEMENT.CHECK", ct); return Ok(ApiResponse<IReadOnlyList<KkdRemainingEntitlementRow>>.Ok(await reports.GetRemainingEntitlementsAsync(employeeId, atDate, ct))); }
 
     [HttpGet("reports/usage")]
     public async Task<IActionResult> Usage([FromQuery] string dimension = "Group", [FromQuery] DateOnly? from = null,

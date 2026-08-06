@@ -44,6 +44,12 @@ public sealed record KkdMatrixValidationResult(bool IsValid, int RuleCount, int 
     int StockSpecificRuleCount, int GroupRuleCount, IReadOnlyList<KkdMatrixValidationIssue> Issues);
 public sealed record KkdOverrideCreateRequest(long EmployeeId, long? RuleId, string GroupCode, decimal Quantity,
     DateOnly ValidFrom, DateOnly? ValidTo, string Reason, bool IsActive = true);
+public sealed record KkdOverrideUpdateRequest(long? RuleId, string GroupCode, decimal Quantity,
+    DateOnly ValidFrom, DateOnly? ValidTo, string Reason, bool IsActive, string ExpectedRowVersion);
+public sealed record KkdOverrideRow(long Id, long EmployeeId, string EmployeeCode, string EmployeeName,
+    long? RuleId, string GroupCode, decimal Quantity, decimal ConsumedQuantity, decimal RemainingQuantity,
+    DateOnly ValidFrom, DateOnly? ValidTo, string Reason, long ApprovedByUserId, bool IsActive,
+    DateTime? CreatedDate, DateTime? UpdatedDate, byte[] RowVersion);
 
 public sealed record KkdLookupRow(long Id, string Code, string Name, bool IsActive);
 public sealed record KkdCustomerLookupRow(long Id, string Code, string Name);
@@ -86,5 +92,8 @@ public interface IKkdDefinitionService
     Task<long> UpsertRoleAsync(long? id, KkdRoleUpsertRequest request, long actor, CancellationToken ct = default);
     Task<long> UpsertEmployeeAsync(long? id, KkdEmployeeUpsertRequest request, long actor, CancellationToken ct = default);
     Task<long> UpsertMatrixAsync(long? id, KkdMatrixUpsertRequest request, long actor, CancellationToken ct = default);
+    Task<PagedResponse<KkdOverrideRow>> GetOverridesPagedAsync(PagedRequest request, CancellationToken ct = default);
     Task<long> CreateOverrideAsync(KkdOverrideCreateRequest request, long actor, CancellationToken ct = default);
+    Task<long> UpdateOverrideAsync(long id, KkdOverrideUpdateRequest request, long actor, CancellationToken ct = default);
+    Task DeleteOverrideAsync(long id, long actor, CancellationToken ct = default);
 }
