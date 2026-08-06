@@ -122,15 +122,6 @@ public sealed class SteelVehicleAcceptancePolicyTests
     }
 
     [Fact]
-    public void Receipt_conversion_is_blocked_for_the_whole_vehicle_when_unknown_slots_remain()
-    {
-        var exception = Assert.ThrowsAny<Exception>(
-            () => SteelReceiptService.EnsureVehicleHasNoUnknownPlates(2));
-
-        Assert.Contains("2 adet bilinmeyen levha", exception.Message);
-    }
-
-    [Fact]
     public void Incremental_acceptance_uses_existing_plus_new_slot_count()
     {
         SteelVehicleAcceptanceService.EnsureTargetSlotCount(

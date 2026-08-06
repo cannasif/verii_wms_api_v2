@@ -314,20 +314,6 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             var plan=await Plans.Query(true).Include(x=>x.Lines).FirstOrDefaultAsync(x=>x.Id==planId,token)??throw AppException.NotFound("SAC planı bulunamadı.");
             var ids=request.LineIds.Where(x=>x>0).Distinct().ToArray();var selected=plan.Lines.Where(x=>ids.Contains(x.Id)).OrderBy(x=>x.LineNo).ToList();
             if(selected.Count==0||selected.Count!=ids.Length)throw AppException.BadRequest("Seçilen SAC satırlarından biri bulunamadı.");
-            var vehicleAcceptanceIds=selected.Where(x=>x.VehicleAcceptanceId.HasValue)
-                .Select(x=>x.VehicleAcceptanceId!.Value).Distinct().ToArray();
-            if(vehicleAcceptanceIds.Length>0)
-            {
-                var affectedVehicleIds=await uow.Repository<SteelVehicleAcceptance>().Query()
-                    .Where(x=>vehicleAcceptanceIds.Contains(x.Id))
-                    .Select(x=>x.VehicleCheckInId)
-                    .Distinct()
-                    .ToArrayAsync(token);
-                var unknownCount=await uow.Repository<SteelVehicleAcceptedPlate>().Query()
-                    .CountAsync(x=>affectedVehicleIds.Contains(x.VehicleCheckInId)
-                        &&x.IdentityStatus==SteelPlateIdentityStatus.Unknown,token);
-                EnsureVehicleHasNoUnknownPlates(unknownCount);
-            }
             var (waybillNo,electronicWaybillNo)=ResolveConversionDocumentReference(
                 request.WaybillNo,request.ElectronicWaybillNo,plan.WaybillNo);
             var waybillDate=request.WaybillDate??plan.WaybillDate;
@@ -398,12 +384,6 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
         if(mode==SteelReceiptConversionMode.Direct)
             await erpPosting.PostIfEligibleAsync(converted.GoodsReceiptId,actor,ct);
         return converted;
-    }
-
-    internal static void EnsureVehicleHasNoUnknownPlates(int unknownCount)
-    {
-        if(unknownCount>0)
-            throw AppException.Conflict($"Bu araçta {unknownCount} adet bilinmeyen levha var; irsaliye oluşturmak için önce eşleştirin.");
     }
 
     public Task<PlaceSteelReceiptLineResult> PlaceAsync(long lineId,PlaceSteelReceiptLineRequest request,long actor,CancellationToken ct=default)

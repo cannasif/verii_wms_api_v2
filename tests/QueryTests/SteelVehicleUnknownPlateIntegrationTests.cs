@@ -240,15 +240,14 @@ public sealed class SteelVehicleUnknownPlateIntegrationTests
         Assert.Equal(3, await fixture.Context.Set<SteelVehicleAcceptedPlate>()
             .CountAsync(x => x.VehicleCheckInId == first.Vehicle.Header.Id));
 
-        var blocked = await Assert.ThrowsAsync<AppException>(() =>
-            fixture.SteelReceipt.ConvertAsync(
-                fixture.Plan.Id,
-                fixture.ConvertRequest([
-                    fixture.Lines[0].Id,
-                    fixture.Lines[1].Id
-                ]),
-                fixture.Creator.Id));
-        Assert.Equal(StatusCodes.Status409Conflict, blocked.StatusCode);
+        var convertedKnown = await fixture.SteelReceipt.ConvertAsync(
+            fixture.Plan.Id,
+            fixture.ConvertRequest([
+                fixture.Lines[0].Id,
+                fixture.Lines[1].Id
+            ]),
+            fixture.Creator.Id);
+        Assert.Equal(2, convertedKnown.ConvertedLineCount);
 
         var oldUnknown = appended.Plates.Single(
             x => x.IdentityStatus == nameof(SteelPlateIdentityStatus.Unknown));
@@ -265,9 +264,9 @@ public sealed class SteelVehicleUnknownPlateIntegrationTests
         Assert.Equal(0, resolved.UnknownCount);
         var converted = await fixture.SteelReceipt.ConvertAsync(
             fixture.Plan.Id,
-            fixture.ConvertRequest(resolved.Plates.Select(x => x.PlanLineId!.Value).ToArray()),
+            fixture.ConvertRequest([fixture.Lines[2].Id]),
             fixture.Creator.Id);
-        Assert.Equal(3, converted.ConvertedLineCount);
+        Assert.Equal(1, converted.ConvertedLineCount);
 
         var duplicateRequest = appendRequest with
         {
@@ -384,12 +383,11 @@ public sealed class SteelVehicleUnknownPlateIntegrationTests
             .Where(x => x.IdentityStatus == nameof(SteelPlateIdentityStatus.Known))
             .Select(x => x.PlanLineId!.Value)
             .ToArray();
-        var blocked = await Assert.ThrowsAsync<AppException>(() =>
-            fixture.SteelReceipt.ConvertAsync(
-                fixture.Plan.Id,
-                fixture.ConvertRequest(knownLineIds),
-                fixture.Creator.Id));
-        Assert.Equal(StatusCodes.Status409Conflict, blocked.StatusCode);
+        var convertedKnown = await fixture.SteelReceipt.ConvertAsync(
+            fixture.Plan.Id,
+            fixture.ConvertRequest(knownLineIds),
+            fixture.Creator.Id);
+        Assert.Equal(3, convertedKnown.ConvertedLineCount);
 
         var sameRoleView = await fixture.Acceptance.GetLatestByVehicleAsync(
             completed.Vehicle.Header.Id, canManageVehicleAcceptance: true);
@@ -481,12 +479,12 @@ public sealed class SteelVehicleUnknownPlateIntegrationTests
             (await fixture.Context.Set<SteelVehicleAcceptance>()
                 .AsNoTracking().SingleAsync(x => x.Id == completed.AcceptanceId)).Status);
 
-        var allLineIds = fullyResolved.Plates.Select(x => x.PlanLineId!.Value).ToArray();
+        var newlyResolvedLineIds = new[] { fixture.Lines[3].Id, fixture.Lines[4].Id };
         var converted = await fixture.SteelReceipt.ConvertAsync(
             fixture.Plan.Id,
-            fixture.ConvertRequest(allLineIds),
+            fixture.ConvertRequest(newlyResolvedLineIds),
             fixture.Creator.Id);
-        Assert.Equal(5, converted.ConvertedLineCount);
+        Assert.Equal(2, converted.ConvertedLineCount);
 
         var replay = await fixture.Acceptance.CompleteAsync(
             request, [vehicleImage], [], fixture.Creator.Id);
