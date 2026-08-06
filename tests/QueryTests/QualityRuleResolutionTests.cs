@@ -158,6 +158,26 @@ public sealed class QualityRuleResolutionTests
         Assert.True(GoodsReceiptOperationsService.ShouldHoldInventoryForQuality(line, header));
     }
 
+    [Theory]
+    [InlineData(GoodsReceiptErpQualityGatePolicy.None)]
+    [InlineData(GoodsReceiptErpQualityGatePolicy.RuleBasedOnly)]
+    public void Manual_quality_is_rejected_when_any_quality_plan_policy_is_not_enabled(
+        GoodsReceiptErpQualityGatePolicy policy)
+    {
+        var exception = Assert.Throws<verii_wms_api_v2.Shared.Application.Exceptions.AppException>(
+            () => GoodsReceiptOperationsService.ValidateManualQualityPolicy(policy, true));
+
+        Assert.Contains("Manuel kalite", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Manual_quality_is_allowed_for_any_quality_plan_policy()
+    {
+        GoodsReceiptOperationsService.ValidateManualQualityPolicy(
+            GoodsReceiptErpQualityGatePolicy.AnyQualityPlan,
+            manualQualityRequested: true);
+    }
+
     [Fact]
     public void Receipt_waits_until_every_matching_quality_line_has_a_final_decision()
     {

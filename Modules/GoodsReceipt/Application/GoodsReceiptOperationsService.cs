@@ -264,6 +264,9 @@ public sealed class GoodsReceiptOperationsService(
             if (hasOrderSources && request.Lines.Any(x => string.IsNullOrWhiteSpace(x.SourceOrderNumber) || !x.SourceOrderId.HasValue))
                 throw AppException.BadRequest("Siparişten doğrudan kabulde tüm kalemlerin sipariş numarası ve satır kimliği bulunmalıdır.");
             var policy = await receiptPolicyService.GetAsync(branch, token);
+            ValidateManualQualityPolicy(
+                policy.ErpQualityGatePolicy,
+                request.ForceQualityControl || request.Lines.Any(x => x.ForceQualityControl));
             var orderSourceByKey = new Dictionary<(string OrderNumber, int OrderId), GoodsReceiptOrderSourceLine>();
             if (hasOrderSources)
             {
@@ -775,6 +778,16 @@ public sealed class GoodsReceiptOperationsService(
         line.RequireQualityControl
         && (header.HoldInventoryUntilQualityDecision
             || line.QualityRoutingSource == GoodsReceiptQualityRoutingSource.ManualReceipt);
+
+    internal static void ValidateManualQualityPolicy(
+        GoodsReceiptErpQualityGatePolicy qualityGatePolicy,
+        bool manualQualityRequested)
+    {
+        if (manualQualityRequested
+            && qualityGatePolicy != GoodsReceiptErpQualityGatePolicy.AnyQualityPlan)
+            throw AppException.Conflict(
+                "Manuel kalite yönlendirmesi için mal kabul ERP kalite bekleme politikası 'Kural veya manuel tüm kalite planlarını bekle' olmalıdır.");
+    }
 
     internal static string ResolveNextAction(bool requiresQualityControl) =>
         requiresQualityControl ? "SendToQuality" : "CreateWaybill";

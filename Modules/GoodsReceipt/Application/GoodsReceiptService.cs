@@ -63,6 +63,9 @@ public sealed class GoodsReceiptService(
             var warehouse = await unitOfWork.Repository<WarehouseEntity>().FirstOrDefaultAsync(x => x.Id == request.TargetWarehouseId && x.BranchCode == branch, false, ct)
                 ?? throw AppException.BadRequest(Message(GoodsReceiptMessageKeys.WarehouseNotFound));
             var receiptPolicy = await receiptPolicyService.GetAsync(branch, ct);
+            GoodsReceiptOperationsService.ValidateManualQualityPolicy(
+                receiptPolicy.ErpQualityGatePolicy,
+                request.ForceQualityControl || request.Lines.Any(x => x.ForceQualityControl));
             var location = await unitOfWork.Repository<WarehouseLocation>().FindByIdAsync(request.ReceivingLocationId, false, ct)
                 ?? throw AppException.BadRequest(Message(GoodsReceiptMessageKeys.ReceivingLocationNotFound));
             if (!location.IsActive || location.WarehouseId != warehouse.Id)
