@@ -6,6 +6,7 @@ using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 using verii_wms_api_v2.Shared.Infrastructure.Files;
+using verii_wms_api_v2.Modules.Identity.Domain;
 using CustomerEntity = verii_wms_api_v2.Modules.Customer.Domain.Customer;
 using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
 using System.Net.Mail;
@@ -31,14 +32,18 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
         await Orders.CountAsync(x=>x.Status==ProcurementOrderStatus.PendingApproval,ct),
         await Orders.CountAsync(x=>(x.Status==ProcurementOrderStatus.Approved||x.Status==ProcurementOrderStatus.SentToSupplier||x.Status==ProcurementOrderStatus.PartiallyReceived)&&x.Lines.Any(l=>l.OrderedQuantity-l.ReceivedQuantity-l.CancelledQuantity>0),ct));
 
-    public Task<PagedResponse<ProcurementGridRow>> GetPagedAsync(string documentType,PagedRequest request,CancellationToken ct=default)=>NormalizeType(documentType) switch
+    public async Task<PagedResponse<ProcurementGridRow>> GetPagedAsync(string documentType,PagedRequest request,CancellationToken ct=default)
     {
-        "request"=>RequestRows(request).ToPagedResponseAsync(request,ct),
-        "rfq"=>RfqRows(request).ToPagedResponseAsync(request,ct),
-        "quote"=>QuoteRows(request).ToPagedResponseAsync(request,ct),
-        "order"=>OrderRows(request).ToPagedResponseAsync(request,ct),
-        _=>throw AppException.BadRequest("Geçersiz satınalma belge türü.")
-    };
+        var page=NormalizeType(documentType) switch
+        {
+            "request"=>await RequestRows(request).ToPagedResponseAsync(request,ct),
+            "rfq"=>await RfqRows(request).ToPagedResponseAsync(request,ct),
+            "quote"=>await QuoteRows(request).ToPagedResponseAsync(request,ct),
+            "order"=>await OrderRows(request).ToPagedResponseAsync(request,ct),
+            _=>throw AppException.BadRequest("Geçersiz satınalma belge türü.")
+        };
+        return await EnrichGridAuditAsync(page,ct);
+    }
 
     public async Task<ProcurementDocumentDetail> GetDetailAsync(string documentType,long id,CancellationToken ct=default)
     {
@@ -50,13 +55,13 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
             var lines=x.Lines.OrderBy(l=>l.LineNo).Select(l=>new ProcurementLineDetail(l.Id,l.LineNo,l.StockId,l.StockCodeSnapshot,l.StockNameSnapshot,l.UnitCode,l.RequestedQuantity,l.ConvertedQuantity,0,0,0,l.RequiredDate,l.ProjectCode,l.RequestedQuantity-l.ConvertedQuantity,l.Id,Status:l.Status.ToString())).ToList();
             var (headerAttachments,lineAttachments)=await LoadAttachmentBundleAsync(ProcurementAttachmentOwnerType.Request,id,ProcurementAttachmentOwnerType.RequestLine,lines.Select(l=>l.Id),ct);
             lines=lines.Select(l=>l with{Attachments=lineAttachments.GetValueOrDefault(l.Id,[])}).ToList();
-            return new(x.Id,type,x.RequestNo,x.RequestDate,x.Status.ToString(),x.Subject,x.Description,null,null,"TRY",1,x.RequiredDate,lines,histories,null,x.Id,x.RequestNo,headerAttachments);
+            return await EnrichDetailAuditAsync(new(x.Id,type,x.RequestNo,x.RequestDate,x.Status.ToString(),x.Subject,x.Description,null,null,"TRY",1,x.RequiredDate,lines,histories,null,x.Id,x.RequestNo,headerAttachments,CreatedBy:x.CreatedBy,CreatedDate:x.CreatedDate,UpdatedBy:x.UpdatedBy,UpdatedDate:x.UpdatedDate),ct);
         }
         if(type=="rfq")
         {
             var x=await Rfqs.Query().Include(x=>x.Lines).Include(x=>x.Suppliers).Include(x=>x.Request).FirstOrDefaultAsync(x=>x.Id==id,ct)??throw AppException.NotFound("Teklif talebi bulunamadı.");
             var invitations=await Invitations.Query().Where(i=>i.ProcurementRfqId==id).ToListAsync(ct);
-            return new(x.Id,type,x.RfqNo,x.RfqDate,x.Status.ToString(),x.Subject,x.BuyerMessage,null,string.Join(", ",x.Suppliers.Select(s=>s.SupplierNameSnapshot)),"TRY",1,x.ResponseDueDate,x.Lines.OrderBy(l=>l.LineNo).Select(l=>new ProcurementLineDetail(l.Id,l.LineNo,l.StockId,l.StockCodeSnapshot,l.StockNameSnapshot,l.UnitCode,l.RequestedQuantity,0,0,0,0,l.RequiredDate,l.ProjectCode,l.RequestedQuantity,l.ProcurementRequestLineId)).ToList(),histories,x.Suppliers.OrderBy(s=>s.SupplierNameSnapshot).Select(s=>{var invitation=s.SupplierId is long sid?invitations.FirstOrDefault(i=>i.SupplierId==sid):null;return new ProcurementSupplierParticipant(s.SupplierId,s.SupplierCodeSnapshot,s.SupplierNameSnapshot,invitation?.Status.ToString(),invitation?.RecipientEmail,invitation?.ExpiresAtUtc);}).ToList(),x.ProcurementRequestId,x.Request?.RequestNo);
+            return await EnrichDetailAuditAsync(new(x.Id,type,x.RfqNo,x.RfqDate,x.Status.ToString(),x.Subject,x.BuyerMessage,null,string.Join(", ",x.Suppliers.Select(s=>s.SupplierNameSnapshot)),"TRY",1,x.ResponseDueDate,x.Lines.OrderBy(l=>l.LineNo).Select(l=>new ProcurementLineDetail(l.Id,l.LineNo,l.StockId,l.StockCodeSnapshot,l.StockNameSnapshot,l.UnitCode,l.RequestedQuantity,0,0,0,0,l.RequiredDate,l.ProjectCode,l.RequestedQuantity,l.ProcurementRequestLineId)).ToList(),histories,x.Suppliers.OrderBy(s=>s.SupplierNameSnapshot).Select(s=>{var invitation=s.SupplierId is long sid?invitations.FirstOrDefault(i=>i.SupplierId==sid):null;return new ProcurementSupplierParticipant(s.SupplierId,s.SupplierCodeSnapshot,s.SupplierNameSnapshot,invitation?.Status.ToString(),invitation?.RecipientEmail,invitation?.ExpiresAtUtc);}).ToList(),x.ProcurementRequestId,x.Request?.RequestNo,RfqId:x.Id,RfqNo:x.RfqNo,CreatedBy:x.CreatedBy,CreatedDate:x.CreatedDate,UpdatedBy:x.UpdatedBy,UpdatedDate:x.UpdatedDate),ct);
         }
         if(type=="quote")
         {
@@ -66,12 +71,15 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
             var lines=x.Lines.OrderBy(l=>l.LineNo).Select(l=>{var r=rfqLines[l.ProcurementRfqLineId];return new ProcurementLineDetail(l.Id,l.LineNo,r.StockId,r.StockCodeSnapshot,r.StockNameSnapshot,r.UnitCode,l.QuotedQuantity,l.ConvertedQuantity,l.UnitPrice,l.DiscountRate,l.VatRate,l.DeliveryDate,r.ProjectCode,l.QuotedQuantity-l.ConvertedQuantity,r.ProcurementRequestLineId);}).ToList();
             var (headerAttachments,lineAttachments)=await LoadAttachmentBundleAsync(ProcurementAttachmentOwnerType.Quote,id,ProcurementAttachmentOwnerType.QuoteLine,lines.Select(l=>l.Id),ct);
             lines=lines.Select(l=>l with{Attachments=lineAttachments.GetValueOrDefault(l.Id,[])}).ToList();
-            return new(x.Id,type,x.QuoteNo,x.QuoteDate,x.Status.ToString(),subject,x.Note,x.SupplierCodeSnapshot,x.SupplierNameSnapshot,x.CurrencyCode,x.ExchangeRate,x.ValidUntil,lines,histories,null,x.Rfq.ProcurementRequestId,x.Rfq.Request?.RequestNo,headerAttachments);
+            return await EnrichDetailAuditAsync(new(x.Id,type,x.QuoteNo,x.QuoteDate,x.Status.ToString(),subject,x.Note,x.SupplierCodeSnapshot,x.SupplierNameSnapshot,x.CurrencyCode,x.ExchangeRate,x.ValidUntil,lines,histories,null,x.Rfq.ProcurementRequestId,x.Rfq.Request?.RequestNo,headerAttachments,x.ProcurementRfqId,x.Rfq.RfqNo,x.Id,x.QuoteNo,x.CreatedBy,CreatedDate:x.CreatedDate,UpdatedBy:x.UpdatedBy,UpdatedDate:x.UpdatedDate),ct);
         }
         if(type=="order")
         {
             var x=await Orders.Query().Include(x=>x.Lines).FirstOrDefaultAsync(x=>x.Id==id,ct)??throw AppException.NotFound("Satınalma siparişi bulunamadı.");
-            return new(x.Id,type,x.OrderNo,x.OrderDate,x.Status.ToString(),"Satınalma siparişi",x.Description,x.SupplierCodeSnapshot,x.SupplierNameSnapshot,x.CurrencyCode,x.ExchangeRate,x.DeliveryDate,x.Lines.OrderBy(l=>l.LineNo).Select(l=>new ProcurementLineDetail(l.Id,l.LineNo,l.StockId,l.StockCodeSnapshot,l.StockNameSnapshot,l.UnitCode,l.OrderedQuantity,l.ReceivedQuantity,l.UnitPrice,l.DiscountRate,l.VatRate,l.DeliveryDate,l.ProjectCode,l.OrderedQuantity-l.ReceivedQuantity-l.CancelledQuantity)).ToList(),histories);
+            var sourceQuote=x.SourceQuoteId is long sourceQuoteId
+                ?await Quotes.Query().Include(q=>q.Rfq).ThenInclude(r=>r.Request).FirstOrDefaultAsync(q=>q.Id==sourceQuoteId,ct)
+                :null;
+            return await EnrichDetailAuditAsync(new(x.Id,type,x.OrderNo,x.OrderDate,x.Status.ToString(),"Satınalma siparişi",x.Description,x.SupplierCodeSnapshot,x.SupplierNameSnapshot,x.CurrencyCode,x.ExchangeRate,x.DeliveryDate,x.Lines.OrderBy(l=>l.LineNo).Select(l=>new ProcurementLineDetail(l.Id,l.LineNo,l.StockId,l.StockCodeSnapshot,l.StockNameSnapshot,l.UnitCode,l.OrderedQuantity,l.ReceivedQuantity,l.UnitPrice,l.DiscountRate,l.VatRate,l.DeliveryDate,l.ProjectCode,l.OrderedQuantity-l.ReceivedQuantity-l.CancelledQuantity)).ToList(),histories,RequestId:sourceQuote?.Rfq.ProcurementRequestId,RequestNo:sourceQuote?.Rfq.Request?.RequestNo,RfqId:sourceQuote?.ProcurementRfqId,RfqNo:sourceQuote?.Rfq.RfqNo,QuoteId:sourceQuote?.Id,QuoteNo:sourceQuote?.QuoteNo,CreatedBy:x.CreatedBy,CreatedDate:x.CreatedDate,UpdatedBy:x.UpdatedBy,UpdatedDate:x.UpdatedDate),ct);
         }
         throw AppException.BadRequest("Geçersiz satınalma belge türü.");
     }
@@ -411,10 +419,69 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
         await emailSender.SendQuoteInvitationAsync(invitation.RecipientEmail,quote.SupplierNameSnapshot,quote.Rfq.RfqNo,quote.Rfq.Subject,quote.Rfq.ResponseDueDate,$"{baseUrl}/supplier/quotes/{Uri.EscapeDataString(rawToken)}",ct);
     }
 
-    private IQueryable<ProcurementGridRow> RequestRows(PagedRequest r){var s=r.Search?.Trim();return Requests.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.RequestNo.Contains(s)||x.Subject.Contains(s)).Select(x=>new ProcurementGridRow(x.Id,"request",x.RequestNo,x.RequestDate,x.Status.ToString(),x.Subject,null,x.Lines.Count,0,"TRY",x.RequiredDate,x.CreatedDate,x.Id,x.RequestNo,null)).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
-    private IQueryable<ProcurementGridRow> RfqRows(PagedRequest r){var s=r.Search?.Trim();return Rfqs.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.RfqNo.Contains(s)||x.Subject.Contains(s)).Select(x=>new ProcurementGridRow(x.Id,"rfq",x.RfqNo,x.RfqDate,x.Status.ToString(),x.Subject,x.Suppliers.OrderBy(y=>y.Id).Select(y=>y.SupplierNameSnapshot).FirstOrDefault(),x.Lines.Count,0,"TRY",x.ResponseDueDate,x.CreatedDate,x.ProcurementRequestId,x.Request!=null?x.Request.RequestNo:null,x.Id)).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
-    private IQueryable<ProcurementGridRow> QuoteRows(PagedRequest r){var s=r.Search?.Trim();return Quotes.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.QuoteNo.Contains(s)||x.SupplierNameSnapshot.Contains(s)||(x.Rfq.Request!=null&&(x.Rfq.Request.RequestNo.Contains(s)||x.Rfq.Request.Subject.Contains(s)))).Select(x=>new ProcurementGridRow(x.Id,"quote",x.QuoteNo,x.QuoteDate,x.Status.ToString(),x.Rfq.Request!=null?x.Rfq.Request.Subject:x.Rfq.Subject,x.SupplierNameSnapshot,x.Lines.Count,x.Lines.Sum(l=>l.QuotedQuantity*l.UnitPrice*(1-l.DiscountRate/100)*(1+l.VatRate/100)),x.CurrencyCode,x.Lines.Where(l=>l.DeliveryDate.HasValue).Select(l=>l.DeliveryDate).Min()??x.ValidUntil,x.CreatedDate,x.Rfq.ProcurementRequestId,x.Rfq.Request!=null?x.Rfq.Request.RequestNo:null,x.ProcurementRfqId)).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
-    private IQueryable<ProcurementGridRow> OrderRows(PagedRequest r){var s=r.Search?.Trim();return Orders.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.OrderNo.Contains(s)||x.SupplierNameSnapshot.Contains(s)).Select(x=>new ProcurementGridRow(x.Id,"order",x.OrderNo,x.OrderDate,x.Status.ToString(),"Satınalma siparişi",x.SupplierNameSnapshot,x.Lines.Count,x.Lines.Sum(l=>l.OrderedQuantity*l.UnitPrice*(1-l.DiscountRate/100)*(1+l.VatRate/100)),x.CurrencyCode,x.DeliveryDate,x.CreatedDate,null,null,null)).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
+    private IQueryable<ProcurementGridRow> RequestRows(PagedRequest r){var s=r.Search?.Trim();return Requests.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.RequestNo.Contains(s)||x.Subject.Contains(s)).Select(x=>new ProcurementGridRow(x.Id,"request",x.RequestNo,x.RequestDate,x.Status.ToString(),x.Subject,null,x.Lines.Count,0,"TRY",x.RequiredDate,x.CreatedDate,x.Id,x.RequestNo,null,null,null,null,x.CreatedBy,null,x.UpdatedDate,x.UpdatedBy,null)).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
+    private IQueryable<ProcurementGridRow> RfqRows(PagedRequest r){var s=r.Search?.Trim();return Rfqs.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.RfqNo.Contains(s)||x.Subject.Contains(s)||(x.Request!=null&&x.Request.RequestNo.Contains(s))).Select(x=>new ProcurementGridRow(x.Id,"rfq",x.RfqNo,x.RfqDate,x.Status.ToString(),x.Subject,x.Suppliers.OrderBy(y=>y.Id).Select(y=>y.SupplierNameSnapshot).FirstOrDefault(),x.Lines.Count,0,"TRY",x.ResponseDueDate,x.CreatedDate,x.ProcurementRequestId,x.Request!=null?x.Request.RequestNo:null,x.Id,x.RfqNo,null,null,x.CreatedBy,null,x.UpdatedDate,x.UpdatedBy,null)).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
+    private IQueryable<ProcurementGridRow> QuoteRows(PagedRequest r){var s=r.Search?.Trim();return Quotes.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.QuoteNo.Contains(s)||x.Rfq.RfqNo.Contains(s)||x.SupplierNameSnapshot.Contains(s)||(x.Rfq.Request!=null&&(x.Rfq.Request.RequestNo.Contains(s)||x.Rfq.Request.Subject.Contains(s)))).Select(x=>new ProcurementGridRow(x.Id,"quote",x.QuoteNo,x.QuoteDate,x.Status.ToString(),x.Rfq.Request!=null?x.Rfq.Request.Subject:x.Rfq.Subject,x.SupplierNameSnapshot,x.Lines.Count,x.Lines.Sum(l=>l.QuotedQuantity*l.UnitPrice*(1-l.DiscountRate/100)*(1+l.VatRate/100)),x.CurrencyCode,x.Lines.Where(l=>l.DeliveryDate.HasValue).Select(l=>l.DeliveryDate).Min()??x.ValidUntil,x.CreatedDate,x.Rfq.ProcurementRequestId,x.Rfq.Request!=null?x.Rfq.Request.RequestNo:null,x.ProcurementRfqId,x.Rfq.RfqNo,x.Id,x.QuoteNo,x.CreatedBy,null,x.UpdatedDate,x.UpdatedBy,null)).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
+    private IQueryable<ProcurementGridRow> OrderRows(PagedRequest r)
+    {
+        var s=r.Search?.Trim();
+        var rows=from x in Orders.Query()
+            join quote in Quotes.Query() on x.SourceQuoteId equals (long?)quote.Id into quoteGroup
+            from quote in quoteGroup.DefaultIfEmpty()
+            where string.IsNullOrWhiteSpace(s)||x.OrderNo.Contains(s)||x.SupplierNameSnapshot.Contains(s)||(quote!=null&&(quote.QuoteNo.Contains(s)||quote.Rfq.RfqNo.Contains(s)||(quote.Rfq.Request!=null&&quote.Rfq.Request.RequestNo.Contains(s))))
+            select new ProcurementGridRow(x.Id,"order",x.OrderNo,x.OrderDate,x.Status.ToString(),"Satınalma siparişi",x.SupplierNameSnapshot,x.Lines.Count,x.Lines.Sum(l=>l.OrderedQuantity*l.UnitPrice*(1-l.DiscountRate/100)*(1+l.VatRate/100)),x.CurrencyCode,x.DeliveryDate,x.CreatedDate,quote!=null?quote.Rfq.ProcurementRequestId:null,quote!=null&&quote.Rfq.Request!=null?quote.Rfq.Request.RequestNo:null,quote!=null?(long?)quote.ProcurementRfqId:null,quote!=null?quote.Rfq.RfqNo:null,quote!=null?(long?)quote.Id:null,quote!=null?quote.QuoteNo:null,x.CreatedBy,null,x.UpdatedDate,x.UpdatedBy);
+        return rows.ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));
+    }
+
+    private async Task<PagedResponse<ProcurementGridRow>> EnrichGridAuditAsync(PagedResponse<ProcurementGridRow> page,CancellationToken ct)
+    {
+        var names=await LoadUserDisplayNamesAsync(page.Items.SelectMany(x=>new long?[]{x.CreatedBy,x.UpdatedBy}),ct);
+        return new PagedResponse<ProcurementGridRow>
+        {
+            Items=page.Items.Select(x=>x with
+            {
+                CreatedByName=UserName(names,x.CreatedBy),
+                UpdatedByName=UserName(names,x.UpdatedBy)
+            }).ToList(),
+            TotalCount=page.TotalCount,
+            PageNumber=page.PageNumber,
+            PageSize=page.PageSize
+        };
+    }
+
+    private async Task<ProcurementDocumentDetail> EnrichDetailAuditAsync(ProcurementDocumentDetail detail,CancellationToken ct)
+    {
+        var ids=detail.History.Select(x=>(long?)x.ActorUserId)
+            .Concat([detail.CreatedBy,detail.UpdatedBy]);
+        var names=await LoadUserDisplayNamesAsync(ids,ct);
+        return detail with
+        {
+            CreatedByName=UserName(names,detail.CreatedBy),
+            UpdatedByName=UserName(names,detail.UpdatedBy),
+            History=detail.History.Select(x=>x with{ActorUserName=UserName(names,x.ActorUserId)}).ToList()
+        };
+    }
+
+    private async Task<Dictionary<long,string>> LoadUserDisplayNamesAsync(IEnumerable<long?> userIds,CancellationToken ct)
+    {
+        var ids=userIds.Where(x=>x.HasValue).Select(x=>x!.Value).Distinct().ToArray();
+        if(ids.Length==0)return [];
+        var users=await uow.Repository<User>().Query()
+            .Where(x=>ids.Contains(x.Id))
+            .Select(x=>new{x.Id,x.Username,x.Email,FirstName=x.Detail!=null?x.Detail.FirstName:null,LastName=x.Detail!=null?x.Detail.LastName:null})
+            .ToListAsync(ct);
+        return users.ToDictionary(
+            x=>x.Id,
+            x=>string.Join(" ",new[]{x.FirstName,x.LastName}.Where(value=>!string.IsNullOrWhiteSpace(value))).Trim() switch
+            {
+                {Length:>0} fullName=>fullName,
+                _ when !string.IsNullOrWhiteSpace(x.Username)=>x.Username,
+                _=>x.Email
+            });
+    }
+
+    private static string? UserName(IReadOnlyDictionary<long,string> names,long? userId)=>
+        userId.HasValue&&names.TryGetValue(userId.Value,out var name)?name:null;
 
     private async Task AddHistory(string type,long id,string from,string to,long actor,string? note,CancellationToken ct)=>await History.AddAsync(new ProcurementStatusHistory{DocumentType=type,DocumentId=id,FromStatus=from,ToStatus=to,ActorUserId=actor,Note=Norm(note),ChangedAtUtc=DateTimeOffset.UtcNow},ct);
     private async Task<T> ExecuteAllocationAsync<T>(Func<CancellationToken,Task<T>> operation,CancellationToken ct)

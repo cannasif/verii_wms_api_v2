@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
+using verii_wms_api_v2.Modules.Procurement.Application;
 using verii_wms_api_v2.Modules.Procurement.Domain;
 using Xunit;
 
@@ -102,6 +103,48 @@ public sealed class ProcurementModelTests
         Assert.Equal(7, defaults.InvitationValidityDays);
         Assert.Equal(3, defaults.MaximumSupplierRevisionCount);
         Assert.True(defaults.AllowSupplierDraftSave);
+    }
+
+    [Fact]
+    public void Procurement_request_lines_persist_line_level_status_with_lookup_index()
+    {
+        using var context = CreateContext();
+        var line = Entity<ProcurementRequestLine>(context.GetService<IDesignTimeModel>().Model);
+
+        Assert.NotNull(line.FindProperty(nameof(ProcurementRequestLine.Status)));
+        Assert.Contains(line.GetIndexes(), index => index.Properties.Select(x => x.Name).SequenceEqual([
+            nameof(ProcurementRequestLine.ProcurementRequestId),
+            nameof(ProcurementRequestLine.Status)
+        ]));
+    }
+
+    [Fact]
+    public void Procurement_read_models_expose_audit_and_document_lineage()
+    {
+        var gridFields = typeof(ProcurementGridRow).GetProperties().Select(x => x.Name).ToHashSet();
+        var detailFields = typeof(ProcurementDocumentDetail).GetProperties().Select(x => x.Name).ToHashSet();
+
+        foreach (var field in new[]
+                 {
+                     nameof(ProcurementGridRow.CreatedBy),
+                     nameof(ProcurementGridRow.CreatedByName),
+                     nameof(ProcurementGridRow.UpdatedBy),
+                     nameof(ProcurementGridRow.UpdatedByName),
+                     nameof(ProcurementGridRow.RequestId),
+                     nameof(ProcurementGridRow.RfqId),
+                     nameof(ProcurementGridRow.QuoteId)
+                 })
+            Assert.Contains(field, gridFields);
+
+        foreach (var field in new[]
+                 {
+                     nameof(ProcurementDocumentDetail.CreatedBy),
+                     nameof(ProcurementDocumentDetail.CreatedByName),
+                     nameof(ProcurementDocumentDetail.RequestNo),
+                     nameof(ProcurementDocumentDetail.RfqNo),
+                     nameof(ProcurementDocumentDetail.QuoteNo)
+                 })
+            Assert.Contains(field, detailFields);
     }
 
     private static IEntityType Entity<TEntity>(IModel model) =>
