@@ -200,7 +200,8 @@ public sealed class StockBalanceService(
     }
 
     public async Task<IReadOnlyList<StockLocationBalanceDto>> ResolveStockLocationsAsync(
-        string branchCode, long warehouseId, long stockId, long? yapCodeId, CancellationToken cancellationToken = default)
+        string branchCode, long warehouseId, long stockId, long? yapCodeId,
+        IReadOnlyCollection<long>? excludeLocationIds = null, CancellationToken cancellationToken = default)
     {
         var candidates = await Locations.Query(true)
             .Where(x => x.BranchCode == branchCode && x.WarehouseId == warehouseId
@@ -208,6 +209,8 @@ public sealed class StockBalanceService(
             .GroupBy(x => x.LocationId)
             .Select(g => new { LocationId = g.Key, AvailableQuantity = g.Sum(x => x.AvailableQuantity) })
             .ToListAsync(cancellationToken);
+        if (excludeLocationIds is { Count: > 0 })
+            candidates = candidates.Where(x => !excludeLocationIds.Contains(x.LocationId)).ToList();
         if (candidates.Count == 0) return [];
 
         var locationIds = candidates.Select(x => x.LocationId).ToArray();

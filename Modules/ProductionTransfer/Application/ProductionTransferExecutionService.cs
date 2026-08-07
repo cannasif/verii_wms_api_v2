@@ -529,11 +529,16 @@ public sealed class ProductionTransferExecutionService(
                 .Select(x => x.DocumentNo).SingleOrDefaultAsync(ct);
 
         var lineLinks = link.Lines.ToDictionary(x => x.WarehouseTransferLineId);
+        var excludedSourceLocationIds = await ProductionTransferSourceLocationExclusions.FromHeaderAsync(
+            uow, header, header.Lines, ct);
         var lines = header.Lines.OrderBy(x => x.LineNo).Select(x =>
         {
             lineLinks.TryGetValue(x.Id, out var lineLink);
-            var routedLocation = x.DefaultSourceLocationId.HasValue
-                && routedLocations.TryGetValue(x.DefaultSourceLocationId.Value, out var location)
+            var suggestedLocationId = x.DefaultSourceLocationId;
+            if (suggestedLocationId.HasValue && excludedSourceLocationIds.Contains(suggestedLocationId.Value))
+                suggestedLocationId = null;
+            var routedLocation = suggestedLocationId.HasValue
+                && routedLocations.TryGetValue(suggestedLocationId.Value, out var location)
                     ? location
                     : null;
             return new ProductionTransferExecutionLineDto(
@@ -541,7 +546,7 @@ public sealed class ProductionTransferExecutionService(
                 x.RequestedQuantity, x.PickedQuantity, lineLink?.HandedOverQuantity ?? 0,
                 Math.Max(0, x.RequestedQuantity - x.PickedQuantity),
                 Math.Max(0, x.RequestedQuantity - x.PickedQuantity),
-                x.TrackingType.ToString(), x.DefaultSourceLocationId, routedLocation?.Code, routedLocation?.Name);
+                x.TrackingType.ToString(), suggestedLocationId, routedLocation?.Code, routedLocation?.Name);
         }).ToArray();
         var requested = lines.Sum(x => x.RequestedQuantity);
         var picked = lines.Sum(x => x.PickedQuantity);
@@ -557,6 +562,7 @@ public sealed class ProductionTransferExecutionService(
             requested, picked, handedOver, Math.Max(0, requested - picked),
             picked > 0 && link.WorkflowStatus is ProductionTransferWorkflowStatus.Planned or ProductionTransferWorkflowStatus.Picking,
             link.WorkflowStatus == ProductionTransferWorkflowStatus.AwaitingHandover,
+            excludedSourceLocationIds.ToArray(),
             lines);
     }
 

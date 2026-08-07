@@ -31,7 +31,8 @@ public sealed record CreateProductionTransferDraftRequest(
     bool RequiredForOrderCompletion,
     IReadOnlyList<ProductionTransferLineContextRequest>? LineContexts,
     long? RequestedByUserId = null,
-    string? RequestedByName = null);
+    string? RequestedByName = null,
+    bool AutoAssignSources = false);
 
 public sealed record ProductionTransferContextDto(
     long LinkId,

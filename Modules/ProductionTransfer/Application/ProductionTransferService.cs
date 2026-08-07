@@ -5,6 +5,9 @@ using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Production.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
+using verii_wms_api_v2.Modules.StockMovement.Domain;
+using verii_wms_api_v2.Modules.StockTracking.Application;
+using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared;
@@ -19,7 +22,8 @@ namespace verii_wms_api_v2.Modules.ProductionTransfer.Application;
 public sealed class ProductionTransferService(
     IUnitOfWork uow,
     IWarehouseTransferService transfers,
-    IAuditLogWriter audit) : IProductionTransferService
+    IAuditLogWriter audit,
+    IStockTrackingPolicyResolver trackingPolicyResolver) : IProductionTransferService
 {
     private static readonly WarehouseTransferBusinessContext[] Contexts =
     [
@@ -53,6 +57,8 @@ public sealed class ProductionTransferService(
             var policy=await GetPolicyEntityAsync(request.Transfer.BranchCode,token);
             request=await ApplyDefaultProductionTransferLocationAsync(
                 request,policy.RequireTargetProductionLocation,token);
+            if(IsAutoAssignSources(request))
+                request=await AutoAssignSourceLocationsAndSerialsAsync(request,token);
             ValidatePolicy(request,policy);
             await ValidateProductionReferencesAsync(request,token);
             if(!request.TriggeredByProduction&&policy.RequireErpMasterDataForManualTransfer)
@@ -61,10 +67,12 @@ public sealed class ProductionTransferService(
             var availability=policy.CheckMaterialAvailability
                 ? await AvailabilityAsync(request.Transfer,token)
                 : ProductionMaterialAvailabilityStatus.NotChecked;
-            if(policy.BlockOnShortage&&availability==ProductionMaterialAvailabilityStatus.Shortage)
+            if(policy.BlockOnShortage&&!IsAutoAssignSources(request)&&availability==ProductionMaterialAvailabilityStatus.Shortage)
                 throw AppException.Conflict("Üretim besleme transferi için kaynak rafta yeterli kullanılabilir stok yok.");
 
-            var result=await transfers.CreateDraftAsync(request.Transfer with{BusinessContext=context},actor,token);
+            var result=await transfers.CreateDraftAsync(request.Transfer with{
+                BusinessContext=context,
+                AutoAssignSources=IsAutoAssignSources(request)},actor,token);
             var header=await uow.Repository<WarehouseTransferHeader>().Query(true)
                 .Include(x=>x.Lines).SingleAsync(x=>x.Id==result.Id,token);
             header.RequireApproval|=policy.RequireApproval;
@@ -367,7 +375,7 @@ public sealed class ProductionTransferService(
         var taskBased=request.Transfer.InitiationMode is WarehouseTransferInitiationMode.OrderBasedTask or WarehouseTransferInitiationMode.StockBasedTask;
         if(policy.RequireTaskAssignment&&!taskBased)
             throw AppException.BadRequest("Üretime transferde emirli yürütme zorunludur. Kullanıcı transfer oluşturulduktan sonra atanabilir.");
-        if(policy.RequireSourceProductionLocation&&request.Transfer.Lines.Any(x=>!x.DefaultSourceLocationId.HasValue))
+        if(policy.RequireSourceProductionLocation&&!IsAutoAssignSources(request)&&request.Transfer.Lines.Any(x=>!x.DefaultSourceLocationId.HasValue))
             throw AppException.BadRequest("Üretime transferde kaynak raf zorunludur.");
         if(policy.RequireTargetProductionLocation&&request.Transfer.Lines.Any(x=>!x.DefaultTargetLocationId.HasValue))
             throw AppException.BadRequest("Üretime transferde üretim besleme/hedef rafı zorunludur.");
@@ -379,6 +387,107 @@ public sealed class ProductionTransferService(
         if(policy.AllowOverIssue&&request.LineContexts?.Any(x=>x.RequiredQuantity>0
                && request.Transfer.Lines[x.LineIndex].Quantity>x.RequiredQuantity*(1+policy.OverIssueTolerancePercent/100m))==true)
             throw AppException.BadRequest("Üretim transfer miktarı fazla sarf toleransını aşıyor.");
+    }
+
+    private static bool IsAutoAssignSources(CreateProductionTransferDraftRequest request)=>
+        request.AutoAssignSources||request.Transfer.AutoAssignSources;
+
+    private async Task<CreateProductionTransferDraftRequest> AutoAssignSourceLocationsAndSerialsAsync(
+        CreateProductionTransferDraftRequest request,CancellationToken ct)
+    {
+        var transfer=request.Transfer;
+        var branch=transfer.BranchCode.Trim();
+        var sourceWarehouseId=transfer.SourceWarehouseId;
+        var excludedLocationIds=await ProductionTransferSourceLocationExclusions.FromTransferAsync(uow,transfer,ct);
+        var locations=await uow.Repository<WarehouseLocation>().Query()
+            .Where(x=>x.WarehouseId==sourceWarehouseId&&x.IsActive&&x.IsPickable&&!x.IsQuarantine)
+            .ToDictionaryAsync(x=>x.Id,ct);
+        var locationIds=locations.Keys.ToArray();
+        var stockIds=transfer.Lines.Select(x=>x.StockId).Distinct().ToArray();
+        var trackingPolicies=new Dictionary<long,EffectiveStockTrackingPolicy>();
+        foreach(var stockId in stockIds)
+            trackingPolicies[stockId]=await trackingPolicyResolver.ResolveAsync(branch,stockId,ct);
+        var balances=(await uow.Repository<LocationStockBalance>().Query()
+            .Where(x=>x.WarehouseId==sourceWarehouseId&&stockIds.Contains(x.StockId)
+                &&locationIds.Contains(x.LocationId)&&x.StockStatus=="Available"&&x.AvailableQuantity>0)
+            .ToListAsync(ct))
+            .Where(x=>!excludedLocationIds.Contains(x.LocationId))
+            .ToList();
+        var movementEntries=await uow.Repository<StockMovementEntry>().Query()
+            .Where(x=>x.WarehouseId==sourceWarehouseId&&stockIds.Contains(x.StockId)
+                &&x.QuantityDelta>0&&x.SerialNo!=null)
+            .ToListAsync(ct);
+        var entryLookup=movementEntries
+            .GroupBy(x=>(x.StockId,x.YapCodeId,SerialNo:x.SerialNo!.Trim().ToUpperInvariant()))
+            .ToDictionary(g=>g.Key,g=>g.OrderBy(e=>e.OccurredAt).ThenBy(e=>e.Id).First());
+
+        var filledLines=transfer.Lines.Select(line=>{
+            var policy=trackingPolicies[line.StockId];
+            return policy.TrackingType is StockTrackingType.Serial or StockTrackingType.LotAndSerial
+                ?AssignSerialLine(line,balances,locations,entryLookup)
+                :AssignNonSerialLine(line,balances,locations);
+        }).ToArray();
+
+        return request with{
+            AutoAssignSources=true,
+            Transfer=transfer with{AutoAssignSources=true,Lines=filledLines}
+        };
+    }
+
+    private static WarehouseTransferLineDraftRequest AssignNonSerialLine(
+        WarehouseTransferLineDraftRequest line,
+        IReadOnlyCollection<LocationStockBalance> balances,
+        IReadOnlyDictionary<long,WarehouseLocation> locations)
+    {
+        var best=balances.Where(x=>x.StockId==line.StockId&&x.YapCodeId==line.YapCodeId
+                &&string.Equals(x.UnitCode,line.UnitCode,StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(x=>x.AvailableQuantity)
+            .ThenBy(x=>locations[x.LocationId].Code,StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+        return line with{DefaultSourceLocationId=best?.LocationId};
+    }
+
+    private static WarehouseTransferLineDraftRequest AssignSerialLine(
+        WarehouseTransferLineDraftRequest line,
+        IReadOnlyCollection<LocationStockBalance> balances,
+        IReadOnlyDictionary<long,WarehouseLocation> locations,
+        IReadOnlyDictionary<(long StockId,long? YapCodeId,string SerialNo),StockMovementEntry> entryLookup)
+    {
+        var serialCandidates=balances.Where(x=>x.StockId==line.StockId&&x.YapCodeId==line.YapCodeId
+                &&string.Equals(x.UnitCode,line.UnitCode,StringComparison.OrdinalIgnoreCase)
+                &&!string.IsNullOrWhiteSpace(x.SerialNo))
+            .GroupBy(x=>x.SerialNo!.Trim(),StringComparer.OrdinalIgnoreCase)
+            .Select(g=>g.OrderByDescending(x=>x.AvailableQuantity)
+                .ThenBy(x=>locations[x.LocationId].Code,StringComparer.OrdinalIgnoreCase)
+                .First())
+            .Select(balance=>{
+                var serial=balance.SerialNo!.Trim().ToUpperInvariant();
+                entryLookup.TryGetValue((balance.StockId,balance.YapCodeId,serial),out var entry);
+                return new{Balance=balance,Entry=entry};
+            })
+            .OrderBy(x=>x.Entry?.OccurredAt??DateTime.MaxValue)
+            .ThenBy(x=>x.Entry?.Id??long.MaxValue)
+            .ToArray();
+
+        if(serialCandidates.Length==0)
+            return line with{
+                DefaultSourceLocationId=null,
+                Trackings=[new WarehouseTransferTrackingDraftRequest(line.Quantity,null,null,null,null,null,null,null)]
+            };
+
+        var wholeUnits=(int)Math.Floor(line.Quantity);
+        var trackings=new List<WarehouseTransferTrackingDraftRequest>();
+        foreach(var candidate in serialCandidates.Take(wholeUnits))
+            trackings.Add(new WarehouseTransferTrackingDraftRequest(1,null,null,candidate.Balance.SerialNo!.Trim(),null,null,
+                candidate.Balance.LocationId,null));
+        var remaining=line.Quantity-trackings.Sum(x=>x.Quantity);
+        if(remaining>0)
+            trackings.Add(new WarehouseTransferTrackingDraftRequest(remaining,null,null,null,null,null,null,null));
+
+        long? defaultSource=trackings.Count(x=>x.SourceLocationId.HasValue)==1
+            ?trackings.First(x=>x.SourceLocationId.HasValue).SourceLocationId
+            :null;
+        return line with{DefaultSourceLocationId=defaultSource,Trackings=trackings};
     }
 
     private static WarehouseTransferBusinessContext Context(ProductionTransferPurpose purpose)=>purpose switch{

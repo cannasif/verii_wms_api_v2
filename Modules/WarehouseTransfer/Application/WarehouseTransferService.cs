@@ -72,7 +72,7 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
             var yapIds=request.Lines.Where(x=>x.YapCodeId.HasValue).Select(x=>x.YapCodeId!.Value).Distinct().ToArray();
             var yaps=await uow.Repository<YapCodeEntity>().Query().Where(x=>yapIds.Contains(x.Id)&&x.BranchCode==branch).ToDictionaryAsync(x=>x.Id,token);
             if(yaps.Count!=yapIds.Length)throw AppException.BadRequest("Seçilen yapı kodlarından biri ERP mirror tablosunda bulunamadı.");
-            ValidateTrackings(request,trackingPolicies);
+            ValidateTrackings(request,trackingPolicies,request.AutoAssignSources);
             await ValidateSerialSourceBalancesAsync(request,trackingPolicies,stocks,token);
 
             var allocated=await numberAllocator.AllocateAsync(request.DocumentSeriesId,DocumentType(request.BusinessContext),DateTime.UtcNow,token);
@@ -348,7 +348,7 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
         if(r.SourceWarehouseId<=0||r.TargetWarehouseId<=0)throw AppException.BadRequest("Kaynak ve hedef depo zorunludur.");
         if(r.BusinessContext==WarehouseTransferBusinessContext.InterWarehouse&&r.SourceWarehouseId==r.TargetWarehouseId)
             throw AppException.BadRequest("Depolar arası transferde kaynak ve hedef depo farklı olmalıdır.");
-        if(r.SourceWarehouseId==r.TargetWarehouseId){
+        if(r.SourceWarehouseId==r.TargetWarehouseId&&!r.AutoAssignSources){
             if(r.Lines.Any(x=>!x.DefaultSourceLocationId.HasValue))
                 throw AppException.BadRequest("Aynı depo içindeki üretim/fason transferinde kaynak raf seçimi zorunludur.");
             if(r.Lines.Any(x=>!x.DefaultTargetLocationId.HasValue))
@@ -370,7 +370,7 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
             WarehouseTransferInitiationMode.OrderBasedDirectTransfer=>p.AllowOrderBasedDirect,
             _=>false};
         if(!allowed)throw AppException.BadRequest("Seçilen sipariş/emir kombinasyonu transfer politikasında kapalıdır.");
-        if(p.RequireSourceLocation&&r.Lines.Any(x=>!x.DefaultSourceLocationId.HasValue))
+        if(p.RequireSourceLocation&&!r.AutoAssignSources&&r.Lines.Any(x=>!x.DefaultSourceLocationId.HasValue))
             throw AppException.BadRequest("Transfer politikası kaynak rafı kalem bazında zorunlu tutuyor.");
         if(p.RequireTargetLocation&&r.Lines.Any(x=>!x.DefaultTargetLocationId.HasValue))
             throw AppException.BadRequest("Transfer politikası hedef rafı kalem bazında zorunlu tutuyor.");
@@ -387,7 +387,8 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
             ||r.Lines.Any(x=>!Belongs(x.DefaultSourceLocationId,r.SourceWarehouseId)||!Belongs(x.DefaultTargetLocationId,r.TargetWarehouseId)))
             throw AppException.BadRequest("Kaynak veya hedef raf seçilen depoyla eşleşmiyor.");
     }
-    private static void ValidateTrackings(CreateWarehouseTransferDraftRequest r,IReadOnlyDictionary<long,EffectiveStockTrackingPolicy> policies){
+    private static void ValidateTrackings(CreateWarehouseTransferDraftRequest r,IReadOnlyDictionary<long,EffectiveStockTrackingPolicy> policies,bool autoAssignSources){
+        if(autoAssignSources)return;
         foreach(var line in r.Lines){
             var trackings=line.Trackings??[];
             var policy=policies[line.StockId];

@@ -61,7 +61,8 @@ public sealed record CreateWarehouseTransferDraftRequest(
     IReadOnlyList<WarehouseTransferLineDraftRequest> Lines,
     IReadOnlyList<long>? AssignedUserIds,
     WarehouseTransferBusinessContext BusinessContext = WarehouseTransferBusinessContext.InterWarehouse,
-    string? ProjectCode = null);
+    string? ProjectCode = null,
+    bool AutoAssignSources = false);
 
 public sealed record CreateWarehouseTransferDraftResult(long Id,string DocumentNo,int LineCount,decimal RequestedQuantity,bool Replayed,long? TaskId,string? TaskNo);
 public sealed record UpdateWarehouseTransferDraftRequest(string RowVersion,DateOnly DocumentDate,long? SourceStagingLocationId,

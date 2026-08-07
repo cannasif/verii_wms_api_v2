@@ -63,6 +63,7 @@ public sealed record ProductionTransferExecutionDto(
     decimal ShortageQuantity,
     bool CanCompletePicking,
     bool CanConfirmHandover,
+    IReadOnlyList<long> ExcludedSourceLocationIds,
     IReadOnlyList<ProductionTransferExecutionLineDto> Lines);
 
 public sealed record ProductionTransferScanPickResult(

@@ -430,14 +430,18 @@ public sealed class ProductionTransferTaskService(
                 throw AppException.Conflict("Rotası değiştirilebilecek açık kalem bulunamadı.");
 
             var stockIds = movable.Select(x => x.Line.StockId).Distinct().ToArray();
+            var excludedLocationIds = await ProductionTransferSourceLocationExclusions.FromHeaderAsync(
+                uow, task.Header, movable.Select(x => x.Line), token);
             var locations = await uow.Repository<WarehouseLocation>().Query()
                 .Where(x => x.WarehouseId == task.WarehouseId && x.IsActive && x.IsPickable && !x.IsQuarantine)
                 .ToDictionaryAsync(x => x.Id, token);
             var locationIds = locations.Keys.ToArray();
-            var balances = await uow.Repository<LocationStockBalance>().Query()
+            var balances = (await uow.Repository<LocationStockBalance>().Query()
                 .Where(x => x.WarehouseId == task.WarehouseId && stockIds.Contains(x.StockId)
                     && locationIds.Contains(x.LocationId) && x.StockStatus == "Available" && x.AvailableQuantity > 0)
-                .ToListAsync(token);
+                .ToListAsync(token))
+                .Where(x => !excludedLocationIds.Contains(x.LocationId))
+                .ToList();
 
             var changed = 0;
             foreach (var taskLine in movable)

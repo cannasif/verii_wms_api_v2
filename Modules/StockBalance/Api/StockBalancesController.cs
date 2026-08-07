@@ -43,11 +43,12 @@ public sealed class StockBalancesController(IStockBalanceService service, IOpeni
 
     [HttpGet("stocks/{stockId:long}/locations")]
     public async Task<IActionResult> ResolveStockLocations(long stockId, [FromQuery] long warehouseId,
-        [FromQuery] string branchCode, [FromQuery] long? yapCodeId, CancellationToken ct)
+        [FromQuery] string branchCode, [FromQuery] long? yapCodeId, [FromQuery] string? excludeLocationIds, CancellationToken ct)
     {
         await RequireAsync("WMS.LOCATIONS.VIEW", ct);
+        var excluded = ParseLocationIds(excludeLocationIds);
         return Ok(ApiResponse<IReadOnlyList<StockLocationBalanceDto>>.Ok(
-            await service.ResolveStockLocationsAsync(branchCode, warehouseId, stockId, yapCodeId, ct)));
+            await service.ResolveStockLocationsAsync(branchCode, warehouseId, stockId, yapCodeId, excluded, ct)));
     }
 
     [HttpPost("locations/paged")]
@@ -120,5 +121,15 @@ public sealed class StockBalancesController(IStockBalanceService service, IOpeni
         if (file.Length > maxSize) throw AppException.BadRequest("XLSX dosyası en fazla 5 MB olabilir.");
         if (!string.Equals(Path.GetExtension(file.FileName), ".xlsx", StringComparison.OrdinalIgnoreCase))
             throw AppException.BadRequest("Yalnızca .xlsx dosyası yüklenebilir.");
+    }
+
+    private static long[] ParseLocationIds(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return [];
+        return value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(x => long.TryParse(x, out var id) && id > 0 ? id : 0)
+            .Where(x => x > 0)
+            .Distinct()
+            .ToArray();
     }
 }

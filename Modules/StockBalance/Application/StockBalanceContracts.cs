@@ -65,7 +65,7 @@ public interface IStockBalanceService
     Task<ReconciliationSummary> GetReconciliationSummaryAsync(CancellationToken cancellationToken = default);
     Task<PagedResponse<ReconciliationIssue>> GetReconciliationIssuesAsync(PagedRequest request, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<SerialLocationMatchDto>> ResolveSerialLocationsAsync(ResolveSerialLocationsRequest request, CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<StockLocationBalanceDto>> ResolveStockLocationsAsync(string branchCode, long warehouseId, long stockId, long? yapCodeId, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<StockLocationBalanceDto>> ResolveStockLocationsAsync(string branchCode, long warehouseId, long stockId, long? yapCodeId, IReadOnlyCollection<long>? excludeLocationIds = null, CancellationToken cancellationToken = default);
 }
 
 public interface IStockBalanceJobRunner
