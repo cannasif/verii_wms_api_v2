@@ -10,6 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Security.Claims;
 using System.Text;
+using System.Text.Json;
 using System.Threading.RateLimiting;
 using verii_wms_api_v2.Modules.Audit;
 using verii_wms_api_v2.Modules.AccessControl;
@@ -52,6 +53,7 @@ using verii_wms_api_v2.Modules.WarehouseInbound;
 using verii_wms_api_v2.Modules.WarehouseOutbound;
 using verii_wms_api_v2.Modules.WarehouseAssistant;
 using verii_wms_api_v2.Shared.Infrastructure.Persistence;
+using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Host.BackgroundJobs;
 using verii_wms_api_v2.Shared.Host.Filters;
 using verii_wms_api_v2.Shared.Host.Middleware;
@@ -169,6 +171,29 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     };
     options.Events = new JwtBearerEvents
     {
+        OnChallenge = async context =>
+        {
+            if (context.Response.HasStarted) return;
+            context.HandleResponse();
+            var resolver = context.HttpContext.RequestServices.GetRequiredService<WmsApiMessageResolver>();
+            var message = resolver.Resolve(StatusCodes.Status401Unauthorized, null, false);
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            context.Response.ContentType = "application/json; charset=utf-8";
+            await context.Response.WriteAsync(JsonSerializer.Serialize(
+                ApiResponse<object>.Error(message.Text, context.HttpContext.TraceIdentifier, message.Code),
+                WmsJsonSerialization.ResponseOptions));
+        },
+        OnForbidden = async context =>
+        {
+            if (context.Response.HasStarted) return;
+            var resolver = context.HttpContext.RequestServices.GetRequiredService<WmsApiMessageResolver>();
+            var message = resolver.Resolve(StatusCodes.Status403Forbidden, null, false);
+            context.Response.StatusCode = StatusCodes.Status403Forbidden;
+            context.Response.ContentType = "application/json; charset=utf-8";
+            await context.Response.WriteAsync(JsonSerializer.Serialize(
+                ApiResponse<object>.Error(message.Text, context.HttpContext.TraceIdentifier, message.Code),
+                WmsJsonSerialization.ResponseOptions));
+        },
         OnTokenValidated = async context =>
         {
             var userIdValue = context.Principal?.FindFirstValue(ClaimTypes.NameIdentifier);
