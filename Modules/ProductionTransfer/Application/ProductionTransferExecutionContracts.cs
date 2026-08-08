@@ -4,9 +4,77 @@ namespace verii_wms_api_v2.Modules.ProductionTransfer.Application;
 
 public sealed record ProductionTransferScanPickRequest(
     Guid IdempotencyKey,
-    long ExpectedLineId,
+    long ExpectedTaskLineId,
     string Barcode,
+    decimal? Quantity = null,
     long? SourceLocationId = null);
+
+public sealed record ResolveProductionTransferBarcodeRequest(string Barcode);
+
+public sealed record ResolveProductionTransferBarcodeResult(
+    long TaskLineId,
+    long WtLineId,
+    long? SourceLocationId,
+    string? SourceLocationCode,
+    long StockId,
+    string StockCode,
+    string? StockName,
+    string? SerialNo,
+    string? LotNo,
+    decimal RemainingQuantity,
+    decimal DefaultQuantity,
+    bool IsSerial,
+    bool CanPick);
+
+public sealed record ProductionTransferPickingRowDto(
+    long TaskLineId,
+    long WtLineId,
+    int LineNo,
+    long? SourceLocationId,
+    string? SourceLocationCode,
+    long StockId,
+    string StockCode,
+    string? StockName,
+    string? SerialNo,
+    decimal RequestedQuantity,
+    decimal RemainingQuantity,
+    decimal ProcessedQuantity,
+    bool CanPick);
+
+public sealed record ProductionTransferPickingTableDto(
+    long TransferId,
+    string DocumentNo,
+    string? ExternalReferenceNo,
+    ProductionTransferWorkflowStatus WorkflowStatus,
+    long PickTaskId,
+    string PickTaskNo,
+    bool IsLocked,
+    bool CanCompletePicking,
+    decimal RequestedQuantity,
+    decimal PickedQuantity,
+    decimal ShortageQuantity,
+    IReadOnlyList<ProductionTransferPickingRowDto> Rows);
+
+public sealed record ProductionTransferRouteRefreshCandidateDto(
+    long LocationId,
+    string LocationCode,
+    decimal AvailableQuantity,
+    decimal SuggestedQuantity,
+    string? SerialNo = null);
+
+public sealed record ProductionTransferRouteRefreshCandidatesDto(
+    long TaskLineId,
+    decimal RemainingQuantity,
+    bool IsSerial,
+    string? CurrentSerialNo,
+    IReadOnlyList<ProductionTransferRouteRefreshCandidateDto> Candidates);
+
+public sealed record ProductionTransferRouteRefreshSplitLineRequest(long LocationId, decimal Quantity, string? SerialNo = null);
+
+public sealed record ApplyProductionTransferRouteRefreshSplitRequest(
+    Guid IdempotencyKey,
+    string? CurrentSerialNo,
+    IReadOnlyList<ProductionTransferRouteRefreshSplitLineRequest> Splits);
 
 public sealed record CompleteProductionPickingRequest(
     Guid IdempotencyKey,
@@ -82,7 +150,21 @@ public sealed record ProductionTransferScanPickResult(
 public interface IProductionTransferExecutionService
 {
     Task<ProductionTransferExecutionDto> GetAsync(long transferId, CancellationToken ct = default);
+    Task<ProductionTransferPickingTableDto> GetPickingTableAsync(long transferId, long actor, CancellationToken ct = default);
+    Task<ResolveProductionTransferBarcodeResult> ResolveBarcodeAsync(long transferId, ResolveProductionTransferBarcodeRequest request, long actor, CancellationToken ct = default);
     Task<ProductionTransferScanPickResult> ScanPickAsync(long transferId, ProductionTransferScanPickRequest request, long actor, CancellationToken ct = default);
+    Task<ProductionTransferRouteRefreshCandidatesDto> GetRouteRefreshCandidatesAsync(
+        long transferId,
+        long taskLineId,
+        string? currentSerialNo,
+        long actor,
+        CancellationToken ct = default);
+    Task<ProductionTransferPickingTableDto> ApplyRouteRefreshSplitAsync(
+        long transferId,
+        long taskLineId,
+        ApplyProductionTransferRouteRefreshSplitRequest request,
+        long actor,
+        CancellationToken ct = default);
     Task<ProductionTransferExecutionDto> CompletePickingAsync(long transferId, CompleteProductionPickingRequest request, long actor, CancellationToken ct = default);
     Task<ProductionTransferExecutionDto> ConfirmHandoverAsync(long transferId, ConfirmProductionHandoverRequest request, long actor, bool canOverrideRequester, CancellationToken ct = default);
 }

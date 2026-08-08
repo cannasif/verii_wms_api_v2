@@ -24,11 +24,12 @@ public sealed class WarehouseTransferReservationService(IStockBalanceService bal
     public async Task ReserveAsync(WarehouseTransferHeader header, string idempotencyKey, long actor, CancellationToken ct)
     {
         var allowPartial = AllowsPartialProductionReservation(header);
+        var activeLines = header.Lines.Where(x => !x.IsDeleted).ToArray();
         var availability = allowPartial
-            ? await LoadLocationAvailabilityAsync(header.SourceWarehouseId, header.Lines.ToArray(), ct)
+            ? await LoadLocationAvailabilityAsync(header.SourceWarehouseId, activeLines, ct)
             : null;
         var drafts = new List<(WarehouseTransferLine Line, WarehouseTransferTracking? Tracking, StockReservationLineRequest Request)>();
-        foreach (var line in header.Lines)
+        foreach (var line in activeLines)
         {
             if (line.Trackings.Count > 0)
             {
@@ -40,22 +41,30 @@ public sealed class WarehouseTransferReservationService(IStockBalanceService bal
                     // kısmen toplanmış bir satırın kalanından fazlasını rezerve etmeye çalışır.
                     var quantity = tracking.PlannedQuantity - tracking.ReservedQuantity - tracking.PickedQuantity;
                     if (quantity <= 0) continue;
-                    var locationId = tracking.SourceLocationId ?? line.DefaultSourceLocationId
-                        ?? throw AppException.Conflict($"{line.LineNo}. satır için rezervasyon rafı bulunamadı.");
-                    quantity = CapReservationQuantity(allowPartial, availability, line, locationId, tracking.LotNo, tracking.SerialNo, quantity);
+                    var locationId = tracking.SourceLocationId ?? line.DefaultSourceLocationId;
+                    if (!locationId.HasValue)
+                    {
+                        if (allowPartial) continue;
+                        throw AppException.Conflict($"{line.LineNo}. satır için rezervasyon rafı bulunamadı.");
+                    }
+                    quantity = CapReservationQuantity(allowPartial, availability, line, locationId.Value, tracking.LotNo, tracking.SerialNo, quantity);
                     if (quantity <= 0) continue;
-                    drafts.Add((line, tracking, Row(line, locationId, tracking.LotNo, tracking.SerialNo, quantity)));
+                    drafts.Add((line, tracking, Row(line, locationId.Value, tracking.LotNo, tracking.SerialNo, quantity)));
                 }
             }
             else
             {
                 var quantity = line.RequestedQuantity - line.ReservedQuantity - line.PickedQuantity;
                 if (quantity <= 0) continue;
-                var locationId = line.DefaultSourceLocationId
-                    ?? throw AppException.Conflict($"{line.LineNo}. satır için rezervasyon rafı bulunamadı.");
-                quantity = CapReservationQuantity(allowPartial, availability, line, locationId, null, null, quantity);
+                var locationId = line.DefaultSourceLocationId;
+                if (!locationId.HasValue)
+                {
+                    if (allowPartial) continue;
+                    throw AppException.Conflict($"{line.LineNo}. satır için rezervasyon rafı bulunamadı.");
+                }
+                quantity = CapReservationQuantity(allowPartial, availability, line, locationId.Value, null, null, quantity);
                 if (quantity <= 0) continue;
-                drafts.Add((line, null, Row(line, locationId, null, null, quantity)));
+                drafts.Add((line, null, Row(line, locationId.Value, null, null, quantity)));
             }
         }
         if (drafts.Count == 0) return;

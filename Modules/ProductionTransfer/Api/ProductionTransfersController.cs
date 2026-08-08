@@ -74,6 +74,22 @@ public sealed class ProductionTransfersController(
     public async Task<IActionResult>Execution(long id,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.VIEW",ct);await Ensure(id,ct);
         return Ok(ApiResponse<ProductionTransferExecutionDto>.Ok(await execution.GetAsync(id,ct)));}
+    [HttpGet("{id:long}/picking-table")]
+    public async Task<IActionResult>PickingTable(long id,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.VIEW",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferPickingTableDto>.Ok(await execution.GetPickingTableAsync(id,UserId(),ct)));}
+    [HttpPost("{id:long}/resolve-barcode")]
+    public async Task<IActionResult>ResolveBarcode(long id,ResolveProductionTransferBarcodeRequest request,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ResolveProductionTransferBarcodeResult>.Ok(await execution.ResolveBarcodeAsync(id,request,UserId(),ct)));}
+    [HttpGet("{id:long}/task-lines/{taskLineId:long}/route-candidates")]
+    public async Task<IActionResult>RouteCandidates(long id,long taskLineId,[FromQuery]string? serialNo,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferRouteRefreshCandidatesDto>.Ok(await execution.GetRouteRefreshCandidatesAsync(id,taskLineId,serialNo,UserId(),ct)));}
+    [HttpPost("{id:long}/task-lines/{taskLineId:long}/route-split")]
+    public async Task<IActionResult>ApplyRouteSplit(long id,long taskLineId,ApplyProductionTransferRouteRefreshSplitRequest request,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferPickingTableDto>.Ok(await execution.ApplyRouteRefreshSplitAsync(id,taskLineId,request,UserId(),ct),"Toplama rotası güncellendi."));}
     [HttpPost("{id:long}/scan-pick")]
     public async Task<IActionResult>ScanPick(long id,ProductionTransferScanPickRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);

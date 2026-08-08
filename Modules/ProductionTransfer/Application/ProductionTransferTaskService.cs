@@ -2,6 +2,7 @@ using System.Data;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.Identity.Domain;
+using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
@@ -532,17 +533,22 @@ public sealed class ProductionTransferTaskService(
             if (check.Count > 0 && !allowPartialStart)
                 throw AppException.Conflict("Görevde eksik stok var. Ön toplama onayı olmadan başlatılamaz.");
 
+            await ApplyPermanentRouteSplitCoreAsync(task, actor, token);
+            await uow.SaveChangesAsync(token);
+
             var now = DateTimeOffset.UtcNow;
+            var header = await LoadTransferHeaderAsync(transferId, token);
+            ProductionTransferPickingSupport.EnsureHeaderReleasedForPicking(header, actor, now);
+
             assignment.AcceptedAtUtc ??= now;
             task.AcceptedAtUtc ??= now; task.AcceptedBy ??= actor;
             task.StartedAtUtc ??= now; task.StartedBy ??= actor;
             task.Status = WarehouseTransferTaskStatus.InProgress;
             task.UpdatedBy = actor; task.UpdatedDate = DateTime.UtcNow;
 
-            if (allowPartialStart || check.Count > 0)
+            if (header.ReservationPolicy != WarehouseTransferReservationPolicy.None)
             {
-                var header = await LoadTransferHeaderAsync(transferId, token);
-                await RestoreOpenLineReservationsAsync(
+                await reservations.ReserveAsync(
                     header,
                     $"WT:{transferId}:RESERVE:START:{taskId}:{actor}",
                     actor,
@@ -555,6 +561,17 @@ public sealed class ProductionTransferTaskService(
                 ChangedFields: ["AcceptedAtUtc", "StartedAtUtc", "Status"]), token);
             return await MapAsync(transferId, token);
         }, ct, IsolationLevel.Serializable);
+
+    public async Task ApplyPermanentRouteSplitAsync(long transferId, long taskId, long actor, CancellationToken ct = default)
+    {
+        await uow.ExecuteInTransactionAsync(async token =>
+        {
+            var task = await LoadTaskAsync(transferId, taskId, token);
+            await ApplyPermanentRouteSplitCoreAsync(task, actor, token);
+            await uow.SaveChangesAsync(token);
+            return true;
+        }, ct, IsolationLevel.Serializable);
+    }
 
     public async Task<IReadOnlyList<WarehouseTransferPickedSourceLocationDto>> GetLinePickedSourcesAsync(
         long transferId, long lineId, CancellationToken ct = default)
@@ -708,6 +725,63 @@ public sealed class ProductionTransferTaskService(
                 warehouse.Id, warehouse.DefaultTransferReturnLocationId, warehouse.DefaultProductionTransferLocationId);
         }, ct, IsolationLevel.Serializable);
 
+    private async Task ApplyPermanentRouteSplitCoreAsync(
+        WarehouseTransferTask task,
+        long actor,
+        CancellationToken ct)
+    {
+        if (task.TaskType is WarehouseTransferTaskType.CancellationReturn or WarehouseTransferTaskType.AssignmentReturn)
+            return;
+        if (task.Status is WarehouseTransferTaskStatus.Completed or WarehouseTransferTaskStatus.Cancelled)
+            return;
+
+        var header = task.Header;
+        var link = await uow.Repository<ProductionTransferHeaderLink>().Query(true)
+            .Include(x => x.Lines)
+            .SingleAsync(x => x.WarehouseTransferHeaderId == header.Id, ct);
+        var movable = task.Lines.Where(x => !x.IsDeleted && x.PlannedQuantity - x.ProcessedQuantity > 0).ToArray();
+        if (movable.Length == 0) return;
+
+        var context = await ProductionTransferPickingSupport.LoadBalanceContextAsync(
+            uow, header, movable.Select(x => x.Line), ct);
+        var utcNow = DateTime.UtcNow;
+        var nextLineNo = header.Lines.Max(x => x.LineNo);
+
+        foreach (var taskLine in movable)
+        {
+            var line = taskLine.Line;
+            var remaining = taskLine.PlannedQuantity - taskLine.ProcessedQuantity;
+            if (remaining <= 0) continue;
+
+            if (line.Trackings.Count > 0)
+            {
+                ProductionTransferLineSplitHelper.RefreshSerialSources(taskLine, line, context, actor, utcNow);
+                continue;
+            }
+
+            var chunks = ProductionTransferRouteAllocation.AllocateGreedyNonSerial(
+                remaining, line.StockId, line.YapCodeId, line.UnitCode, context.Balances, context.Locations);
+            if (chunks.Count == 0) continue;
+
+            var sourceLineLink = link.Lines.Single(x => x.WarehouseTransferLineId == line.Id);
+            if (chunks.All(x => !x.LocationId.HasValue))
+            {
+                line.DefaultSourceLocationId = null;
+                taskLine.SourceLocationId = null;
+                line.RequestedQuantity = remaining;
+                taskLine.PlannedQuantity = remaining;
+                sourceLineLink.RequiredQuantity = remaining;
+                continue;
+            }
+
+            ProductionTransferLineSplitHelper.ApplyNonSerialRouteChunks(
+                header, link, task, taskLine, line, sourceLineLink, chunks, ref nextLineNo, actor, utcNow,
+                allowShortageWithoutLocation: true);
+        }
+
+        ProductionTransferLineSplitHelper.RemoveRedundantShortageSiblings(header, task, link);
+    }
+
     private async Task<WarehouseTransferTask> LoadTaskAsync(long transferId, long taskId, CancellationToken ct) =>
         await uow.Repository<WarehouseTransferTask>().Query(true)
             .Include(x => x.Header).Include(x => x.Assignments)
@@ -842,6 +916,7 @@ public sealed class ProductionTransferTaskService(
         await uow.Repository<WarehouseTransferHeader>().Query(true)
             .Include(x => x.Lines).ThenInclude(x => x.Trackings)
             .Include(x => x.Tasks).ThenInclude(x => x.Lines)
+            .Include(x => x.Tasks).ThenInclude(x => x.Assignments)
             .SingleAsync(x => x.Id == transferId && Contexts.Contains(x.BusinessContext), ct);
 
     private static void ApplyReturnedQuantityToTransferLine(WarehouseTransferLine wtLine, decimal returnedQuantity, long actor)

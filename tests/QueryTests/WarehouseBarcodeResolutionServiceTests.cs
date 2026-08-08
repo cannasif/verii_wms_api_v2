@@ -115,8 +115,8 @@ public sealed class WarehouseBarcodeResolutionServiceTests
         db.AddRange(source, waiting);
         await db.SaveChangesAsync();
         db.AddRange(
-            CreateSerialBalance(warehouse.Id, source.Id, stock.Id, "UTG-1", 41),
-            CreateSerialBalance(warehouse.Id, waiting.Id, stock.Id, "UTG-1", 7));
+            CreateSerialBalance(warehouse.Id, source.Id, stock.Id, "UTG-1", 41, "SRC"),
+            CreateSerialBalance(warehouse.Id, waiting.Id, stock.Id, "UTG-1", 7, "WAIT"));
         await db.SaveChangesAsync();
 
         await using var uow = new UnitOfWork(db, new HttpContextAccessor());
@@ -162,11 +162,62 @@ public sealed class WarehouseBarcodeResolutionServiceTests
             warehouse.Id, stock.Id)));
     }
 
+    [Fact]
+    public async Task Outbound_expected_stock_picks_best_balance_when_duplicate_serial_rows_exist()
+    {
+        await using var db = CreateDb();
+        var warehouse = new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" };
+        var stock = new Stock
+        {
+            BranchCode = "0",
+            ErpStockCode = "01/013",
+            StockName = "Test stok",
+            BaseUnitCode = "AD"
+        };
+        db.AddRange(warehouse, stock);
+        await db.SaveChangesAsync();
+
+        var location = new WarehouseLocation
+        {
+            BranchCode = "0",
+            WarehouseId = warehouse.Id,
+            Code = "A1",
+            Name = "Raf 1",
+            IsActive = true,
+            IsPickable = true
+        };
+        db.Add(location);
+        await db.SaveChangesAsync();
+        db.AddRange(
+            CreateSerialBalance(warehouse.Id, location.Id, stock.Id, "UTG-1", 1, "DIM-1"),
+            CreateSerialBalance(warehouse.Id, location.Id, stock.Id, "UTG-1", 1, "DIM-2"));
+        await db.SaveChangesAsync();
+
+        await using var uow = new UnitOfWork(db, new HttpContextAccessor());
+        var resolver = new WarehouseBarcodeResolutionService(
+            uow,
+            new FixedTrackingPolicyResolver(stock.Id, stock.ErpStockCode, SerialQuantityRule.OneSerialPerLine));
+
+        var result = await resolver.ResolveAsync(new(
+            "UTG-1",
+            "0",
+            WarehouseBarcodePurpose.Outbound,
+            warehouse.Id,
+            stock.Id,
+            location.Id,
+            null,
+            "AD"));
+
+        Assert.True(result.CanExecute);
+        Assert.Equal("UTG-1", result.SerialNo);
+        Assert.NotEmpty(result.BalanceCandidates);
+    }
+
     private static LocationStockBalance CreateSerialBalance(
-        long warehouseId, long locationId, long stockId, string serialNo, decimal quantity) => new()
+        long warehouseId, long locationId, long stockId, string serialNo, decimal quantity, string dimensionKey) => new()
     {
         BranchCode = "0",
-        DimensionKey = $"{locationId}-{serialNo}",
+        DimensionKey = dimensionKey,
         WarehouseId = warehouseId,
         LocationId = locationId,
         StockId = stockId,

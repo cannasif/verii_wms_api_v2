@@ -66,6 +66,7 @@ public interface IProductionTransferTaskService
     Task<ProductionTransferTaskBoardDto> RefreshRouteAsync(long transferId, long taskId, long actor, CancellationToken ct = default);
     Task<ProductionTaskStartCheckDto> CheckStartAsync(long transferId, long taskId, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> AcceptAndStartAsync(long transferId, long taskId, long actor, bool allowPartialStart = false, CancellationToken ct = default);
+    Task ApplyPermanentRouteSplitAsync(long transferId, long taskId, long actor, CancellationToken ct = default);
     Task<IReadOnlyList<WarehouseTransferPickedSourceLocationDto>> GetLinePickedSourcesAsync(long transferId, long lineId, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> CompleteCancellationReturnAsync(long transferId, long taskId, Guid idempotencyKey, long actor, CancellationToken ct = default);
     Task<WarehouseTransferReturnSettingDto> GetReturnSettingAsync(long warehouseId, CancellationToken ct = default);

@@ -77,6 +77,8 @@ public sealed class ProductionTransferService(
                 .Include(x=>x.Lines).SingleAsync(x=>x.Id==result.Id,token);
             header.RequireApproval|=policy.RequireApproval;
             header.CancellationReturnPolicy=policy.CancellationReturnPolicy;
+            if(IsAutoAssignSources(request))
+                header.ReservationPolicy=WarehouseTransferReservationPolicy.None;
             if(header.RequireApproval&&header.ApprovalStatus==Modules.WarehouseOperations.Domain.OperationApprovalStatus.NotRequired)
                 header.ApprovalStatus=Modules.WarehouseOperations.Domain.OperationApprovalStatus.Pending;
 
