@@ -12,6 +12,7 @@ using verii_wms_api_v2.Modules.WarehouseOutbound.Domain;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
+using verii_wms_api_v2.Shared.Domain;
 using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
 
 namespace verii_wms_api_v2.Modules.Kkd.Application;
@@ -469,6 +470,7 @@ public sealed class KkdDistributionService(
         await uow.ExecuteInTransactionAsync(async token =>
         {
             var entity = await uow.Repository<KkdDistribution>().Query(true)
+                .Include(x => x.Lines)
                 .SingleOrDefaultAsync(x => x.Id == id, token)
                 ?? throw AppException.NotFound("KKD dağıtımı bulunamadı.");
             if (entity.Status is KkdDistributionStatus.Completed or KkdDistributionStatus.Cancelled)
@@ -478,9 +480,13 @@ public sealed class KkdDistributionService(
 
             var desired = request.Approve ? KkdExcessApprovalStatus.Approved : KkdExcessApprovalStatus.Rejected;
             if (entity.ExcessApprovalStatus == desired) return true;
+
             var outbound = entity.WarehouseOutboundId.HasValue
-                ? await uow.Repository<WarehouseOutboundHeader>().FindByIdAsync(
-                    entity.WarehouseOutboundId.Value, tracking: true, cancellationToken: token)
+                ? await uow.Repository<WarehouseOutboundHeader>().Query(true)
+                    .Include(x => x.Lines).ThenInclude(x => x.Sources)
+                    .Include(x => x.Lines).ThenInclude(x => x.Trackings)
+                    .Include(x => x.Tasks).ThenInclude(x => x.Lines)
+                    .SingleOrDefaultAsync(x => x.Id == entity.WarehouseOutboundId.Value, token)
                 : null;
             if (outbound is null)
                 throw AppException.Conflict("KKD dağıtımına bağlı ambar çıkışı bulunamadı.");
@@ -494,12 +500,117 @@ public sealed class KkdDistributionService(
             entity.ExcessApprovedAtUtc = now;
             entity.UpdatedBy = actor;
             entity.UpdatedDate = now.UtcDateTime;
-            outbound.RequireApproval = true;
-            outbound.ApprovalStatus = request.Approve
-                ? OperationApprovalStatus.Approved
-                : OperationApprovalStatus.Rejected;
             outbound.UpdatedBy = actor;
             outbound.UpdatedDate = now.UtcDateTime;
+
+            if (request.Approve)
+            {
+                // Onay: kota aşımı dahil tüm kalemler aynı tek ambar çıkışıyla devam eder.
+                outbound.RequireApproval = true;
+                outbound.ApprovalStatus = OperationApprovalStatus.Approved;
+            }
+            else
+            {
+                var excessLines = entity.Lines.Where(l => l.ExcessQuantity > 0).ToList();
+                // Belgede hakkı hiç olmayan (tamamen aşım) kalem yoksa ya da en az bir kalemde hak
+                // varsa: sadece aşım miktarını at, hakkı olan miktarla aynı tek çıkış devam etsin.
+                var canPartiallySalvage = entity.Lines.Any(l => l.EntitledQuantity > 0);
+
+                if (!canPartiallySalvage)
+                {
+                    // Hiçbir kalemde hak yok: kurtarılacak bir şey yok, eski davranış geçerli
+                    // (belge ve bağlı çıkış tamamen reddedilmiş sayılır, tamamlanamaz).
+                    outbound.RequireApproval = true;
+                    outbound.ApprovalStatus = OperationApprovalStatus.Rejected;
+                }
+                else
+                {
+                    var discardedByRequestLineId = new Dictionary<long, decimal>();
+
+                    void SoftDelete(BaseEntity soft)
+                    {
+                        soft.IsDeleted = true;
+                        soft.DeletedBy = actor;
+                        soft.DeletedDate = now.UtcDateTime;
+                    }
+
+                    foreach (var line in excessLines)
+                    {
+                        var discardedQuantity = line.ExcessQuantity;
+                        if (line.KkdRequestLineId.HasValue)
+                        {
+                            discardedByRequestLineId.TryGetValue(line.KkdRequestLineId.Value, out var sum);
+                            discardedByRequestLineId[line.KkdRequestLineId.Value] = sum + discardedQuantity;
+                        }
+
+                        var outboundLine = outbound.Lines.FirstOrDefault(x => x.LineNo == line.LineNo);
+                        if (line.EntitledQuantity > 0)
+                        {
+                            // Kısmi aşım: kalem hak edilen miktara düşürülüp aynı çıkışta bırakılır.
+                            line.Quantity = line.EntitledQuantity;
+                            line.ExcessQuantity = 0;
+                            line.UpdatedBy = actor;
+                            line.UpdatedDate = now.UtcDateTime;
+                            if (outboundLine is not null)
+                            {
+                                outboundLine.RequestedQuantity = line.EntitledQuantity;
+                                outboundLine.UpdatedBy = actor;
+                                outboundLine.UpdatedDate = now.UtcDateTime;
+                                foreach (var taskLine in outbound.Tasks.SelectMany(t => t.Lines)
+                                             .Where(tl => tl.WarehouseOutboundLineId == outboundLine.Id))
+                                {
+                                    taskLine.PlannedQuantity = line.EntitledQuantity;
+                                    taskLine.UpdatedBy = actor;
+                                    taskLine.UpdatedDate = now.UtcDateTime;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // Tamamı aşım: kalem tamamen düşer, aynı çıkışın geri kalanı etkilenmez.
+                            SoftDelete(line);
+                            if (outboundLine is not null)
+                            {
+                                foreach (var taskLine in outbound.Tasks.SelectMany(t => t.Lines)
+                                             .Where(tl => tl.WarehouseOutboundLineId == outboundLine.Id)
+                                             .ToList())
+                                    SoftDelete(taskLine);
+                                foreach (var source in outboundLine.Sources.ToList())
+                                    SoftDelete(source);
+                                foreach (var tracking in outboundLine.Trackings.ToList())
+                                    SoftDelete(tracking);
+                                SoftDelete(outboundLine);
+                            }
+                        }
+                    }
+
+                    if (entity.KkdRequestId.HasValue && discardedByRequestLineId.Count > 0)
+                    {
+                        var trackedRequest = await uow.Repository<KkdRequest>().Query(true)
+                            .Include(x => x.Lines)
+                            .SingleOrDefaultAsync(x => x.Id == entity.KkdRequestId.Value, token);
+                        if (trackedRequest is not null)
+                        {
+                            foreach (var (requestLineId, discarded) in discardedByRequestLineId)
+                            {
+                                var requestLine = trackedRequest.Lines.SingleOrDefault(x => x.Id == requestLineId);
+                                if (requestLine is null) continue;
+                                requestLine.AllocatedQuantity = Math.Max(0, requestLine.AllocatedQuantity - discarded);
+                                requestLine.UpdatedBy = actor;
+                                requestLine.UpdatedDate = now.UtcDateTime;
+                            }
+                            trackedRequest.UpdatedBy = actor;
+                            trackedRequest.UpdatedDate = now.UtcDateTime;
+                            KkdRequestStateMachine.Refresh(trackedRequest, now);
+                        }
+                    }
+
+                    // Kalan kalemler için aşım artık yok; bu tek çıkış normal akışla (release/pick/pack/ship) devam edebilir.
+                    outbound.RequireApproval = true;
+                    outbound.ApprovalStatus = OperationApprovalStatus.Approved;
+                }
+            }
+
             await uow.SaveChangesAsync(token);
             return true;
         }, ct, IsolationLevel.Serializable);

@@ -45,7 +45,10 @@ public sealed class KkdDistributionCompletionService(IUnitOfWork uow, IErpPostin
                 throw AppException.Conflict("İptal edilmiş KKD dağıtımı tamamlanamaz.");
             if (entity.ExcessApprovalStatus == KkdExcessApprovalStatus.Pending)
                 throw AppException.Conflict("Kota aşımı için depo yöneticisinin fiziksel kontrol onayı bekleniyor.");
-            if (entity.ExcessApprovalStatus == KkdExcessApprovalStatus.Rejected)
+            // Reddedilen aşım kalemleri karar anında belgeden düşürülür (bkz. DecideExcessApprovalAsync).
+            // Geriye kalan kalemlerde hâlâ aşım varsa (örn. hiç hak edilen miktar yoksa) belge tamamlanamaz.
+            if (entity.ExcessApprovalStatus == KkdExcessApprovalStatus.Rejected
+                && entity.Lines.Any(l => l.ExcessQuantity > 0))
                 throw AppException.Conflict("Kota aşımı reddedilmiş KKD dağıtımı tamamlanamaz.");
             if (!entity.WarehouseOutboundId.HasValue)
                 throw AppException.Conflict("KKD dağıtımının ambar çıkış belgesi bulunmuyor.");
