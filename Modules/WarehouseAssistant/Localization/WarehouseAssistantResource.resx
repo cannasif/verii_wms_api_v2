@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="CapabilityExampleMyActivities" xml:space="preserve"><value>Bugün yaptığım işlemleri göster</value></data>
+  <data name="CapabilityExampleUserActivities" xml:space="preserve"><value>Ahmet Demir kullanıcısının bugün yaptığı işlemleri göster</value></data>
+  <data name="CapabilityExampleSerialBalance" xml:space="preserve"><value>DTG-1 seri bakiyesi hangi depo ve raflarda?</value></data>
+  <data name="CapabilityExampleStockBalance" xml:space="preserve"><value>01/013 stok kodlu ürün hangi raflarda var?</value></data>
+  <data name="CapabilityExampleSerialReceipt" xml:space="preserve"><value>DTG-1 serisi ne zaman ve kim tarafından mal kabul edildi?</value></data>
+  <data name="CapabilityExampleBarcode" xml:space="preserve"><value>Barkod 01/013 hangi stoka ait ve nerede bulunuyor?</value></data>
+  <data name="CapabilityExampleMovement" xml:space="preserve"><value>01/013 stok hareketlerini göster</value></data>
+  <data name="CapabilityExampleTasks" xml:space="preserve"><value>Bana atanmış açık görevleri göster</value></data>
+  <data name="ScopeAll" xml:space="preserve"><value>Tüm kullanıcılar ve yetkili olduğunuz WMS verileri</value></data>
+  <data name="ScopeSelf" xml:space="preserve"><value>Yalnız kendi işlemleriniz ve yetkili olduğunuz WMS verileri</value></data>
+  <data name="ActivityNone" xml:space="preserve"><value>{0} için {1} adına kayıtlı bir işlem bulunamadı.</value></data>
+  <data name="ActivityFound" xml:space="preserve"><value>{0} için {1} adına {2} işlem buldum. En yeni işlemler üstte gösteriliyor.</value></data>
+  <data name="ActivityForcedSelf" xml:space="preserve"><value>Yetkiniz yalnız kendi işlem kayıtlarınızı görmenize izin verdiği için sonuçlar size göre sınırlandı.</value></data>
+  <data name="SerialBalanceDenied" xml:space="preserve"><value>Seri bakiyelerini görmek için stok bakiyesi görüntüleme yetkisi gereklidir.</value></data>
+  <data name="SerialRequired" xml:space="preserve"><value>Seri numarasını da yazar mısınız? Örnek: “DTG-1 seri bakiyesi nerede?”</value></data>
+  <data name="SerialBalanceNone" xml:space="preserve"><value>“{0}” serisi için yetkili olduğunuz depolarda aktif bakiye bulunamadı.</value></data>
+  <data name="SerialBalanceFound" xml:space="preserve"><value>“{0}” serisi {1} depo/raf bakiyesinde bulundu. Toplam {2:0.###} {3}, kullanılabilir {4:0.###} {3}.</value></data>
+  <data name="SerialReceiptDenied" xml:space="preserve"><value>Serinin giriş geçmişini görmek için stok hareketi ve mal kabul görüntüleme yetkileri gereklidir.</value></data>
+  <data name="SerialReceiptRequired" xml:space="preserve"><value>Mal kabul geçmişini arayacağınız seri numarasını yazar mısınız?</value></data>
+  <data name="SerialReceiptNone" xml:space="preserve"><value>“{0}” serisi için aktif bir mal kabul giriş hareketi bulunamadı. Kayıt ters çevrilmiş veya farklı bir operasyonla açılmış olabilir.</value></data>
+  <data name="SerialReceiptFound" xml:space="preserve"><value>“{0}” serisinin {1} mal kabul giriş kaydını buldum. İlk görünen kayıt {2} belgesiyle {3} tarafından işlendi.</value></data>
+  <data name="StockBalanceDenied" xml:space="preserve"><value>Stok ve raf bakiyelerini görmek için stok bakiyesi görüntüleme yetkisi gereklidir.</value></data>
+  <data name="StockRequired" xml:space="preserve"><value>Stok kodunu veya ürün adını daha açık yazar mısınız? Örnek: “01/013 stok kodlu ürün hangi raflarda var?”</value></data>
+  <data name="StockBalanceNone" xml:space="preserve"><value>{0} - {1} için yetkili olduğunuz depolarda aktif raf bakiyesi bulunamadı.</value></data>
+  <data name="StockBalanceFound" xml:space="preserve"><value>{0} - {1}, {2} raf bakiyesinde bulundu. Kullanılabilir toplam miktar {3:0.###} {4}.</value></data>
+  <data name="HelpAnswer" xml:space="preserve"><value>İşlem geçmişinizi, yetkiniz varsa kullanıcı hareketlerini, stok/ürün/malzeme raf bakiyelerini, barkod içeriğini, stok hareketlerini, atanmış görevleri ve seri mal kabul geçmişini sorabilirsiniz. Veriler yalnız yetkili olduğunuz şube ve depolarla sınırlandırılır.</value></data>
+  <data name="UnknownAnswer" xml:space="preserve"><value>Soruyu güvenli bir WMS sorgusuna dönüştüremedim. Stok/ürün/malzeme kodu, barkod, seri numarası, kullanıcı ve zaman bilgisini açıkça yazarak tekrar deneyin.</value></data>
+  <data name="AllUsers" xml:space="preserve"><value>tüm kullanıcılar</value></data>
+  <data name="ConversationNotFound" xml:space="preserve"><value>Depo asistanı konuşması bulunamadı.</value></data>
+  <data name="DateToday" xml:space="preserve"><value>Bugün</value></data>
+  <data name="DateYesterday" xml:space="preserve"><value>Dün</value></data>
+  <data name="DateLastSevenDays" xml:space="preserve"><value>Son 7 gün</value></data>
+  <data name="DateThisWeek" xml:space="preserve"><value>Bu hafta</value></data>
+  <data name="DateLastThirtyDays" xml:space="preserve"><value>Son 30 gün</value></data>
+  <data name="UserNumber" xml:space="preserve"><value>Kullanıcı #{0}</value></data>
+  <data name="SystemUser" xml:space="preserve"><value>Sistem</value></data>
+  <data name="Unassigned" xml:space="preserve"><value>Atanmamış</value></data>
+  <data name="ActionGoodsReceipt" xml:space="preserve"><value>Mal kabul işlemi</value></data>
+  <data name="ActionWarehouseTransfer" xml:space="preserve"><value>Depolar arası transfer işlemi</value></data>
+  <data name="ActionProductionTransfer" xml:space="preserve"><value>Üretime transfer işlemi</value></data>
+  <data name="ActionShipment" xml:space="preserve"><value>Sevk işlemi</value></data>
+  <data name="ActionWarehouseInbound" xml:space="preserve"><value>Ambar giriş işlemi</value></data>
+  <data name="ActionWarehouseOutbound" xml:space="preserve"><value>Ambar çıkış işlemi</value></data>
+  <data name="ActionQuality" xml:space="preserve"><value>Kalite işlemi</value></data>
+  <data name="ActionPacking" xml:space="preserve"><value>Paketleme işlemi</value></data>
+  <data name="ActionStock" xml:space="preserve"><value>Stok işlemi</value></data>
+  <data name="ActionUser" xml:space="preserve"><value>Kullanıcı işlemi</value></data>
+  <data name="MessageRequired" xml:space="preserve"><value>Depo asistanına sorulacak mesaj zorunludur.</value></data>
+  <data name="MessageTooLong" xml:space="preserve"><value>Mesaj en fazla {0} karakter olabilir.</value></data>
+  <data name="BarcodeBalanceDenied" xml:space="preserve"><value>Barkoda bağlı stok ve raf bilgilerini görmek için stok bakiyesi görüntüleme yetkisi gereklidir.</value></data>
+  <data name="BarcodeRequired" xml:space="preserve"><value>Sorgulamak istediğiniz barkodu da yazar mısınız? Örnek: “Barkod GRL-000123 hangi stoka ait?”</value></data>
+  <data name="BarcodeResolverUnavailable" xml:space="preserve"><value>Merkezi barkod çözümleme servisi şu anda kullanılamıyor.</value></data>
+  <data name="BarcodeRetrySuggestion" xml:space="preserve"><value>Barkod değerini boşluk bırakmadan tekrar sorgula</value></data>
+  <data name="BarcodeBalanceNone" xml:space="preserve"><value>Barkod {0} - {1} stok kartıyla eşleşti; yetkili olduğunuz depolarda aktif bakiye bulunamadı.</value></data>
+  <data name="BarcodeBalanceFound" xml:space="preserve"><value>Barkod {0} - {1} stok kartıyla eşleşti ve {2} aktif raf bakiyesi bulundu. Kullanılabilir toplam miktar {3:0.###} {4}.</value></data>
+  <data name="MovementDenied" xml:space="preserve"><value>Stok hareket izini görmek için stok hareketi görüntüleme yetkisi gereklidir.</value></data>
+  <data name="MovementSubjectRequired" xml:space="preserve"><value>Hareketlerini görmek istediğiniz stok kodunu, ürün adını veya seri numarasını yazın.</value></data>
+  <data name="MovementNone" xml:space="preserve"><value>{0} için {1} adına yetkili olduğunuz depolarda stok hareketi bulunamadı.</value></data>
+  <data name="MovementFound" xml:space="preserve"><value>{0} için {1} adına {2} stok hareketi buldum. Giriş toplamı {3:0.###}, çıkış toplamı {4:0.###}.</value></data>
+  <data name="SerialSubject" xml:space="preserve"><value>{0} serisi</value></data>
+  <data name="SuggestionStockMovement" xml:space="preserve"><value>{0} stok hareketlerini göster</value></data>
+  <data name="SuggestionSerialBalance" xml:space="preserve"><value>{0} seri bakiyesi hangi raflarda?</value></data>
+  <data name="SuggestionStockLocation" xml:space="preserve"><value>{0} hangi raflarda var?</value></data>
+  <data name="TaskDenied" xml:space="preserve"><value>Atanmış görevleri görmek için ilgili depo operasyonu görüntüleme yetkilerinden en az biri gereklidir.</value></data>
+  <data name="TaskNone" xml:space="preserve"><value>{0} için yetkili olduğunuz operasyonlarda açık atanmış görev bulunamadı.</value></data>
+  <data name="TaskFound" xml:space="preserve"><value>{0} için {1} açık görev buldum. Önceliği ve hedef zamanı yüksek olan işler üstte gösteriliyor.</value></data>
+  <data name="TaskForcedSelf" xml:space="preserve"><value>Yetkiniz başka kullanıcıların görevlerini görmeye izin vermediği için sonuçlar yalnız size göre sınırlandırıldı.</value></data>
+  <data name="InvalidSession" xml:space="preserve"><value>Geçersiz kullanıcı oturumu.</value></data>
+  <data name="BranchScopeMissing" xml:space="preserve"><value>Şube kapsamı bulunamadı.</value></data>
+</root>

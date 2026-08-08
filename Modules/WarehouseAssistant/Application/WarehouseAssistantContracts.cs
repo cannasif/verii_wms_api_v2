@@ -12,6 +12,9 @@ public enum WarehouseAssistantIntent
     SerialBalance = 4,
     SerialReceiptHistory = 5,
     StockLocationBalance = 6,
+    BarcodeLookup = 7,
+    StockMovementHistory = 8,
+    AssignedTasks = 9,
     Unknown = 99
 }
 
@@ -28,7 +31,12 @@ public sealed record WarehouseAssistantAccess(
     bool CanQueryAllUsers,
     bool CanViewStockBalances,
     bool CanViewStockMovements,
-    bool CanViewGoodsReceipts);
+    bool CanViewGoodsReceipts,
+    bool CanViewWarehouseTransfers = false,
+    bool CanViewShipping = false,
+    bool CanViewWarehouseInbound = false,
+    bool CanViewWarehouseOutbound = false,
+    bool CanViewProductionTransfers = false);
 
 public sealed record AskWarehouseAssistantRequest(long? ConversationId, string Message);
 
@@ -36,6 +44,9 @@ public sealed record WarehouseAssistantCapabilities(
     bool CanQueryAllUsers,
     bool CanQuerySerialBalances,
     bool CanQuerySerialReceiptHistory,
+    bool CanQueryBarcode,
+    bool CanQueryStockMovements,
+    bool CanQueryAssignedTasks,
     string ScopeLabel,
     IReadOnlyList<string> ExampleQuestions);
 
@@ -51,7 +62,8 @@ public sealed record WarehouseAssistantMessageRow(
     string Content,
     string? Intent,
     string? Scope,
-    DateTime? CreatedDate);
+    DateTime? CreatedDate,
+    WarehouseAssistantChatResponse? Result);
 
 public sealed record WarehouseAssistantActivityRow(
     long Id,
@@ -112,6 +124,69 @@ public sealed record WarehouseAssistantStockLocationRow(
     decimal ReservedQuantity,
     decimal AvailableQuantity);
 
+public sealed record WarehouseAssistantBarcodeRow(
+    string Barcode,
+    string Source,
+    long StockId,
+    string StockCode,
+    string StockName,
+    long? YapCodeId,
+    string? YapCode,
+    decimal? EncodedQuantity,
+    string UnitCode,
+    string? LotNo,
+    string? SerialNo,
+    DateOnly? ManufacturingDate,
+    DateOnly? ExpirationDate,
+    bool RequireSerial,
+    bool RequireLot,
+    bool RequireManufacturingDate,
+    bool RequireExpirationDate,
+    IReadOnlyList<string> MissingFields);
+
+public sealed record WarehouseAssistantMovementRow(
+    long EntryId,
+    long OperationId,
+    string OperationType,
+    string OperationStatus,
+    string? ReferenceType,
+    string? ReferenceNo,
+    long? ReferenceId,
+    long StockId,
+    string StockCode,
+    string StockName,
+    int WarehouseCode,
+    string WarehouseName,
+    string LocationCode,
+    string LocationName,
+    decimal QuantityDelta,
+    string UnitCode,
+    string? LotNo,
+    string? SerialNo,
+    string StockStatus,
+    DateTime OccurredAtUtc,
+    bool IsReversal);
+
+public sealed record WarehouseAssistantTaskRow(
+    string Module,
+    long TaskId,
+    string TaskNo,
+    string TaskType,
+    string Status,
+    byte Priority,
+    long DocumentId,
+    string DocumentNo,
+    long WarehouseId,
+    int WarehouseCode,
+    string WarehouseName,
+    decimal PlannedQuantity,
+    decimal ProcessedQuantity,
+    decimal RemainingQuantity,
+    DateTimeOffset? PlannedAtUtc,
+    DateTimeOffset? DueAtUtc,
+    long? AssigneeUserId,
+    string AssigneeDisplayName);
+
 public sealed record WarehouseAssistantChatResponse(
     long ConversationId,
     long MessageId,
@@ -123,15 +198,23 @@ public sealed record WarehouseAssistantChatResponse(
     IReadOnlyList<WarehouseAssistantSerialBalanceRow> SerialBalances,
     IReadOnlyList<WarehouseAssistantSerialReceiptRow> SerialReceipts,
     IReadOnlyList<WarehouseAssistantStockLocationRow> StockLocations,
+    WarehouseAssistantBarcodeRow? Barcode,
+    IReadOnlyList<WarehouseAssistantMovementRow> Movements,
+    IReadOnlyList<WarehouseAssistantTaskRow> Tasks,
     IReadOnlyList<string> Suggestions);
 
-public sealed record WarehouseAssistantContext(string? SerialNo, long? StockId, string? StockCode);
+public sealed record WarehouseAssistantContext(
+    string? SerialNo,
+    long? StockId,
+    string? StockCode,
+    string? Barcode = null);
 
 public sealed record WarehouseAssistantIntentResolution(
     WarehouseAssistantIntent Intent,
     WarehouseAssistantDatePreset DatePreset,
     string? SerialNo,
     string? StockQuery,
+    string? Barcode,
     string? TargetUserQuery,
     bool RequestsAllUsers,
     decimal Confidence,
@@ -151,4 +234,5 @@ public interface IWarehouseAssistantService
     Task<IReadOnlyList<WarehouseAssistantConversationRow>> GetConversationsAsync(long actorUserId, string branchCode, CancellationToken ct = default);
     Task<IReadOnlyList<WarehouseAssistantMessageRow>> GetMessagesAsync(long conversationId, long actorUserId, string branchCode, CancellationToken ct = default);
     Task<WarehouseAssistantChatResponse> AskAsync(AskWarehouseAssistantRequest request, long actorUserId, string branchCode, WarehouseAssistantAccess access, CancellationToken ct = default);
+    Task ArchiveConversationAsync(long conversationId, long actorUserId, string branchCode, CancellationToken ct = default);
 }

@@ -1,52 +1,84 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.Audit.Domain;
+using verii_wms_api_v2.Modules.BarcodeDesigner.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Identity.Application;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
+using verii_wms_api_v2.Modules.ProjectSettings.Domain;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
 using verii_wms_api_v2.Modules.WarehouseAssistant.Domain;
+using verii_wms_api_v2.Modules.WarehouseAssistant.Localization;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
+using static verii_wms_api_v2.Modules.WarehouseAssistant.Localization.WarehouseAssistantMessageKeys;
 
 namespace verii_wms_api_v2.Modules.WarehouseAssistant.Application;
 
-public sealed class WarehouseAssistantService(
-    IUnitOfWork unitOfWork,
-    IWarehouseAssistantIntentResolver intentResolver,
-    IAuditLogWriter audit,
-    TimeProvider timeProvider) : IWarehouseAssistantService
+public sealed partial class WarehouseAssistantService : IWarehouseAssistantService
 {
     private const int MaximumMessageLength = 1000;
     private const int MaximumResultCount = 50;
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private readonly IUnitOfWork unitOfWork;
+    private readonly IWarehouseAssistantIntentResolver intentResolver;
+    private readonly IAuditLogWriter audit;
+    private readonly TimeProvider timeProvider;
+    private readonly IWarehouseBarcodeResolver? barcodeResolver;
+    private readonly IStringLocalizer<WarehouseAssistantResource>? localizer;
+
+    public WarehouseAssistantService(
+        IUnitOfWork unitOfWork,
+        IWarehouseAssistantIntentResolver intentResolver,
+        IAuditLogWriter audit,
+        TimeProvider timeProvider,
+        IWarehouseBarcodeResolver? barcodeResolver = null,
+        IStringLocalizer<WarehouseAssistantResource>? localizer = null)
+    {
+        this.unitOfWork = unitOfWork;
+        this.intentResolver = intentResolver;
+        this.audit = audit;
+        this.timeProvider = timeProvider;
+        this.barcodeResolver = barcodeResolver;
+        this.localizer = localizer;
+    }
 
     public Task<WarehouseAssistantCapabilities> GetCapabilitiesAsync(
         WarehouseAssistantAccess access,
         CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
-        var examples = new List<string> { "Bugün yaptığım işlemleri göster" };
-        if (access.CanQueryAllUsers) examples.Add("Ahmet Demir kullanıcısının bugün yaptığı işlemleri göster");
+        var examples = new List<string> { M(CapabilityExampleMyActivities) };
+        if (access.CanQueryAllUsers) examples.Add(M(CapabilityExampleUserActivities));
         if (access.CanViewStockBalances)
         {
-            examples.Add("DTG-1 seri bakiyesi hangi depo ve raflarda?");
-            examples.Add("01/013 stok kodlu ürün hangi raflarda var?");
+            examples.Add(M(CapabilityExampleSerialBalance));
+            examples.Add(M(CapabilityExampleStockBalance));
         }
         if (access.CanViewStockMovements && access.CanViewGoodsReceipts)
-            examples.Add("DTG-1 serisi ne zaman ve kim tarafından mal kabul edildi?");
+            examples.Add(M(CapabilityExampleSerialReceipt));
+        if (access.CanViewStockBalances)
+            examples.Add(M(CapabilityExampleBarcode));
+        if (access.CanViewStockMovements)
+            examples.Add(M(CapabilityExampleMovement));
+        if (CanQueryAnyTasks(access))
+            examples.Add(M(CapabilityExampleTasks));
 
         return Task.FromResult(new WarehouseAssistantCapabilities(
             access.CanQueryAllUsers,
             access.CanViewStockBalances,
             access.CanViewStockMovements && access.CanViewGoodsReceipts,
-            access.CanQueryAllUsers ? "Tüm kullanıcılar ve yetkili olduğunuz WMS verileri" : "Yalnız kendi işlemleriniz ve yetkili olduğunuz WMS verileri",
+            access.CanViewStockBalances,
+            access.CanViewStockMovements,
+            CanQueryAnyTasks(access),
+            M(access.CanQueryAllUsers ? ScopeAll : ScopeSelf),
             examples));
     }
 
@@ -68,12 +100,31 @@ public sealed class WarehouseAssistantService(
         CancellationToken ct = default)
     {
         await EnsureConversationOwnershipAsync(conversationId, actorUserId, branchCode, ct);
-        return await unitOfWork.Repository<WarehouseAssistantMessage>().Query()
+        var rows = await unitOfWork.Repository<WarehouseAssistantMessage>().Query()
             .Where(x => x.ConversationId == conversationId && x.BranchCode == branchCode)
             .OrderBy(x => x.CreatedDate).ThenBy(x => x.Id)
             .Take(200)
-            .Select(x => new WarehouseAssistantMessageRow(x.Id, x.Role, x.Content, x.Intent, x.Scope, x.CreatedDate))
+            .Select(x => new
+            {
+                x.Id,
+                x.Role,
+                x.Content,
+                x.Intent,
+                x.Scope,
+                x.CreatedDate,
+                x.ResponseDataJson
+            })
             .ToListAsync(ct);
+        return rows.Select(x => new WarehouseAssistantMessageRow(
+            x.Id,
+            x.Role,
+            x.Content,
+            x.Intent,
+            x.Scope,
+            x.CreatedDate,
+            x.Role == "assistant"
+                ? RestoreChatResponse(conversationId, x.Id, x.Content, x.Intent, x.Scope, x.ResponseDataJson)
+                : null)).ToArray();
     }
 
     public async Task<WarehouseAssistantChatResponse> AskAsync(
@@ -103,12 +154,17 @@ public sealed class WarehouseAssistantService(
         await unitOfWork.Repository<WarehouseAssistantMessage>().AddAsync(userMessage, ct);
 
         var result = await ExecuteIntentAsync(resolution, message, actorUserId, branchCode, access, ct);
-        var responseData = new
+        var responseData = new StoredResponseData
         {
-            result.Activities,
-            result.SerialBalances,
-            result.SerialReceipts,
-            result.StockLocations
+            ProviderMode = resolution.ProviderMode,
+            Activities = result.Activities,
+            SerialBalances = result.SerialBalances,
+            SerialReceipts = result.SerialReceipts,
+            StockLocations = result.StockLocations,
+            Barcode = result.Barcode,
+            Movements = result.Movements,
+            Tasks = result.Tasks,
+            Suggestions = result.Suggestions
         };
         var assistantMessage = new WarehouseAssistantMessage
         {
@@ -143,7 +199,9 @@ public sealed class WarehouseAssistantService(
                 Intent = result.Intent.ToString(),
                 result.Scope,
                 result.ToolName,
-                ResultCount = result.Activities.Count + result.SerialBalances.Count + result.SerialReceipts.Count + result.StockLocations.Count,
+                ResultCount = result.Activities.Count + result.SerialBalances.Count + result.SerialReceipts.Count
+                    + result.StockLocations.Count + result.Movements.Count + result.Tasks.Count
+                    + (result.Barcode is null ? 0 : 1),
                 CorrelationId = correlationId
             },
             ChangedFields: ["Intent", "Scope", "ToolName"]), ct);
@@ -159,6 +217,9 @@ public sealed class WarehouseAssistantService(
             result.SerialBalances,
             result.SerialReceipts,
             result.StockLocations,
+            result.Barcode,
+            result.Movements,
+            result.Tasks,
             result.Suggestions);
     }
 
@@ -180,6 +241,12 @@ public sealed class WarehouseAssistantService(
                 await ExecuteSerialReceiptAsync(resolution, actorUserId, branchCode, access, ct),
             WarehouseAssistantIntent.StockLocationBalance =>
                 await ExecuteStockLocationAsync(resolution, originalMessage, actorUserId, branchCode, access, ct),
+            WarehouseAssistantIntent.BarcodeLookup =>
+                await ExecuteBarcodeLookupAsync(resolution, actorUserId, branchCode, access, ct),
+            WarehouseAssistantIntent.StockMovementHistory =>
+                await ExecuteStockMovementHistoryAsync(resolution, originalMessage, actorUserId, branchCode, access, ct),
+            WarehouseAssistantIntent.AssignedTasks =>
+                await ExecuteAssignedTasksAsync(resolution, originalMessage, actorUserId, branchCode, access, ct),
             WarehouseAssistantIntent.Help => HelpResult(access),
             _ => UnknownResult(access)
         };
@@ -194,7 +261,7 @@ public sealed class WarehouseAssistantService(
         CancellationToken ct)
     {
         var target = await ResolveActivityTargetAsync(message, resolution, actorUserId, access.CanQueryAllUsers, ct);
-        var (startUtc, endUtc, periodLabel) = ResolveDateRange(resolution.DatePreset);
+        var (startUtc, endUtc, periodLabel) = await ResolveDateRangeAsync(resolution.DatePreset, ct);
         var logs = unitOfWork.Repository<AuditLog>().Query()
             .Where(x => x.BranchCode == branchCode
                 && x.CreatedDate >= startUtc && x.CreatedDate < endUtc
@@ -230,10 +297,10 @@ public sealed class WarehouseAssistantService(
 
         var forcedSelf = !access.CanQueryAllUsers && (resolution.RequestsAllUsers || target.RequestedAnotherUser);
         var answer = rows.Length == 0
-            ? $"{periodLabel} için {target.DisplayName} adına kayıtlı bir işlem bulunamadı."
-            : $"{periodLabel} için {target.DisplayName} adına {rows.Length} işlem buldum. En yeni işlemler üstte gösteriliyor.";
+            ? M(ActivityNone, periodLabel, target.DisplayName)
+            : M(ActivityFound, periodLabel, target.DisplayName, rows.Length);
         if (forcedSelf)
-            answer = "Yetkiniz yalnız kendi işlem kayıtlarınızı görmenize izin verdiği için sonuçlar size göre sınırlandı. " + answer;
+            answer = M(ActivityForcedSelf) + " " + answer;
 
         return new ExecutionResult(
             resolution.Intent,
@@ -244,8 +311,11 @@ public sealed class WarehouseAssistantService(
             [],
             [],
             [],
+            null,
+            [],
+            [],
             new WarehouseAssistantContext(null, null, null),
-            ["Bugün yaptığım işlemler", "Son 7 gündeki işlemlerim"]);
+            [M(CapabilityExampleMyActivities), M(CapabilityExampleMyActivities)]);
     }
 
     private async Task<ExecutionResult> ExecuteSerialBalanceAsync(
@@ -256,9 +326,9 @@ public sealed class WarehouseAssistantService(
         CancellationToken ct)
     {
         if (!access.CanViewStockBalances)
-            return Denied(resolution.Intent, "Seri bakiyelerini görmek için stok bakiyesi görüntüleme yetkisi gereklidir.");
+            return Denied(resolution.Intent, M(SerialBalanceDenied));
         if (string.IsNullOrWhiteSpace(resolution.SerialNo))
-            return MissingEntity(resolution.Intent, "Seri numarasını da yazar mısınız? Örnek: “DTG-1 seri bakiyesi nerede?”");
+            return MissingEntity(resolution.Intent, M(SerialRequired));
 
         var serialNo = resolution.SerialNo.Trim();
         var warehouseAccess = await UserWarehouseAccessService.ResolveAsync(unitOfWork, actorUserId, branchCode, ct);
@@ -281,12 +351,12 @@ public sealed class WarehouseAssistantService(
             .ToListAsync(ct);
 
         var answer = rows.Count == 0
-            ? $"“{serialNo}” serisi için yetkili olduğunuz depolarda aktif bakiye bulunamadı."
-            : $"“{serialNo}” serisi {rows.Count} depo/raf bakiyesinde bulundu. Toplam {rows.Sum(x => x.Quantity):0.###} {rows[0].UnitCode}, kullanılabilir {rows.Sum(x => x.AvailableQuantity):0.###} {rows[0].UnitCode}.";
+            ? M(SerialBalanceNone, serialNo)
+            : M(SerialBalanceFound, serialNo, rows.Count, rows.Sum(x => x.Quantity), rows[0].UnitCode, rows.Sum(x => x.AvailableQuantity));
         return new ExecutionResult(
             resolution.Intent, "authorized-warehouses", "query-serial-balance", answer,
-            [], rows, [], [], new WarehouseAssistantContext(serialNo, rows.FirstOrDefault()?.StockId, rows.FirstOrDefault()?.StockCode),
-            [$"{serialNo} serisi ne zaman ve kim tarafından mal kabul edildi?"]);
+            [], rows, [], [], null, [], [], new WarehouseAssistantContext(serialNo, rows.FirstOrDefault()?.StockId, rows.FirstOrDefault()?.StockCode),
+            [M(CapabilityExampleSerialReceipt)]);
     }
 
     private async Task<ExecutionResult> ExecuteSerialReceiptAsync(
@@ -297,9 +367,9 @@ public sealed class WarehouseAssistantService(
         CancellationToken ct)
     {
         if (!access.CanViewStockMovements || !access.CanViewGoodsReceipts)
-            return Denied(resolution.Intent, "Serinin giriş geçmişini görmek için stok hareketi ve mal kabul görüntüleme yetkileri gereklidir.");
+            return Denied(resolution.Intent, M(SerialReceiptDenied));
         if (string.IsNullOrWhiteSpace(resolution.SerialNo))
-            return MissingEntity(resolution.Intent, "Mal kabul geçmişini arayacağınız seri numarasını yazar mısınız?");
+            return MissingEntity(resolution.Intent, M(SerialReceiptRequired));
 
         var serialNo = resolution.SerialNo.Trim();
         var warehouseAccess = await UserWarehouseAccessService.ResolveAsync(unitOfWork, actorUserId, branchCode, ct);
@@ -350,12 +420,12 @@ public sealed class WarehouseAssistantService(
             DisplayUser(x.ActorUserId, null, names))).ToArray();
 
         var answer = rows.Length == 0
-            ? $"“{serialNo}” serisi için aktif bir mal kabul giriş hareketi bulunamadı. Kayıt ters çevrilmiş veya farklı bir operasyonla açılmış olabilir."
-            : $"“{serialNo}” serisinin {rows.Length} mal kabul giriş kaydını buldum. İlk görünen kayıt {rows[0].GoodsReceiptNo} belgesiyle {rows[0].ReceivedByDisplayName} tarafından işlendi.";
+            ? M(SerialReceiptNone, serialNo)
+            : M(SerialReceiptFound, serialNo, rows.Length, rows[0].GoodsReceiptNo, rows[0].ReceivedByDisplayName);
         return new ExecutionResult(
             resolution.Intent, "authorized-warehouses", "query-serial-goods-receipt-history", answer,
-            [], [], rows, [], new WarehouseAssistantContext(serialNo, raw.FirstOrDefault()?.Stock.Id, raw.FirstOrDefault()?.Stock.ErpStockCode),
-            [$"{serialNo} seri bakiyesi hangi raflarda?"]);
+            [], [], rows, [], null, [], [], new WarehouseAssistantContext(serialNo, raw.FirstOrDefault()?.Stock.Id, raw.FirstOrDefault()?.Stock.ErpStockCode),
+            [M(SuggestionSerialBalance, serialNo)]);
     }
 
     private async Task<ExecutionResult> ExecuteStockLocationAsync(
@@ -367,11 +437,11 @@ public sealed class WarehouseAssistantService(
         CancellationToken ct)
     {
         if (!access.CanViewStockBalances)
-            return Denied(resolution.Intent, "Stok ve raf bakiyelerini görmek için stok bakiyesi görüntüleme yetkisi gereklidir.");
+            return Denied(resolution.Intent, M(StockBalanceDenied));
 
         var stock = await ResolveStockAsync(message, branchCode, ct);
         if (stock is null)
-            return MissingEntity(resolution.Intent, "Stok kodunu veya ürün adını daha açık yazar mısınız? Örnek: “01/013 stok kodlu ürün hangi raflarda var?”");
+            return MissingEntity(resolution.Intent, M(StockRequired));
 
         var warehouseAccess = await UserWarehouseAccessService.ResolveAsync(unitOfWork, actorUserId, branchCode, ct);
         var balances = unitOfWork.Repository<LocationStockBalance>().Query()
@@ -390,45 +460,45 @@ public sealed class WarehouseAssistantService(
             .Take(MaximumResultCount)
             .ToListAsync(ct);
         var answer = rows.Count == 0
-            ? $"{stock.ErpStockCode} - {stock.StockName} için yetkili olduğunuz depolarda aktif raf bakiyesi bulunamadı."
-            : $"{stock.ErpStockCode} - {stock.StockName} {rows.Count} raf bakiyesinde bulundu. Kullanılabilir toplam miktar {rows.Sum(x => x.AvailableQuantity):0.###} {rows[0].UnitCode}.";
+            ? M(StockBalanceNone, stock.ErpStockCode, stock.StockName)
+            : M(StockBalanceFound, stock.ErpStockCode, stock.StockName, rows.Count, rows.Sum(x => x.AvailableQuantity), rows[0].UnitCode);
         return new ExecutionResult(
             resolution.Intent, "authorized-warehouses", "query-stock-location-balance", answer,
-            [], [], [], rows, new WarehouseAssistantContext(null, stock.Id, stock.ErpStockCode),
-            [$"{stock.ErpStockCode} ürününün seri bakiyelerini göster"]);
+            [], [], [], rows, null, [], [], new WarehouseAssistantContext(null, stock.Id, stock.ErpStockCode),
+            [M(SuggestionSerialBalance, stock.ErpStockCode)]);
     }
 
-    private static ExecutionResult HelpResult(WarehouseAssistantAccess access)
+    private ExecutionResult HelpResult(WarehouseAssistantAccess access)
     {
-        var suggestions = new List<string> { "Bugün yaptığım işlemler" };
-        if (access.CanQueryAllUsers) suggestions.Add("Ahmet Demir bugün hangi işlemleri yaptı?");
-        if (access.CanViewStockBalances) suggestions.Add("DTG-1 seri bakiyesi hangi raflarda?");
-        if (access.CanViewStockMovements && access.CanViewGoodsReceipts) suggestions.Add("DTG-1 serisini kim ve ne zaman içeri aldı?");
+        var suggestions = new List<string> { M(CapabilityExampleMyActivities) };
+        if (access.CanQueryAllUsers) suggestions.Add(M(CapabilityExampleUserActivities));
+        if (access.CanViewStockBalances) suggestions.Add(M(CapabilityExampleSerialBalance));
+        if (access.CanViewStockMovements && access.CanViewGoodsReceipts) suggestions.Add(M(CapabilityExampleSerialReceipt));
         return new ExecutionResult(
             WarehouseAssistantIntent.Help,
             access.CanQueryAllUsers ? "all-users-available" : "self",
             "help",
-            "İşlem geçmişinizi, yetkiniz varsa kullanıcı hareketlerini, stok/ürün/malzeme raf bakiyelerini ve seri mal kabul geçmişini sorabilirsiniz. Veriler yalnız yetkili olduğunuz şube ve depolarla sınırlandırılır.",
-            [], [], [], [], new WarehouseAssistantContext(null, null, null), suggestions);
+            M(HelpAnswer),
+            [], [], [], [], null, [], [], new WarehouseAssistantContext(null, null, null), suggestions);
     }
 
-    private static ExecutionResult UnknownResult(WarehouseAssistantAccess access)
+    private ExecutionResult UnknownResult(WarehouseAssistantAccess access)
     {
         var help = HelpResult(access);
         return help with
         {
             Intent = WarehouseAssistantIntent.Unknown,
             ToolName = "none",
-            Answer = "Soruyu güvenli bir WMS sorgusuna dönüştüremedim. Stok/ürün/malzeme kodu, seri numarası, kullanıcı ve zaman bilgisini açıkça yazarak tekrar deneyin."
+            Answer = M(UnknownAnswer)
         };
     }
 
-    private static ExecutionResult Denied(WarehouseAssistantIntent intent, string answer) => new(
-        intent, "denied", "authorization-check", answer, [], [], [], [],
-        new WarehouseAssistantContext(null, null, null), ["Bugün yaptığım işlemler"]);
+    private ExecutionResult Denied(WarehouseAssistantIntent intent, string answer) => new(
+        intent, "denied", "authorization-check", answer, [], [], [], [], null, [], [],
+        new WarehouseAssistantContext(null, null, null), [M(CapabilityExampleMyActivities)]);
 
     private static ExecutionResult MissingEntity(WarehouseAssistantIntent intent, string answer) => new(
-        intent, "authorized", "validation", answer, [], [], [], [],
+        intent, "authorized", "validation", answer, [], [], [], [], null, [], [],
         new WarehouseAssistantContext(null, null, null), []);
 
     private async Task<ActivityTarget> ResolveActivityTargetAsync(
@@ -470,7 +540,7 @@ public sealed class WarehouseAssistantService(
         if (target is not null)
             return new ActivityTarget(target.User.Id, false, string.IsNullOrWhiteSpace(target.FullName) ? target.User.Username : target.FullName, true);
         if (resolution.RequestsAllUsers)
-            return new ActivityTarget(null, true, "tüm kullanıcılar", false);
+            return new ActivityTarget(null, true, M(AllUsers), false);
 
         return new ActivityTarget(actorUserId, false, await GetUserDisplayNameAsync(actorUserId, ct), false);
     }
@@ -527,7 +597,7 @@ public sealed class WarehouseAssistantService(
         {
             var existing = await unitOfWork.Repository<WarehouseAssistantConversation>().Query(true)
                 .FirstOrDefaultAsync(x => x.Id == conversationId.Value && x.UserId == actorUserId && x.BranchCode == branchCode && !x.IsArchived, ct);
-            return existing ?? throw AppException.NotFound("Depo asistanı konuşması bulunamadı.");
+            return existing ?? throw AppException.NotFound(M(ConversationNotFound));
         }
 
         var conversation = new WarehouseAssistantConversation
@@ -544,11 +614,76 @@ public sealed class WarehouseAssistantService(
         return conversation;
     }
 
+    public async Task ArchiveConversationAsync(
+        long conversationId,
+        long actorUserId,
+        string branchCode,
+        CancellationToken ct = default)
+    {
+        var conversation = await unitOfWork.Repository<WarehouseAssistantConversation>().Query(true)
+            .FirstOrDefaultAsync(x => x.Id == conversationId
+                && x.UserId == actorUserId
+                && x.BranchCode == branchCode
+                && !x.IsArchived, ct)
+            ?? throw AppException.NotFound(M(ConversationNotFound));
+        conversation.IsArchived = true;
+        conversation.UpdatedBy = actorUserId;
+        conversation.UpdatedDate = timeProvider.GetUtcNow().UtcDateTime;
+        unitOfWork.Repository<WarehouseAssistantConversation>().Update(conversation);
+        await unitOfWork.SaveChangesAsync(ct);
+        await audit.WriteAsync(new AuditLogWriteEntry(
+            "warehouse-assistant.conversation.archive",
+            "WarehouseAssistantConversation",
+            conversation.Id.ToString(),
+            "Succeeded",
+            "warehouse-assistant",
+            NewValues: new { conversation.IsArchived },
+            ChangedFields: [nameof(conversation.IsArchived)]), ct);
+    }
+
+    private static WarehouseAssistantChatResponse? RestoreChatResponse(
+        long conversationId,
+        long messageId,
+        string answer,
+        string? intentValue,
+        string? scope,
+        string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try
+        {
+            var stored = JsonSerializer.Deserialize<StoredResponseData>(json, JsonOptions);
+            if (stored is null) return null;
+            var intent = Enum.TryParse<WarehouseAssistantIntent>(intentValue, true, out var parsed)
+                ? parsed
+                : WarehouseAssistantIntent.Unknown;
+            return new WarehouseAssistantChatResponse(
+                conversationId,
+                messageId,
+                answer,
+                intent,
+                scope ?? "authorized",
+                stored.ProviderMode,
+                stored.Activities ?? [],
+                stored.SerialBalances ?? [],
+                stored.SerialReceipts ?? [],
+                stored.StockLocations ?? [],
+                stored.Barcode,
+                stored.Movements ?? [],
+                stored.Tasks ?? [],
+                stored.Suggestions ?? []);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
     private async Task EnsureConversationOwnershipAsync(long conversationId, long actorUserId, string branchCode, CancellationToken ct)
     {
         var exists = await unitOfWork.Repository<WarehouseAssistantConversation>().Query()
             .AnyAsync(x => x.Id == conversationId && x.UserId == actorUserId && x.BranchCode == branchCode && !x.IsArchived, ct);
-        if (!exists) throw AppException.NotFound("Depo asistanı konuşması bulunamadı.");
+        if (!exists) throw AppException.NotFound(M(ConversationNotFound));
     }
 
     private async Task<WarehouseAssistantContext?> GetContextAsync(long conversationId, string branchCode, CancellationToken ct)
@@ -563,10 +698,16 @@ public sealed class WarehouseAssistantService(
         catch (JsonException) { return null; }
     }
 
-    private (DateTime StartUtc, DateTime EndUtc, string Label) ResolveDateRange(WarehouseAssistantDatePreset preset)
+    private async Task<(DateTime StartUtc, DateTime EndUtc, string Label)> ResolveDateRangeAsync(
+        WarehouseAssistantDatePreset preset,
+        CancellationToken ct)
     {
         var utcNow = timeProvider.GetUtcNow();
-        var zone = ResolveIstanbulTimeZone();
+        var configuredZone = await unitOfWork.Repository<ProjectSetting>().Query()
+            .Where(x => x.SettingKey == "GLOBAL")
+            .Select(x => x.TimeZoneId)
+            .FirstOrDefaultAsync(ct);
+        var zone = ResolveTimeZone(configuredZone);
         var localNow = TimeZoneInfo.ConvertTime(utcNow, zone);
         var today = localNow.Date;
         DateTime startLocal;
@@ -575,16 +716,16 @@ public sealed class WarehouseAssistantService(
         switch (preset)
         {
             case WarehouseAssistantDatePreset.Yesterday:
-                startLocal = today.AddDays(-1); endLocal = today; label = "Dün"; break;
+                startLocal = today.AddDays(-1); endLocal = today; label = M(DateYesterday); break;
             case WarehouseAssistantDatePreset.LastSevenDays:
-                startLocal = today.AddDays(-6); endLocal = today.AddDays(1); label = "Son 7 gün"; break;
+                startLocal = today.AddDays(-6); endLocal = today.AddDays(1); label = M(DateLastSevenDays); break;
             case WarehouseAssistantDatePreset.ThisWeek:
                 var offset = ((int)today.DayOfWeek + 6) % 7;
-                startLocal = today.AddDays(-offset); endLocal = today.AddDays(1); label = "Bu hafta"; break;
+                startLocal = today.AddDays(-offset); endLocal = today.AddDays(1); label = M(DateThisWeek); break;
             case WarehouseAssistantDatePreset.LastThirtyDays:
-                startLocal = today.AddDays(-29); endLocal = today.AddDays(1); label = "Son 30 gün"; break;
+                startLocal = today.AddDays(-29); endLocal = today.AddDays(1); label = M(DateLastThirtyDays); break;
             default:
-                startLocal = today; endLocal = today.AddDays(1); label = "Bugün"; break;
+                startLocal = today; endLocal = today.AddDays(1); label = M(DateToday); break;
         }
         return (
             TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(startLocal, DateTimeKind.Unspecified), zone),
@@ -592,9 +733,15 @@ public sealed class WarehouseAssistantService(
             label);
     }
 
-    private static TimeZoneInfo ResolveIstanbulTimeZone()
+    private static TimeZoneInfo ResolveTimeZone(string? configuredZone)
     {
-        foreach (var id in new[] { "Europe/Istanbul", "Turkey Standard Time" })
+        var candidates = new List<string>();
+        if (!string.IsNullOrWhiteSpace(configuredZone)) candidates.Add(configuredZone.Trim());
+        if (string.Equals(configuredZone, "Europe/Istanbul", StringComparison.OrdinalIgnoreCase))
+            candidates.Add("Turkey Standard Time");
+        candidates.Add("Europe/Istanbul");
+        candidates.Add("Turkey Standard Time");
+        foreach (var id in candidates.Distinct(StringComparer.OrdinalIgnoreCase))
         {
             try { return TimeZoneInfo.FindSystemTimeZoneById(id); }
             catch (TimeZoneNotFoundException) { }
@@ -623,39 +770,51 @@ public sealed class WarehouseAssistantService(
     private async Task<string> GetUserDisplayNameAsync(long userId, CancellationToken ct)
     {
         var names = await ResolveUserNamesAsync([userId], ct);
-        return names.GetValueOrDefault(userId, $"Kullanıcı #{userId}");
+        return names.GetValueOrDefault(userId, M(UserNumber, userId));
     }
 
-    private static string DisplayUser(long? userId, string? email, IReadOnlyDictionary<long, string> names) =>
+    private string DisplayUser(long? userId, string? email, IReadOnlyDictionary<long, string> names) =>
         userId.HasValue && names.TryGetValue(userId.Value, out var name)
             ? name
-            : !string.IsNullOrWhiteSpace(email) ? email : "Sistem";
+            : !string.IsNullOrWhiteSpace(email) ? email : M(SystemUser);
 
-    private static string HumanizeAction(string action) => action.ToLowerInvariant() switch
+    private string HumanizeAction(string action) => action.ToLowerInvariant() switch
     {
-        var x when x.StartsWith("goods-receipt") => "Mal kabul işlemi",
-        var x when x.StartsWith("warehouse-transfer") => "Depolar arası transfer işlemi",
-        var x when x.StartsWith("production-transfer") => "Üretime transfer işlemi",
-        var x when x.StartsWith("shipment") => "Sevk işlemi",
-        var x when x.StartsWith("warehouse-inbound") => "Ambar giriş işlemi",
-        var x when x.StartsWith("warehouse-outbound") => "Ambar çıkış işlemi",
-        var x when x.StartsWith("quality") => "Kalite işlemi",
-        var x when x.StartsWith("packing") => "Paketleme işlemi",
-        var x when x.StartsWith("stock") => "Stok işlemi",
-        var x when x.StartsWith("user") => "Kullanıcı işlemi",
+        var x when x.StartsWith("goods-receipt") => M(ActionGoodsReceipt),
+        var x when x.StartsWith("warehouse-transfer") => M(ActionWarehouseTransfer),
+        var x when x.StartsWith("production-transfer") => M(ActionProductionTransfer),
+        var x when x.StartsWith("shipment") => M(ActionShipment),
+        var x when x.StartsWith("warehouse-inbound") => M(ActionWarehouseInbound),
+        var x when x.StartsWith("warehouse-outbound") => M(ActionWarehouseOutbound),
+        var x when x.StartsWith("quality") => M(ActionQuality),
+        var x when x.StartsWith("packing") => M(ActionPacking),
+        var x when x.StartsWith("stock") => M(ActionStock),
+        var x when x.StartsWith("user") => M(ActionUser),
         _ => action.Replace('.', ' ').Replace('-', ' ')
     };
 
-    private static string ValidateMessage(string? value)
+    private string ValidateMessage(string? value)
     {
         var message = value?.Trim();
-        if (string.IsNullOrWhiteSpace(message)) throw AppException.BadRequest("Depo asistanına sorulacak mesaj zorunludur.");
-        if (message.Length > MaximumMessageLength) throw AppException.BadRequest($"Mesaj en fazla {MaximumMessageLength} karakter olabilir.");
+        if (string.IsNullOrWhiteSpace(message)) throw AppException.BadRequest(M(MessageRequired));
+        if (message.Length > MaximumMessageLength) throw AppException.BadRequest(M(MessageTooLong, MaximumMessageLength));
         return message;
     }
 
     private static bool ContainsAny(string value, IEnumerable<string> candidates) =>
         candidates.Any(candidate => value.Contains(candidate, StringComparison.Ordinal));
+
+    private string M(string key, params object[] arguments) => localizer is null
+        ? key
+        : localizer[key, arguments].Value;
+
+    private static bool CanQueryAnyTasks(WarehouseAssistantAccess access) =>
+        access.CanViewGoodsReceipts
+        || access.CanViewWarehouseTransfers
+        || access.CanViewShipping
+        || access.CanViewWarehouseInbound
+        || access.CanViewWarehouseOutbound
+        || access.CanViewProductionTransfers;
 
     private sealed record ActivityTarget(long? UserId, bool AllUsers, string DisplayName, bool RequestedAnotherUser);
 
@@ -668,6 +827,22 @@ public sealed class WarehouseAssistantService(
         IReadOnlyList<WarehouseAssistantSerialBalanceRow> SerialBalances,
         IReadOnlyList<WarehouseAssistantSerialReceiptRow> SerialReceipts,
         IReadOnlyList<WarehouseAssistantStockLocationRow> StockLocations,
+        WarehouseAssistantBarcodeRow? Barcode,
+        IReadOnlyList<WarehouseAssistantMovementRow> Movements,
+        IReadOnlyList<WarehouseAssistantTaskRow> Tasks,
         WarehouseAssistantContext Context,
         IReadOnlyList<string> Suggestions);
+
+    private sealed class StoredResponseData
+    {
+        public string ProviderMode { get; init; } = "deterministic";
+        public IReadOnlyList<WarehouseAssistantActivityRow> Activities { get; init; } = [];
+        public IReadOnlyList<WarehouseAssistantSerialBalanceRow> SerialBalances { get; init; } = [];
+        public IReadOnlyList<WarehouseAssistantSerialReceiptRow> SerialReceipts { get; init; } = [];
+        public IReadOnlyList<WarehouseAssistantStockLocationRow> StockLocations { get; init; } = [];
+        public WarehouseAssistantBarcodeRow? Barcode { get; init; }
+        public IReadOnlyList<WarehouseAssistantMovementRow> Movements { get; init; } = [];
+        public IReadOnlyList<WarehouseAssistantTaskRow> Tasks { get; init; } = [];
+        public IReadOnlyList<string> Suggestions { get; init; } = [];
+    }
 }

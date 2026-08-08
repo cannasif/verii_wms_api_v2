@@ -38,6 +38,7 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, $"{settings.BaseUrl.TrimEnd('/')}/responses");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.ApiKey);
+            request.Headers.TryAddWithoutValidation("X-Client-Request-Id", Guid.NewGuid().ToString("D"));
             var payload = CreatePayload(message, context);
             request.Content = new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -51,9 +52,7 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
 
             await using var stream = await response.Content.ReadAsStreamAsync(timeout.Token);
             using var document = await JsonDocument.ParseAsync(stream, cancellationToken: timeout.Token);
-            var arguments = document.RootElement.GetProperty("output").EnumerateArray()
-                .FirstOrDefault(x => x.TryGetProperty("type", out var type) && type.GetString() == "function_call")
-                .GetProperty("arguments").GetString();
+            var arguments = TryGetFunctionArguments(document.RootElement);
             if (string.IsNullOrWhiteSpace(arguments)) return deterministic;
             using var parsed = JsonDocument.Parse(arguments);
             var root = parsed.RootElement;
@@ -66,6 +65,7 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
                 datePreset,
                 NullIfBlank(root.GetProperty("serialNo").GetString()) ?? context?.SerialNo,
                 NullIfBlank(root.GetProperty("stockQuery").GetString()) ?? context?.StockCode,
+                NullIfBlank(root.GetProperty("barcode").GetString()) ?? context?.Barcode,
                 NullIfBlank(root.GetProperty("targetUserQuery").GetString()),
                 root.GetProperty("requestsAllUsers").GetBoolean(),
                 0.85m,
@@ -81,9 +81,11 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
     private object CreatePayload(string message, WarehouseAssistantContext? context) => new
     {
         model = settings.Model,
+        store = false,
+        max_output_tokens = 300,
         input = new object[]
         {
-            new { role = "system", content = "Classify Turkish WMS questions. Stock, ürün, malzeme and mamul are synonyms. Never decide authorization. Return only the forced function call." },
+            new { role = "system", content = "Classify multilingual WMS questions. Stock, product, item, material, ürün, malzeme and mamul are synonyms. Barcode and label are synonyms. Never decide authorization, never generate SQL, and never infer access rights. Return only the forced function call." },
             new { role = "user", content = $"Question: {message}\nPrevious entity context: {JsonSerializer.Serialize(context)}" }
         },
         tools = new object[]
@@ -103,10 +105,11 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
                         datePreset = new { type = "string", @enum = Enum.GetNames<WarehouseAssistantDatePreset>() },
                         serialNo = new { type = new[] { "string", "null" } },
                         stockQuery = new { type = new[] { "string", "null" } },
+                        barcode = new { type = new[] { "string", "null" } },
                         targetUserQuery = new { type = new[] { "string", "null" } },
                         requestsAllUsers = new { type = "boolean" }
                     },
-                    required = new[] { "intent", "datePreset", "serialNo", "stockQuery", "targetUserQuery", "requestsAllUsers" },
+                    required = new[] { "intent", "datePreset", "serialNo", "stockQuery", "barcode", "targetUserQuery", "requestsAllUsers" },
                     additionalProperties = false
                 }
             }
@@ -114,6 +117,19 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
         tool_choice = new { type = "function", name = "resolve_wms_question" },
         parallel_tool_calls = false
     };
+
+    private static string? TryGetFunctionArguments(JsonElement root)
+    {
+        if (!root.TryGetProperty("output", out var output) || output.ValueKind != JsonValueKind.Array)
+            return null;
+        foreach (var item in output.EnumerateArray())
+        {
+            if (!item.TryGetProperty("type", out var type) || type.GetString() != "function_call") continue;
+            if (item.TryGetProperty("arguments", out var arguments) && arguments.ValueKind == JsonValueKind.String)
+                return arguments.GetString();
+        }
+        return null;
+    }
 
     private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

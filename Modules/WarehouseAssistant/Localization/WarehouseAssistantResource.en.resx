@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="CapabilityExampleMyActivities" xml:space="preserve"><value>Show the operations I performed today</value></data>
+  <data name="CapabilityExampleUserActivities" xml:space="preserve"><value>Show the operations performed by Ahmet Demir today</value></data>
+  <data name="CapabilityExampleSerialBalance" xml:space="preserve"><value>In which warehouse and bin is serial DTG-1?</value></data>
+  <data name="CapabilityExampleStockBalance" xml:space="preserve"><value>In which bins is item 01/013 available?</value></data>
+  <data name="CapabilityExampleSerialReceipt" xml:space="preserve"><value>When and by whom was serial DTG-1 received?</value></data>
+  <data name="CapabilityExampleBarcode" xml:space="preserve"><value>Which item does barcode 01/013 identify and where is it?</value></data>
+  <data name="CapabilityExampleMovement" xml:space="preserve"><value>Show stock movements for 01/013</value></data>
+  <data name="CapabilityExampleTasks" xml:space="preserve"><value>Show my assigned open tasks</value></data>
+  <data name="ScopeAll" xml:space="preserve"><value>All users and WMS data you are authorized to access</value></data>
+  <data name="ScopeSelf" xml:space="preserve"><value>Only your operations and WMS data you are authorized to access</value></data>
+  <data name="ActivityNone" xml:space="preserve"><value>No operation was found for {1} during {0}.</value></data>
+  <data name="ActivityFound" xml:space="preserve"><value>I found {2} operations for {1} during {0}. Newest operations are shown first.</value></data>
+  <data name="ActivityForcedSelf" xml:space="preserve"><value>Your permissions only allow access to your own operation records, so the results were limited to you.</value></data>
+  <data name="SerialBalanceDenied" xml:space="preserve"><value>Stock balance view permission is required to see serial balances.</value></data>
+  <data name="SerialRequired" xml:space="preserve"><value>Please provide the serial number. Example: “Where is the balance for serial DTG-1?”</value></data>
+  <data name="SerialBalanceNone" xml:space="preserve"><value>No active balance was found for serial “{0}” in warehouses you are authorized to access.</value></data>
+  <data name="SerialBalanceFound" xml:space="preserve"><value>Serial “{0}” was found in {1} warehouse/bin balances. Total {2:0.###} {3}; available {4:0.###} {3}.</value></data>
+  <data name="SerialReceiptDenied" xml:space="preserve"><value>Stock movement and goods receipt view permissions are required to see serial receipt history.</value></data>
+  <data name="SerialReceiptRequired" xml:space="preserve"><value>Please provide the serial number whose goods receipt history you want to search.</value></data>
+  <data name="SerialReceiptNone" xml:space="preserve"><value>No active goods receipt entry was found for serial “{0}”. The record may have been reversed or created by another operation.</value></data>
+  <data name="SerialReceiptFound" xml:space="preserve"><value>I found {1} goods receipt entries for serial “{0}”. The first record was processed by {3} with document {2}.</value></data>
+  <data name="StockBalanceDenied" xml:space="preserve"><value>Stock balance view permission is required to see stock and bin balances.</value></data>
+  <data name="StockRequired" xml:space="preserve"><value>Please provide a clearer item code or product name. Example: “In which bins is item 01/013 available?”</value></data>
+  <data name="StockBalanceNone" xml:space="preserve"><value>No active bin balance was found for {0} - {1} in warehouses you are authorized to access.</value></data>
+  <data name="StockBalanceFound" xml:space="preserve"><value>{0} - {1} was found in {2} bin balances. Total available quantity is {3:0.###} {4}.</value></data>
+  <data name="HelpAnswer" xml:space="preserve"><value>You can ask about operation history, authorized user activity, item bin balances, barcode contents, stock movements, assigned tasks, and serial receipt history. Data is limited to branches and warehouses you are authorized to access.</value></data>
+  <data name="UnknownAnswer" xml:space="preserve"><value>I could not convert the question into a safe WMS query. Try again with a clear item code, barcode, serial number, user, and time range.</value></data>
+  <data name="AllUsers" xml:space="preserve"><value>all users</value></data>
+  <data name="ConversationNotFound" xml:space="preserve"><value>Warehouse assistant conversation was not found.</value></data>
+  <data name="DateToday" xml:space="preserve"><value>today</value></data>
+  <data name="DateYesterday" xml:space="preserve"><value>yesterday</value></data>
+  <data name="DateLastSevenDays" xml:space="preserve"><value>the last 7 days</value></data>
+  <data name="DateThisWeek" xml:space="preserve"><value>this week</value></data>
+  <data name="DateLastThirtyDays" xml:space="preserve"><value>the last 30 days</value></data>
+  <data name="UserNumber" xml:space="preserve"><value>User #{0}</value></data>
+  <data name="SystemUser" xml:space="preserve"><value>System</value></data>
+  <data name="Unassigned" xml:space="preserve"><value>Unassigned</value></data>
+  <data name="ActionGoodsReceipt" xml:space="preserve"><value>Goods receipt operation</value></data>
+  <data name="ActionWarehouseTransfer" xml:space="preserve"><value>Warehouse transfer operation</value></data>
+  <data name="ActionProductionTransfer" xml:space="preserve"><value>Production transfer operation</value></data>
+  <data name="ActionShipment" xml:space="preserve"><value>Shipment operation</value></data>
+  <data name="ActionWarehouseInbound" xml:space="preserve"><value>Warehouse inbound operation</value></data>
+  <data name="ActionWarehouseOutbound" xml:space="preserve"><value>Warehouse outbound operation</value></data>
+  <data name="ActionQuality" xml:space="preserve"><value>Quality operation</value></data>
+  <data name="ActionPacking" xml:space="preserve"><value>Packing operation</value></data>
+  <data name="ActionStock" xml:space="preserve"><value>Stock operation</value></data>
+  <data name="ActionUser" xml:space="preserve"><value>User operation</value></data>
+  <data name="MessageRequired" xml:space="preserve"><value>A message for the warehouse assistant is required.</value></data>
+  <data name="MessageTooLong" xml:space="preserve"><value>The message may contain at most {0} characters.</value></data>
+  <data name="BarcodeBalanceDenied" xml:space="preserve"><value>Stock balance view permission is required to see the item and bin information linked to a barcode.</value></data>
+  <data name="BarcodeRequired" xml:space="preserve"><value>Please provide the barcode you want to query. Example: “Which item does barcode GRL-000123 identify?”</value></data>
+  <data name="BarcodeResolverUnavailable" xml:space="preserve"><value>The central barcode resolution service is currently unavailable.</value></data>
+  <data name="BarcodeRetrySuggestion" xml:space="preserve"><value>Query the barcode again without spaces</value></data>
+  <data name="BarcodeBalanceNone" xml:space="preserve"><value>The barcode matched item {0} - {1}; no active balance was found in warehouses you are authorized to access.</value></data>
+  <data name="BarcodeBalanceFound" xml:space="preserve"><value>The barcode matched item {0} - {1}, with {2} active bin balances. Total available quantity is {3:0.###} {4}.</value></data>
+  <data name="MovementDenied" xml:space="preserve"><value>Stock movement view permission is required to see the stock movement trail.</value></data>
+  <data name="MovementSubjectRequired" xml:space="preserve"><value>Provide the item code, product name, or serial number whose movements you want to see.</value></data>
+  <data name="MovementNone" xml:space="preserve"><value>No stock movements were found for {1} during {0} in warehouses you are authorized to access.</value></data>
+  <data name="MovementFound" xml:space="preserve"><value>I found {2} stock movements for {1} during {0}. Total inbound is {3:0.###}; total outbound is {4:0.###}.</value></data>
+  <data name="SerialSubject" xml:space="preserve"><value>serial {0}</value></data>
+  <data name="SuggestionStockMovement" xml:space="preserve"><value>Show stock movements for {0}</value></data>
+  <data name="SuggestionSerialBalance" xml:space="preserve"><value>In which bins is serial {0} available?</value></data>
+  <data name="SuggestionStockLocation" xml:space="preserve"><value>In which bins is {0} available?</value></data>
+  <data name="TaskDenied" xml:space="preserve"><value>At least one related warehouse operation view permission is required to see assigned tasks.</value></data>
+  <data name="TaskNone" xml:space="preserve"><value>No open assigned tasks were found for {0} in operations you are authorized to access.</value></data>
+  <data name="TaskFound" xml:space="preserve"><value>I found {1} open tasks for {0}. Higher-priority and earlier-due tasks are shown first.</value></data>
+  <data name="TaskForcedSelf" xml:space="preserve"><value>Your permissions do not allow viewing other users’ tasks, so the results were limited to you.</value></data>
+  <data name="InvalidSession" xml:space="preserve"><value>Invalid user session.</value></data>
+  <data name="BranchScopeMissing" xml:space="preserve"><value>Branch scope was not found.</value></data>
+</root>

@@ -10,7 +10,16 @@ public static class WarehouseAssistantModule
         IConfiguration configuration)
     {
         services.AddOptions<WarehouseAssistantOptions>()
-            .Bind(configuration.GetSection(WarehouseAssistantOptions.SectionName));
+            .Bind(configuration.GetSection(WarehouseAssistantOptions.SectionName))
+            .Validate(options => options.TimeoutSeconds is >= 5 and <= 60,
+                "WarehouseAssistant:TimeoutSeconds must be between 5 and 60 seconds.")
+            .Validate(options => Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out var uri)
+                    && uri.Scheme == Uri.UriSchemeHttps,
+                "WarehouseAssistant:BaseUrl must be an absolute HTTPS URL.")
+            .Validate(options => !options.EnableOpenAiIntentResolution
+                    || (!string.IsNullOrWhiteSpace(options.Model) && !string.IsNullOrWhiteSpace(options.ApiKey)),
+                "WarehouseAssistant model and API key are required when OpenAI intent resolution is enabled.")
+            .ValidateOnStart();
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<WarehouseAssistantIntentResolver>();
         services.AddHttpClient<OpenAiWarehouseAssistantIntentResolver>();
