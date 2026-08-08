@@ -86,4 +86,27 @@
   <data name="ParameterHintInvalid" xml:space="preserve"><value>Parametre rehberi isteği geçersizdir.</value></data>
   <data name="ParameterHelpRequired" xml:space="preserve"><value>Hangi parametreyi sorduğunuzu biraz daha açık yazar mısınız? Parametre adını ve mümkünse seçeneği belirtin.</value></data>
   <data name="ParameterHelpAnswer" xml:space="preserve"><value>Bu parametrenin seçeneklerini; ne zaman seçileceği, hangi ekran ve işlemleri etkilediği, gerçek operasyon örneği ve dikkat edilmesi gereken sonuçlarıyla aşağıda karşılaştırdım.</value></data>
+  <data name="CapabilityExampleSteelVehicles" xml:space="preserve"><value>Bugün sac mal kabul için kaç araç girdi, plakaları neler?</value></data>
+  <data name="CapabilityExampleWarehouseTransfers" xml:space="preserve"><value>Bu hafta yapılan depolar arası transferleri göster</value></data>
+  <data name="CapabilityExampleProductionTransfers" xml:space="preserve"><value>Bu hafta yapılan üretime transferleri göster</value></data>
+  <data name="SteelVehicleAnalysisDenied" xml:space="preserve"><value>Sac araç girişlerini görmek için sac mal kabul araç görüntüleme yetkisi gereklidir.</value></data>
+  <data name="SteelVehicleAllPlates" xml:space="preserve"><value>tüm plakalar</value></data>
+  <data name="SteelVehicleAnalysisNone" xml:space="preserve"><value>{0} zaman aralığında {1} için sac araç giriş kaydı bulunamadı.</value></data>
+  <data name="SteelVehicleAnalysisFound" xml:space="preserve"><value>{0} zaman aralığında {1} için {2} araç girişi bulundu. Beyan edilen levha {3}, kabul edilen levha {4}, kimliği çözümlenmemiş levha {5}.</value></data>
+  <data name="SteelVehicleHistoryNone" xml:space="preserve"><value>{0} plakalı araç için geçmiş sac mal kabul kaydı bulunamadı.</value></data>
+  <data name="SteelVehicleHistoryFound" xml:space="preserve"><value>{0} plakalı araç için geçmişte {1} araç girişi bulundu. Beyan edilen levha {2}, kabul edilen levha {3}, kimliği çözümlenmemiş levha {4}.</value></data>
+  <data name="SteelVehicleResultLimited" xml:space="preserve"><value>Toplam {1} araçtan en yeni {0} kayıt gösteriliyor.</value></data>
+  <data name="SuggestionSteelVehicleByPlate" xml:space="preserve"><value>Belirli bir plakanın sac araç giriş geçmişini göster</value></data>
+  <data name="WarehouseTransferAnalysisDenied" xml:space="preserve"><value>Depolar arası transferleri görmek için transfer görüntüleme yetkisi gereklidir.</value></data>
+  <data name="ProductionTransferAnalysisDenied" xml:space="preserve"><value>Üretime transferleri görmek için üretime transfer görüntüleme yetkisi gereklidir.</value></data>
+  <data name="TransferAnalysisDenied" xml:space="preserve"><value>Transfer analizini görmek için depolar arası transfer veya üretime transfer görüntüleme yetkisi gereklidir.</value></data>
+  <data name="TransferScopeProduction" xml:space="preserve"><value>üretime transfer</value></data>
+  <data name="TransferScopeInterWarehouse" xml:space="preserve"><value>depolar arası transfer</value></data>
+  <data name="TransferScopeAll" xml:space="preserve"><value>yetkili olduğunuz tüm transferler</value></data>
+  <data name="TransferNoQuantity" xml:space="preserve"><value>miktar içeren kalem yok</value></data>
+  <data name="TransferAnalysisNone" xml:space="preserve"><value>{0} belge tarihi aralığında {1} kaydı bulunamadı.</value></data>
+  <data name="TransferAnalysisFound" xml:space="preserve"><value>{0} belge tarihi aralığında {1} kapsamında {2} transfer belgesi bulundu. Birim bazında miktarlar (istenen/toplanan/teslim alınan/eksik kapatılan): {3}.</value></data>
+  <data name="TransferResultLimited" xml:space="preserve"><value>Toplam {1} belgeden en yeni {0} belge gösteriliyor.</value></data>
+  <data name="TransferDocumentAnalysisNone" xml:space="preserve"><value>{0} numaralı belge için {1} kaydı bulunamadı.</value></data>
+  <data name="TransferDocumentAnalysisFound" xml:space="preserve"><value>{0} numaralı belge için {1} kapsamında {2} transfer belgesi bulundu. Birim bazında miktarlar (istenen/toplanan/teslim alınan/eksik kapatılan): {3}.</value></data>
 </root>

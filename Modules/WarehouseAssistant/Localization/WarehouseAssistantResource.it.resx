@@ -25,4 +25,27 @@
   <data name="ParameterHintInvalid" xml:space="preserve"><value>La richiesta di guida al parametro non è valida.</value></data>
   <data name="ParameterHelpRequired" xml:space="preserve"><value>Specificare il parametro e, se possibile, l'opzione da spiegare.</value></data>
   <data name="ParameterHelpAnswer" xml:space="preserve"><value>Le opzioni sono confrontate sotto con utilizzo, impatti, esempio reale e conseguenze importanti.</value></data>
+  <data name="CapabilityExampleSteelVehicles" xml:space="preserve"><value>Quanti veicoli sono entrati oggi per il ricevimento acciaio e quali sono le targhe?</value></data>
+  <data name="CapabilityExampleWarehouseTransfers" xml:space="preserve"><value>Mostra i trasferimenti tra magazzini di questa settimana</value></data>
+  <data name="CapabilityExampleProductionTransfers" xml:space="preserve"><value>Mostra i trasferimenti alla produzione di questa settimana</value></data>
+  <data name="SteelVehicleAnalysisDenied" xml:space="preserve"><value>È richiesta l’autorizzazione per visualizzare i veicoli di ricevimento acciaio.</value></data>
+  <data name="SteelVehicleAllPlates" xml:space="preserve"><value>tutte le targhe</value></data>
+  <data name="SteelVehicleAnalysisNone" xml:space="preserve"><value>Nessun ingresso veicolo trovato per {1} durante {0}.</value></data>
+  <data name="SteelVehicleAnalysisFound" xml:space="preserve"><value>Durante {0} sono stati trovati {2} veicoli per {1}. Lamiere dichiarate: {3}; accettate: {4}; non identificate: {5}.</value></data>
+  <data name="SteelVehicleHistoryNone" xml:space="preserve"><value>Non è stato trovato alcun ingresso storico di veicolo per il ricevimento lamiere con targa {0}.</value></data>
+  <data name="SteelVehicleHistoryFound" xml:space="preserve"><value>Sono stati trovati {1} ingressi storici di veicoli per la targa {0}. Lamiere dichiarate: {2}; accettate: {3}; non identificate: {4}.</value></data>
+  <data name="SteelVehicleResultLimited" xml:space="preserve"><value>Sono mostrati i {0} veicoli più recenti di {1}.</value></data>
+  <data name="SuggestionSteelVehicleByPlate" xml:space="preserve"><value>Mostra lo storico di ingresso di una targa specifica</value></data>
+  <data name="WarehouseTransferAnalysisDenied" xml:space="preserve"><value>È richiesta l’autorizzazione per i trasferimenti tra magazzini.</value></data>
+  <data name="ProductionTransferAnalysisDenied" xml:space="preserve"><value>È richiesta l’autorizzazione per i trasferimenti alla produzione.</value></data>
+  <data name="TransferAnalysisDenied" xml:space="preserve"><value>È richiesta un’autorizzazione per trasferimenti tra magazzini o alla produzione.</value></data>
+  <data name="TransferScopeProduction" xml:space="preserve"><value>trasferimenti alla produzione</value></data>
+  <data name="TransferScopeInterWarehouse" xml:space="preserve"><value>trasferimenti tra magazzini</value></data>
+  <data name="TransferScopeAll" xml:space="preserve"><value>tutti i trasferimenti autorizzati</value></data>
+  <data name="TransferNoQuantity" xml:space="preserve"><value>nessuna riga con quantità</value></data>
+  <data name="TransferAnalysisNone" xml:space="preserve"><value>Nessun record di {1} trovato per le date documento {0}.</value></data>
+  <data name="TransferAnalysisFound" xml:space="preserve"><value>Per le date {0}, sono stati trovati {2} documenti in {1}. Totali per unità (richiesto/prelevato/ricevuto/chiuso mancante): {3}.</value></data>
+  <data name="TransferResultLimited" xml:space="preserve"><value>Sono mostrati i {0} documenti più recenti di {1}.</value></data>
+  <data name="TransferDocumentAnalysisNone" xml:space="preserve"><value>Non è stato trovato alcun record di {1} per il documento {0}.</value></data>
+  <data name="TransferDocumentAnalysisFound" xml:space="preserve"><value>Per il documento {0} sono stati trovati {2} documenti di trasferimento nell’ambito {1}. Quantità per unità (richiesta/prelevata/ricevuta/mancante chiusa): {3}.</value></data>
 </root>

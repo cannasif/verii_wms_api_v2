@@ -52,4 +52,27 @@
   <data name="ParameterHintInvalid" xml:space="preserve"><value>Die Anfrage zur Parameterhilfe ist ungültig.</value></data>
   <data name="ParameterHelpRequired" xml:space="preserve"><value>Bitte nennen Sie den Parameter und möglichst die zu erklärende Option.</value></data>
   <data name="ParameterHelpAnswer" xml:space="preserve"><value>Die Optionen werden unten mit Einsatzzeitpunkt, Auswirkungen, Praxisbeispiel und wichtigen Folgen verglichen.</value></data>
+  <data name="CapabilityExampleSteelVehicles" xml:space="preserve"><value>Wie viele Fahrzeuge kamen heute zur Stahlannahme und welche Kennzeichen hatten sie?</value></data>
+  <data name="CapabilityExampleWarehouseTransfers" xml:space="preserve"><value>Lagertransfers dieser Woche anzeigen</value></data>
+  <data name="CapabilityExampleProductionTransfers" xml:space="preserve"><value>Produktionstransfers dieser Woche anzeigen</value></data>
+  <data name="SteelVehicleAnalysisDenied" xml:space="preserve"><value>Die Berechtigung zur Anzeige von Fahrzeugen der Stahlannahme ist erforderlich.</value></data>
+  <data name="SteelVehicleAllPlates" xml:space="preserve"><value>alle Kennzeichen</value></data>
+  <data name="SteelVehicleAnalysisNone" xml:space="preserve"><value>Für {1} wurde im Zeitraum {0} keine Fahrzeuganmeldung gefunden.</value></data>
+  <data name="SteelVehicleAnalysisFound" xml:space="preserve"><value>Im Zeitraum {0} wurden für {1} {2} Fahrzeuge gefunden. Gemeldete Bleche: {3}; angenommene Bleche: {4}; ungeklärte Bleche: {5}.</value></data>
+  <data name="SteelVehicleHistoryNone" xml:space="preserve"><value>Für das Kennzeichen {0} wurde kein früherer Fahrzeugeingang zur Blechannahme gefunden.</value></data>
+  <data name="SteelVehicleHistoryFound" xml:space="preserve"><value>Für das Kennzeichen {0} wurden {1} frühere Fahrzeugeingänge gefunden. Gemeldete Bleche: {2}; angenommene Bleche: {3}; ungeklärte Bleche: {4}.</value></data>
+  <data name="SteelVehicleResultLimited" xml:space="preserve"><value>Die neuesten {0} von {1} Fahrzeugen werden angezeigt.</value></data>
+  <data name="SuggestionSteelVehicleByPlate" xml:space="preserve"><value>Fahrzeughistorie für ein bestimmtes Kennzeichen anzeigen</value></data>
+  <data name="WarehouseTransferAnalysisDenied" xml:space="preserve"><value>Die Berechtigung zur Anzeige von Lagertransfers ist erforderlich.</value></data>
+  <data name="ProductionTransferAnalysisDenied" xml:space="preserve"><value>Die Berechtigung zur Anzeige von Produktionstransfers ist erforderlich.</value></data>
+  <data name="TransferAnalysisDenied" xml:space="preserve"><value>Eine Berechtigung für Lager- oder Produktionstransfers ist erforderlich.</value></data>
+  <data name="TransferScopeProduction" xml:space="preserve"><value>Produktionstransfers</value></data>
+  <data name="TransferScopeInterWarehouse" xml:space="preserve"><value>Lagertransfers</value></data>
+  <data name="TransferScopeAll" xml:space="preserve"><value>alle berechtigten Transfers</value></data>
+  <data name="TransferNoQuantity" xml:space="preserve"><value>keine Positionen mit Menge</value></data>
+  <data name="TransferAnalysisNone" xml:space="preserve"><value>Für die Belegdaten {0} wurden keine {1} gefunden.</value></data>
+  <data name="TransferAnalysisFound" xml:space="preserve"><value>Für die Belegdaten {0} wurden {2} Belege in {1} gefunden. Mengen je Einheit (angefordert/kommissioniert/empfangen/fehlend geschlossen): {3}.</value></data>
+  <data name="TransferResultLimited" xml:space="preserve"><value>Die neuesten {0} von {1} Belegen werden angezeigt.</value></data>
+  <data name="TransferDocumentAnalysisNone" xml:space="preserve"><value>Für Beleg {0} wurde kein Datensatz im Bereich {1} gefunden.</value></data>
+  <data name="TransferDocumentAnalysisFound" xml:space="preserve"><value>Für Beleg {0} wurden im Bereich {1} {2} Transferbeleg(e) gefunden. Mengen je Einheit (angefordert/kommissioniert/empfangen/fehlgeschlossen): {3}.</value></data>
 </root>

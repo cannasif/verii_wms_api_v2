@@ -86,4 +86,27 @@
   <data name="ParameterHintInvalid" xml:space="preserve"><value>The parameter guidance request is invalid.</value></data>
   <data name="ParameterHelpRequired" xml:space="preserve"><value>Please specify the parameter name and, if possible, the option you want explained.</value></data>
   <data name="ParameterHelpAnswer" xml:space="preserve"><value>I compared this parameter's options below, including when to choose each one, affected screens and operations, a real scenario, and important consequences.</value></data>
+  <data name="CapabilityExampleSteelVehicles" xml:space="preserve"><value>How many steel receipt vehicles entered today and what are their plates?</value></data>
+  <data name="CapabilityExampleWarehouseTransfers" xml:space="preserve"><value>Show inter-warehouse transfers created this week</value></data>
+  <data name="CapabilityExampleProductionTransfers" xml:space="preserve"><value>Show production transfers created this week</value></data>
+  <data name="SteelVehicleAnalysisDenied" xml:space="preserve"><value>Steel receipt vehicle view permission is required.</value></data>
+  <data name="SteelVehicleAllPlates" xml:space="preserve"><value>all plates</value></data>
+  <data name="SteelVehicleAnalysisNone" xml:space="preserve"><value>No steel vehicle entry was found for {1} during {0}.</value></data>
+  <data name="SteelVehicleAnalysisFound" xml:space="preserve"><value>During {0}, {2} vehicle entries were found for {1}. Declared sheets: {3}; accepted plates: {4}; unresolved plates: {5}.</value></data>
+  <data name="SteelVehicleHistoryNone" xml:space="preserve"><value>No historical steel receipt vehicle entry was found for plate {0}.</value></data>
+  <data name="SteelVehicleHistoryFound" xml:space="preserve"><value>{1} historical vehicle entries were found for plate {0}. Declared sheets: {2}; accepted plates: {3}; unresolved plates: {4}.</value></data>
+  <data name="SteelVehicleResultLimited" xml:space="preserve"><value>The newest {0} of {1} vehicles are shown.</value></data>
+  <data name="SuggestionSteelVehicleByPlate" xml:space="preserve"><value>Show steel vehicle entry history for a specific plate</value></data>
+  <data name="WarehouseTransferAnalysisDenied" xml:space="preserve"><value>Inter-warehouse transfer view permission is required.</value></data>
+  <data name="ProductionTransferAnalysisDenied" xml:space="preserve"><value>Production transfer view permission is required.</value></data>
+  <data name="TransferAnalysisDenied" xml:space="preserve"><value>Inter-warehouse or production transfer view permission is required.</value></data>
+  <data name="TransferScopeProduction" xml:space="preserve"><value>production transfers</value></data>
+  <data name="TransferScopeInterWarehouse" xml:space="preserve"><value>inter-warehouse transfers</value></data>
+  <data name="TransferScopeAll" xml:space="preserve"><value>all authorized transfers</value></data>
+  <data name="TransferNoQuantity" xml:space="preserve"><value>no lines with quantity</value></data>
+  <data name="TransferAnalysisNone" xml:space="preserve"><value>No {1} record was found for document dates {0}.</value></data>
+  <data name="TransferAnalysisFound" xml:space="preserve"><value>For document dates {0}, {2} documents were found in {1}. Totals by unit (requested/picked/received/short-closed): {3}.</value></data>
+  <data name="TransferResultLimited" xml:space="preserve"><value>The newest {0} of {1} documents are shown.</value></data>
+  <data name="TransferDocumentAnalysisNone" xml:space="preserve"><value>No {1} record was found for document {0}.</value></data>
+  <data name="TransferDocumentAnalysisFound" xml:space="preserve"><value>For document {0}, {2} transfer document(s) were found in the {1} scope. Quantities by unit (requested/picked/received/short-closed): {3}.</value></data>
 </root>

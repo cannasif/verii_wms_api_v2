@@ -25,4 +25,27 @@
   <data name="ParameterHintInvalid" xml:space="preserve"><value>La demande d'aide sur le paramètre est invalide.</value></data>
   <data name="ParameterHelpRequired" xml:space="preserve"><value>Indiquez le nom du paramètre et, si possible, l'option à expliquer.</value></data>
   <data name="ParameterHelpAnswer" xml:space="preserve"><value>Les options sont comparées ci-dessous avec leur usage, leurs impacts, un exemple réel et les conséquences importantes.</value></data>
+  <data name="CapabilityExampleSteelVehicles" xml:space="preserve"><value>Combien de véhicules sont entrés aujourd’hui pour la réception d’acier et quelles sont leurs immatriculations ?</value></data>
+  <data name="CapabilityExampleWarehouseTransfers" xml:space="preserve"><value>Afficher les transferts entre entrepôts de cette semaine</value></data>
+  <data name="CapabilityExampleProductionTransfers" xml:space="preserve"><value>Afficher les transferts vers la production de cette semaine</value></data>
+  <data name="SteelVehicleAnalysisDenied" xml:space="preserve"><value>L’autorisation de consulter les véhicules de réception d’acier est requise.</value></data>
+  <data name="SteelVehicleAllPlates" xml:space="preserve"><value>toutes les immatriculations</value></data>
+  <data name="SteelVehicleAnalysisNone" xml:space="preserve"><value>Aucune entrée de véhicule n’a été trouvée pour {1} pendant {0}.</value></data>
+  <data name="SteelVehicleAnalysisFound" xml:space="preserve"><value>Pendant {0}, {2} véhicules ont été trouvés pour {1}. Tôles déclarées : {3} ; acceptées : {4} ; non identifiées : {5}.</value></data>
+  <data name="SteelVehicleHistoryNone" xml:space="preserve"><value>Aucune entrée historique de véhicule de réception de tôles n’a été trouvée pour la plaque {0}.</value></data>
+  <data name="SteelVehicleHistoryFound" xml:space="preserve"><value>{1} entrées historiques de véhicule ont été trouvées pour la plaque {0}. Tôles déclarées : {2} ; acceptées : {3} ; non identifiées : {4}.</value></data>
+  <data name="SteelVehicleResultLimited" xml:space="preserve"><value>Les {0} véhicules les plus récents sur {1} sont affichés.</value></data>
+  <data name="SuggestionSteelVehicleByPlate" xml:space="preserve"><value>Afficher l’historique d’entrée d’une immatriculation précise</value></data>
+  <data name="WarehouseTransferAnalysisDenied" xml:space="preserve"><value>L’autorisation de consulter les transferts entre entrepôts est requise.</value></data>
+  <data name="ProductionTransferAnalysisDenied" xml:space="preserve"><value>L’autorisation de consulter les transferts vers la production est requise.</value></data>
+  <data name="TransferAnalysisDenied" xml:space="preserve"><value>Une autorisation de transfert entre entrepôts ou vers la production est requise.</value></data>
+  <data name="TransferScopeProduction" xml:space="preserve"><value>transferts vers la production</value></data>
+  <data name="TransferScopeInterWarehouse" xml:space="preserve"><value>transferts entre entrepôts</value></data>
+  <data name="TransferScopeAll" xml:space="preserve"><value>tous les transferts autorisés</value></data>
+  <data name="TransferNoQuantity" xml:space="preserve"><value>aucune ligne avec quantité</value></data>
+  <data name="TransferAnalysisNone" xml:space="preserve"><value>Aucun enregistrement {1} n’a été trouvé pour les dates de document {0}.</value></data>
+  <data name="TransferAnalysisFound" xml:space="preserve"><value>Pour les dates {0}, {2} documents ont été trouvés dans {1}. Totaux par unité (demandé/prélevé/reçu/clôturé manquant) : {3}.</value></data>
+  <data name="TransferResultLimited" xml:space="preserve"><value>Les {0} documents les plus récents sur {1} sont affichés.</value></data>
+  <data name="TransferDocumentAnalysisNone" xml:space="preserve"><value>Aucun enregistrement {1} n’a été trouvé pour le document {0}.</value></data>
+  <data name="TransferDocumentAnalysisFound" xml:space="preserve"><value>Pour le document {0}, {2} document(s) de transfert ont été trouvés dans le périmètre {1}. Quantités par unité (demandée/prélevée/reçue/manquante clôturée) : {3}.</value></data>
 </root>

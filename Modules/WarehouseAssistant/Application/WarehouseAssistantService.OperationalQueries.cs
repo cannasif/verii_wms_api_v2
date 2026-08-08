@@ -224,7 +224,13 @@ public sealed partial class WarehouseAssistantService
         if (access.CanViewWarehouseOutbound)
             candidates.AddRange(await QueryWarehouseOutboundTasksAsync(branchCode, targetUserId, warehouseAccess.IsRestricted, warehouseAccess.WarehouseIds, ct));
 
-        var selected = candidates
+        var scopedCandidates = resolution.TransferScope switch
+        {
+            WarehouseAssistantTransferScope.Production => candidates.Where(x => x.Module == "ProductionTransfer"),
+            WarehouseAssistantTransferScope.InterWarehouse => candidates.Where(x => x.Module == "WarehouseTransfer"),
+            _ => candidates
+        };
+        var selected = scopedCandidates
             .OrderBy(x => x.Priority)
             .ThenBy(x => x.DueAtUtc ?? DateTimeOffset.MaxValue)
             .ThenBy(x => x.PlannedAtUtc ?? DateTimeOffset.MaxValue)

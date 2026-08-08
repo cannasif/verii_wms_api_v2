@@ -25,4 +25,27 @@
   <data name="ParameterHintInvalid" xml:space="preserve"><value>طلب شرح المعلمة غير صالح.</value></data>
   <data name="ParameterHelpRequired" xml:space="preserve"><value>حدد اسم المعلمة والخيار المراد شرحه إن أمكن.</value></data>
   <data name="ParameterHelpAnswer" xml:space="preserve"><value>تمت مقارنة الخيارات أدناه مع وقت الاستخدام والتأثيرات ومثال عملي والنتائج المهمة.</value></data>
+  <data name="CapabilityExampleSteelVehicles" xml:space="preserve"><value>كم مركبة دخلت اليوم لاستلام الصلب وما أرقام لوحاتها؟</value></data>
+  <data name="CapabilityExampleWarehouseTransfers" xml:space="preserve"><value>اعرض التحويلات بين المستودعات لهذا الأسبوع</value></data>
+  <data name="CapabilityExampleProductionTransfers" xml:space="preserve"><value>اعرض تحويلات الإنتاج لهذا الأسبوع</value></data>
+  <data name="SteelVehicleAnalysisDenied" xml:space="preserve"><value>يلزم تصريح عرض مركبات استلام الصلب.</value></data>
+  <data name="SteelVehicleAllPlates" xml:space="preserve"><value>جميع اللوحات</value></data>
+  <data name="SteelVehicleAnalysisNone" xml:space="preserve"><value>لم يتم العثور على دخول مركبات لـ {1} خلال {0}.</value></data>
+  <data name="SteelVehicleAnalysisFound" xml:space="preserve"><value>خلال {0} تم العثور على {2} مركبة لـ {1}. الصفائح المعلنة: {3}؛ المقبولة: {4}؛ غير المعروفة: {5}.</value></data>
+  <data name="SteelVehicleHistoryNone" xml:space="preserve"><value>لم يتم العثور على سجل سابق لدخول مركبة استلام صفائح للوحة {0}.</value></data>
+  <data name="SteelVehicleHistoryFound" xml:space="preserve"><value>تم العثور على {1} سجلات دخول سابقة للمركبة ذات اللوحة {0}. الصفائح المعلنة: {2}؛ المقبولة: {3}؛ غير المعروفة: {4}.</value></data>
+  <data name="SteelVehicleResultLimited" xml:space="preserve"><value>يتم عرض أحدث {0} مركبة من أصل {1}.</value></data>
+  <data name="SuggestionSteelVehicleByPlate" xml:space="preserve"><value>اعرض سجل دخول مركبة برقم لوحة محدد</value></data>
+  <data name="WarehouseTransferAnalysisDenied" xml:space="preserve"><value>يلزم تصريح عرض التحويلات بين المستودعات.</value></data>
+  <data name="ProductionTransferAnalysisDenied" xml:space="preserve"><value>يلزم تصريح عرض تحويلات الإنتاج.</value></data>
+  <data name="TransferAnalysisDenied" xml:space="preserve"><value>يلزم تصريح للتحويلات بين المستودعات أو تحويلات الإنتاج.</value></data>
+  <data name="TransferScopeProduction" xml:space="preserve"><value>تحويلات الإنتاج</value></data>
+  <data name="TransferScopeInterWarehouse" xml:space="preserve"><value>التحويلات بين المستودعات</value></data>
+  <data name="TransferScopeAll" xml:space="preserve"><value>جميع التحويلات المصرح بها</value></data>
+  <data name="TransferNoQuantity" xml:space="preserve"><value>لا توجد بنود بكميات</value></data>
+  <data name="TransferAnalysisNone" xml:space="preserve"><value>لم يتم العثور على سجلات {1} لتواريخ المستند {0}.</value></data>
+  <data name="TransferAnalysisFound" xml:space="preserve"><value>لتواريخ المستند {0} تم العثور على {2} مستند في {1}. الإجماليات حسب الوحدة (مطلوب/مجموع/مستلم/مغلق كنقص): {3}.</value></data>
+  <data name="TransferResultLimited" xml:space="preserve"><value>يتم عرض أحدث {0} مستند من أصل {1}.</value></data>
+  <data name="TransferDocumentAnalysisNone" xml:space="preserve"><value>لم يتم العثور على سجل {1} للمستند {0}.</value></data>
+  <data name="TransferDocumentAnalysisFound" xml:space="preserve"><value>للمستند {0} تم العثور على {2} مستند تحويل ضمن نطاق {1}. الكميات حسب الوحدة (المطلوبة/المجمعة/المستلمة/النقص المغلق): {3}.</value></data>
 </root>

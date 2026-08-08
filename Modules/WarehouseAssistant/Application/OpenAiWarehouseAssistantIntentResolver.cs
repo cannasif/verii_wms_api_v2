@@ -72,7 +72,15 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
                 "openai",
                 ParseDate(root.GetProperty("dateFrom").GetString()),
                 ParseDate(root.GetProperty("dateTo").GetString()),
-                NullIfBlank(root.GetProperty("supplierQuery").GetString()));
+                NullIfBlank(root.GetProperty("supplierQuery").GetString()),
+                VehiclePlateQuery: NullIfBlank(root.GetProperty("vehiclePlateQuery").GetString()) ?? context?.VehiclePlate,
+                TransferDocumentQuery: NullIfBlank(root.GetProperty("transferDocumentQuery").GetString()) ?? context?.TransferDocumentNo,
+                TransferScope: Enum.TryParse<WarehouseAssistantTransferScope>(root.GetProperty("transferScope").GetString(), true, out var transferScope)
+                    ? transferScope
+                    : context?.TransferScope ?? WarehouseAssistantTransferScope.All,
+                HasExplicitDateFilter: deterministic.HasExplicitDateFilter
+                    || !string.IsNullOrWhiteSpace(root.GetProperty("dateFrom").GetString())
+                    || !string.IsNullOrWhiteSpace(root.GetProperty("dateTo").GetString()));
         }
         catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
@@ -88,7 +96,7 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
         max_output_tokens = 300,
         input = new object[]
         {
-            new { role = "system", content = "Classify multilingual WMS questions. Stock, product, item, material, ürün, malzeme and mamul are synonyms. Supplier, vendor, cari and tedarikçi are synonyms. Extract explicit dates as ISO yyyy-MM-dd and keep date ranges inclusive. Never decide authorization, never generate SQL, and never infer access rights. Return only the forced function call." },
+            new { role = "system", content = "Classify multilingual WMS questions. Stock, product, item, material, ürün, malzeme and mamul are synonyms. Supplier, vendor, cari and tedarikçi are synonyms. Steel/sheet vehicle entry questions map to SteelVehicleAnalysis. Warehouse-to-warehouse transfer reports map to WarehouseTransferAnalysis with InterWarehouse scope; production material transfer reports use Production scope. Questions about a user's assigned work remain AssignedTasks. Extract explicit dates as ISO yyyy-MM-dd and keep date ranges inclusive. Never decide authorization, never generate SQL, and never infer access rights. Return only the forced function call." },
             new { role = "user", content = $"Question: {message}\nPrevious entity context: {JsonSerializer.Serialize(context)}" }
         },
         tools = new object[]
@@ -113,9 +121,12 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
                         requestsAllUsers = new { type = "boolean" },
                         dateFrom = new { type = new[] { "string", "null" }, description = "Inclusive date from as yyyy-MM-dd" },
                         dateTo = new { type = new[] { "string", "null" }, description = "Inclusive date to as yyyy-MM-dd" },
-                        supplierQuery = new { type = new[] { "string", "null" } }
+                        supplierQuery = new { type = new[] { "string", "null" } },
+                        vehiclePlateQuery = new { type = new[] { "string", "null" } },
+                        transferDocumentQuery = new { type = new[] { "string", "null" } },
+                        transferScope = new { type = "string", @enum = Enum.GetNames<WarehouseAssistantTransferScope>() }
                     },
-                    required = new[] { "intent", "datePreset", "serialNo", "stockQuery", "barcode", "targetUserQuery", "requestsAllUsers", "dateFrom", "dateTo", "supplierQuery" },
+                    required = new[] { "intent", "datePreset", "serialNo", "stockQuery", "barcode", "targetUserQuery", "requestsAllUsers", "dateFrom", "dateTo", "supplierQuery", "vehiclePlateQuery", "transferDocumentQuery", "transferScope" },
                     additionalProperties = false
                 }
             }

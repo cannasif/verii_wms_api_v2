@@ -17,7 +17,16 @@ public enum WarehouseAssistantIntent
     AssignedTasks = 9,
     GoodsReceiptAnalysis = 10,
     ParameterHelp = 11,
+    SteelVehicleAnalysis = 12,
+    WarehouseTransferAnalysis = 13,
     Unknown = 99
+}
+
+public enum WarehouseAssistantTransferScope
+{
+    All = 0,
+    InterWarehouse = 1,
+    Production = 2
 }
 
 public enum WarehouseAssistantDatePreset
@@ -38,7 +47,8 @@ public sealed record WarehouseAssistantAccess(
     bool CanViewShipping = false,
     bool CanViewWarehouseInbound = false,
     bool CanViewWarehouseOutbound = false,
-    bool CanViewProductionTransfers = false);
+    bool CanViewProductionTransfers = false,
+    bool CanViewSteelVehicles = false);
 
 public sealed record WarehouseAssistantParameterHint(
     string Module,
@@ -60,7 +70,9 @@ public sealed record WarehouseAssistantCapabilities(
     string ScopeLabel,
     IReadOnlyList<string> ExampleQuestions,
     bool CanQueryGoodsReceiptAnalysis = false,
-    bool CanExplainParameters = true);
+    bool CanExplainParameters = true,
+    bool CanQuerySteelVehicleAnalysis = false,
+    bool CanQueryTransferAnalysis = false);
 
 public sealed record WarehouseAssistantConversationRow(
     long Id,
@@ -230,6 +242,44 @@ public sealed record WarehouseAssistantParameterGuideRow(
     string Field,
     string? Value);
 
+public sealed record WarehouseAssistantSteelVehicleRow(
+    long VehicleCheckInId,
+    string PlateNo,
+    string? TrailerPlateNo,
+    string DriverName,
+    string? CarrierName,
+    int DeclaredSteelSheetCount,
+    int AcceptedPlateCount,
+    int UnresolvedPlateCount,
+    string Status,
+    DateTimeOffset CheckedInAtUtc,
+    DateOnly BusinessDate,
+    string? CustomerCode,
+    string? CustomerName);
+
+public sealed record WarehouseAssistantTransferRow(
+    long TransferId,
+    string DocumentNo,
+    DateOnly DocumentDate,
+    string BusinessContext,
+    int SourceWarehouseCode,
+    string SourceWarehouseName,
+    int TargetWarehouseCode,
+    string TargetWarehouseName,
+    string Status,
+    string ApprovalStatus,
+    string ErpIntegrationStatus,
+    int LineCount,
+    string UnitCode,
+    decimal RequestedQuantity,
+    decimal PickedQuantity,
+    decimal ShippedQuantity,
+    decimal ReceivedQuantity,
+    decimal PutawayQuantity,
+    decimal ShortClosedQuantity,
+    string? ExternalReferenceNo,
+    DateTimeOffset? CompletedAtUtc);
+
 public sealed record WarehouseAssistantChatResponse(
     long ConversationId,
     long MessageId,
@@ -246,7 +296,9 @@ public sealed record WarehouseAssistantChatResponse(
     IReadOnlyList<WarehouseAssistantTaskRow> Tasks,
     IReadOnlyList<string> Suggestions,
     IReadOnlyList<WarehouseAssistantGoodsReceiptRow>? GoodsReceipts = null,
-    IReadOnlyList<WarehouseAssistantParameterGuideRow>? ParameterGuides = null);
+    IReadOnlyList<WarehouseAssistantParameterGuideRow>? ParameterGuides = null,
+    IReadOnlyList<WarehouseAssistantSteelVehicleRow>? SteelVehicles = null,
+    IReadOnlyList<WarehouseAssistantTransferRow>? Transfers = null);
 
 public sealed record WarehouseAssistantContext(
     string? SerialNo,
@@ -260,7 +312,10 @@ public sealed record WarehouseAssistantContext(
     DateOnly? DateTo = null,
     string? ParameterModule = null,
     string? ParameterField = null,
-    string? ParameterValue = null);
+    string? ParameterValue = null,
+    string? VehiclePlate = null,
+    string? TransferDocumentNo = null,
+    WarehouseAssistantTransferScope? TransferScope = null);
 
 public sealed record WarehouseAssistantIntentResolution(
     WarehouseAssistantIntent Intent,
@@ -277,7 +332,11 @@ public sealed record WarehouseAssistantIntentResolution(
     string? SupplierQuery = null,
     string? ParameterModule = null,
     string? ParameterField = null,
-    string? ParameterValue = null);
+    string? ParameterValue = null,
+    string? VehiclePlateQuery = null,
+    string? TransferDocumentQuery = null,
+    WarehouseAssistantTransferScope TransferScope = WarehouseAssistantTransferScope.All,
+    bool HasExplicitDateFilter = false);
 
 public interface IWarehouseAssistantIntentResolver
 {

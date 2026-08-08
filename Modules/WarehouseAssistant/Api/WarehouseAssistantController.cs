@@ -54,7 +54,8 @@ public sealed class WarehouseAssistantController(
         await permissions.HasPermissionAsync(User, "WMS.SHIPPING.VIEW", ct),
         await permissions.HasPermissionAsync(User, "WMS.WAREHOUSE_INBOUND.VIEW", ct),
         await permissions.HasPermissionAsync(User, "WMS.WAREHOUSE_OUTBOUND.VIEW", ct),
-        await permissions.HasPermissionAsync(User, "WMS.PRODUCTION_TRANSFER.VIEW", ct));
+        await permissions.HasPermissionAsync(User, "WMS.PRODUCTION_TRANSFER.VIEW", ct),
+        await permissions.HasPermissionAsync(User, "WMS.STEEL_RECEIPT.VEHICLE.VIEW", ct));
 
     private long CurrentUserId() =>
         long.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id) && id > 0

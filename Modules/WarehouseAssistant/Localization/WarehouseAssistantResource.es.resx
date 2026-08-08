@@ -25,4 +25,27 @@
   <data name="ParameterHintInvalid" xml:space="preserve"><value>La solicitud de ayuda del parámetro no es válida.</value></data>
   <data name="ParameterHelpRequired" xml:space="preserve"><value>Indique el parámetro y, si es posible, la opción que desea explicar.</value></data>
   <data name="ParameterHelpAnswer" xml:space="preserve"><value>Las opciones se comparan abajo con cuándo usarlas, sus efectos, un ejemplo real y consecuencias importantes.</value></data>
+  <data name="CapabilityExampleSteelVehicles" xml:space="preserve"><value>¿Cuántos vehículos entraron hoy para recepción de acero y cuáles son sus matrículas?</value></data>
+  <data name="CapabilityExampleWarehouseTransfers" xml:space="preserve"><value>Mostrar transferencias entre almacenes de esta semana</value></data>
+  <data name="CapabilityExampleProductionTransfers" xml:space="preserve"><value>Mostrar transferencias a producción de esta semana</value></data>
+  <data name="SteelVehicleAnalysisDenied" xml:space="preserve"><value>Se requiere permiso para ver vehículos de recepción de acero.</value></data>
+  <data name="SteelVehicleAllPlates" xml:space="preserve"><value>todas las matrículas</value></data>
+  <data name="SteelVehicleAnalysisNone" xml:space="preserve"><value>No se encontraron entradas de vehículos para {1} durante {0}.</value></data>
+  <data name="SteelVehicleAnalysisFound" xml:space="preserve"><value>Durante {0} se encontraron {2} vehículos para {1}. Chapas declaradas: {3}; aceptadas: {4}; sin identificar: {5}.</value></data>
+  <data name="SteelVehicleHistoryNone" xml:space="preserve"><value>No se encontró ningún ingreso histórico de vehículo para recepción de chapas con la matrícula {0}.</value></data>
+  <data name="SteelVehicleHistoryFound" xml:space="preserve"><value>Se encontraron {1} ingresos históricos de vehículo para la matrícula {0}. Chapas declaradas: {2}; aceptadas: {3}; sin identificar: {4}.</value></data>
+  <data name="SteelVehicleResultLimited" xml:space="preserve"><value>Se muestran los {0} vehículos más recientes de {1}.</value></data>
+  <data name="SuggestionSteelVehicleByPlate" xml:space="preserve"><value>Mostrar el historial de entrada de una matrícula específica</value></data>
+  <data name="WarehouseTransferAnalysisDenied" xml:space="preserve"><value>Se requiere permiso para ver transferencias entre almacenes.</value></data>
+  <data name="ProductionTransferAnalysisDenied" xml:space="preserve"><value>Se requiere permiso para ver transferencias a producción.</value></data>
+  <data name="TransferAnalysisDenied" xml:space="preserve"><value>Se requiere permiso para transferencias entre almacenes o a producción.</value></data>
+  <data name="TransferScopeProduction" xml:space="preserve"><value>transferencias a producción</value></data>
+  <data name="TransferScopeInterWarehouse" xml:space="preserve"><value>transferencias entre almacenes</value></data>
+  <data name="TransferScopeAll" xml:space="preserve"><value>todas las transferencias autorizadas</value></data>
+  <data name="TransferNoQuantity" xml:space="preserve"><value>sin líneas con cantidad</value></data>
+  <data name="TransferAnalysisNone" xml:space="preserve"><value>No se encontraron registros de {1} para las fechas de documento {0}.</value></data>
+  <data name="TransferAnalysisFound" xml:space="preserve"><value>Para las fechas {0}, se encontraron {2} documentos en {1}. Totales por unidad (solicitado/recogido/recibido/cerrado con faltante): {3}.</value></data>
+  <data name="TransferResultLimited" xml:space="preserve"><value>Se muestran los {0} documentos más recientes de {1}.</value></data>
+  <data name="TransferDocumentAnalysisNone" xml:space="preserve"><value>No se encontró ningún registro de {1} para el documento {0}.</value></data>
+  <data name="TransferDocumentAnalysisFound" xml:space="preserve"><value>Para el documento {0} se encontraron {2} documento(s) de transferencia en el ámbito {1}. Cantidades por unidad (solicitada/preparada/recibida/faltante cerrada): {3}.</value></data>
 </root>

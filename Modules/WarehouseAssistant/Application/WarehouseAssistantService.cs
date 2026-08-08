@@ -70,6 +70,12 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             examples.Add(M(CapabilityExampleMovement));
         if (CanQueryAnyTasks(access))
             examples.Add(M(CapabilityExampleTasks));
+        if (access.CanViewSteelVehicles)
+            examples.Add(M(CapabilityExampleSteelVehicles));
+        if (access.CanViewWarehouseTransfers)
+            examples.Add(M(CapabilityExampleWarehouseTransfers));
+        if (access.CanViewProductionTransfers)
+            examples.Add(M(CapabilityExampleProductionTransfers));
 
         return Task.FromResult(new WarehouseAssistantCapabilities(
             access.CanQueryAllUsers,
@@ -81,7 +87,9 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             M(access.CanQueryAllUsers ? ScopeAll : ScopeSelf),
             examples,
             access.CanViewGoodsReceipts,
-            true));
+            true,
+            access.CanViewSteelVehicles,
+            access.CanViewWarehouseTransfers || access.CanViewProductionTransfers));
     }
 
     public async Task<IReadOnlyList<WarehouseAssistantConversationRow>> GetConversationsAsync(
@@ -183,6 +191,8 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             Tasks = result.Tasks,
             GoodsReceipts = result.GoodsReceipts ?? [],
             ParameterGuides = result.ParameterGuides ?? [],
+            SteelVehicles = result.SteelVehicles ?? [],
+            Transfers = result.Transfers ?? [],
             Suggestions = result.Suggestions
         };
         var assistantMessage = new WarehouseAssistantMessage
@@ -221,6 +231,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                 ResultCount = result.Activities.Count + result.SerialBalances.Count + result.SerialReceipts.Count
                     + result.StockLocations.Count + result.Movements.Count + result.Tasks.Count
                     + (result.GoodsReceipts?.Count ?? 0) + (result.ParameterGuides?.Count ?? 0)
+                    + (result.SteelVehicles?.Count ?? 0) + (result.Transfers?.Count ?? 0)
                     + (result.Barcode is null ? 0 : 1),
                 CorrelationId = correlationId
             },
@@ -242,7 +253,9 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             result.Tasks,
             result.Suggestions,
             result.GoodsReceipts ?? [],
-            result.ParameterGuides ?? []);
+            result.ParameterGuides ?? [],
+            result.SteelVehicles ?? [],
+            result.Transfers ?? []);
     }
 
     private async Task<ExecutionResult> ExecuteIntentAsync(
@@ -271,6 +284,10 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                 await ExecuteAssignedTasksAsync(resolution, originalMessage, actorUserId, branchCode, access, ct),
             WarehouseAssistantIntent.GoodsReceiptAnalysis =>
                 await ExecuteGoodsReceiptAnalysisAsync(resolution, originalMessage, actorUserId, branchCode, access, ct),
+            WarehouseAssistantIntent.SteelVehicleAnalysis =>
+                await ExecuteSteelVehicleAnalysisAsync(resolution, branchCode, access, ct),
+            WarehouseAssistantIntent.WarehouseTransferAnalysis =>
+                await ExecuteWarehouseTransferAnalysisAsync(resolution, actorUserId, branchCode, access, ct),
             WarehouseAssistantIntent.ParameterHelp => ExecuteParameterHelp(resolution),
             WarehouseAssistantIntent.Help => HelpResult(access),
             _ => UnknownResult(access)
@@ -698,7 +715,9 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                 stored.Tasks ?? [],
                 stored.Suggestions ?? [],
                 stored.GoodsReceipts ?? [],
-                stored.ParameterGuides ?? []);
+                stored.ParameterGuides ?? [],
+                stored.SteelVehicles ?? [],
+                stored.Transfers ?? []);
         }
         catch (JsonException)
         {
@@ -914,7 +933,9 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         WarehouseAssistantContext Context,
         IReadOnlyList<string> Suggestions,
         IReadOnlyList<WarehouseAssistantGoodsReceiptRow>? GoodsReceipts = null,
-        IReadOnlyList<WarehouseAssistantParameterGuideRow>? ParameterGuides = null);
+        IReadOnlyList<WarehouseAssistantParameterGuideRow>? ParameterGuides = null,
+        IReadOnlyList<WarehouseAssistantSteelVehicleRow>? SteelVehicles = null,
+        IReadOnlyList<WarehouseAssistantTransferRow>? Transfers = null);
 
     private sealed class StoredResponseData
     {
@@ -928,6 +949,8 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         public IReadOnlyList<WarehouseAssistantTaskRow> Tasks { get; init; } = [];
         public IReadOnlyList<WarehouseAssistantGoodsReceiptRow> GoodsReceipts { get; init; } = [];
         public IReadOnlyList<WarehouseAssistantParameterGuideRow> ParameterGuides { get; init; } = [];
+        public IReadOnlyList<WarehouseAssistantSteelVehicleRow> SteelVehicles { get; init; } = [];
+        public IReadOnlyList<WarehouseAssistantTransferRow> Transfers { get; init; } = [];
         public IReadOnlyList<string> Suggestions { get; init; } = [];
     }
 }

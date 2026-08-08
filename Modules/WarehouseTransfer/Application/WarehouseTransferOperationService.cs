@@ -647,7 +647,7 @@ public sealed class WarehouseTransferOperationService(
             or WarehouseTransferBusinessContext.ProductionOutputMove;
         if (isProduction)
         {
-            if (task.Status is WarehouseTransferTaskStatus.Open or WarehouseTransferTaskStatus.Assigned)
+            if (task!.Status is WarehouseTransferTaskStatus.Open or WarehouseTransferTaskStatus.Assigned)
                 task.Status = WarehouseTransferTaskStatus.InProgress;
             return;
         }
