@@ -7,6 +7,29 @@ public enum KkdPeriodType { Day = 1, Month = 2, Year = 3 }
 public enum KkdDistributionStatus { Draft = 1, Validated = 2, OutboundCreated = 3, Completed = 4, Cancelled = 5, Failed = 6 }
 public enum KkdEntitlementSourceType { Matrix = 1, ManualOverride = 2, OpenOrderExcess = 3 }
 public enum KkdExcessApprovalStatus { NotRequired = 1, Pending = 2, Approved = 3, Rejected = 4 }
+public enum KkdRequestSourceType { Wms = 1, Windbox = 2, Netsis = 3, Manual = 4 }
+public enum KkdRequestPriority { Low = 1, Normal = 2, High = 3, Urgent = 4 }
+public enum KkdRequestStatus
+{
+    Open = 1,
+    AwaitingStockSelection = 2,
+    ReadyToPrepare = 3,
+    InPreparation = 4,
+    ReadyForDelivery = 5,
+    PartiallyDelivered = 6,
+    Completed = 7,
+    Cancelled = 8
+}
+public enum KkdRequestLineStatus
+{
+    AwaitingStockSelection = 1,
+    ReadyToPrepare = 2,
+    InPreparation = 3,
+    ReadyForDelivery = 4,
+    PartiallyDelivered = 5,
+    Completed = 6,
+    Cancelled = 7
+}
 
 public sealed class KkdPolicy : BaseEntity
 {
@@ -145,6 +168,69 @@ public sealed class KkdEmployeeStockPreference : BaseEntity
     public byte[] RowVersion { get; set; } = [];
 }
 
+public sealed class KkdRequest : BaseEntity
+{
+    public Guid CorrelationId { get; set; }
+    public string RequestNo { get; set; } = string.Empty;
+    public long EmployeeId { get; set; }
+    public KkdEmployee Employee { get; set; } = null!;
+    public long CustomerId { get; set; }
+    public long? WarehouseId { get; set; }
+    public long? AssignedUserId { get; set; }
+    public KkdRequestSourceType SourceType { get; set; } = KkdRequestSourceType.Wms;
+    public string? ExternalRequestNo { get; set; }
+    public KkdRequestPriority Priority { get; set; } = KkdRequestPriority.Normal;
+    public KkdRequestStatus Status { get; set; } = KkdRequestStatus.Open;
+    public DateTimeOffset RequestedAtUtc { get; set; }
+    public DateTimeOffset? NeededAtUtc { get; set; }
+    public DateTimeOffset? StartedAtUtc { get; set; }
+    public DateTimeOffset? ReadyAtUtc { get; set; }
+    public DateTimeOffset? CompletedAtUtc { get; set; }
+    public DateTimeOffset? CancelledAtUtc { get; set; }
+    public string? CancellationReason { get; set; }
+    public string? Description { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+    public ICollection<KkdRequestLine> Lines { get; set; } = [];
+}
+
+public sealed class KkdRequestLine : BaseEntity
+{
+    public long RequestId { get; set; }
+    public KkdRequest Request { get; set; } = null!;
+    public int LineNo { get; set; }
+    public string GroupCode { get; set; } = string.Empty;
+    public string? GroupName { get; set; }
+    public long? StockId { get; set; }
+    public string? StockCodeSnapshot { get; set; }
+    public string? StockNameSnapshot { get; set; }
+    public string UnitCode { get; set; } = "ADET";
+    public decimal RequestedQuantity { get; set; }
+    public decimal AllocatedQuantity { get; set; }
+    public decimal DeliveredQuantity { get; set; }
+    public decimal CancelledQuantity { get; set; }
+    public KkdRequestLineStatus Status { get; set; } = KkdRequestLineStatus.AwaitingStockSelection;
+    public string? ExternalOrderNo { get; set; }
+    public string? ExternalOrderLineId { get; set; }
+    public long? ResolvedByUserId { get; set; }
+    public DateTimeOffset? ResolvedAtUtc { get; set; }
+    public string? ResolutionReason { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+    public ICollection<KkdRequestLineResolution> Resolutions { get; set; } = [];
+}
+
+public sealed class KkdRequestLineResolution : BaseEntity
+{
+    public Guid IdempotencyKey { get; set; }
+    public long RequestLineId { get; set; }
+    public KkdRequestLine RequestLine { get; set; } = null!;
+    public long? PreviousStockId { get; set; }
+    public long StockId { get; set; }
+    public string StockCodeSnapshot { get; set; } = string.Empty;
+    public string? StockNameSnapshot { get; set; }
+    public string Reason { get; set; } = string.Empty;
+    public DateTimeOffset ResolvedAtUtc { get; set; }
+}
+
 public sealed class KkdDistribution : BaseEntity
 {
     public Guid CorrelationId { get; set; }
@@ -156,6 +242,8 @@ public sealed class KkdDistribution : BaseEntity
     public string DocumentNo { get; set; } = string.Empty;
     public KkdDistributionStatus Status { get; set; } = KkdDistributionStatus.Draft;
     public long? WarehouseOutboundId { get; set; }
+    public long? KkdRequestId { get; set; }
+    public KkdRequest? KkdRequest { get; set; }
     public KkdExcessApprovalStatus ExcessApprovalStatus { get; set; } = KkdExcessApprovalStatus.NotRequired;
     public string? ExcessApprovalReason { get; set; }
     public long? ExcessApprovedBy { get; set; }
@@ -183,6 +271,8 @@ public sealed class KkdDistributionLine : BaseEntity
     public string? SerialNo { get; set; }
     public string? OpenOrderNo { get; set; }
     public string? OpenOrderLineId { get; set; }
+    public long? KkdRequestLineId { get; set; }
+    public KkdRequestLine? KkdRequestLine { get; set; }
     public byte[] RowVersion { get; set; } = [];
     public ICollection<KkdDistributionEntitlementAllocation> EntitlementAllocations { get; set; } = [];
     public ICollection<KkdEntitlementConsumption> Consumptions { get; set; } = [];

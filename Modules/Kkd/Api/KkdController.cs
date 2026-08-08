@@ -1,10 +1,12 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Localization;
 using verii_wms_api_v2.Modules.AccessControl.Application;
 using verii_wms_api_v2.Modules.BarcodeDesigner.Application;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Modules.Kkd.Application;
+using verii_wms_api_v2.Modules.Kkd.Localization;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 
@@ -15,10 +17,12 @@ public sealed class KkdController(
     IKkdDefinitionService definitions,
     IKkdEntitlementService entitlements,
     IKkdDistributionService distributions,
+    IKkdRequestService requests,
     IKkdReportService reports,
     IKkdPolicyService policy,
     IWarehouseBarcodeResolver barcodeResolver,
-    IPermissionAuthorizationService permissions) : ControllerBase
+    IPermissionAuthorizationService permissions,
+    IStringLocalizer<KkdRequestResource> requestLocalizer) : ControllerBase
 {
     [HttpGet("policy")]
     public async Task<IActionResult> GetPolicy(CancellationToken ct)
@@ -120,6 +124,42 @@ public sealed class KkdController(
     public async Task<IActionResult> Check(KkdEntitlementCheckRequest request, CancellationToken ct)
     { await Require("WMS.KKD.ENTITLEMENT.CHECK", ct); return Ok(ApiResponse<KkdEntitlementCheckResult>.Ok(await entitlements.CheckAsync(request, ct))); }
 
+    [HttpPost("requests/paged")]
+    public async Task<IActionResult> RequestsPaged(PagedRequest request, CancellationToken ct)
+    { await Require("WMS.KKD.REQUESTS.VIEW", ct); return Ok(ApiResponse<PagedResponse<KkdRequestGridRow>>.Ok(await requests.GetPagedAsync(request, ct))); }
+
+    [HttpGet("requests/{id:long}")]
+    public async Task<IActionResult> RequestDetail(long id, CancellationToken ct)
+    { await Require("WMS.KKD.REQUESTS.VIEW", ct); return Ok(ApiResponse<KkdRequestDetail>.Ok(await requests.GetDetailAsync(id, ct))); }
+
+    [HttpPost("requests")]
+    public async Task<IActionResult> CreateRequest(KkdRequestCreateRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.CREATE", ct);
+        return Ok(ApiResponse<KkdRequestDetail>.Ok(await requests.CreateAsync(request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.Created)));
+    }
+
+    [HttpPost("requests/{id:long}/lines/{lineId:long}/resolve")]
+    public async Task<IActionResult> ResolveRequestLine(long id, long lineId, KkdRequestResolveLineRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
+        return Ok(ApiResponse<KkdRequestDetail>.Ok(await requests.ResolveLineAsync(id, lineId, request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.Resolved)));
+    }
+
+    [HttpPut("requests/{id:long}/assignment")]
+    public async Task<IActionResult> AssignRequest(long id, KkdRequestAssignRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
+        return Ok(ApiResponse<KkdRequestDetail>.Ok(await requests.AssignAsync(id, request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.Assigned)));
+    }
+
+    [HttpPost("requests/{id:long}/cancel")]
+    public async Task<IActionResult> CancelRequest(long id, KkdRequestCancelRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.CANCEL", ct);
+        return Ok(ApiResponse<KkdRequestDetail>.Ok(await requests.CancelAsync(id, request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.Cancelled)));
+    }
+
     [HttpGet("distributions")]
     public async Task<IActionResult> Distributions(CancellationToken ct)
     { await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct); return Ok(ApiResponse<IReadOnlyList<KkdDistributionRow>>.Ok(await distributions.GetRecentAsync(UserId(), ct))); }
@@ -133,8 +173,8 @@ public sealed class KkdController(
     { await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct); return Ok(ApiResponse<KkdDistributionDetail>.Ok(await distributions.GetDetailAsync(id, UserId(), ct))); }
 
     [HttpGet("distributions/context/{employeeId:long}")]
-    public async Task<IActionResult> DistributionContext(long employeeId, CancellationToken ct)
-    { await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct); return Ok(ApiResponse<KkdDistributionContext>.Ok(await distributions.GetContextAsync(employeeId, ct))); }
+    public async Task<IActionResult> DistributionContext(long employeeId, [FromQuery] bool includeOpenOrders = true, CancellationToken ct = default)
+    { await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct); return Ok(ApiResponse<KkdDistributionContext>.Ok(await distributions.GetContextAsync(employeeId, includeOpenOrders, ct))); }
 
     [HttpGet("distributions/context/{employeeId:long}/lines")]
     public async Task<IActionResult> DistributionOrderLines(long employeeId, [FromQuery] string orderNumbersCsv, CancellationToken ct)
@@ -152,7 +192,7 @@ public sealed class KkdController(
     public async Task<IActionResult> MaterialRequestContext(long employeeId, CancellationToken ct)
     {
         await RequireMaterialRequestOrderFlow(ct);
-        return Ok(ApiResponse<KkdDistributionContext>.Ok(await distributions.GetContextAsync(employeeId, ct)));
+        return Ok(ApiResponse<KkdDistributionContext>.Ok(await distributions.GetContextAsync(employeeId, true, ct)));
     }
 
     [HttpGet("material-requests/context/{employeeId:long}/lines")]
@@ -213,6 +253,8 @@ public sealed class KkdController(
 
     private async Task Require(string code, CancellationToken ct)
     { if (!await permissions.HasPermissionAsync(User, code, ct)) throw AppException.Forbidden(); }
+
+    private string RequestMessage(string key) => requestLocalizer[key].Value;
 
     private async Task RequireMaterialRequestOrderFlow(CancellationToken ct)
     {

@@ -68,6 +68,27 @@ public sealed class KkdDistributionCompletionService(IUnitOfWork uow, IErpPostin
                 entity.CompletedAtUtc = now;
                 entity.UpdatedBy = actor;
                 entity.UpdatedDate = DateTime.UtcNow;
+                if (entity.KkdRequestId.HasValue)
+                {
+                    var request = await uow.Repository<KkdRequest>().Query(true).Include(x => x.Lines)
+                        .SingleOrDefaultAsync(x => x.Id == entity.KkdRequestId.Value, token)
+                        ?? throw AppException.Conflict("Bağlı KKD talebi bulunamadı.");
+                    var lines = request.Lines.ToDictionary(x => x.Id);
+                    foreach (var distributionLine in entity.Lines.Where(x => x.KkdRequestLineId.HasValue))
+                    {
+                        if (!lines.TryGetValue(distributionLine.KkdRequestLineId!.Value, out var requestLine))
+                            throw AppException.Conflict("Bağlı KKD talep kalemi bulunamadı.");
+                        if (requestLine.AllocatedQuantity < distributionLine.Quantity)
+                            throw AppException.Conflict("KKD talep kalemindeki ayrılmış miktar dağıtım miktarıyla uyuşmuyor.");
+                        requestLine.AllocatedQuantity -= distributionLine.Quantity;
+                        requestLine.DeliveredQuantity += distributionLine.Quantity;
+                        requestLine.UpdatedBy = actor;
+                        requestLine.UpdatedDate = now.UtcDateTime;
+                    }
+                    request.UpdatedBy = actor;
+                    request.UpdatedDate = now.UtcDateTime;
+                    KkdRequestStateMachine.Refresh(request, now);
+                }
                 await uow.SaveChangesAsync(token);
             }
             return (Entity: entity, Replayed: replayed);

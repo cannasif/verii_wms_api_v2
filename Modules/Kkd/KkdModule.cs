@@ -9,6 +9,7 @@ public static class KkdModule
         .AddScoped<IKkdDefinitionService, KkdDefinitionService>()
         .AddScoped<IKkdPolicyService, KkdPolicyService>()
         .AddScoped<IKkdEntitlementService, KkdEntitlementService>()
+        .AddScoped<IKkdRequestService, KkdRequestService>()
         .AddScoped<IKkdReportService, KkdReportService>()
         .AddScoped<IKkdDistributionCompletionService, KkdDistributionCompletionService>()
         .AddScoped<IKkdDistributionService, KkdDistributionService>()

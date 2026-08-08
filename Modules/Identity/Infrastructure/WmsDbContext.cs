@@ -122,6 +122,9 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<KkdEntitlementPhase> KkdEntitlementPhases => Set<KkdEntitlementPhase>();
     public DbSet<KkdEmployeeEntitlementOverride> KkdEmployeeEntitlementOverrides => Set<KkdEmployeeEntitlementOverride>();
     public DbSet<KkdEmployeeStockPreference> KkdEmployeeStockPreferences => Set<KkdEmployeeStockPreference>();
+    public DbSet<KkdRequest> KkdRequests => Set<KkdRequest>();
+    public DbSet<KkdRequestLine> KkdRequestLines => Set<KkdRequestLine>();
+    public DbSet<KkdRequestLineResolution> KkdRequestLineResolutions => Set<KkdRequestLineResolution>();
     public DbSet<KkdDistribution> KkdDistributions => Set<KkdDistribution>();
     public DbSet<KkdDistributionLine> KkdDistributionLines => Set<KkdDistributionLine>();
     public DbSet<KkdEntitlementConsumption> KkdEntitlementConsumptions => Set<KkdEntitlementConsumption>();
@@ -320,6 +323,9 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new KkdEntitlementPhaseConfiguration());
         modelBuilder.ApplyConfiguration(new KkdEmployeeEntitlementOverrideConfiguration());
         modelBuilder.ApplyConfiguration(new KkdEmployeeStockPreferenceConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdRequestConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdRequestLineConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdRequestLineResolutionConfiguration());
         modelBuilder.ApplyConfiguration(new KkdDistributionConfiguration());
         modelBuilder.ApplyConfiguration(new KkdDistributionLineConfiguration());
         modelBuilder.ApplyConfiguration(new KkdEntitlementConsumptionConfiguration());
@@ -622,7 +628,11 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             new PermissionDefinition { Id=2508, BranchCode="0", Code="WMS.KKD.DISTRIBUTION.OPERATE", Name="KKD dağıtım ve ambar çıkış işlemini yürüt", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2509, BranchCode="0", Code="WMS.KKD.REPORTS.VIEW", Name="KKD raporlarını görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2510, BranchCode="0", Code="WMS.KKD.POLICY.VIEW", Name="KKD süreç politikasını görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
-            new PermissionDefinition { Id=2511, BranchCode="0", Code="WMS.KKD.POLICY.MANAGE", Name="KKD süreç politikasını yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
+            new PermissionDefinition { Id=2511, BranchCode="0", Code="WMS.KKD.POLICY.MANAGE", Name="KKD süreç politikasını yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2512, BranchCode="0", Code="WMS.KKD.REQUESTS.VIEW", Name="Açık KKD taleplerini görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2513, BranchCode="0", Code="WMS.KKD.REQUESTS.CREATE", Name="KKD talebi oluştur", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2514, BranchCode="0", Code="WMS.KKD.REQUESTS.RESOLVE", Name="KKD talebinde stok ve beden seçimini çözümle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2515, BranchCode="0", Code="WMS.KKD.REQUESTS.CANCEL", Name="KKD talebini iptal et", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionDefinition>().HasData(
             new PermissionDefinition { Id=2600, BranchCode="0", Code="WMS.PROCUREMENT.VIEW", Name="Satınalma belgelerini görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2601, BranchCode="0", Code="WMS.PROCUREMENT.REQUEST.MANAGE", Name="Satınalma taleplerini yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
@@ -655,6 +665,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2410,9).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2420,5).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2500,12).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
+        modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2512,4).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2600,6).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(new PermissionGroupPermission { Id=2700, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=2700, CreatedDate=seedDate });
         modelBuilder.Entity<UserPermissionGroup>().HasData(new UserPermissionGroup { Id=1001, BranchCode="0", UserId=1, PermissionGroupId=1001, CreatedDate=seedDate });

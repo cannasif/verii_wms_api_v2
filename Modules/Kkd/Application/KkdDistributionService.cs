@@ -26,13 +26,18 @@ public sealed class KkdDistributionService(
     IStockTrackingPolicyResolver trackingPolicies,
     IKkdPolicyService policies) : IKkdDistributionService
 {
-    public async Task<KkdDistributionContext> GetContextAsync(long employeeId, CancellationToken ct = default)
+    public async Task<KkdDistributionContext> GetContextAsync(
+        long employeeId,
+        bool includeOpenOrders = true,
+        CancellationToken ct = default)
     {
         var employee = await ActiveEmployeeAsync(employeeId, ct);
         var customer = await uow.Repository<verii_wms_api_v2.Modules.Customer.Domain.Customer>().Query()
             .SingleOrDefaultAsync(x => x.Id == employee.CustomerId, ct)
             ?? throw AppException.Conflict("KKD personelinin bağlı olduğu cari bulunamadı.");
-        var openOrderRows = await ReadKkdOpenOrdersAsync(customer.CustomerCode, ct);
+        IReadOnlyList<KkdCustomerOpenOrderDto> openOrderRows = includeOpenOrders
+            ? await ReadKkdOpenOrdersAsync(customer.CustomerCode, ct)
+            : [];
         var policy = await policies.GetAsync(employee.BranchCode, ct);
         var preferredStocks = await (
             from preference in uow.Repository<KkdEmployeeStockPreference>().Query()
@@ -140,6 +145,35 @@ public sealed class KkdDistributionService(
         var policy = await policies.GetAsync(employee.BranchCode, ct);
         ValidatePolicy(request, employee, policy);
 
+        KkdRequest? linkedRequest = null;
+        IReadOnlyDictionary<long, KkdRequestLine> linkedLines = new Dictionary<long, KkdRequestLine>();
+        if (request.KkdRequestId.HasValue)
+        {
+            linkedRequest = await uow.Repository<KkdRequest>().Query().Include(x => x.Lines)
+                .SingleOrDefaultAsync(x => x.Id == request.KkdRequestId.Value, ct)
+                ?? throw AppException.NotFound("KKD talebi bulunamadı.");
+            if (linkedRequest.EmployeeId != employee.Id)
+                throw AppException.Conflict("KKD talebi seçilen personele ait değildir.");
+            if (linkedRequest.Status is KkdRequestStatus.Completed or KkdRequestStatus.Cancelled)
+                throw AppException.Conflict("Tamamlanmış veya iptal edilmiş KKD talebinden dağıtım oluşturulamaz.");
+            if (linkedRequest.WarehouseId.HasValue && linkedRequest.WarehouseId.Value != request.WarehouseId)
+                throw AppException.Conflict("Dağıtım deposu KKD talebine atanmış depoyla aynı olmalıdır.");
+            linkedLines = linkedRequest.Lines.ToDictionary(x => x.Id);
+            foreach (var item in request.Lines)
+            {
+                if (!item.KkdRequestLineId.HasValue || !linkedLines.TryGetValue(item.KkdRequestLineId.Value, out var requestLine))
+                    throw AppException.Conflict("Her dağıtım kalemi seçilen KKD talebindeki bir kaleme bağlı olmalıdır.");
+                if (!requestLine.StockId.HasValue)
+                    throw AppException.Conflict($"{requestLine.GroupCode} grubu için stok/beden seçimi yapılmadan dağıtım başlatılamaz.");
+                if (requestLine.StockId.Value != item.StockId)
+                    throw AppException.Conflict($"{requestLine.GroupCode} talep kalemi için seçilen stok değiştirilemez.");
+                var remaining = requestLine.RequestedQuantity - requestLine.AllocatedQuantity
+                    - requestLine.DeliveredQuantity - requestLine.CancelledQuantity;
+                if (item.Quantity > remaining)
+                    throw AppException.Conflict($"{requestLine.GroupCode} talep kaleminde hazırlanabilir miktar {remaining:0.######}; {item.Quantity:0.######} ayrılamaz.");
+            }
+        }
+
         var stockIds = request.Lines.Select(x => x.StockId).Distinct().ToArray();
         var stocks = await uow.Repository<StockEntity>().Query()
             .Where(x => x.BranchCode == employee.BranchCode && stockIds.Contains(x.Id))
@@ -240,6 +274,7 @@ public sealed class KkdDistributionService(
                 DocumentNo = $"KKD-{outbound.DocumentNo}",
                 Status = KkdDistributionStatus.OutboundCreated,
                 WarehouseOutboundId = outbound.Id,
+                KkdRequestId = request.KkdRequestId,
                 ExcessApprovalStatus = requiresExcessApproval
                     ? KkdExcessApprovalStatus.Pending
                     : KkdExcessApprovalStatus.NotRequired,
@@ -270,6 +305,7 @@ public sealed class KkdDistributionService(
                     SerialNo = Single(item.Request.Trackings?.Select(x => x.SerialNo)),
                     OpenOrderNo = item.Order?.OrderNumber,
                     OpenOrderLineId = item.Order?.OrderId.ToString(),
+                    KkdRequestLineId = item.Request.KkdRequestLineId,
                     CreatedBy = actor,
                     CreatedDate = now
                 };
@@ -310,6 +346,29 @@ public sealed class KkdDistributionService(
                     preference.UpdatedBy = actor;
                     preference.UpdatedDate = now;
                 }
+            }
+            if (request.KkdRequestId.HasValue)
+            {
+                var trackedRequest = await uow.Repository<KkdRequest>().Query(true).Include(x => x.Lines)
+                    .SingleOrDefaultAsync(x => x.Id == request.KkdRequestId.Value, token)
+                    ?? throw AppException.NotFound("KKD talebi bulunamadı.");
+                foreach (var item in request.Lines)
+                {
+                    var requestLine = trackedRequest.Lines.Single(x => x.Id == item.KkdRequestLineId!.Value);
+                    var remaining = requestLine.RequestedQuantity - requestLine.AllocatedQuantity
+                        - requestLine.DeliveredQuantity - requestLine.CancelledQuantity;
+                    if (item.Quantity > remaining)
+                        throw AppException.Conflict($"{requestLine.GroupCode} talep kalemi başka bir işlem tarafından ayrıldı. Ekranı yenileyin.");
+                    requestLine.AllocatedQuantity += item.Quantity;
+                    requestLine.UpdatedBy = actor;
+                    requestLine.UpdatedDate = DateTime.UtcNow;
+                }
+                trackedRequest.WarehouseId ??= request.WarehouseId;
+                trackedRequest.AssignedUserId ??= assignedUserIds.FirstOrDefault() is > 0 ? assignedUserIds[0] : null;
+                trackedRequest.StartedAtUtc ??= DateTimeOffset.UtcNow;
+                trackedRequest.UpdatedBy = actor;
+                trackedRequest.UpdatedDate = DateTime.UtcNow;
+                KkdRequestStateMachine.Refresh(trackedRequest, DateTimeOffset.UtcNow);
             }
             await uow.Repository<KkdDistribution>().AddAsync(distribution, token);
             if (requiresExcessApproval)
@@ -478,6 +537,7 @@ public sealed class KkdDistributionService(
                 .SingleOrDefaultAsync(x => x.Id == id, token)
                 ?? throw AppException.NotFound("KKD dağıtımı bulunamadı.");
             var now = DateTimeOffset.UtcNow;
+            var wasCompleted = entity.Status == KkdDistributionStatus.Completed;
             foreach (var consumption in entity.Lines.SelectMany(x => x.Consumptions).Where(x => !x.IsReversal))
             {
                 if (await uow.Repository<KkdEntitlementConsumption>().AnyAsync(
@@ -509,6 +569,27 @@ public sealed class KkdDistributionService(
                         ?? throw AppException.Conflict("Ters kaydı alınacak personel ek hakkı bulunamadı.");
                     item.ConsumedQuantity = Math.Max(0, item.ConsumedQuantity - consumption.Quantity);
                 }
+            }
+            if (entity.KkdRequestId.HasValue)
+            {
+                var request = await uow.Repository<KkdRequest>().Query(true).Include(x => x.Lines)
+                    .SingleOrDefaultAsync(x => x.Id == entity.KkdRequestId.Value, token)
+                    ?? throw AppException.Conflict("Bağlı KKD talebi bulunamadı.");
+                var lines = request.Lines.ToDictionary(x => x.Id);
+                foreach (var distributionLine in entity.Lines.Where(x => x.KkdRequestLineId.HasValue))
+                {
+                    if (!lines.TryGetValue(distributionLine.KkdRequestLineId!.Value, out var requestLine))
+                        throw AppException.Conflict("Bağlı KKD talep kalemi bulunamadı.");
+                    if (wasCompleted)
+                        requestLine.DeliveredQuantity = Math.Max(0, requestLine.DeliveredQuantity - distributionLine.Quantity);
+                    else
+                        requestLine.AllocatedQuantity = Math.Max(0, requestLine.AllocatedQuantity - distributionLine.Quantity);
+                    requestLine.UpdatedBy = actor;
+                    requestLine.UpdatedDate = now.UtcDateTime;
+                }
+                request.UpdatedBy = actor;
+                request.UpdatedDate = now.UtcDateTime;
+                KkdRequestStateMachine.Refresh(request, now);
             }
             entity.Status = KkdDistributionStatus.Cancelled;
             entity.UpdatedBy = actor;
@@ -635,6 +716,17 @@ public sealed class KkdDistributionService(
             !string.IsNullOrWhiteSpace(x.OrderNumber)
             != (x.OrderLineId.HasValue && x.OrderLineId.Value > 0)))
             throw AppException.BadRequest("Sipariş numarası ve sipariş satırı birlikte gönderilmelidir.");
+        if (request.KkdRequestId.HasValue)
+        {
+            if (request.KkdRequestId.Value <= 0 || request.Lines.Any(x => !x.KkdRequestLineId.HasValue || x.KkdRequestLineId <= 0))
+                throw AppException.BadRequest("KKD talebi ve talep kalemi bağlantıları geçerli olmalıdır.");
+            if (request.Lines.Select(x => x.KkdRequestLineId).Distinct().Count() != request.Lines.Count)
+                throw AppException.BadRequest("Aynı KKD talep kalemi bir dağıtımda yalnızca bir kez kullanılabilir.");
+            if (request.Lines.Any(x => !string.IsNullOrWhiteSpace(x.OrderNumber) || x.OrderLineId.HasValue))
+                throw AppException.BadRequest("KKD talebi bağlantısı ile Netsis sipariş bağlantısı aynı dağıtımda kullanılamaz.");
+        }
+        else if (request.Lines.Any(x => x.KkdRequestLineId.HasValue))
+            throw AppException.BadRequest("KKD talep kalemi gönderildiğinde üst talep kimliği de zorunludur.");
     }
 
     internal static void ValidatePolicy(KkdDistributionCreateRequest request, KkdEmployee employee, KkdPolicyDto policy)
@@ -642,7 +734,7 @@ public sealed class KkdDistributionService(
         var orderRefs = request.Lines
             .Where(x => !string.IsNullOrWhiteSpace(x.OrderNumber) && x.OrderLineId.HasValue)
             .ToArray();
-        if (policy.RequireOpenOrder && orderRefs.Length != request.Lines.Count)
+        if (policy.RequireOpenOrder && !request.KkdRequestId.HasValue && orderRefs.Length != request.Lines.Count)
             throw AppException.Conflict("KKD politikası gereği her dağıtım kalemi açık Netsis siparişine bağlı olmalıdır.");
         if (orderRefs.Length > 0 && orderRefs.Length != request.Lines.Count)
             throw AppException.BadRequest("Sipariş bağlantılı ve siparişsiz kalemler aynı KKD dağıtımında kullanılamaz.");

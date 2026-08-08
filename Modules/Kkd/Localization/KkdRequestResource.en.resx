@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="NotFound" xml:space="preserve"><value>PPE request was not found.</value></data>
+  <data name="LineNotFound" xml:space="preserve"><value>PPE request line was not found.</value></data>
+  <data name="EmployeeNotFound" xml:space="preserve"><value>PPE employee was not found.</value></data>
+  <data name="EmployeeInactive" xml:space="preserve"><value>A PPE request cannot be created for an inactive employee.</value></data>
+  <data name="UserNotFound" xml:space="preserve"><value>The active user to assign was not found.</value></data>
+  <data name="StockNotFound" xml:space="preserve"><value>The selected stock was not found.</value></data>
+  <data name="InvalidIdempotencyKey" xml:space="preserve"><value>A valid operation key is required for safe retries.</value></data>
+  <data name="InvalidLines" xml:space="preserve"><value>A request must contain between one and 100 lines.</value></data>
+  <data name="InvalidQuantity" xml:space="preserve"><value>Requested quantity must be greater than zero.</value></data>
+  <data name="InvalidGroupCode" xml:space="preserve"><value>PPE stock group is required and cannot exceed 80 characters.</value></data>
+  <data name="InvalidDescription" xml:space="preserve"><value>Request description cannot exceed 2000 characters.</value></data>
+  <data name="InvalidReason" xml:space="preserve"><value>Operation reason must be between 3 and 1000 characters.</value></data>
+  <data name="InvalidSearchField" xml:space="preserve"><value>Search is not allowed in field '{0}'.</value></data>
+  <data name="GroupEntitlementNotFound" xml:space="preserve"><value>The employee has no currently valid PPE entitlement rule for group '{0}'.</value></data>
+  <data name="StockGroupMismatch" xml:space="preserve"><value>The selected stock does not belong to PPE group '{0}'.</value></data>
+  <data name="StockCannotChange" xml:space="preserve"><value>Stock cannot be changed after preparation or delivery has started.</value></data>
+  <data name="ClosedRequestCannotChange" xml:space="preserve"><value>A completed or cancelled PPE request cannot be changed.</value></data>
+  <data name="RequestHasProgress" xml:space="preserve"><value>A PPE request with preparation or delivery progress cannot be cancelled. Reverse the linked distribution first.</value></data>
+  <data name="ConcurrencyConflict" xml:space="preserve"><value>The PPE request was changed by another user. Refresh and retry.</value></data>
+  <data name="Created" xml:space="preserve"><value>PPE request was created.</value></data>
+  <data name="Resolved" xml:space="preserve"><value>The stock/size selection for the PPE request line was saved.</value></data>
+  <data name="Assigned" xml:space="preserve"><value>The PPE request was assigned to a preparation owner.</value></data>
+  <data name="Cancelled" xml:space="preserve"><value>PPE request was cancelled.</value></data>
+</root>

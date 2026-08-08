@@ -25,7 +25,8 @@ public sealed record KkdDistributionLineCreateRequest(
     long? OrderLineId,
     bool RequireHandlingUnit,
     string? Description,
-    IReadOnlyList<KkdDistributionTrackingRequest>? Trackings);
+    IReadOnlyList<KkdDistributionTrackingRequest>? Trackings,
+    long? KkdRequestLineId = null);
 
 public sealed record KkdDistributionCreateRequest(
     Guid IdempotencyKey,
@@ -38,7 +39,8 @@ public sealed record KkdDistributionCreateRequest(
     string? Description,
     IReadOnlyList<KkdDistributionLineCreateRequest> Lines,
     bool CreateWarehouseTask = false,
-    IReadOnlyList<long>? AssignedUserIds = null);
+    IReadOnlyList<long>? AssignedUserIds = null,
+    long? KkdRequestId = null);
 
 public sealed record KkdDistributionCreateResult(
     long Id,
@@ -134,7 +136,7 @@ public sealed record KkdOpenOrderLine(
 
 public interface IKkdDistributionService
 {
-    Task<KkdDistributionContext> GetContextAsync(long employeeId, CancellationToken ct = default);
+    Task<KkdDistributionContext> GetContextAsync(long employeeId, bool includeOpenOrders = true, CancellationToken ct = default);
     Task<IReadOnlyList<KkdOpenOrderLine>> GetOpenOrderLinesAsync(long employeeId, string orderNumbersCsv, CancellationToken ct = default);
     Task<KkdDistributionCreateResult> CreateAsync(KkdDistributionCreateRequest request, long actor, CancellationToken ct = default);
     Task<IReadOnlyList<KkdDistributionRow>> GetRecentAsync(long actor, CancellationToken ct = default);

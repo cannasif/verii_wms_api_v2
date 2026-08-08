@@ -2,6 +2,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
 using verii_wms_api_v2.Modules.Kkd.Domain;
 using verii_wms_api_v2.Shared.Infrastructure;
+using CustomerEntity = verii_wms_api_v2.Modules.Customer.Domain.Customer;
+using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
+using UserEntity = verii_wms_api_v2.Modules.Identity.Domain.User;
+using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 
 namespace verii_wms_api_v2.Modules.Kkd.Infrastructure;
 
@@ -145,6 +149,79 @@ public sealed class KkdEmployeeStockPreferenceConfiguration : BaseEntityConfigur
     }
 }
 
+public sealed class KkdRequestConfiguration : BaseEntityConfiguration<KkdRequest>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdRequest> b)
+    {
+        b.ToTable("RII_KKD_REQUEST");
+        b.Property(x => x.RequestNo).HasMaxLength(50).IsRequired();
+        b.Property(x => x.SourceType).HasConversion<string>().HasMaxLength(30);
+        b.Property(x => x.ExternalRequestNo).HasMaxLength(100);
+        b.Property(x => x.Priority).HasConversion<string>().HasMaxLength(20);
+        b.Property(x => x.Status).HasConversion<string>().HasMaxLength(40);
+        b.Property(x => x.CancellationReason).HasMaxLength(1000);
+        b.Property(x => x.Description).HasMaxLength(2000);
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasOne(x => x.Employee).WithMany().HasForeignKey(x => x.EmployeeId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<CustomerEntity>().WithMany().HasForeignKey(x => x.CustomerId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<WarehouseEntity>().WithMany().HasForeignKey(x => x.WarehouseId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<UserEntity>().WithMany().HasForeignKey(x => x.AssignedUserId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => x.CorrelationId).IsUnique();
+        b.HasIndex(x => new { x.BranchCode, x.RequestNo }).IsUnique();
+        b.HasIndex(x => new { x.BranchCode, x.Status, x.Priority, x.NeededAtUtc });
+        b.HasIndex(x => new { x.BranchCode, x.EmployeeId, x.Status });
+        b.HasIndex(x => new { x.BranchCode, x.WarehouseId, x.Status });
+    }
+}
+
+public sealed class KkdRequestLineConfiguration : BaseEntityConfiguration<KkdRequestLine>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdRequestLine> b)
+    {
+        b.ToTable("RII_KKD_REQUEST_LINE", t => t.HasCheckConstraint(
+            "CK_RII_KKD_REQUEST_LINE_QTY",
+            "[RequestedQuantity] > 0 AND [AllocatedQuantity] >= 0 AND [DeliveredQuantity] >= 0 AND [CancelledQuantity] >= 0 AND [AllocatedQuantity] + [DeliveredQuantity] + [CancelledQuantity] <= [RequestedQuantity]"));
+        b.Property(x => x.GroupCode).HasMaxLength(80).IsRequired();
+        b.Property(x => x.GroupName).HasMaxLength(200);
+        b.Property(x => x.StockCodeSnapshot).HasMaxLength(100);
+        b.Property(x => x.StockNameSnapshot).HasMaxLength(300);
+        b.Property(x => x.UnitCode).HasMaxLength(20).IsRequired();
+        b.Property(x => x.RequestedQuantity).HasPrecision(20, 6);
+        b.Property(x => x.AllocatedQuantity).HasPrecision(20, 6);
+        b.Property(x => x.DeliveredQuantity).HasPrecision(20, 6);
+        b.Property(x => x.CancelledQuantity).HasPrecision(20, 6);
+        b.Property(x => x.Status).HasConversion<string>().HasMaxLength(40);
+        b.Property(x => x.ExternalOrderNo).HasMaxLength(100);
+        b.Property(x => x.ExternalOrderLineId).HasMaxLength(100);
+        b.Property(x => x.ResolutionReason).HasMaxLength(1000);
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasOne(x => x.Request).WithMany(x => x.Lines).HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<StockEntity>().WithMany().HasForeignKey(x => x.StockId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<UserEntity>().WithMany().HasForeignKey(x => x.ResolvedByUserId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => new { x.RequestId, x.LineNo }).IsUnique();
+        b.HasIndex(x => new { x.BranchCode, x.Status, x.GroupCode, x.StockId });
+        b.HasIndex(x => new { x.BranchCode, x.ExternalOrderNo, x.ExternalOrderLineId })
+            .HasFilter("[ExternalOrderNo] IS NOT NULL AND [ExternalOrderLineId] IS NOT NULL");
+    }
+}
+
+public sealed class KkdRequestLineResolutionConfiguration : BaseEntityConfiguration<KkdRequestLineResolution>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdRequestLineResolution> b)
+    {
+        b.ToTable("RII_KKD_REQUEST_LINE_RESOLUTION");
+        b.Property(x => x.StockCodeSnapshot).HasMaxLength(100).IsRequired();
+        b.Property(x => x.StockNameSnapshot).HasMaxLength(300);
+        b.Property(x => x.Reason).HasMaxLength(1000).IsRequired();
+        b.HasOne(x => x.RequestLine).WithMany(x => x.Resolutions)
+            .HasForeignKey(x => x.RequestLineId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<StockEntity>().WithMany().HasForeignKey(x => x.PreviousStockId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<StockEntity>().WithMany().HasForeignKey(x => x.StockId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => x.IdempotencyKey).IsUnique();
+        b.HasIndex(x => new { x.BranchCode, x.RequestLineId, x.ResolvedAtUtc });
+    }
+}
+
 public sealed class KkdDistributionConfiguration : BaseEntityConfiguration<KkdDistribution>
 {
     protected override void ConfigureEntity(EntityTypeBuilder<KkdDistribution> b)
@@ -162,6 +239,8 @@ public sealed class KkdDistributionConfiguration : BaseEntityConfiguration<KkdDi
         b.HasIndex(x => x.CorrelationId).IsUnique();
         b.HasIndex(x => new { x.BranchCode, x.DocumentNo }).IsUnique();
         b.HasIndex(x => x.WarehouseOutboundId).IsUnique().HasFilter("[WarehouseOutboundId] IS NOT NULL");
+        b.HasOne(x => x.KkdRequest).WithMany().HasForeignKey(x => x.KkdRequestId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => x.KkdRequestId).HasFilter("[KkdRequestId] IS NOT NULL");
     }
 }
 
@@ -182,7 +261,9 @@ public sealed class KkdDistributionLineConfiguration : BaseEntityConfiguration<K
         b.Property(x => x.OpenOrderLineId).HasMaxLength(100);
         b.Property(x => x.RowVersion).IsRowVersion();
         b.HasOne(x => x.Distribution).WithMany(x => x.Lines).HasForeignKey(x => x.DistributionId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.KkdRequestLine).WithMany().HasForeignKey(x => x.KkdRequestLineId).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(x => new { x.DistributionId, x.LineNo }).IsUnique();
+        b.HasIndex(x => x.KkdRequestLineId).HasFilter("[KkdRequestLineId] IS NOT NULL");
     }
 }
 

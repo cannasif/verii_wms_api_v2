@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="NotFound" xml:space="preserve"><value>KKD talebi bulunamadı.</value></data>
+  <data name="LineNotFound" xml:space="preserve"><value>KKD talep kalemi bulunamadı.</value></data>
+  <data name="EmployeeNotFound" xml:space="preserve"><value>KKD personeli bulunamadı.</value></data>
+  <data name="EmployeeInactive" xml:space="preserve"><value>Pasif personel için KKD talebi açılamaz.</value></data>
+  <data name="UserNotFound" xml:space="preserve"><value>Atanacak aktif kullanıcı bulunamadı.</value></data>
+  <data name="StockNotFound" xml:space="preserve"><value>Seçilen stok bulunamadı.</value></data>
+  <data name="InvalidIdempotencyKey" xml:space="preserve"><value>İşlemin güvenle tekrarlanabilmesi için geçerli bir işlem anahtarı gereklidir.</value></data>
+  <data name="InvalidLines" xml:space="preserve"><value>Talep en az bir, en fazla 100 kalem içermelidir.</value></data>
+  <data name="InvalidQuantity" xml:space="preserve"><value>Talep miktarı sıfırdan büyük olmalıdır.</value></data>
+  <data name="InvalidGroupCode" xml:space="preserve"><value>KKD stok grubu zorunludur ve 80 karakteri aşamaz.</value></data>
+  <data name="InvalidDescription" xml:space="preserve"><value>Talep açıklaması 2000 karakteri aşamaz.</value></data>
+  <data name="InvalidReason" xml:space="preserve"><value>İşlem nedeni 3-1000 karakter arasında olmalıdır.</value></data>
+  <data name="InvalidSearchField" xml:space="preserve"><value>'{0}' alanında arama yapılamaz.</value></data>
+  <data name="GroupEntitlementNotFound" xml:space="preserve"><value>Personelin '{0}' grubu için bugün geçerli bir KKD hak kuralı bulunmuyor.</value></data>
+  <data name="StockGroupMismatch" xml:space="preserve"><value>Seçilen stok '{0}' KKD grubuna ait değildir.</value></data>
+  <data name="StockCannotChange" xml:space="preserve"><value>Hazırlama veya teslimat başlamış bir talep kaleminin stoğu değiştirilemez.</value></data>
+  <data name="ClosedRequestCannotChange" xml:space="preserve"><value>Tamamlanmış veya iptal edilmiş KKD talebi değiştirilemez.</value></data>
+  <data name="RequestHasProgress" xml:space="preserve"><value>Hazırlama veya teslimat başlamış KKD talebi iptal edilemez. Önce bağlı dağıtım işlemini geri alın.</value></data>
+  <data name="ConcurrencyConflict" xml:space="preserve"><value>KKD talebi başka bir kullanıcı tarafından değiştirildi. Ekranı yenileyip tekrar deneyin.</value></data>
+  <data name="Created" xml:space="preserve"><value>KKD talebi oluşturuldu.</value></data>
+  <data name="Resolved" xml:space="preserve"><value>KKD talep kaleminin stok/beden seçimi kaydedildi.</value></data>
+  <data name="Assigned" xml:space="preserve"><value>KKD talebi hazırlama sorumlusuna atandı.</value></data>
+  <data name="Cancelled" xml:space="preserve"><value>KKD talebi iptal edildi.</value></data>
+</root>
