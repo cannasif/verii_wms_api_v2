@@ -11,6 +11,18 @@ namespace verii_wms_api_v2.Shared.Host.Middleware;
 /// </summary>
 public sealed class ApiResponseLocalizationMiddleware(RequestDelegate next, WmsApiMessageResolver resolver)
 {
+    private static readonly HashSet<string> NestedMessageProperties = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "validationMessage", "matchMessage", "warningMessage", "errorMessage",
+        "lastErrorMessage", "lastError", "statusMessage", "resultMessage"
+    };
+
+    private static readonly HashSet<string> MessageContextProperties = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "rowNumber", "status", "reasonCode", "code", "severity", "isConfigured",
+        "isAllowed", "isSuccessful", "success"
+    };
+
     public async Task InvokeAsync(HttpContext context)
     {
         var originalBody = context.Response.Body;
@@ -64,9 +76,76 @@ public sealed class ApiResponseLocalizationMiddleware(RequestDelegate next, WmsA
             envelope[messageProperty ?? "message"] = localized.Text;
             envelope[codeProperty ?? "messageCode"] = localized.Code;
         }
+        else
+        {
+            var localized = resolver.ResolveCode(existingCode, rawMessage);
+            envelope[messageProperty ?? "message"] = localized.Text;
+        }
+
+        foreach (var property in envelope.ToList())
+        {
+            if (string.Equals(property.Key, messageProperty, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(property.Key, codeProperty, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            LocalizeNestedMessages(property.Value);
+        }
 
         context.Response.ContentLength = null;
         await JsonSerializer.SerializeAsync(originalBody, envelope, WmsJsonSerialization.ResponseOptions);
+    }
+
+    private void LocalizeNestedMessages(JsonNode? node)
+    {
+        if (node is JsonArray array)
+        {
+            foreach (var item in array) LocalizeNestedMessages(item);
+            return;
+        }
+
+        if (node is not JsonObject value) return;
+
+        foreach (var property in value.ToList())
+        {
+            if (property.Value is JsonValue jsonValue
+                && jsonValue.TryGetValue<string>(out var rawMessage)
+                && !string.IsNullOrWhiteSpace(rawMessage)
+                && ShouldLocalize(value, property.Key))
+            {
+                var success = ReadNestedSuccess(value);
+                var localized = resolver.Resolve(
+                    success ? StatusCodes.Status200OK : StatusCodes.Status400BadRequest,
+                    rawMessage,
+                    success);
+                value[property.Key] = localized.Text;
+            }
+            else
+            {
+                LocalizeNestedMessages(property.Value);
+            }
+        }
+    }
+
+    private static bool ShouldLocalize(JsonObject owner, string propertyName) =>
+        NestedMessageProperties.Contains(propertyName)
+        || (string.Equals(propertyName, "message", StringComparison.OrdinalIgnoreCase)
+            && owner.Any(property => MessageContextProperties.Contains(property.Key)));
+
+    private static bool ReadNestedSuccess(JsonObject owner)
+    {
+        foreach (var propertyName in new[] { "success", "isSuccessful", "isAllowed" })
+        {
+            var property = FindProperty(owner, propertyName);
+            if (property is not null && owner[property] is JsonValue value && value.TryGetValue<bool>(out var result))
+                return result;
+        }
+
+        var statusProperty = FindProperty(owner, "status");
+        var status = ReadString(owner, statusProperty);
+        return status is not null && (status.Contains("success", StringComparison.OrdinalIgnoreCase)
+            || status.Contains("complete", StringComparison.OrdinalIgnoreCase)
+            || status.Contains("valid", StringComparison.OrdinalIgnoreCase)
+            || status.Contains("created", StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsJson(string? contentType) =>
