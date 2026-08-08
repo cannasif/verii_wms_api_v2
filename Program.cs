@@ -50,6 +50,7 @@ using verii_wms_api_v2.Modules.VehicleCheckIn;
 using verii_wms_api_v2.Modules.WarehouseTransfer;
 using verii_wms_api_v2.Modules.WarehouseInbound;
 using verii_wms_api_v2.Modules.WarehouseOutbound;
+using verii_wms_api_v2.Modules.WarehouseAssistant;
 using verii_wms_api_v2.Shared.Infrastructure.Persistence;
 using verii_wms_api_v2.Shared.Host.BackgroundJobs;
 using verii_wms_api_v2.Shared.Host.Filters;
@@ -122,6 +123,7 @@ builder.Services.AddSubcontractingTransferModule();
 builder.Services.AddWarehouseInboundModule();
 builder.Services.AddWarehouseOutboundModule();
 builder.Services.AddShippingModule();
+builder.Services.AddWarehouseAssistantModule(builder.Configuration);
 builder.Services.AddSmtpModule();
 builder.Services.AddAuditModule();
 builder.Services.AddAccessControlModule();
@@ -228,6 +230,20 @@ builder.Services.AddRateLimiter(options =>
     options.AddPolicy("supplier-portal",context=>RateLimitPartition.GetFixedWindowLimiter(
         $"{context.Connection.RemoteIpAddress}:{context.Request.RouteValues["token"]}",
         _=>new FixedWindowRateLimiterOptions{PermitLimit=30,Window=TimeSpan.FromMinutes(1),QueueLimit=0,AutoReplenishment=true}));
+    options.AddPolicy("warehouse-assistant", context =>
+    {
+        var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "anonymous";
+        return RateLimitPartition.GetFixedWindowLimiter(
+            userId,
+            _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = 30,
+                Window = TimeSpan.FromMinutes(1),
+                QueueLimit = 2,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+                AutoReplenishment = true
+            });
+    });
 });
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => policy
     .WithOrigins(builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? ["http://localhost:5173"])
