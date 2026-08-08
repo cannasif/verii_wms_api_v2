@@ -626,13 +626,8 @@ public sealed class ProductionTransferExecutionService(
             var picked = aggregate.Header.Lines.Sum(x => x.PickedQuantity);
             var requested = aggregate.Header.Lines.Sum(x => x.RequestedQuantity);
             if (picked <= 0) throw AppException.Conflict("Teslim beklemeye alınacak toplanmış stok bulunmuyor.");
-            if (picked < requested)
-            {
-                if (!request.ConfirmPartialPicking)
-                    throw AppException.Conflict("Toplama eksik. Eksik toplamayı bilinçli olarak onaylamadan devam edemezsiniz.");
-                if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Trim().Length < 5)
-                    throw AppException.BadRequest("Eksik toplama nedeni en az 5 karakter olmalıdır.");
-            }
+            if (picked < requested && !request.ConfirmPartialPicking)
+                throw AppException.Conflict("Toplama eksik. Eksik toplamayı bilinçli olarak onaylamadan devam edemezsiniz.");
 
             aggregate.Link.WorkflowStatus = ProductionTransferWorkflowStatus.AwaitingHandover;
             aggregate.Link.LastPickingCompletionIdempotencyKey = request.IdempotencyKey;

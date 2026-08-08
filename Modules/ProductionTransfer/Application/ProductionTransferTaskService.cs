@@ -62,6 +62,121 @@ public sealed class ProductionTransferTaskService(
             x.CreatedDate)).ToArray();
     }
 
+    public async Task<IReadOnlyList<ProductionWorkOrderTransferHeaderRowDto>> GetWorkOrderTransferGroupsAsync(
+        ProductionWorkOrderTransferTab tab,
+        string? search,
+        CancellationToken ct = default)
+    {
+        var links = await uow.Repository<ProductionTransferHeaderLink>().Query()
+            .Include(x => x.WarehouseTransferHeader).ThenInclude(h => h.Tasks).ThenInclude(t => t.Lines)
+            .Include(x => x.WarehouseTransferHeader).ThenInclude(h => h.Tasks).ThenInclude(t => t.Assignments)
+            .Include(x => x.WarehouseTransferHeader).ThenInclude(h => h.Lines)
+            .Where(x => Contexts.Contains(x.WarehouseTransferHeader.BusinessContext))
+            .OrderByDescending(x => x.WarehouseTransferHeader.CreatedDate)
+            .Take(1000)
+            .ToListAsync(ct);
+
+        if (links.Count == 0) return [];
+
+        var labelContext = ProductionWorkOrderTransferGrouping.BuildLabelContext(links);
+        var residualIds = links
+            .Where(x => x.ResidualWarehouseTransferHeaderId.HasValue)
+            .Select(x => x.ResidualWarehouseTransferHeaderId!.Value)
+            .Distinct()
+            .ToArray();
+        var residualDocs = residualIds.Length == 0
+            ? new Dictionary<long, string>()
+            : await uow.Repository<WarehouseTransferHeader>().Query()
+                .Where(x => residualIds.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, x => x.DocumentNo, ct);
+
+        var warehouseIds = links
+            .SelectMany(x => new[] { x.WarehouseTransferHeader.SourceWarehouseId, x.WarehouseTransferHeader.TargetWarehouseId })
+            .Distinct()
+            .ToArray();
+        var warehouses = await uow.Repository<WarehouseEntity>().Query(ignoreQueryFilters: true)
+            .Where(x => warehouseIds.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, x => new { x.WarehouseCode, x.WarehouseName }, ct);
+
+        var userIds = links
+            .SelectMany(x => x.WarehouseTransferHeader.Tasks)
+            .SelectMany(x => x.Assignments.Where(a => !a.IsDeleted))
+            .Select(x => x.UserId)
+            .Distinct()
+            .ToArray();
+        var users = userIds.Length == 0
+            ? new Dictionary<long, string>()
+            : await uow.Repository<User>().Query()
+                .Where(x => userIds.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, x => x.Username, ct);
+
+        var rows = new List<ProductionWorkOrderTransferHeaderRowDto>();
+        foreach (var link in links)
+        {
+            var header = link.WarehouseTransferHeader;
+            if (!ProductionWorkOrderTransferGrouping.MatchesTab(tab, header, link)) continue;
+            if (!ProductionWorkOrderTransferGrouping.MatchesSearch(search, header, link)) continue;
+
+            var source = warehouses.GetValueOrDefault(header.SourceWarehouseId);
+            var target = warehouses.GetValueOrDefault(header.TargetWarehouseId);
+            var activeTasks = header.Tasks.Where(x => !x.IsDeleted).OrderBy(x => x.Id).ToArray();
+            var taskRows = activeTasks.Select(task =>
+            {
+                var planned = task.Lines.Where(x => !x.IsDeleted).Sum(x => x.PlannedQuantity);
+                var processed = task.Lines.Where(x => !x.IsDeleted).Sum(x => x.ProcessedQuantity);
+                var displaySuffix = ProductionWorkOrderTransferGrouping.GetDisplaySuffix(
+                    task, link, labelContext, activeTasks);
+                return new ProductionWorkOrderTransferTaskRowDto(
+                    task.Id,
+                    task.TaskNo,
+                    ProductionWorkOrderTransferGrouping.BuildDisplayLabel(task.TaskNo, header.DocumentNo, displaySuffix),
+                    displaySuffix,
+                    task.TaskType,
+                    task.Status,
+                    task.WarehouseId,
+                    planned,
+                    processed,
+                    Math.Max(0, planned - processed),
+                    task.Assignments.Where(x => !x.IsDeleted)
+                        .OrderByDescending(x => x.IsPrimary)
+                        .Select(x => users.GetValueOrDefault(x.UserId, $"Kullanıcı #{x.UserId}"))
+                        .ToArray(),
+                    task.PreviousTaskId,
+                    task.OriginTaskId,
+                    task.OriginUserId,
+                    task.CompletedAtUtc);
+            }).ToArray();
+
+            rows.Add(new ProductionWorkOrderTransferHeaderRowDto(
+                header.Id,
+                header.DocumentNo,
+                header.ExternalReferenceNo,
+                header.Status,
+                link.WorkflowStatus,
+                link.ProductionOrderId,
+                link.ProductionOrderNo,
+                link.ProductionHeaderId,
+                link.ParentWarehouseTransferHeaderId,
+                link.ResidualWarehouseTransferHeaderId,
+                link.ResidualWarehouseTransferHeaderId is long residualId
+                    ? residualDocs.GetValueOrDefault(residualId)
+                    : null,
+                link.ParentWarehouseTransferHeaderId.HasValue,
+                header.SourceWarehouseId,
+                source?.WarehouseCode ?? 0,
+                source?.WarehouseName ?? string.Empty,
+                header.TargetWarehouseId,
+                target?.WarehouseCode ?? 0,
+                target?.WarehouseName ?? string.Empty,
+                header.Lines.Where(x => !x.IsDeleted).Sum(x => x.RequestedQuantity),
+                header.Lines.Where(x => !x.IsDeleted).Sum(x => x.PickedQuantity),
+                header.CreatedDate,
+                taskRows));
+        }
+
+        return rows;
+    }
+
     public Task<ProductionTransferTaskBoardDto> AssignAsync(long transferId, long taskId, AssignProductionTransferTaskRequest request, long actor, CancellationToken ct = default) =>
         uow.ExecuteInTransactionAsync(async token =>
         {
@@ -226,6 +341,52 @@ public sealed class ProductionTransferTaskService(
             return await MapAsync(transferId, token);
         }, ct, IsolationLevel.Serializable);
 
+    public Task<ProductionTransferTaskBoardDto> ProcessReturnTaskLineAsync(
+        long transferId, long taskId, long taskLineId, Guid idempotencyKey, long actor, CancellationToken ct = default) =>
+        uow.ExecuteInTransactionAsync(async token =>
+        {
+            if (idempotencyKey == Guid.Empty) throw AppException.BadRequest("İdempotency anahtarı zorunludur.");
+            var task = await LoadTaskAsync(transferId, taskId, token);
+            if (task.TaskType is not (WarehouseTransferTaskType.AssignmentReturn or WarehouseTransferTaskType.CancellationReturn))
+                throw AppException.BadRequest("Seçilen görev bir iade görevi değildir.");
+            if (task.Status != WarehouseTransferTaskStatus.InProgress || task.StartedBy != actor
+                || !task.Assignments.Any(x => !x.IsDeleted && x.UserId == actor && x.AcceptedAtUtc.HasValue))
+                throw AppException.Conflict("İade satırını onaylamadan önce 'Bu işi yapıyorum' işlemini kullanın.");
+            var taskLine = task.Lines.SingleOrDefault(x => x.Id == taskLineId && !x.IsDeleted)
+                ?? throw AppException.NotFound("İade görev satırı bulunamadı.");
+            if (taskLine.ProcessedQuantity >= taskLine.PlannedQuantity)
+                return await MapAsync(transferId, token);
+
+            var movementLines = BuildReturnMovementLines(task, taskLine);
+            if (movementLines.Count > 0)
+            {
+                var referenceType = task.TaskType == WarehouseTransferTaskType.AssignmentReturn
+                    ? "WarehouseTransferAssignmentReturnLine"
+                    : "WarehouseTransferCancellationReturnLine";
+                await movements.PostAsync(new(
+                    $"WT:{transferId}:RETURN-LINE:{taskLineId}:{idempotencyKey:N}",
+                    StockMovementTypes.Transfer,
+                    referenceType,
+                    task.Header.DocumentNo,
+                    transferId,
+                    DateTime.UtcNow,
+                    "İade görevi satır onayı",
+                    $"{task.Header.DocumentNo} iade satırı: {taskLine.Line.StockCodeSnapshot}",
+                    movementLines), token);
+            }
+
+            taskLine.ProcessedQuantity = taskLine.PlannedQuantity;
+            taskLine.UpdatedBy = actor;
+            taskLine.UpdatedDate = DateTime.UtcNow;
+            task.UpdatedBy = actor;
+            task.UpdatedDate = DateTime.UtcNow;
+            await uow.SaveChangesAsync(token);
+            await audit.WriteAsync(new("production-transfer.task.return-line.process", nameof(WarehouseTransferTaskLine), taskLine.Id.ToString(), "Succeeded", "production-transfer",
+                NewValues: new { TransferId = transferId, TaskId = task.Id, TaskLineId = taskLine.Id, taskLine.PlannedQuantity },
+                ChangedFields: ["ProcessedQuantity"]), token);
+            return await MapAsync(transferId, token);
+        }, ct, IsolationLevel.Serializable);
+
     public Task<ProductionTransferTaskBoardDto> CompleteAssignmentReturnAsync(
         long transferId, long taskId, Guid idempotencyKey, long actor, CancellationToken ct = default) =>
         uow.ExecuteInTransactionAsync(async token =>
@@ -238,6 +399,8 @@ public sealed class ProductionTransferTaskService(
             if (task.Status != WarehouseTransferTaskStatus.InProgress || task.StartedBy != actor
                 || !task.Assignments.Any(x => !x.IsDeleted && x.UserId == actor && x.AcceptedAtUtc.HasValue))
                 throw AppException.Conflict("İade görevini tamamlamadan önce 'Bu işi yapıyorum' işlemini kullanın.");
+            if (task.Lines.Any(x => x.ProcessedQuantity < x.PlannedQuantity))
+                throw AppException.Conflict("Tüm iade satırlarını rafa yerleştirmeden iadeyi tamamlayamazsınız.");
 
             var movementLines = BuildReturnMovementLines(task);
             long? operationId = null;
@@ -647,6 +810,8 @@ public sealed class ProductionTransferTaskService(
             if (task.Status != WarehouseTransferTaskStatus.InProgress || task.StartedBy != actor
                 || !task.Assignments.Any(x => !x.IsDeleted && x.UserId == actor && x.AcceptedAtUtc.HasValue))
                 throw AppException.Conflict("İade görevini tamamlamadan önce 'Bu işi yapıyorum' işlemini kullanın.");
+            if (task.Lines.Any(x => x.ProcessedQuantity < x.PlannedQuantity))
+                throw AppException.Conflict("Tüm iade satırlarını rafa yerleştirmeden iadeyi tamamlayamazsınız.");
 
             var movementLines = BuildReturnMovementLines(task);
             long? operationId = null;
@@ -799,9 +964,13 @@ public sealed class ProductionTransferTaskService(
         var userIds = header.Tasks.SelectMany(x => x.Assignments.Where(a => !a.IsDeleted)).Select(x => x.UserId).Distinct().ToArray();
         var users = await uow.Repository<User>().Query().Where(x => userIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.Username, ct);
         var locationIds = header.Tasks.SelectMany(x => x.Lines)
-            .SelectMany(x => x.SourceLocationId.HasValue
-                ? new[] { x.SourceLocationId.Value }
-                : x.Line.Trackings.Where(t => t.SourceLocationId.HasValue).Select(t => t.SourceLocationId!.Value))
+            .SelectMany(x =>
+            {
+                var ids = x.SourceLocationId.HasValue
+                    ? new[] { x.SourceLocationId.Value }
+                    : x.Line.Trackings.Where(t => t.SourceLocationId.HasValue).Select(t => t.SourceLocationId!.Value).ToArray();
+                return x.TargetLocationId.HasValue ? ids.Append(x.TargetLocationId.Value) : ids;
+            })
             .Distinct().ToArray();
         var locations = await uow.Repository<WarehouseLocation>().Query().Where(x => locationIds.Contains(x.Id))
             .ToDictionaryAsync(x => x.Id, x => new { x.Code, x.Name }, ct);
@@ -827,11 +996,23 @@ public sealed class ProductionTransferTaskService(
                     ? new[] { x.SourceLocationId.Value }
                     : x.Line.Trackings.Where(t => t.SourceLocationId.HasValue).Select(t => t.SourceLocationId!.Value).Distinct().ToArray();
                 var lineLocations = lineLocationIds.Where(locations.ContainsKey).Select(id => locations[id]).ToArray();
+                var targetLocation = x.TargetLocationId.HasValue && locations.TryGetValue(x.TargetLocationId.Value, out var targetLoc)
+                    ? targetLoc
+                    : default;
+                var serialNos = x.Line.Trackings
+                    .Where(t => t.PickedQuantity > 0 && !string.IsNullOrWhiteSpace(t.SerialNo))
+                    .Select(t => t.SerialNo!.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
                 return new ProductionTransferTaskLineDto(x.Id, x.WtLineId, x.Line.StockCodeSnapshot, x.Line.StockNameSnapshot,
                     x.PlannedQuantity, covered, Math.Max(0, x.PlannedQuantity - covered), x.ProcessedQuantity,
                     x.SourceLocationId,
                     lineLocations.Length == 0 ? null : string.Join(", ", lineLocations.Select(v => v.Code).Distinct()),
                     lineLocations.Length == 0 ? null : string.Join(", ", lineLocations.Select(v => v.Name).Distinct()),
+                    x.TargetLocationId,
+                    targetLocation?.Code,
+                    targetLocation?.Name,
+                    serialNos.Length == 0 ? null : string.Join(", ", serialNos),
                     x.Line.RequestedQuantity);
             }).ToList())).ToList();
         var workloadRows = await uow.Repository<WarehouseTransferTask>().Query()
@@ -882,11 +1063,15 @@ public sealed class ProductionTransferTaskService(
 
     private static string CleanReason(string? value) => string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim();
 
-    private static IReadOnlyList<StockMovementLineRequest> BuildReturnMovementLines(WarehouseTransferTask task)
+    private static IReadOnlyList<StockMovementLineRequest> BuildReturnMovementLines(
+        WarehouseTransferTask task,
+        WarehouseTransferTaskLine? onlyTaskLine = null)
     {
         var rows = new List<StockMovementLineRequest>();
-        foreach (var taskLine in task.Lines)
+        foreach (var taskLine in task.Lines.Where(x => !x.IsDeleted))
         {
+            if (onlyTaskLine is not null && taskLine.Id != onlyTaskLine.Id) continue;
+            if (onlyTaskLine is null && taskLine.ProcessedQuantity >= taskLine.PlannedQuantity) continue;
             var line = taskLine.Line;
             var tracked = line.Trackings.Where(x => x.PickedQuantity > 0).ToList();
             if (tracked.Count == 0)

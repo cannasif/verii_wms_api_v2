@@ -107,6 +107,14 @@ public sealed class ProductionTransfersController(
     public async Task<IActionResult>TaskPool(CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);
         return Ok(ApiResponse<IReadOnlyList<ProductionTransferTaskPoolRow>>.Ok(await tasks.GetPoolAsync(UserId(),ct)));}
+    [HttpGet("work-order-transfer-groups")]
+    public async Task<IActionResult>WorkOrderTransferGroups(
+        [FromQuery]ProductionWorkOrderTransferTab tab,
+        [FromQuery]string? search,
+        CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.VIEW",ct);
+        return Ok(ApiResponse<IReadOnlyList<ProductionWorkOrderTransferHeaderRowDto>>.Ok(
+            await tasks.GetWorkOrderTransferGroupsAsync(tab,search,ct)));}
     [HttpPost("{id:long}/tasks/{taskId:long}/assign")]
     public async Task<IActionResult>Assign(long id,long taskId,AssignProductionTransferTaskRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);
@@ -119,6 +127,10 @@ public sealed class ProductionTransfersController(
     public async Task<IActionResult>RequestAssignmentReturn(long id,long taskId,long userId,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);
         return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.RequestAssignmentReturnAsync(id,taskId,userId,UserId(),ct),"İade görevi oluşturuldu."));}
+    [HttpPost("{id:long}/tasks/{taskId:long}/task-lines/{taskLineId:long}/process-return")]
+    public async Task<IActionResult>ProcessReturnTaskLine(long id,long taskId,long taskLineId,StartProductionTransferTaskRequest request,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.ProcessReturnTaskLineAsync(id,taskId,taskLineId,request.IdempotencyKey,UserId(),ct),"İade satırı onaylandı."));}
     [HttpPost("{id:long}/tasks/{taskId:long}/complete-assignment-return")]
     public async Task<IActionResult>CompleteAssignmentReturn(long id,long taskId,StartProductionTransferTaskRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
