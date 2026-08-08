@@ -6,9 +6,12 @@ using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Modules.Customer.Domain;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
+using verii_wms_api_v2.Modules.SteelReceipt.Domain;
+using verii_wms_api_v2.Modules.VehicleCheckIn.Domain;
 using verii_wms_api_v2.Modules.WarehouseAssistant.Application;
 using verii_wms_api_v2.Modules.WarehouseAssistant.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
+using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 using verii_wms_api_v2.Shared.Infrastructure.Persistence;
@@ -238,6 +241,94 @@ public sealed class WarehouseAssistantServiceTests
         Assert.False((await db.WarehouseAssistantConversations.SingleAsync(x => x.Id == 100)).IsArchived);
     }
 
+    [Fact]
+    public async Task Steel_vehicle_analysis_returns_branch_scoped_plate_and_acceptance_totals()
+    {
+        await using var db = CreateDbContext();
+        var now = new DateTimeOffset(2026, 8, 8, 12, 0, 0, TimeSpan.Zero);
+        db.Users.Add(new User { Id = 10, Username = "admin", Email = "admin@v3rii.com", PasswordHash = "x", Role = "Admin" });
+        db.Set<VehicleCheckInHeader>().AddRange(
+            Vehicle(100, "0", "34 ABC 123", 8, now.AddHours(-2)),
+            Vehicle(101, "0", "06 XYZ 987", 4, now.AddHours(-1)),
+            Vehicle(102, "0", "35 OLD 001", 7, now.AddDays(-1)),
+            Vehicle(103, "1", "34 OTHER 9", 9, now.AddHours(-1)),
+            Vehicle(104, "0", "34 ABC 123", 3, now.AddDays(-2)));
+        db.Set<SteelVehicleAcceptedPlate>().AddRange(
+            AcceptedPlate(200, 100, SteelPlateIdentityStatus.Known),
+            AcceptedPlate(201, 100, SteelPlateIdentityStatus.Unknown),
+            AcceptedPlate(202, 101, SteelPlateIdentityStatus.Known));
+        await db.SaveChangesAsync();
+
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        var service = new WarehouseAssistantService(unitOfWork, new WarehouseAssistantIntentResolver(), new NoopAuditWriter(), new FixedTimeProvider(now));
+
+        var all = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, "Bugün sac mal kabul için kaç araç girdi, plakaları neler?"),
+            10, "0", new WarehouseAssistantAccess(false, false, false, false, CanViewSteelVehicles: true));
+        var onePlate = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, "Bugün plaka 34 ABC 123 olan sac aracı kaç levhayla girdi?"),
+            10, "0", new WarehouseAssistantAccess(false, false, false, false, CanViewSteelVehicles: true));
+        var plateHistory = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, "34 ABC 123 plakasının sac mal kabul geçmişini göster"),
+            10, "0", new WarehouseAssistantAccess(false, false, false, false, CanViewSteelVehicles: true));
+
+        Assert.Equal(WarehouseAssistantIntent.SteelVehicleAnalysis, all.Intent);
+        Assert.Equal(2, all.SteelVehicles!.Count);
+        Assert.Equal(12, all.SteelVehicles.Sum(x => x.DeclaredSteelSheetCount));
+        Assert.Equal(3, all.SteelVehicles.Sum(x => x.AcceptedPlateCount));
+        Assert.Equal(1, all.SteelVehicles.Sum(x => x.UnresolvedPlateCount));
+        Assert.Equal("34 ABC 123", Assert.Single(onePlate.SteelVehicles!).PlateNo);
+        Assert.Equal(2, plateHistory.SteelVehicles!.Count);
+    }
+
+    [Fact]
+    public async Task Transfer_analysis_separates_production_and_interwarehouse_documents()
+    {
+        await using var db = CreateDbContext();
+        var now = new DateTimeOffset(2026, 8, 8, 12, 0, 0, TimeSpan.Zero);
+        db.Users.Add(new User { Id = 10, Username = "admin", Email = "admin@v3rii.com", PasswordHash = "x", Role = "Admin" });
+        db.Warehouses.AddRange(
+            new WarehouseEntity { Id = 30, BranchCode = "0", WarehouseCode = 1, WarehouseName = "Hammadde" },
+            new WarehouseEntity { Id = 31, BranchCode = "0", WarehouseCode = 2, WarehouseName = "Üretim" });
+        db.Set<WarehouseTransferHeader>().AddRange(
+            TransferHeader(300, "WT-2026-001", WarehouseTransferBusinessContext.InterWarehouse, WarehouseTransferStatus.Completed),
+            TransferHeader(301, "PT-2026-001", WarehouseTransferBusinessContext.ProductionMaterialSupply, WarehouseTransferStatus.PartiallyPicked),
+            TransferHeader(302, "PT-2025-OLD", WarehouseTransferBusinessContext.ProductionMaterialSupply, WarehouseTransferStatus.Completed, new DateOnly(2025, 8, 8)));
+        db.Set<WarehouseTransferLine>().AddRange(
+            TransferLine(400, 300, 10, 10, 10),
+            TransferLine(401, 301, 5, 2, 0),
+            TransferLine(402, 302, 7, 7, 7));
+        await db.SaveChangesAsync();
+
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        var service = new WarehouseAssistantService(unitOfWork, new WarehouseAssistantIntentResolver(), new NoopAuditWriter(), new FixedTimeProvider(now));
+        var access = new WarehouseAssistantAccess(
+            false, false, false, false,
+            CanViewWarehouseTransfers: true,
+            CanViewProductionTransfers: true);
+
+        var production = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, "Bugün kaç üretime transfer yapıldı?"), 10, "0", access);
+        var warehouse = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, "Bugünkü normal depolar arası transferleri göster"), 10, "0", access);
+        var historicalDocument = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, "PT-2025-OLD numaralı üretime transferin durumunu göster"), 10, "0", access);
+        var todayHistoricalDocument = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, "Bugün PT-2025-OLD numaralı üretime transferi göster"), 10, "0", access);
+
+        var productionRow = Assert.Single(production.Transfers!);
+        Assert.Equal("PT-2026-001", productionRow.DocumentNo);
+        Assert.Equal(5, productionRow.RequestedQuantity);
+        Assert.Equal(2, productionRow.PickedQuantity);
+        var warehouseRow = Assert.Single(warehouse.Transfers!);
+        Assert.Equal("WT-2026-001", warehouseRow.DocumentNo);
+        Assert.Equal(10, warehouseRow.ReceivedQuantity);
+        Assert.Equal("PT-2025-OLD", Assert.Single(historicalDocument.Transfers!).DocumentNo);
+        Assert.Empty(todayHistoricalDocument.Transfers!);
+        Assert.Equal(WarehouseAssistantTransferScope.Production,
+            (await new WarehouseAssistantIntentResolver().ResolveAsync("Bugün kaç üretime transfer yapıldı?", null)).TransferScope);
+    }
+
     private static WmsDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<WmsDbContext>()
@@ -291,6 +382,68 @@ public sealed class WarehouseAssistantServiceTests
         ReceivedQuantity = quantity,
         AcceptedQuantity = quantity,
         Status = GoodsReceiptLineStatus.Received
+    };
+
+    private static VehicleCheckInHeader Vehicle(long id, string branch, string plate, int sheetCount, DateTimeOffset checkedInAt) => new()
+    {
+        Id = id,
+        BranchCode = branch,
+        PlateNo = plate,
+        PlateNoNormalized = new string(plate.Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray()),
+        SteelSheetCount = sheetCount,
+        BusinessDate = DateOnly.FromDateTime(checkedInAt.UtcDateTime),
+        CheckedInAtUtc = checkedInAt,
+        Status = VehicleCheckInStatus.Completed
+    };
+
+    private static SteelVehicleAcceptedPlate AcceptedPlate(long id, long vehicleId, SteelPlateIdentityStatus status) => new()
+    {
+        Id = id,
+        BranchCode = "0",
+        VehicleCheckInId = vehicleId,
+        VehicleAcceptanceId = 900,
+        SequenceNo = (int)(id - 199),
+        IdentityStatus = status
+    };
+
+    private static WarehouseTransferHeader TransferHeader(
+        long id,
+        string documentNo,
+        WarehouseTransferBusinessContext context,
+        WarehouseTransferStatus status,
+        DateOnly? documentDate = null) => new()
+    {
+        Id = id,
+        BranchCode = "0",
+        DocumentSeriesId = 1,
+        DocumentNo = documentNo,
+        DocumentDate = documentDate ?? new DateOnly(2026, 8, 8),
+        BusinessContext = context,
+        InitiationMode = WarehouseTransferInitiationMode.StockBasedTask,
+        ProcessType = WarehouseTransferProcessType.InternalRequest,
+        SourceWarehouseId = 30,
+        TargetWarehouseId = 31,
+        Status = status
+    };
+
+    private static WarehouseTransferLine TransferLine(long id, long headerId, decimal requested, decimal picked, decimal received) => new()
+    {
+        Id = id,
+        BranchCode = "0",
+        WtHeaderId = headerId,
+        LineNo = 1,
+        StockId = 500,
+        StockCodeSnapshot = "STK-1",
+        StockNameSnapshot = "Test Stok",
+        UnitCode = "AD",
+        BaseUnitCode = "AD",
+        RequestedQuantity = requested,
+        PickedQuantity = picked,
+        ShippedQuantity = received,
+        ReceivedQuantity = received,
+        PutawayQuantity = received,
+        SourceWarehouseId = 30,
+        TargetWarehouseId = 31
     };
 
     private sealed class NoopAuditWriter : IAuditLogWriter

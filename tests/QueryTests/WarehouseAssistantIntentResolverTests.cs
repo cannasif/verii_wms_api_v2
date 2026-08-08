@@ -18,6 +18,10 @@ public sealed class WarehouseAssistantIntentResolverTests
     [InlineData("01/013 stok hareketlerini göster", WarehouseAssistantIntent.StockMovementHistory)]
     [InlineData("Bana atanmış açık görevleri göster", WarehouseAssistantIntent.AssignedTasks)]
     [InlineData("01.08.2026 ile 08.08.2026 arasında ABC carisine kaç mal kabul yapıldı, neler alındı?", WarehouseAssistantIntent.GoodsReceiptAnalysis)]
+    [InlineData("Bugün sac mal kabul için kaç araç girdi, plakaları neler?", WarehouseAssistantIntent.SteelVehicleAnalysis)]
+    [InlineData("Bu hafta yapılan normal depolar arası transferleri göster", WarehouseAssistantIntent.WarehouseTransferAnalysis)]
+    [InlineData("Bu hafta kaç üretime transfer yapıldı?", WarehouseAssistantIntent.WarehouseTransferAnalysis)]
+    [InlineData("Bana atanmış açık üretime transfer görevlerini göster", WarehouseAssistantIntent.AssignedTasks)]
     public async Task Resolves_supported_turkish_warehouse_questions(string message, WarehouseAssistantIntent expected)
     {
         var result = await resolver.ResolveAsync(message, null);
@@ -43,6 +47,8 @@ public sealed class WarehouseAssistantIntentResolverTests
     [InlineData("Show stock movement history for item 01/013", WarehouseAssistantIntent.StockMovementHistory)]
     [InlineData("Show my assigned open tasks", WarehouseAssistantIntent.AssignedTasks)]
     [InlineData("Lookup barcode GRL-000123", WarehouseAssistantIntent.BarcodeLookup)]
+    [InlineData("How many steel receipt vehicles entered today?", WarehouseAssistantIntent.SteelVehicleAnalysis)]
+    [InlineData("Show production transfers created this week", WarehouseAssistantIntent.WarehouseTransferAnalysis)]
     [InlineData("Zeige meine offenen Aufgaben", WarehouseAssistantIntent.AssignedTasks)]
     [InlineData("Afficher mes tâches ouvertes", WarehouseAssistantIntent.AssignedTasks)]
     [InlineData("Mostrar mis tareas abiertas", WarehouseAssistantIntent.AssignedTasks)]
@@ -93,6 +99,24 @@ public sealed class WarehouseAssistantIntentResolverTests
     {
         var result = await resolver.ResolveAsync(message, null);
         Assert.Equal(expected, result.SerialNo);
+    }
+
+    [Fact]
+    public async Task Extracts_vehicle_plate_and_transfer_scope_without_confusing_dates()
+    {
+        var vehicle = await resolver.ResolveAsync("01.08.2026 ile 08.08.2026 arasında plaka 34 ABC 123 olan sac aracı ne zaman girdi?", null);
+        var production = await resolver.ResolveAsync("PT-2026-0007 üretime transfer durumunu göster", null);
+        var productionMaterial = await resolver.ResolveAsync("MK202600000049 numaralı üretime transferin durumunu göster", null);
+        var warehouse = await resolver.ResolveAsync("WT-2026-0012 normal transfer durumunu göster", null);
+
+        Assert.Equal("34 ABC 123", vehicle.VehiclePlateQuery);
+        Assert.True(vehicle.HasExplicitDateFilter);
+        Assert.Equal(WarehouseAssistantTransferScope.Production, production.TransferScope);
+        Assert.False(production.HasExplicitDateFilter);
+        Assert.Equal("PT-2026-0007", production.TransferDocumentQuery);
+        Assert.Equal("MK202600000049", productionMaterial.TransferDocumentQuery);
+        Assert.Equal(WarehouseAssistantTransferScope.InterWarehouse, warehouse.TransferScope);
+        Assert.Equal("WT-2026-0012", warehouse.TransferDocumentQuery);
     }
 
     [Fact]
