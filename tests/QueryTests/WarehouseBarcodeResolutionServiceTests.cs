@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
 using verii_wms_api_v2.Modules.BarcodeDesigner.Application;
+using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Stock.Domain;
@@ -18,6 +19,59 @@ namespace verii_wms_api_v2.QueryTests;
 
 public sealed class WarehouseBarcodeResolutionServiceTests
 {
+    [Fact]
+    public async Task Split_source_label_is_rejected_and_generated_child_remains_resolvable()
+    {
+        await using var db = CreateDb();
+        var stock = new Stock
+        {
+            BranchCode = "0",
+            ErpStockCode = "STK-001",
+            StockName = "Test stok",
+            BaseUnitCode = "AD"
+        };
+        db.Add(stock);
+        await db.SaveChangesAsync();
+        db.AddRange(
+            new GoodsReceiptLabel
+            {
+                BranchCode = "0",
+                StockId = stock.Id,
+                StockCodeSnapshot = stock.ErpStockCode,
+                LabelQuantity = 10,
+                UnitCode = "AD",
+                SerialNo = "PALLET-1",
+                BarcodeValue = "OLD-SPLIT-LABEL",
+                Status = GoodsReceiptLabelStatus.Split
+            },
+            new GoodsReceiptLabel
+            {
+                BranchCode = "0",
+                StockId = stock.Id,
+                StockCodeSnapshot = stock.ErpStockCode,
+                LabelQuantity = 4,
+                UnitCode = "AD",
+                SerialNo = "PALLET-1",
+                BarcodeValue = "NEW-CHILD-LABEL",
+                Status = GoodsReceiptLabelStatus.Generated
+            });
+        await db.SaveChangesAsync();
+
+        await using var uow = new UnitOfWork(db, new HttpContextAccessor());
+        var resolver = new WarehouseBarcodeResolutionService(
+            uow,
+            new FixedTrackingPolicyResolver(stock.Id, stock.ErpStockCode, SerialQuantityRule.OneSerialPerLine));
+
+        await Assert.ThrowsAsync<AppException>(() => resolver.ResolveAsync(new(
+            "OLD-SPLIT-LABEL", "0", WarehouseBarcodePurpose.Inbound, null, stock.Id)));
+
+        var child = await resolver.ResolveAsync(new(
+            "NEW-CHILD-LABEL", "0", WarehouseBarcodePurpose.Inbound, null, stock.Id));
+        Assert.Equal("GoodsReceiptLabel", child.Source);
+        Assert.Equal(4, child.Quantity);
+        Assert.Equal("PALLET-1", child.SerialNo);
+    }
+
     [Theory]
     [InlineData(SerialQuantityRule.OneSerialPerBaseUnit, 1)]
     [InlineData(SerialQuantityRule.OneSerialPerLine, 9)]

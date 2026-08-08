@@ -18,4 +18,12 @@
   <data name="InvalidAssignee" xml:space="preserve"><value>Emir için seçilen kullanıcılardan biri aktif değil veya bulunamadı.</value></data>
   <data name="IdempotencyConflict" xml:space="preserve"><value>Aynı idempotency anahtarı farklı bir mal kabul isteğinde kullanılamaz.</value></data>
   <data name="ConcurrencyConflict" xml:space="preserve"><value>Sipariş miktarı başka bir işlem tarafından değiştirildi. Veriyi yenileyip tekrar deneyin.</value></data>
+  <data name="LabelSplitInvalidRequest" xml:space="preserve"><value>Etiket bölme bilgileri geçersiz. Ayrılacak miktar sıfırdan büyük, etiket miktarından küçük ve açıklama en az 3 karakter olmalıdır.</value></data>
+  <data name="LabelSplitNotFound" xml:space="preserve"><value>Bölünecek etiket bulunamadı.</value></data>
+  <data name="LabelSplitAlreadyCompleted" xml:space="preserve"><value>Bu etiket daha önce bölündü. Eski etiket yeniden kullanılamaz; oluşan alt etiketleri kullanın.</value></data>
+  <data name="LabelSplitUnavailable" xml:space="preserve"><value>İptal edilmiş, bölünmüş veya stok bağlantısı olmayan etiket bölünemez.</value></data>
+  <data name="LabelSplitSerialPerUnitBlocked" xml:space="preserve"><value>{0} stoku her birim için ayrı seriyle izleniyor. Tek bir seri/etiket bölünemez.</value></data>
+  <data name="LabelSplitQuantityMismatch" xml:space="preserve"><value>Alt etiket miktarlarının toplamı kaynak etiket miktarına eşit olmalıdır.</value></data>
+  <data name="LabelSplitCompleted" xml:space="preserve"><value>Etiket iki izlenebilir alt etikete bölündü.</value></data>
+  <data name="LabelVoidUnavailable" xml:space="preserve"><value>İptal edilmiş etiket barkodu kullanılamaz.</value></data>
 </root>

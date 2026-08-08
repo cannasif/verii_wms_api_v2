@@ -327,9 +327,11 @@ public sealed class GoodsReceiptExecutionService(
     {
         var batch = await uow.Repository<GoodsReceiptLabelBatch>().Query(true).Include(x => x.Labels)
             .FirstAsync(x => x.Id == batchId, ct);
-        batch.PrintedLabelCount = batch.Labels.Count(x => x.PrintCount > 0);
-        batch.ConsumedLabelCount = batch.Labels.Count(x => x.Status == GoodsReceiptLabelStatus.Consumed);
-        batch.VoidLabelCount = batch.Labels.Count(x => x.Status == GoodsReceiptLabelStatus.Void);
+        var activeLabels = batch.Labels.Where(x => x.Status != GoodsReceiptLabelStatus.Split).ToList();
+        batch.TotalLabelCount = activeLabels.Count;
+        batch.PrintedLabelCount = activeLabels.Count(x => x.PrintCount > 0);
+        batch.ConsumedLabelCount = activeLabels.Count(x => x.Status == GoodsReceiptLabelStatus.Consumed);
+        batch.VoidLabelCount = activeLabels.Count(x => x.Status == GoodsReceiptLabelStatus.Void);
         var finished = batch.ConsumedLabelCount + batch.VoidLabelCount == batch.TotalLabelCount;
         batch.Status = finished
             ? batch.ConsumedLabelCount == 0 ? GoodsReceiptLabelBatchStatus.Cancelled : GoodsReceiptLabelBatchStatus.Consumed
@@ -360,6 +362,8 @@ public sealed class GoodsReceiptExecutionService(
             throw AppException.Conflict("Etiket daha önce kullanılmış.");
         if (label.Status == GoodsReceiptLabelStatus.Void)
             throw AppException.Conflict("İptal edilmiş etiket kullanılamaz.");
+        if (label.Status == GoodsReceiptLabelStatus.Split)
+            throw AppException.Conflict("Bölünmüş ana etiket kullanılamaz. Oluşturulan alt etiketlerden birini okutun.");
     }
 
     private static void ValidateTracking(

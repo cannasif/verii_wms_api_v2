@@ -1,6 +1,8 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 using verii_wms_api_v2.Modules.BarcodeDesigner.Domain;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
+using verii_wms_api_v2.Modules.GoodsReceipt.Localization;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.StockTracking.Application;
@@ -14,7 +16,8 @@ namespace verii_wms_api_v2.Modules.BarcodeDesigner.Application;
 
 public sealed class WarehouseBarcodeResolutionService(
     IUnitOfWork uow,
-    IStockTrackingPolicyResolver trackingPolicies) : IWarehouseBarcodeResolver
+    IStockTrackingPolicyResolver trackingPolicies,
+    IStringLocalizer<GoodsReceiptResource>? goodsReceiptMessages = null) : IWarehouseBarcodeResolver
 {
     public async Task<ResolvedWarehouseBarcode> ResolveAsync(
         ResolveWarehouseBarcodeRequest request,
@@ -28,8 +31,11 @@ public sealed class WarehouseBarcodeResolutionService(
         var generated = await uow.Repository<GeneratedBarcode>().Query()
             .FirstOrDefaultAsync(x => x.BranchCode == branch && x.BarcodeValue == raw, cancellationToken);
         var goodsReceiptLabel = await uow.Repository<GoodsReceiptLabel>().Query()
-            .FirstOrDefaultAsync(x => x.BranchCode == branch && x.BarcodeValue == raw
-                && x.Status != GoodsReceiptLabelStatus.Void, cancellationToken);
+            .FirstOrDefaultAsync(x => x.BranchCode == branch && x.BarcodeValue == raw, cancellationToken);
+        if (goodsReceiptLabel?.Status == GoodsReceiptLabelStatus.Split)
+            throw AppException.Conflict(Message(GoodsReceiptMessageKeys.LabelSplitAlreadyCompleted));
+        if (goodsReceiptLabel?.Status == GoodsReceiptLabelStatus.Void)
+            throw AppException.Conflict(Message(GoodsReceiptMessageKeys.LabelVoidUnavailable));
         var warehouseInboundLabel = goodsReceiptLabel is null
             ? await uow.Repository<WarehouseInboundLabel>().Query()
                 .FirstOrDefaultAsync(x => x.BranchCode == branch && x.BarcodeValue == raw
@@ -330,6 +336,8 @@ public sealed class WarehouseBarcodeResolutionService(
 
     private static string? EmptyToNull(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private string Message(string key) => goodsReceiptMessages?[key].Value ?? key;
 
     private static bool MatchesStockAlias(StockEntity stock, string value) =>
         new[]

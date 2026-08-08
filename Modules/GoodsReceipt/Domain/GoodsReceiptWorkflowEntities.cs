@@ -58,7 +58,8 @@ public enum GoodsReceiptLabelStatus
     Printed = 2,
     Assigned = 3,
     Consumed = 4,
-    Void = 5
+    Void = 5,
+    Split = 6
 }
 
 public sealed class GoodsReceiptTask : BaseEntity
@@ -180,6 +181,13 @@ public sealed class GoodsReceiptLabel : BaseEntity
     public DateOnly? ExpirationDate { get; set; }
     public string BarcodeValue { get; set; } = string.Empty;
     public GoodsReceiptLabelStatus Status { get; set; } = GoodsReceiptLabelStatus.Generated;
+    public long? ParentLabelId { get; set; }
+    public GoodsReceiptLabel? ParentLabel { get; set; }
+    public long? RootLabelId { get; set; }
+    public Guid? SplitCorrelationId { get; set; }
+    public DateTimeOffset? SplitAtUtc { get; set; }
+    public long? SplitBy { get; set; }
+    public string? SplitReason { get; set; }
     public int PrintCount { get; set; }
     public DateTimeOffset? LastPrintedAtUtc { get; set; }
     public DateTimeOffset? AssignedAtUtc { get; set; }
@@ -187,4 +195,5 @@ public sealed class GoodsReceiptLabel : BaseEntity
     public string? VoidReason { get; set; }
     public string? Description { get; set; }
     public byte[] RowVersion { get; set; } = [];
+    public ICollection<GoodsReceiptLabel> ChildLabels { get; set; } = [];
 }

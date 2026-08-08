@@ -149,6 +149,8 @@ public sealed class GoodsReceiptLabelConfiguration : BaseEntityConfiguration<Goo
         builder.Property(x => x.ExpirationDate).HasColumnType("date");
         builder.Property(x => x.BarcodeValue).HasMaxLength(200).IsRequired();
         builder.Property(x => x.Status).HasConversion<string>().HasMaxLength(30).IsRequired();
+        Utc(builder.Property(x => x.SplitAtUtc));
+        builder.Property(x => x.SplitReason).HasMaxLength(500);
         Utc(builder.Property(x => x.LastPrintedAtUtc));
         Utc(builder.Property(x => x.AssignedAtUtc));
         Utc(builder.Property(x => x.ConsumedAtUtc));
@@ -161,7 +163,12 @@ public sealed class GoodsReceiptLabelConfiguration : BaseEntityConfiguration<Goo
         builder.HasOne<GoodsReceiptTaskLine>().WithMany().HasForeignKey(x => x.GrTaskLineId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Modules.Stock.Domain.Stock>().WithMany().HasForeignKey(x => x.StockId).OnDelete(DeleteBehavior.Restrict);
         builder.HasOne<Modules.YapCode.Domain.YapCode>().WithMany().HasForeignKey(x => x.YapCodeId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne(x => x.ParentLabel).WithMany(x => x.ChildLabels).HasForeignKey(x => x.ParentLabelId).OnDelete(DeleteBehavior.Restrict);
+        builder.HasOne<GoodsReceiptLabel>().WithMany().HasForeignKey(x => x.RootLabelId).OnDelete(DeleteBehavior.Restrict);
         builder.HasIndex(x => x.BarcodeValue).IsUnique().HasDatabaseName("UX_RII_GR_LABEL_BARCODE");
+        builder.HasIndex(x => x.SplitCorrelationId).IsUnique().HasFilter("[SplitCorrelationId] IS NOT NULL").HasDatabaseName("UX_RII_GR_LABEL_SPLIT_CORRELATION");
+        builder.HasIndex(x => new { x.ParentLabelId, x.Status }).HasDatabaseName("IX_RII_GR_LABEL_PARENT_STATUS");
+        builder.HasIndex(x => x.RootLabelId).HasDatabaseName("IX_RII_GR_LABEL_ROOT");
         builder.HasIndex(x => new { x.BatchId, x.Status }).HasDatabaseName("IX_RII_GR_LABEL_BATCH_STATUS");
         builder.HasIndex(x => new { x.GrHeaderId, x.GrLineId }).HasDatabaseName("IX_RII_GR_LABEL_HEADER_LINE");
         builder.HasIndex(x => new { x.StockId, x.LotNo, x.SerialNo }).HasDatabaseName("IX_RII_GR_LABEL_TRACE");

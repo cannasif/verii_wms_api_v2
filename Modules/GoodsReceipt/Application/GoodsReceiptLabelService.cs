@@ -1,9 +1,13 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.BarcodeDesigner.Application;
 using verii_wms_api_v2.Modules.BarcodeDesigner.Domain;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
+using verii_wms_api_v2.Modules.GoodsReceipt.Localization;
+using verii_wms_api_v2.Modules.StockTracking.Application;
+using verii_wms_api_v2.Modules.StockTracking.Domain;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -13,7 +17,9 @@ namespace verii_wms_api_v2.Modules.GoodsReceipt.Application;
 public sealed class GoodsReceiptLabelService(
     IUnitOfWork uow,
     IBarcodePolicyService barcodePolicy,
-    IAuditLogWriter audit) : IGoodsReceiptLabelService
+    IAuditLogWriter audit,
+    IStockTrackingPolicyResolver trackingPolicies,
+    IStringLocalizer<GoodsReceiptResource> localizer) : IGoodsReceiptLabelService
 {
     private IGenericRepository<GoodsReceiptLabelBatch> Batches => uow.Repository<GoodsReceiptLabelBatch>();
     private IGenericRepository<GoodsReceiptLabel> Labels => uow.Repository<GoodsReceiptLabel>();
@@ -160,7 +166,7 @@ public sealed class GoodsReceiptLabelService(
         if (lineId.HasValue) query = query.Where(x => x.GrLineId == lineId.Value);
 
         var rows = await query.OrderBy(x => x.GrLineId).ThenBy(x => x.Id).ToListAsync(ct);
-        return rows.Select(Map).ToList();
+        return await MapRowsAsync(rows, ct);
     }
 
     public Task MarkPrintedAsync(MarkGoodsReceiptLabelsPrintedRequest request, long actor,
@@ -172,14 +178,16 @@ public sealed class GoodsReceiptLabelService(
         {
             var labels = await Labels.Query(true).Where(x => ids.Contains(x.Id)).ToListAsync(token);
             if (labels.Count != ids.Length) throw AppException.NotFound("Etiketlerden biri bulunamadı.");
-            if (labels.Any(x => x.Status is GoodsReceiptLabelStatus.Void or GoodsReceiptLabelStatus.Consumed))
+            if (labels.Any(x => x.Status is GoodsReceiptLabelStatus.Void or GoodsReceiptLabelStatus.Split
+                    || x.Status == GoodsReceiptLabelStatus.Consumed && !x.ParentLabelId.HasValue))
                 throw AppException.Conflict("İptal veya tüketilmiş etiket yazdırılamaz.");
             if (restrictToActorAssignment)
                 await EnsureLabelsBelongToActorAssignments(labels, actor, token);
             var now = DateTimeOffset.UtcNow;
             foreach (var label in labels)
             {
-                label.Status = GoodsReceiptLabelStatus.Printed;
+                if (label.Status != GoodsReceiptLabelStatus.Consumed)
+                    label.Status = GoodsReceiptLabelStatus.Printed;
                 label.PrintCount++;
                 label.LastPrintedAtUtc = now;
                 label.UpdatedBy = actor;
@@ -249,6 +257,8 @@ public sealed class GoodsReceiptLabelService(
             var label = await Labels.FindByIdAsync(labelId, true, token) ?? throw AppException.NotFound("Etiket bulunamadı.");
             ApplyVersion(label, request.RowVersion);
             if (label.Status == GoodsReceiptLabelStatus.Consumed) throw AppException.Conflict("Tüketilmiş etiket iptal edilemez.");
+            if (label.Status == GoodsReceiptLabelStatus.Split)
+                throw AppException.Conflict(Message(GoodsReceiptMessageKeys.LabelSplitAlreadyCompleted));
             label.Status = GoodsReceiptLabelStatus.Void;
             label.VoidReason = request.Reason.Trim();
             label.UpdatedBy = actor;
@@ -261,14 +271,129 @@ public sealed class GoodsReceiptLabelService(
         }, ct);
     }
 
+    public Task<SplitGoodsReceiptLabelResult> SplitAsync(long labelId,
+        SplitGoodsReceiptLabelRequest request, long actor, CancellationToken ct = default)
+    {
+        var reason = request.Reason?.Trim();
+        if (labelId <= 0 || request.IdempotencyKey == Guid.Empty || request.SplitQuantity <= 0
+            || string.IsNullOrWhiteSpace(reason) || reason.Length is < 3 or > 500)
+            throw AppException.BadRequest(Message(GoodsReceiptMessageKeys.LabelSplitInvalidRequest));
+
+        return uow.ExecuteInTransactionAsync(async token =>
+        {
+            var source = await Labels.Query(true).Include(x => x.ChildLabels)
+                .FirstOrDefaultAsync(x => x.Id == labelId, token)
+                ?? throw AppException.NotFound(Message(GoodsReceiptMessageKeys.LabelSplitNotFound));
+
+            if (source.SplitCorrelationId == request.IdempotencyKey)
+            {
+                var replaySourceRow = (await MapRowsAsync([source], token)).Single();
+                var replayRows = await MapRowsAsync(source.ChildLabels.OrderBy(x => x.Id).ToList(), token);
+                return new SplitGoodsReceiptLabelResult(replaySourceRow, replayRows, true);
+            }
+            if (source.Status == GoodsReceiptLabelStatus.Split)
+                throw AppException.Conflict(Message(GoodsReceiptMessageKeys.LabelSplitAlreadyCompleted));
+            if (source.Status == GoodsReceiptLabelStatus.Void || !source.StockId.HasValue)
+                throw AppException.Conflict(Message(GoodsReceiptMessageKeys.LabelSplitUnavailable));
+            if (request.SplitQuantity >= source.LabelQuantity
+                || !HasSupportedQuantityScale(request.SplitQuantity))
+                throw AppException.BadRequest(Message(GoodsReceiptMessageKeys.LabelSplitInvalidRequest));
+
+            ApplyVersion(source, request.RowVersion);
+            var policy = await trackingPolicies.ResolveAsync(source.BranchCode, source.StockId.Value, token);
+            if (policy.SerialQuantityRule == SerialQuantityRule.OneSerialPerBaseUnit)
+                throw AppException.Conflict(Message(
+                    GoodsReceiptMessageKeys.LabelSplitSerialPerUnitBlocked, source.StockCodeSnapshot));
+
+            var quantities = new[] { request.SplitQuantity, source.LabelQuantity - request.SplitQuantity };
+            if (quantities.Any(x => x <= 0 || !HasSupportedQuantityScale(x))
+                || quantities.Sum() != source.LabelQuantity)
+                throw AppException.BadRequest(Message(GoodsReceiptMessageKeys.LabelSplitQuantityMismatch));
+
+            var documentNo = await uow.Repository<GoodsReceiptHeader>().Query()
+                .Where(x => x.Id == source.GrHeaderId)
+                .Select(x => x.DocumentNo)
+                .SingleAsync(token);
+
+            var now = DateTimeOffset.UtcNow;
+            var sourceStatus = source.Status;
+            source.Status = GoodsReceiptLabelStatus.Split;
+            source.SplitCorrelationId = request.IdempotencyKey;
+            source.SplitAtUtc = now;
+            source.SplitBy = actor;
+            source.SplitReason = reason;
+            source.UpdatedBy = actor;
+            source.UpdatedDate = DateTime.UtcNow;
+
+            var childStatus = sourceStatus == GoodsReceiptLabelStatus.Consumed
+                ? GoodsReceiptLabelStatus.Consumed
+                : GoodsReceiptLabelStatus.Generated;
+            var children = new List<GoodsReceiptLabel>(2);
+            for (var index = 0; index < quantities.Length; index++)
+            {
+                var barcode = await barcodePolicy.GenerateAsync(BarcodeScope(source), new BarcodeGenerateRequest(
+                    $"GR-LABEL-SPLIT:{request.IdempotencyKey:N}:{index + 1}",
+                    source.StockCodeSnapshot, source.SerialNo, source.YapCodeSnapshot, source.LotNo,
+                    null, null, documentNo), token);
+                var child = Stamp(new GoodsReceiptLabel
+                {
+                    BranchCode = source.BranchCode,
+                    BatchId = source.BatchId,
+                    GrHeaderId = source.GrHeaderId,
+                    GrLineId = source.GrLineId,
+                    GrTaskLineId = source.GrTaskLineId,
+                    StockId = source.StockId,
+                    StockCodeSnapshot = source.StockCodeSnapshot,
+                    StockNameSnapshot = source.StockNameSnapshot,
+                    YapCodeId = source.YapCodeId,
+                    YapCodeSnapshot = source.YapCodeSnapshot,
+                    LabelQuantity = quantities[index],
+                    UnitCode = source.UnitCode,
+                    LotNo = source.LotNo,
+                    SerialNo = source.SerialNo,
+                    ManufacturingDate = source.ManufacturingDate,
+                    ExpirationDate = source.ExpirationDate,
+                    BarcodeValue = barcode.Value,
+                    Status = childStatus,
+                    ConsumedAtUtc = childStatus == GoodsReceiptLabelStatus.Consumed
+                        ? source.ConsumedAtUtc
+                        : null,
+                    ParentLabelId = source.Id,
+                    RootLabelId = source.RootLabelId ?? source.Id,
+                    Description = reason
+                }, actor);
+                children.Add(child);
+            }
+
+            await Labels.AddRangeAsync(children, token);
+            await uow.SaveChangesAsync(token);
+            await RefreshBatches([source.BatchId], actor, token);
+            await audit.WriteAsync(new("goods-receipt.label.split", nameof(GoodsReceiptLabel), source.Id.ToString(),
+                "Succeeded", "goods-receipt", Reason: reason,
+                OldValues: new { source.BarcodeValue, SourceQuantity = source.LabelQuantity },
+                NewValues: new
+                {
+                    source.SplitCorrelationId,
+                    ChildLabels = children.Select(x => new { x.Id, x.BarcodeValue, x.LabelQuantity })
+                },
+                ChangedFields: ["Status", "SplitCorrelationId", "SplitAtUtc", "ChildLabels"]), token);
+
+            var sourceRow = (await MapRowsAsync([source], token)).Single();
+            var childRows = await MapRowsAsync(children, token);
+            return new SplitGoodsReceiptLabelResult(sourceRow, childRows, false);
+        }, ct, IsolationLevel.Serializable);
+    }
+
     private async Task RefreshBatches(IEnumerable<long> batchIds, long actor, CancellationToken ct)
     {
         foreach (var id in batchIds.Distinct())
         {
             var batch = await Batches.Query(true).Include(x => x.Labels).FirstAsync(x => x.Id == id, ct);
-            batch.PrintedLabelCount = batch.Labels.Count(x => x.PrintCount > 0);
-            batch.ConsumedLabelCount = batch.Labels.Count(x => x.Status == GoodsReceiptLabelStatus.Consumed);
-            batch.VoidLabelCount = batch.Labels.Count(x => x.Status == GoodsReceiptLabelStatus.Void);
+            var activeLabels = batch.Labels.Where(x => x.Status != GoodsReceiptLabelStatus.Split).ToList();
+            batch.TotalLabelCount = activeLabels.Count;
+            batch.PrintedLabelCount = activeLabels.Count(x => x.PrintCount > 0);
+            batch.ConsumedLabelCount = activeLabels.Count(x => x.Status == GoodsReceiptLabelStatus.Consumed);
+            batch.VoidLabelCount = activeLabels.Count(x => x.Status == GoodsReceiptLabelStatus.Void);
             batch.LastPrintedAtUtc = batch.Labels.Max(x => x.LastPrintedAtUtc);
             batch.Status = batch.ConsumedLabelCount + batch.VoidLabelCount == batch.TotalLabelCount
                 ? batch.ConsumedLabelCount == 0 ? GoodsReceiptLabelBatchStatus.Cancelled : GoodsReceiptLabelBatchStatus.Consumed
@@ -298,13 +423,46 @@ public sealed class GoodsReceiptLabelService(
         var row = new GoodsReceiptLabelBatchRow(batch.Id, header.Id, header.DocumentNo, task?.Id, task?.TaskNo,
             batch.BatchNo, batch.Status, batch.TotalLabelCount, batch.PrintedLabelCount, batch.ConsumedLabelCount,
             batch.VoidLabelCount, batch.LastPrintedAtUtc, batch.CreatedBy, batch.CreatedDate, batch.RowVersion);
-        return new(row, batch.Labels.OrderBy(x => x.Id).Select(Map).ToList());
+        return new(row, await MapRowsAsync(batch.Labels.OrderBy(x => x.Id).ToList(), ct));
     }
 
-    private static GoodsReceiptLabelRow Map(GoodsReceiptLabel x) => new(x.Id, x.BatchId, x.GrHeaderId, x.GrLineId,
-        x.GrTaskLineId, x.StockId, x.StockCodeSnapshot, x.StockNameSnapshot, x.YapCodeSnapshot, x.LabelQuantity,
-        x.UnitCode, x.LotNo, x.SerialNo, x.ManufacturingDate, x.ExpirationDate, x.BarcodeValue, x.Status,
-        x.PrintCount, x.LastPrintedAtUtc, x.ConsumedAtUtc, x.VoidReason, x.RowVersion);
+    private async Task<IReadOnlyList<GoodsReceiptLabelRow>> MapRowsAsync(
+        IReadOnlyCollection<GoodsReceiptLabel> labels, CancellationToken ct)
+    {
+        var policies = new Dictionary<(string BranchCode, long StockId), EffectiveStockTrackingPolicy>();
+        foreach (var group in labels.Where(x => x.StockId.HasValue)
+                     .GroupBy(x => (x.BranchCode, StockId: x.StockId!.Value)))
+            policies[group.Key] = await trackingPolicies.ResolveAsync(
+                group.Key.BranchCode, group.Key.StockId, ct);
+        return labels.Select(x => Map(x, x.StockId.HasValue
+            ? policies.GetValueOrDefault((x.BranchCode, x.StockId.Value)) : null)).ToList();
+    }
+
+    private string? SplitBlockReason(GoodsReceiptLabel label, EffectiveStockTrackingPolicy? policy)
+    {
+        if (label.Status == GoodsReceiptLabelStatus.Split)
+            return Message(GoodsReceiptMessageKeys.LabelSplitAlreadyCompleted);
+        if (label.Status == GoodsReceiptLabelStatus.Void || !label.StockId.HasValue)
+            return Message(GoodsReceiptMessageKeys.LabelSplitUnavailable);
+        if (label.LabelQuantity < 0.000002m)
+            return Message(GoodsReceiptMessageKeys.LabelSplitInvalidRequest);
+        return policy?.SerialQuantityRule == SerialQuantityRule.OneSerialPerBaseUnit
+            ? Message(GoodsReceiptMessageKeys.LabelSplitSerialPerUnitBlocked, label.StockCodeSnapshot)
+            : null;
+    }
+
+    private static bool HasSupportedQuantityScale(decimal quantity)
+        => decimal.Round(quantity, 6, MidpointRounding.AwayFromZero) == quantity;
+
+    private GoodsReceiptLabelRow Map(GoodsReceiptLabel x, EffectiveStockTrackingPolicy? policy)
+    {
+        var splitBlockReason = SplitBlockReason(x, policy);
+        return new(x.Id, x.BatchId, x.GrHeaderId, x.GrLineId,
+            x.GrTaskLineId, x.StockId, x.StockCodeSnapshot, x.StockNameSnapshot, x.YapCodeSnapshot, x.LabelQuantity,
+            x.UnitCode, x.LotNo, x.SerialNo, x.ManufacturingDate, x.ExpirationDate, x.BarcodeValue, x.Status,
+            x.PrintCount, x.LastPrintedAtUtc, x.ConsumedAtUtc, x.VoidReason, x.ParentLabelId, x.RootLabelId,
+            x.SplitAtUtc, x.SplitBy, x.SplitReason, splitBlockReason is null, splitBlockReason, x.RowVersion);
+    }
 
     private static IReadOnlyList<LabelSeed> BuildSeeds(GoodsReceiptTaskLine line, GenerateGoodsReceiptLabelLineRequest input, decimal remaining)
     {
@@ -340,4 +498,11 @@ public sealed class GoodsReceiptLabelService(
     { var text = string.IsNullOrWhiteSpace(value) ? null : value.Trim(); return text?.Length > max ? text[..max] : text; }
     private sealed record LabelSeed(decimal Quantity, string? LotNo, string? SerialNo,
         DateOnly? ManufacturingDate, DateOnly? ExpirationDate, string? Description);
+
+    private static BarcodePolicyScope BarcodeScope(GoodsReceiptLabel label) =>
+        !string.IsNullOrWhiteSpace(label.SerialNo) ? BarcodePolicyScope.ProductSerial
+        : !string.IsNullOrWhiteSpace(label.LotNo) ? BarcodePolicyScope.ProductLot
+        : BarcodePolicyScope.Logistics;
+
+    private string Message(string key, params object[] arguments) => localizer[key, arguments].Value;
 }

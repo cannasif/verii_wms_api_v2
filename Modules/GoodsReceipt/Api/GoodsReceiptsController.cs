@@ -238,6 +238,16 @@ public sealed class GoodsReceiptsController(
         return Ok(ApiResponse<bool>.Ok(true, "Etiket iptal edildi."));
     }
 
+    [HttpPost("labels/{id:long}/split")]
+    public async Task<IActionResult> SplitLabel(long id, SplitGoodsReceiptLabelRequest request,
+        CancellationToken cancellationToken)
+    {
+        await Require("WMS.GOODS_RECEIPT.UPDATE", cancellationToken);
+        var result = await labels.SplitAsync(id, request, CurrentUserId(), cancellationToken);
+        return Ok(ApiResponse<SplitGoodsReceiptLabelResult>.Ok(result,
+            localizer[GoodsReceiptMessageKeys.LabelSplitCompleted].Value));
+    }
+
     [HttpPost("tasks/{id:long}/receive")]
     public async Task<IActionResult> ReceiveTaskScan(long id, ReceiveGoodsReceiptTaskRequest request, CancellationToken cancellationToken)
     {

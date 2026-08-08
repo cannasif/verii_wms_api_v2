@@ -320,7 +320,8 @@ public sealed class GoodsReceiptLifecycleService(
 
             var labels = await uow.Repository<GoodsReceiptLabel>().Query(true)
                 .Where(x => x.GrHeaderId == id && x.Status != GoodsReceiptLabelStatus.Consumed
-                    && x.Status != GoodsReceiptLabelStatus.Void).ToListAsync(ct);
+                    && x.Status != GoodsReceiptLabelStatus.Void
+                    && x.Status != GoodsReceiptLabelStatus.Split).ToListAsync(ct);
             foreach (var label in labels)
             {
                 label.Status = GoodsReceiptLabelStatus.Void;
