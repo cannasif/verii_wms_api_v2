@@ -11,6 +11,7 @@ public static class WmsLocalizationExtensions
     public static IServiceCollection AddWmsLocalization(this IServiceCollection services)
     {
         services.AddLocalization();
+        services.AddSingleton<WmsApiMessageResolver>();
         services.Configure<RequestLocalizationOptions>(options =>
         {
             options.DefaultRequestCulture = new RequestCulture("tr");

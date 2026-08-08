@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="Unauthorized" xml:space="preserve"><value>Oturum geçersiz veya süresi dolmuş. Lütfen yeniden giriş yapın.</value></data>
+  <data name="Forbidden" xml:space="preserve"><value>Bu işlem için yetkiniz bulunmuyor.</value></data>
+  <data name="NotFound" xml:space="preserve"><value>İstenen kayıt bulunamadı.</value></data>
+  <data name="BadRequest" xml:space="preserve"><value>İstek bilgileri geçersiz.</value></data>
+  <data name="Conflict" xml:space="preserve"><value>İşlem mevcut kayıt durumu nedeniyle tamamlanamadı.</value></data>
+  <data name="BadGateway" xml:space="preserve"><value>ERP bağlantısından geçerli bir yanıt alınamadı.</value></data>
+  <data name="ServiceUnavailable" xml:space="preserve"><value>İlgili servis şu anda kullanılamıyor. Lütfen daha sonra tekrar deneyin.</value></data>
+  <data name="InternalServerError" xml:space="preserve"><value>Beklenmeyen bir sunucu hatası oluştu.</value></data>
+  <data name="OperationFailed" xml:space="preserve"><value>İşlem tamamlanamadı.</value></data>
+  <data name="Required" xml:space="preserve"><value>Devam etmek için zorunlu bilgileri tamamlayın.</value></data>
+  <data name="Invalid" xml:space="preserve"><value>Girilen bilgiler geçersiz veya birbiriyle uyuşmuyor.</value></data>
+  <data name="ResourceNotFound" xml:space="preserve"><value>Seçilen kayıt bulunamadı veya artık kullanılamıyor.</value></data>
+  <data name="Duplicate" xml:space="preserve"><value>Bu kayıt veya işlem daha önce oluşturulmuş.</value></data>
+  <data name="Concurrency" xml:space="preserve"><value>Kayıt başka bir kullanıcı tarafından değiştirildi. Listeyi yenileyip tekrar deneyin.</value></data>
+  <data name="Quantity" xml:space="preserve"><value>İstenen miktar mevcut kullanılabilir miktarla uyuşmuyor.</value></data>
+  <data name="InvalidState" xml:space="preserve"><value>Bu işlem kaydın mevcut durumunda yapılamaz.</value></data>
+  <data name="File" xml:space="preserve"><value>Dosya doğrulanamadı veya işlenemedi.</value></data>
+  <data name="Erp" xml:space="preserve"><value>ERP işlemi tamamlanamadı. ERP bağlantısını ve aktarım durumunu kontrol edin.</value></data>
+  <data name="Created" xml:space="preserve"><value>Kayıt oluşturuldu.</value></data>
+  <data name="Updated" xml:space="preserve"><value>Kayıt güncellendi.</value></data>
+  <data name="Deleted" xml:space="preserve"><value>Kayıt silindi.</value></data>
+  <data name="Cancelled" xml:space="preserve"><value>İşlem iptal edildi.</value></data>
+  <data name="Approved" xml:space="preserve"><value>İşlem onaylandı.</value></data>
+  <data name="Completed" xml:space="preserve"><value>İşlem tamamlandı.</value></data>
+  <data name="OperationCompleted" xml:space="preserve"><value>İşlem başarıyla tamamlandı.</value></data>
+</root>

@@ -132,3 +132,14 @@ Auth, layout, sidebar, header ve Zustand store’ları ortak kabukta; WMS iş ek
 4. Login/forgot-password ve web auth state’ini tamamlamak.
 5. Layout/sidebar/header kabuğunu netleştirmek.
 6. İlk WMS feature’ını bu kurallarla eklemek.
+
+## API mesaj sözleşmesi
+
+API’nin kullanıcıya gösterdiği üst seviye JSON yanıtları ortak mesaj katmanından geçer.
+
+- İstemci dili `X-Language` başlığıyla `tr`, `en`, `de`, `fr`, `ar`, `es` veya `it` olarak gönderilir.
+- Yanıt zarfında `message` alanına ek olarak kararlı bir `messageCode` bulunur.
+- `messageCode`, arayüzün metni tekrar yorumlamadan doğru bildirimi göstermesini sağlar.
+- İstisna ayrıntıları loglanır; production yanıtında ham exception veya stack trace gösterilmez.
+- Türkçe varsayılan dilde operasyonel ayrıntı korunur. Diğer desteklenen diller ortak katalogdaki güvenli, lokalize karşılığı kullanır.
+- Yeni controller veya servis kullanıcıya mesaj üretirken doğrudan metin yerine ilgili module resource anahtarını kullanmalıdır. Eski çağrılar için response middleware geriye dönük uyumluluk sağlar.

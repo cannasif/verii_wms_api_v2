@@ -256,6 +256,7 @@ builder.Services.AddSwaggerGen(options =>
 
 var app = builder.Build();
 app.UseWmsLocalization();
+app.UseMiddleware<ApiResponseLocalizationMiddleware>();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 if (app.Environment.IsDevelopment())
 {
