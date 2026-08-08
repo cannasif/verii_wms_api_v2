@@ -57,6 +57,8 @@ using verii_wms_api_v2.Modules.WarehouseInbound.Domain;
 using verii_wms_api_v2.Modules.WarehouseInbound.Infrastructure;
 using verii_wms_api_v2.Modules.WarehouseOutbound.Domain;
 using verii_wms_api_v2.Modules.WarehouseOutbound.Infrastructure;
+using verii_wms_api_v2.Modules.WarehouseAssistant.Domain;
+using verii_wms_api_v2.Modules.WarehouseAssistant.Infrastructure;
 using verii_wms_api_v2.Modules.SystemManagement.Domain;
 using verii_wms_api_v2.Modules.SystemManagement.Infrastructure;
 using verii_wms_api_v2.Modules.Warehouse.Infrastructure;
@@ -163,6 +165,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<SmtpSetting> SmtpSettings => Set<SmtpSetting>();
     public DbSet<HangfireExecutionLog> HangfireExecutionLogs => Set<HangfireExecutionLog>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<WarehouseAssistantConversation> WarehouseAssistantConversations => Set<WarehouseAssistantConversation>();
+    public DbSet<WarehouseAssistantMessage> WarehouseAssistantMessages => Set<WarehouseAssistantMessage>();
     public DbSet<ProjectSetting> ProjectSettings => Set<ProjectSetting>();
     public DbSet<ErpPostingRecord> ErpPostingRecords => Set<ErpPostingRecord>();
     public DbSet<ErpIntegrationAttempt> ErpIntegrationAttempts => Set<ErpIntegrationAttempt>();
@@ -361,6 +365,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new SmtpSettingConfiguration());
         modelBuilder.ApplyConfiguration(new HangfireExecutionLogConfiguration());
         modelBuilder.ApplyConfiguration(new AuditLogConfiguration());
+        modelBuilder.ApplyConfiguration(new WarehouseAssistantConversationConfiguration());
+        modelBuilder.ApplyConfiguration(new WarehouseAssistantMessageConfiguration());
         modelBuilder.ApplyConfiguration(new ProjectSettingConfiguration());
         modelBuilder.ApplyConfiguration(new ErpPostingRecordConfiguration());
         modelBuilder.ApplyConfiguration(new ErpIntegrationAttemptConfiguration());
@@ -624,6 +630,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             new PermissionDefinition { Id=2603, BranchCode="0", Code="WMS.PROCUREMENT.QUOTE.MANAGE", Name="Tedarikçi tekliflerini yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2604, BranchCode="0", Code="WMS.PROCUREMENT.ORDER.MANAGE", Name="Satınalma siparişlerini yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2605, BranchCode="0", Code="WMS.PROCUREMENT.APPROVE", Name="Satınalma belgelerini onayla", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
+        modelBuilder.Entity<PermissionDefinition>().HasData(
+            new PermissionDefinition { Id=2700, BranchCode="0", Code="WMS.WAREHOUSE_ASSISTANT.QUERY_ALL_USERS", Name="Depo asistanında tüm kullanıcıların işlemlerini sorgula", Description="Depo asistanında başka kullanıcıların ve tüm kullanıcıların denetim kayıtlarını sorgulamaya izin verir.", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionGroup>().HasData(new PermissionGroup { Id=1001, BranchCode="0", Name="System Administrators", Description="Tam sistem yönetimi", IsSystemAdmin=true, IsProtected=true, TemplateKey="SYSTEM_ADMINISTRATORS", IsActive=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(1,8).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(9,7).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
@@ -648,6 +656,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2420,5).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2500,12).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2600,6).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
+        modelBuilder.Entity<PermissionGroupPermission>().HasData(new PermissionGroupPermission { Id=2700, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=2700, CreatedDate=seedDate });
         modelBuilder.Entity<UserPermissionGroup>().HasData(new UserPermissionGroup { Id=1001, BranchCode="0", UserId=1, PermissionGroupId=1001, CreatedDate=seedDate });
     }
 
