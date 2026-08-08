@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Options;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.ErpIntegration.Infrastructure;
+using verii_wms_api_v2.Modules.ProductionTransfer.Application;
 
 namespace verii_wms_api_v2.Modules.ErpIntegration;
 
@@ -20,6 +21,7 @@ public static class ErpIntegrationModule
             .ConfigurePrimaryHttpMessageHandler(BuildHandler);
         services.AddScoped<IErpPostingService, ErpPostingService>();
         services.AddScoped<IGoodsReceiptErpPostingCoordinator, GoodsReceiptErpPostingCoordinator>();
+        services.AddScoped<IProductionTransferErpPostingCoordinator, ProductionTransferErpPostingCoordinator>();
         services.AddScoped<IErpCancellationService, ErpCancellationService>();
         services.AddScoped<IOperationCancellationCoordinator, OperationCancellationCoordinator>();
         return services;

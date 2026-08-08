@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="ErpPostingProcessed" xml:space="preserve"><value>Die Netsis-Buchung des Produktionstransfers wurde verarbeitet.</value></data>
+  <data name="InvalidErpIdempotencyKey" xml:space="preserve"><value>Für die ERP-Buchung ist ein gültiger Vorgangsschlüssel erforderlich.</value></data>
+  <data name="ErpPostingDisabled" xml:space="preserve"><value>Die Netsis-Buchung ist für diesen Produktionstransfer per Richtlinie deaktiviert.</value></data>
+  <data name="TransferMustBeCompleted" xml:space="preserve"><value>Der Produktionstransfer muss vor der Netsis-Buchung physisch übergeben sein.</value></data>
+  <data name="ErpCommitUncertain" xml:space="preserve"><value>Das Ergebnis der vorherigen Netsis-Buchung ist unklar. Prüfen Sie den Beleg vor einem erneuten Versuch.</value></data>
+  <data name="ErpPostingInProgress" xml:space="preserve"><value>Die Netsis-Buchung dieses Produktionstransfers läuft noch.</value></data>
+  <data name="TransferRequired" xml:space="preserve"><value>Ein Produktionstransfer muss ausgewählt werden.</value></data>
+  <data name="TransferNotFound" xml:space="preserve"><value>Produktionstransfer wurde nicht gefunden.</value></data>
+  <data name="TransferLinkNotFound" xml:space="preserve"><value>Verknüpfung des Produktionstransfers wurde nicht gefunden.</value></data>
+  <data name="ErpUnexpectedFailure" xml:space="preserve"><value>Die Netsis-Buchung konnte wegen eines technischen Fehlers nicht gestartet werden. Versuchen Sie es im Datensatz erneut.</value></data>
+</root>

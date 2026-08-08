@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="ErpPostingProcessed" xml:space="preserve"><value>تمت معالجة إرسال تحويل الإنتاج إلى Netsis.</value></data>
+  <data name="InvalidErpIdempotencyKey" xml:space="preserve"><value>يلزم مفتاح عملية صالح للإرسال إلى ERP.</value></data>
+  <data name="ErpPostingDisabled" xml:space="preserve"><value>تم تعطيل الإرسال إلى Netsis لهذا التحويل وفق السياسة.</value></data>
+  <data name="TransferMustBeCompleted" xml:space="preserve"><value>يجب إتمام التسليم الفعلي لتحويل الإنتاج قبل الإرسال إلى Netsis.</value></data>
+  <data name="ErpCommitUncertain" xml:space="preserve"><value>نتيجة الإرسال السابق إلى Netsis غير مؤكدة. تحقق من المستند قبل إعادة المحاولة.</value></data>
+  <data name="ErpPostingInProgress" xml:space="preserve"><value>لا يزال إرسال تحويل الإنتاج إلى Netsis قيد التنفيذ.</value></data>
+  <data name="TransferRequired" xml:space="preserve"><value>يجب اختيار تحويل إنتاج.</value></data>
+  <data name="TransferNotFound" xml:space="preserve"><value>لم يتم العثور على تحويل الإنتاج.</value></data>
+  <data name="TransferLinkNotFound" xml:space="preserve"><value>لم يتم العثور على رابط تحويل الإنتاج.</value></data>
+  <data name="ErpUnexpectedFailure" xml:space="preserve"><value>تعذر بدء الإرسال إلى Netsis بسبب خطأ تقني. أعد المحاولة من السجل.</value></data>
+</root>

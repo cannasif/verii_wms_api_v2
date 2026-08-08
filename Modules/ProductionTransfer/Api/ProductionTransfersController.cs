@@ -1,9 +1,11 @@
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Localization;
 using verii_wms_api_v2.Modules.AccessControl.Application;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.ProductionTransfer.Application;
+using verii_wms_api_v2.Modules.ProductionTransfer.Localization;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared;
@@ -18,8 +20,10 @@ public sealed class ProductionTransfersController(
     IWarehouseTransferOperationService operations,
     IProductionTransferTaskService tasks,
     IProductionTransferExecutionService execution,
+    IProductionTransferErpPostingCoordinator productionTransferErp,
     IOperationCancellationCoordinator cancellationCoordinator,
-    IPermissionAuthorizationService permissions) : ControllerBase
+    IPermissionAuthorizationService permissions,
+    IStringLocalizer<ProductionTransferResource> localizer) : ControllerBase
 {
     private static readonly WarehouseTransferBusinessContext[] Contexts=[
         WarehouseTransferBusinessContext.ProductionMaterialSupply,
@@ -102,7 +106,15 @@ public sealed class ProductionTransfersController(
     public async Task<IActionResult>ConfirmHandover(long id,ConfirmProductionHandoverRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
         var canOverrideRequester=await permissions.HasPermissionAsync(User,"WMS.PRODUCTION_TRANSFER.APPROVE",ct);
-        return Ok(ApiResponse<ProductionTransferExecutionDto>.Ok(await execution.ConfirmHandoverAsync(id,request,UserId(),canOverrideRequester,ct),"Üretim transferi teslim onayı tamamlandı."));}
+        var actor=UserId();
+        await execution.ConfirmHandoverAsync(id,request,actor,canOverrideRequester,ct);
+        await productionTransferErp.PostIfEligibleAsync(id,actor,ct);
+        return Ok(ApiResponse<ProductionTransferExecutionDto>.Ok(await execution.GetAsync(id,ct),"Üretim transferi teslim onayı tamamlandı."));}
+    [HttpPost("{id:long}/erp/post")]
+    public async Task<IActionResult>PostErp(long id,ErpPostRequest request,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.APPROVE",ct);await Ensure(id,ct);
+        await productionTransferErp.PostNowAsync(id,request.IdempotencyKey,UserId(),ct);
+        return Ok(ApiResponse<ProductionTransferExecutionDto>.Ok(await execution.GetAsync(id,ct),localizer["ErpPostingProcessed"]));}
     [HttpGet("task-pool")]
     public async Task<IActionResult>TaskPool(CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);

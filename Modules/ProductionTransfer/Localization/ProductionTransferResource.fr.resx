@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="ErpPostingProcessed" xml:space="preserve"><value>L’envoi Netsis du transfert de production a été traité.</value></data>
+  <data name="InvalidErpIdempotencyKey" xml:space="preserve"><value>Une clé d’opération valide est obligatoire pour l’envoi ERP.</value></data>
+  <data name="ErpPostingDisabled" xml:space="preserve"><value>L’envoi Netsis est désactivé par la politique pour ce transfert de production.</value></data>
+  <data name="TransferMustBeCompleted" xml:space="preserve"><value>Le transfert de production doit être remis physiquement avant l’envoi Netsis.</value></data>
+  <data name="ErpCommitUncertain" xml:space="preserve"><value>Le résultat du précédent envoi Netsis est incertain. Vérifiez le document avant de réessayer.</value></data>
+  <data name="ErpPostingInProgress" xml:space="preserve"><value>L’envoi Netsis de ce transfert de production est toujours en cours.</value></data>
+  <data name="TransferRequired" xml:space="preserve"><value>Un transfert de production doit être sélectionné.</value></data>
+  <data name="TransferNotFound" xml:space="preserve"><value>Transfert de production introuvable.</value></data>
+  <data name="TransferLinkNotFound" xml:space="preserve"><value>Lien du transfert de production introuvable.</value></data>
+  <data name="ErpUnexpectedFailure" xml:space="preserve"><value>L’envoi Netsis n’a pas pu démarrer en raison d’une erreur technique. Réessayez depuis l’enregistrement.</value></data>
+</root>

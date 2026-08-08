@@ -2,6 +2,7 @@ using System.Data;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.BarcodeDesigner.Application;
+using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Application;
@@ -824,6 +825,7 @@ public sealed class ProductionTransferExecutionService(
             MaterialAvailabilityStatus = originalLink.MaterialAvailabilityStatus,
             RequirementCalculatedAtUtc = DateTimeOffset.UtcNow,
             WorkflowStatus = ProductionTransferWorkflowStatus.Planned,
+            ErpPostingPolicy = originalLink.ErpPostingPolicy,
             RequestedByUserId = originalLink.RequestedByUserId,
             RequestedByNameSnapshot = originalLink.RequestedByNameSnapshot,
             ParentWarehouseTransferHeaderId = original.Id
@@ -937,6 +939,16 @@ public sealed class ProductionTransferExecutionService(
             residualDocumentNo = await uow.Repository<WarehouseTransferHeader>().Query()
                 .Where(x => x.Id == link.ResidualWarehouseTransferHeaderId.Value)
                 .Select(x => x.DocumentNo).SingleOrDefaultAsync(ct);
+        var erpPosting = await uow.Repository<ErpPostingRecord>().Query()
+            .Where(x => x.SourceType == ErpPostingSourceType.WarehouseTransfer && x.SourceEntityId == header.Id)
+            .Select(x => new
+            {
+                x.Status,
+                x.ErpDocumentNo,
+                x.LastErrorCode,
+                x.LastErrorMessage
+            })
+            .SingleOrDefaultAsync(ct);
 
         var lineLinks = link.Lines.ToDictionary(x => x.WarehouseTransferLineId);
         var excludedSourceLocationIds = await ProductionTransferSourceLocationExclusions.FromHeaderAsync(
@@ -963,6 +975,8 @@ public sealed class ProductionTransferExecutionService(
         var handedOver = lines.Sum(x => x.HandedOverQuantity);
         return new(
             header.Id, header.DocumentNo, link.WorkflowStatus, header.Status.ToString(),
+            link.ErpPostingPolicy, header.ErpIntegrationStatus, erpPosting?.Status,
+            erpPosting?.ErpDocumentNo, erpPosting?.LastErrorCode, erpPosting?.LastErrorMessage,
             source.Id, source.WarehouseCode, source.WarehouseName,
             target.Id, target.WarehouseCode, target.WarehouseName,
             waiting?.Id, waiting?.Code, waiting?.Name,

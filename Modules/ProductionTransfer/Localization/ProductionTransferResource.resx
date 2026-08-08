@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="ErpPostingProcessed" xml:space="preserve"><value>Üretim transferi Netsis aktarımı işlendi.</value></data>
+  <data name="InvalidErpIdempotencyKey" xml:space="preserve"><value>ERP aktarımı için geçerli bir işlem anahtarı zorunludur.</value></data>
+  <data name="ErpPostingDisabled" xml:space="preserve"><value>Bu üretim transferinde Netsis aktarımı politika tarafından kapatılmıştır.</value></data>
+  <data name="TransferMustBeCompleted" xml:space="preserve"><value>Netsis aktarımı için üretim transferi fiziksel teslimle tamamlanmış olmalıdır.</value></data>
+  <data name="ErpCommitUncertain" xml:space="preserve"><value>Önceki Netsis aktarımının sonucu belirsizdir. Yeniden göndermeden önce Netsis belgesini doğrulayın.</value></data>
+  <data name="ErpPostingInProgress" xml:space="preserve"><value>Bu üretim transferinin Netsis aktarımı halen devam ediyor.</value></data>
+  <data name="TransferRequired" xml:space="preserve"><value>Üretim transferi seçilmelidir.</value></data>
+  <data name="TransferNotFound" xml:space="preserve"><value>Üretim transferi bulunamadı.</value></data>
+  <data name="TransferLinkNotFound" xml:space="preserve"><value>Üretim transfer bağlantısı bulunamadı.</value></data>
+  <data name="ErpUnexpectedFailure" xml:space="preserve"><value>Netsis aktarımı teknik bir hata nedeniyle başlatılamadı. Kayıt üzerinden tekrar deneyin.</value></data>
+</root>

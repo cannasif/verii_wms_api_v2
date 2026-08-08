@@ -80,11 +80,7 @@ public sealed class ErpPostingService(
             .Include(x => x.SourceDocuments)
             .SingleOrDefaultAsync(x => x.Id == id, cancellationToken)
             ?? throw AppException.NotFound("Depolar arası transfer kaydı bulunamadı.");
-        if (header.Status is not (WarehouseTransferStatus.Shipped
-            or WarehouseTransferStatus.PartiallyReceived
-            or WarehouseTransferStatus.Received
-            or WarehouseTransferStatus.PartiallyPutaway
-            or WarehouseTransferStatus.Completed))
+        if (!IsWarehouseTransferReadyForErp(header.Status))
             throw AppException.Conflict("ERP transfer kaydı için transferin sevk edilmiş olması gerekir.");
         if (header.ApprovalStatus is OperationApprovalStatus.Pending or OperationApprovalStatus.Rejected)
             throw AppException.Conflict("Transfer onay süreci tamamlanmadan ERP kaydı oluşturulamaz.");
@@ -107,6 +103,14 @@ public sealed class ErpPostingService(
             userId,
             cancellationToken);
     }
+
+    internal static bool IsWarehouseTransferReadyForErp(WarehouseTransferStatus status) =>
+        status is WarehouseTransferStatus.Shipped
+            or WarehouseTransferStatus.PartiallyReceived
+            or WarehouseTransferStatus.Received
+            or WarehouseTransferStatus.PartiallyPutaway
+            or WarehouseTransferStatus.Completed
+            or WarehouseTransferStatus.CompletedWithShortage;
 
     public async Task<ErpPostingResult> PostShipmentAsync(
         long id,

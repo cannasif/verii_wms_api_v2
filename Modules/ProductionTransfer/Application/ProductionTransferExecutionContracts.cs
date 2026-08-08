@@ -1,4 +1,6 @@
+using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
+using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 
 namespace verii_wms_api_v2.Modules.ProductionTransfer.Application;
 
@@ -108,6 +110,12 @@ public sealed record ProductionTransferExecutionDto(
     string DocumentNo,
     ProductionTransferWorkflowStatus WorkflowStatus,
     string TransferStatus,
+    ProductionTransferErpPostingPolicy ErpPostingPolicy,
+    ErpIntegrationStatus ErpIntegrationStatus,
+    ErpPostingStatus? ErpPostingStatus,
+    string? ErpDocumentNo,
+    string? ErpErrorCode,
+    string? ErpErrorMessage,
     long SourceWarehouseId,
     int SourceWarehouseCode,
     string SourceWarehouseName,

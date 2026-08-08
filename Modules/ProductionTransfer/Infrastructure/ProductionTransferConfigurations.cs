@@ -17,6 +17,9 @@ public sealed class ProductionTransferHeaderLinkConfiguration : BaseEntityConfig
         b.Property(x=>x.WorkflowStatus).HasConversion<string>().HasMaxLength(40)
             .HasDefaultValue(ProductionTransferWorkflowStatus.Planned)
             .HasSentinel((ProductionTransferWorkflowStatus)0);
+        b.Property(x=>x.ErpPostingPolicy).HasConversion<string>().HasMaxLength(30)
+            .HasDefaultValue(ProductionTransferErpPostingPolicy.AfterHandover)
+            .HasSentinel((ProductionTransferErpPostingPolicy)0);
         b.Property(x=>x.ProductionPlanNo).HasMaxLength(100);
         b.Property(x=>x.ProductionOrderNo).HasMaxLength(100);
         b.Property(x=>x.ProductionOperationCode).HasMaxLength(100);
@@ -95,6 +98,9 @@ public sealed class ProductionTransferPolicyConfiguration : BaseEntityConfigurat
         b.Property(x=>x.WmsSourceSystemCode).HasMaxLength(50).IsRequired().HasDefaultValue("WINDBOX");
         b.Property(x=>x.RequireErpMasterDataForManualTransfer).HasDefaultValue(true);
         b.Property(x=>x.OverIssueTolerancePercent).HasPrecision(9,4);
+        b.Property(x=>x.ErpPostingPolicy).HasConversion<string>().HasMaxLength(30)
+            .HasDefaultValue(ProductionTransferErpPostingPolicy.AfterHandover)
+            .HasSentinel((ProductionTransferErpPostingPolicy)0);
         b.Property(x=>x.CancellationReturnPolicy).HasConversion<string>().HasMaxLength(40)
             .HasDefaultValue(WarehouseTransferCancellationReturnPolicy.OriginalSourceLocation)
             .HasSentinel((WarehouseTransferCancellationReturnPolicy)0);

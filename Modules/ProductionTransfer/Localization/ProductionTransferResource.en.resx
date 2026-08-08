@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="ErpPostingProcessed" xml:space="preserve"><value>Production transfer Netsis posting was processed.</value></data>
+  <data name="InvalidErpIdempotencyKey" xml:space="preserve"><value>A valid operation key is required for ERP posting.</value></data>
+  <data name="ErpPostingDisabled" xml:space="preserve"><value>Netsis posting is disabled by policy for this production transfer.</value></data>
+  <data name="TransferMustBeCompleted" xml:space="preserve"><value>The production transfer must be physically handed over before Netsis posting.</value></data>
+  <data name="ErpCommitUncertain" xml:space="preserve"><value>The previous Netsis posting result is uncertain. Verify the Netsis document before retrying.</value></data>
+  <data name="ErpPostingInProgress" xml:space="preserve"><value>Netsis posting for this production transfer is still in progress.</value></data>
+  <data name="TransferRequired" xml:space="preserve"><value>A production transfer must be selected.</value></data>
+  <data name="TransferNotFound" xml:space="preserve"><value>Production transfer was not found.</value></data>
+  <data name="TransferLinkNotFound" xml:space="preserve"><value>Production transfer link was not found.</value></data>
+  <data name="ErpUnexpectedFailure" xml:space="preserve"><value>Netsis posting could not be started because of a technical error. Retry from the record.</value></data>
+</root>

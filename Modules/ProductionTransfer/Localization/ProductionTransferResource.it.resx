@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="ErpPostingProcessed" xml:space="preserve"><value>L’invio a Netsis del trasferimento di produzione è stato elaborato.</value></data>
+  <data name="InvalidErpIdempotencyKey" xml:space="preserve"><value>Per l’invio ERP è richiesta una chiave operazione valida.</value></data>
+  <data name="ErpPostingDisabled" xml:space="preserve"><value>L’invio a Netsis è disabilitato dalla politica per questo trasferimento di produzione.</value></data>
+  <data name="TransferMustBeCompleted" xml:space="preserve"><value>Il trasferimento di produzione deve essere consegnato fisicamente prima dell’invio a Netsis.</value></data>
+  <data name="ErpCommitUncertain" xml:space="preserve"><value>L’esito del precedente invio a Netsis è incerto. Verificare il documento prima di riprovare.</value></data>
+  <data name="ErpPostingInProgress" xml:space="preserve"><value>L’invio a Netsis di questo trasferimento di produzione è ancora in corso.</value></data>
+  <data name="TransferRequired" xml:space="preserve"><value>È necessario selezionare un trasferimento di produzione.</value></data>
+  <data name="TransferNotFound" xml:space="preserve"><value>Trasferimento di produzione non trovato.</value></data>
+  <data name="TransferLinkNotFound" xml:space="preserve"><value>Collegamento del trasferimento di produzione non trovato.</value></data>
+  <data name="ErpUnexpectedFailure" xml:space="preserve"><value>Impossibile avviare l’invio a Netsis per un errore tecnico. Riprovare dal record.</value></data>
+</root>

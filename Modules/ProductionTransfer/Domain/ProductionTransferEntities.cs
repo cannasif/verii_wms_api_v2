@@ -37,6 +37,13 @@ public enum ProductionTransferWorkflowStatus
     Cancelled = 6
 }
 
+public enum ProductionTransferErpPostingPolicy
+{
+    Disabled = 1,
+    Manual = 2,
+    AfterHandover = 3
+}
+
 public sealed class ProductionTransferHeaderLink : BaseEntity
 {
     public long WarehouseTransferHeaderId { get; set; }
@@ -59,6 +66,7 @@ public sealed class ProductionTransferHeaderLink : BaseEntity
     public ProductionMaterialAvailabilityStatus MaterialAvailabilityStatus { get; set; } = ProductionMaterialAvailabilityStatus.NotChecked;
     public DateTimeOffset? RequirementCalculatedAtUtc { get; set; }
     public ProductionTransferWorkflowStatus WorkflowStatus { get; set; } = ProductionTransferWorkflowStatus.Planned;
+    public ProductionTransferErpPostingPolicy ErpPostingPolicy { get; set; } = ProductionTransferErpPostingPolicy.AfterHandover;
     public long? RequestedByUserId { get; set; }
     public string? RequestedByNameSnapshot { get; set; }
     public long? HandoverConfirmedBy { get; set; }
@@ -132,6 +140,7 @@ public sealed class ProductionTransferPolicy : BaseEntity
     public bool AllowOverIssue { get; set; }
     public decimal OverIssueTolerancePercent { get; set; }
     public bool RequireApproval { get; set; }
+    public ProductionTransferErpPostingPolicy ErpPostingPolicy { get; set; } = ProductionTransferErpPostingPolicy.AfterHandover;
     public WarehouseTransferCancellationReturnPolicy CancellationReturnPolicy { get; set; } = WarehouseTransferCancellationReturnPolicy.OriginalSourceLocation;
     public byte[] RowVersion { get; set; } = [];
 }
