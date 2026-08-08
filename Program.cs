@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using System.Security.Claims;
@@ -75,6 +76,8 @@ builder.Services.AddControllers(options =>
 builder.Services.ConfigureHttpJsonOptions(options =>
     WmsJsonSerialization.Configure(options.SerializerOptions));
 builder.Services.AddWmsLocalization();
+builder.Services.Configure<ApiBehaviorOptions>(options =>
+    options.InvalidModelStateResponseFactory = WmsApiValidationResponseFactory.Create);
 var databaseConnection = builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("ConnectionStrings:DefaultConnection is missing. Configure it through user-secrets or environment variables.");
 builder.Services.AddDbContextPool<WmsDbContext>(
@@ -219,14 +222,14 @@ builder.Services.AddAuthorizationBuilder().SetFallbackPolicy(new AuthorizationPo
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
-    options.OnRejected = static (context, _) =>
+    options.OnRejected = static async (context, cancellationToken) =>
     {
         if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
         {
             context.HttpContext.Response.Headers.RetryAfter =
                 Math.Max(1, (int)Math.Ceiling(retryAfter.TotalSeconds)).ToString();
         }
-        return ValueTask.CompletedTask;
+        await ApiStatusCodeResponseWriter.WriteAsync(context.HttpContext, cancellationToken);
     };
     options.AddPolicy("identity-sensitive", context => RateLimitPartition.GetFixedWindowLimiter(
         context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
@@ -283,6 +286,8 @@ var app = builder.Build();
 app.UseWmsLocalization();
 app.UseMiddleware<ApiResponseLocalizationMiddleware>();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
+app.UseStatusCodePages(statusCodeContext =>
+    ApiStatusCodeResponseWriter.WriteAsync(statusCodeContext.HttpContext));
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();

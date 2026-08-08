@@ -29,4 +29,10 @@
   <data name="Approved" xml:space="preserve"><value>İşlem onaylandı.</value></data>
   <data name="Completed" xml:space="preserve"><value>İşlem tamamlandı.</value></data>
   <data name="OperationCompleted" xml:space="preserve"><value>İşlem başarıyla tamamlandı.</value></data>
+  <data name="MethodNotAllowed" xml:space="preserve"><value>Bu endpoint için kullanılan HTTP yöntemi desteklenmiyor.</value></data>
+  <data name="RequestTimeout" xml:space="preserve"><value>İstek zaman aşımına uğradı. Lütfen tekrar deneyin.</value></data>
+  <data name="PayloadTooLarge" xml:space="preserve"><value>Gönderilen içerik izin verilen boyutu aşıyor.</value></data>
+  <data name="UnsupportedMediaType" xml:space="preserve"><value>Gönderilen içerik türü desteklenmiyor.</value></data>
+  <data name="TooManyRequests" xml:space="preserve"><value>Çok fazla istek gönderildi. Lütfen kısa bir süre sonra tekrar deneyin.</value></data>
+  <data name="ValidationFailed" xml:space="preserve"><value>Gönderilen bilgiler doğrulanamadı. Hatalı alanları kontrol edin.</value></data>
 </root>

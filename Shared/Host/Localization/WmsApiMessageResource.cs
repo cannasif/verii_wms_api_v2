@@ -9,10 +9,20 @@ public sealed record WmsApiLocalizedMessage(string Code, string Text);
 
 public sealed class WmsApiMessageResolver(IStringLocalizer<WmsApiMessageResource> localizer)
 {
+    public static IReadOnlyList<string> CatalogCodes { get; } =
+    [
+        "Unauthorized", "Forbidden", "NotFound", "MethodNotAllowed", "RequestTimeout",
+        "PayloadTooLarge", "UnsupportedMediaType", "TooManyRequests", "BadRequest",
+        "ValidationFailed", "Conflict", "BadGateway", "ServiceUnavailable",
+        "InternalServerError", "OperationFailed", "Required", "Invalid",
+        "ResourceNotFound", "Duplicate", "Concurrency", "Quantity", "InvalidState",
+        "File", "Erp", "Created", "Updated", "Deleted", "Cancelled", "Approved",
+        "Completed", "OperationCompleted"
+    ];
+
     public WmsApiLocalizedMessage Resolve(int statusCode, string? rawMessage, bool success)
     {
         var code = Classify(statusCode, rawMessage, success);
-        var fallback = localizer[code].Value;
         var language = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
 
         // Turkish is the API's default culture. Preserve its detailed operational
@@ -23,7 +33,18 @@ public sealed class WmsApiMessageResolver(IStringLocalizer<WmsApiMessageResource
             return new(code, rawMessage);
         }
 
-        return new(code, string.IsNullOrWhiteSpace(fallback) ? localizer["OperationCompleted"].Value : fallback);
+        return ResolveCode(code, rawMessage);
+    }
+
+    public WmsApiLocalizedMessage ResolveCode(string code, string? fallback = null)
+    {
+        var localized = localizer[code];
+        if (!localized.ResourceNotFound && !string.IsNullOrWhiteSpace(localized.Value))
+            return new(code, localized.Value);
+
+        var safeCode = string.IsNullOrWhiteSpace(fallback) ? "OperationFailed" : Classify(400, fallback, false);
+        var safeLocalized = localizer[safeCode];
+        return new(safeCode, safeLocalized.ResourceNotFound ? localizer["OperationFailed"].Value : safeLocalized.Value);
     }
 
     public static string Classify(int statusCode, string? message, bool success)
@@ -31,6 +52,12 @@ public sealed class WmsApiMessageResolver(IStringLocalizer<WmsApiMessageResource
         if (statusCode == StatusCodes.Status401Unauthorized) return "Unauthorized";
         if (statusCode == StatusCodes.Status403Forbidden) return "Forbidden";
         if (statusCode == StatusCodes.Status404NotFound) return "NotFound";
+        if (statusCode == StatusCodes.Status405MethodNotAllowed) return "MethodNotAllowed";
+        if (statusCode == StatusCodes.Status408RequestTimeout) return "RequestTimeout";
+        if (statusCode == StatusCodes.Status413PayloadTooLarge) return "PayloadTooLarge";
+        if (statusCode == StatusCodes.Status415UnsupportedMediaType) return "UnsupportedMediaType";
+        if (statusCode == StatusCodes.Status422UnprocessableEntity) return "ValidationFailed";
+        if (statusCode == StatusCodes.Status429TooManyRequests) return "TooManyRequests";
         if (statusCode == StatusCodes.Status502BadGateway) return "BadGateway";
         if (statusCode == StatusCodes.Status503ServiceUnavailable) return "ServiceUnavailable";
         if (statusCode >= StatusCodes.Status500InternalServerError) return "InternalServerError";
@@ -38,7 +65,7 @@ public sealed class WmsApiMessageResolver(IStringLocalizer<WmsApiMessageResource
         var value = message?.Trim() ?? string.Empty;
         if (success)
         {
-            if (ContainsAny(value, "oluşturuldu", "created", "erzeugt", "crÃ©Ã©", "creado")) return "Created";
+            if (ContainsAny(value, "oluşturuldu", "created", "erzeugt", "créé", "creado", "creato")) return "Created";
             if (ContainsAny(value, "güncellendi", "updated", "geändert", "mis à jour", "actualizado")) return "Updated";
             if (ContainsAny(value, "silindi", "deleted", "gelöscht", "supprim", "eliminado")) return "Deleted";
             if (ContainsAny(value, "iptal", "cancelled", "cancelled", "storniert", "annulé", "cancelado")) return "Cancelled";
