@@ -36,6 +36,20 @@ public sealed class WmsApiMessageResolver(IStringLocalizer<WmsApiMessageResource
         return ResolveCode(code, rawMessage);
     }
 
+    // Used for responses that already carry a resolved MessageCode (e.g. AppException
+    // errors already processed once by ExceptionHandlingMiddleware). Re-running the
+    // generic catalog lookup there would clobber a detailed Turkish operational message
+    // with the generic catalog text for that code, so this preserves it the same way
+    // Resolve() does for a first-time resolution.
+    public WmsApiLocalizedMessage ResolveExisting(string code, string? rawMessage)
+    {
+        var language = CultureInfo.CurrentUICulture.TwoLetterISOLanguageName;
+        if (language.Equals("tr", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(rawMessage))
+            return new(code, rawMessage);
+
+        return ResolveCode(code, rawMessage);
+    }
+
     public WmsApiLocalizedMessage ResolveCode(string code, string? fallback = null)
     {
         var localized = localizer[code];

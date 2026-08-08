@@ -78,7 +78,7 @@ public sealed class ApiResponseLocalizationMiddleware(RequestDelegate next, WmsA
         }
         else
         {
-            var localized = resolver.ResolveCode(existingCode, rawMessage);
+            var localized = resolver.ResolveExisting(existingCode, rawMessage);
             envelope[messageProperty ?? "message"] = localized.Text;
         }
 
