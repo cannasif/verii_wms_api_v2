@@ -5,6 +5,8 @@ using verii_wms_api_v2.Modules.Audit.Domain;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Modules.WarehouseAssistant.Application;
+using verii_wms_api_v2.Modules.WarehouseAssistant.Domain;
+using verii_wms_api_v2.Shared.Application.Exceptions;
 using verii_wms_api_v2.Shared.Infrastructure.Persistence;
 using Xunit;
 
@@ -42,6 +44,128 @@ public sealed class WarehouseAssistantServiceTests
         Assert.Single(result.Activities);
         Assert.Equal(10, result.Activities[0].UserId);
         Assert.DoesNotContain(result.Activities, x => x.UserId == 20);
+    }
+
+    [Fact]
+    public async Task Conversation_history_restores_structured_result_cards()
+    {
+        await using var db = CreateDbContext();
+        var now = new DateTime(2026, 8, 8, 10, 0, 0, DateTimeKind.Utc);
+        db.Users.Add(new User { Id = 10, Username = "worker", Email = "worker@v3rii.com", PasswordHash = "x", Role = "User" });
+        db.WarehouseAssistantConversations.Add(new WarehouseAssistantConversation
+        {
+            Id = 100,
+            UserId = 10,
+            Title = "Görevlerim",
+            LastMessageAtUtc = now,
+            BranchCode = "0",
+            CreatedDate = now
+        });
+        db.WarehouseAssistantMessages.Add(new WarehouseAssistantMessage
+        {
+            Id = 101,
+            ConversationId = 100,
+            Role = "assistant",
+            Content = "Bir görev bulundu.",
+            Intent = WarehouseAssistantIntent.AssignedTasks.ToString(),
+            Scope = "self",
+            ResponseDataJson = """{"providerMode":"deterministic","activities":[],"serialBalances":[],"serialReceipts":[],"stockLocations":[],"barcode":null,"movements":[],"tasks":[{"module":"GoodsReceipt","taskId":5,"taskNo":"GR-TASK-5","taskType":"Receive","status":"Assigned","priority":1,"documentId":7,"documentNo":"GR-7","warehouseId":2,"warehouseCode":1,"warehouseName":"Ana Depo","plannedQuantity":10,"processedQuantity":4,"remainingQuantity":6,"plannedAtUtc":null,"dueAtUtc":null,"assigneeUserId":10,"assigneeDisplayName":"worker"}],"suggestions":[]}""",
+            CorrelationId = Guid.NewGuid(),
+            BranchCode = "0",
+            CreatedDate = now
+        });
+        await db.SaveChangesAsync();
+
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        var service = new WarehouseAssistantService(unitOfWork, new WarehouseAssistantIntentResolver(), new NoopAuditWriter(), new FixedTimeProvider(new DateTimeOffset(now)));
+
+        var rows = await service.GetMessagesAsync(100, 10, "0");
+
+        var result = Assert.Single(rows).Result;
+        Assert.NotNull(result);
+        Assert.Equal("GR-TASK-5", Assert.Single(result.Tasks).TaskNo);
+    }
+
+    [Fact]
+    public async Task Archive_only_hides_owned_conversation()
+    {
+        await using var db = CreateDbContext();
+        var now = new DateTime(2026, 8, 8, 10, 0, 0, DateTimeKind.Utc);
+        db.Users.Add(new User { Id = 10, Username = "worker", Email = "worker@v3rii.com", PasswordHash = "x", Role = "User" });
+        db.WarehouseAssistantConversations.Add(new WarehouseAssistantConversation
+        {
+            Id = 100,
+            UserId = 10,
+            Title = "Görevlerim",
+            LastMessageAtUtc = now,
+            BranchCode = "0",
+            CreatedDate = now
+        });
+        await db.SaveChangesAsync();
+
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        var service = new WarehouseAssistantService(unitOfWork, new WarehouseAssistantIntentResolver(), new NoopAuditWriter(), new FixedTimeProvider(new DateTimeOffset(now)));
+
+        await service.ArchiveConversationAsync(100, 10, "0");
+
+        Assert.Empty(await service.GetConversationsAsync(10, "0"));
+        Assert.True((await db.WarehouseAssistantConversations.IgnoreQueryFilters().SingleAsync(x => x.Id == 100)).IsArchived);
+    }
+
+    [Theory]
+    [InlineData("Barkod GRL-000123 hangi stoka ait?")]
+    [InlineData("01/013 stok hareketlerini göster")]
+    [InlineData("Bana atanmış açık görevleri göster")]
+    public async Task Operational_queries_fail_closed_without_module_permissions(string question)
+    {
+        await using var db = CreateDbContext();
+        db.Users.Add(new User { Id = 10, Username = "worker", Email = "worker@v3rii.com", PasswordHash = "x", Role = "User" });
+        await db.SaveChangesAsync();
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        var service = new WarehouseAssistantService(
+            unitOfWork,
+            new WarehouseAssistantIntentResolver(),
+            new NoopAuditWriter(),
+            new FixedTimeProvider(new DateTimeOffset(2026, 8, 8, 10, 0, 0, TimeSpan.Zero)));
+
+        var result = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, question),
+            10,
+            "0",
+            new WarehouseAssistantAccess(false, false, false, false));
+
+        Assert.Equal("denied", result.Scope);
+        Assert.Empty(result.StockLocations);
+        Assert.Empty(result.Movements);
+        Assert.Empty(result.Tasks);
+        Assert.Null(result.Barcode);
+    }
+
+    [Fact]
+    public async Task User_cannot_archive_another_users_conversation()
+    {
+        await using var db = CreateDbContext();
+        var now = new DateTime(2026, 8, 8, 10, 0, 0, DateTimeKind.Utc);
+        db.Users.AddRange(
+            new User { Id = 10, Username = "worker", Email = "worker@v3rii.com", PasswordHash = "x", Role = "User" },
+            new User { Id = 20, Username = "other", Email = "other@v3rii.com", PasswordHash = "x", Role = "User" });
+        db.WarehouseAssistantConversations.Add(new WarehouseAssistantConversation
+        {
+            Id = 100,
+            UserId = 20,
+            Title = "Other user's conversation",
+            LastMessageAtUtc = now,
+            BranchCode = "0",
+            CreatedDate = now
+        });
+        await db.SaveChangesAsync();
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        var service = new WarehouseAssistantService(unitOfWork, new WarehouseAssistantIntentResolver(), new NoopAuditWriter(), new FixedTimeProvider(new DateTimeOffset(now)));
+
+        var exception = await Assert.ThrowsAsync<AppException>(() => service.ArchiveConversationAsync(100, 10, "0"));
+
+        Assert.Equal(StatusCodes.Status404NotFound, exception.StatusCode);
+        Assert.False((await db.WarehouseAssistantConversations.SingleAsync(x => x.Id == 100)).IsArchived);
     }
 
     private static WmsDbContext CreateDbContext()

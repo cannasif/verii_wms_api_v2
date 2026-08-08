@@ -14,10 +14,60 @@ public sealed class WarehouseAssistantIntentResolverTests
     [InlineData("DTG-1 serisi ne zaman ve kim tarafından içeri alındı?", WarehouseAssistantIntent.SerialReceiptHistory)]
     [InlineData("01/013 stok kodlu ürün hangi raflarda var?", WarehouseAssistantIntent.StockLocationBalance)]
     [InlineData("01/013 malzeme bakiyesi nerede?", WarehouseAssistantIntent.StockLocationBalance)]
+    [InlineData("Barkod GRL-000123 hangi stoka ait?", WarehouseAssistantIntent.BarcodeLookup)]
+    [InlineData("01/013 stok hareketlerini göster", WarehouseAssistantIntent.StockMovementHistory)]
+    [InlineData("Bana atanmış açık görevleri göster", WarehouseAssistantIntent.AssignedTasks)]
     public async Task Resolves_supported_turkish_warehouse_questions(string message, WarehouseAssistantIntent expected)
     {
         var result = await resolver.ResolveAsync(message, null);
         Assert.Equal(expected, result.Intent);
+    }
+
+    [Theory]
+    [InlineData("Show my activities today", WarehouseAssistantIntent.MyActivities)]
+    [InlineData("Where is the serial DTG-1 and what is its balance?", WarehouseAssistantIntent.SerialBalance)]
+    [InlineData("Show stock movement history for item 01/013", WarehouseAssistantIntent.StockMovementHistory)]
+    [InlineData("Show my assigned open tasks", WarehouseAssistantIntent.AssignedTasks)]
+    [InlineData("Lookup barcode GRL-000123", WarehouseAssistantIntent.BarcodeLookup)]
+    [InlineData("Zeige meine offenen Aufgaben", WarehouseAssistantIntent.AssignedTasks)]
+    [InlineData("Afficher mes tâches ouvertes", WarehouseAssistantIntent.AssignedTasks)]
+    [InlineData("Mostrar mis tareas abiertas", WarehouseAssistantIntent.AssignedTasks)]
+    [InlineData("Mostra i miei compiti aperti", WarehouseAssistantIntent.AssignedTasks)]
+    [InlineData("اعرض مهامي المفتوحة", WarehouseAssistantIntent.AssignedTasks)]
+    public async Task Resolves_supported_questions_without_external_ai(
+        string message,
+        WarehouseAssistantIntent expected)
+    {
+        var result = await resolver.ResolveAsync(message, null);
+
+        Assert.Equal(expected, result.Intent);
+    }
+
+    [Theory]
+    [InlineData("Show my activities yesterday", WarehouseAssistantDatePreset.Yesterday)]
+    [InlineData("Zeige meine Aktivitäten diese Woche", WarehouseAssistantDatePreset.ThisWeek)]
+    [InlineData("Afficher les opérations des 7 derniers jours", WarehouseAssistantDatePreset.LastSevenDays)]
+    [InlineData("Mostrar operaciones de los últimos 30 días", WarehouseAssistantDatePreset.LastThirtyDays)]
+    public async Task Resolves_multilingual_date_ranges(
+        string message,
+        WarehouseAssistantDatePreset expected)
+    {
+        var result = await resolver.ResolveAsync(message, null);
+
+        Assert.Equal(expected, result.DatePreset);
+    }
+
+    [Theory]
+    [InlineData("Barkod GRL-000123 hangi stoka ait?", "GRL-000123")]
+    [InlineData("Etiket: '01086900000000011726010110LOT-1' sorgula", "01086900000000011726010110LOT-1")]
+    [InlineData("Lookup barcode GRL-000123", "GRL-000123")]
+    [InlineData("Barcode: '01086900000000011726010110LOT-1'", "01086900000000011726010110LOT-1")]
+    public async Task Extracts_barcode_value_for_safe_central_resolution(string message, string expected)
+    {
+        var result = await resolver.ResolveAsync(message, null);
+
+        Assert.Equal(WarehouseAssistantIntent.BarcodeLookup, result.Intent);
+        Assert.Equal(expected, result.Barcode);
     }
 
     [Theory]
