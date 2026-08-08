@@ -17,10 +17,24 @@ public sealed class WarehouseAssistantIntentResolverTests
     [InlineData("Barkod GRL-000123 hangi stoka ait?", WarehouseAssistantIntent.BarcodeLookup)]
     [InlineData("01/013 stok hareketlerini göster", WarehouseAssistantIntent.StockMovementHistory)]
     [InlineData("Bana atanmış açık görevleri göster", WarehouseAssistantIntent.AssignedTasks)]
+    [InlineData("01.08.2026 ile 08.08.2026 arasında ABC carisine kaç mal kabul yapıldı, neler alındı?", WarehouseAssistantIntent.GoodsReceiptAnalysis)]
     public async Task Resolves_supported_turkish_warehouse_questions(string message, WarehouseAssistantIntent expected)
     {
         var result = await resolver.ResolveAsync(message, null);
         Assert.Equal(expected, result.Intent);
+    }
+
+    [Fact]
+    public async Task Extracts_inclusive_explicit_date_range_for_goods_receipt_analysis()
+    {
+        var result = await resolver.ResolveAsync(
+            "08.08.2026 ile 01.08.2026 arasında ABC carisine yapılan mal kabullerde neler alındı?",
+            null);
+
+        Assert.Equal(WarehouseAssistantIntent.GoodsReceiptAnalysis, result.Intent);
+        Assert.Equal(new DateOnly(2026, 8, 1), result.DateFrom);
+        Assert.Equal(new DateOnly(2026, 8, 8), result.DateTo);
+        Assert.NotNull(result.SupplierQuery);
     }
 
     [Theory]

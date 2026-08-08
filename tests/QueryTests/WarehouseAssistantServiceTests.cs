@@ -4,8 +4,12 @@ using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.Audit.Domain;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
+using verii_wms_api_v2.Modules.Customer.Domain;
+using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.WarehouseAssistant.Application;
 using verii_wms_api_v2.Modules.WarehouseAssistant.Domain;
+using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
+using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 using verii_wms_api_v2.Shared.Infrastructure.Persistence;
 using Xunit;
@@ -14,6 +18,42 @@ namespace verii_wms_api_v2.QueryTests;
 
 public sealed class WarehouseAssistantServiceTests
 {
+    [Fact]
+    public async Task Goods_receipt_analysis_filters_by_document_date_supplier_and_received_quantity()
+    {
+        await using var db = CreateDbContext();
+        var now = new DateTimeOffset(2026, 8, 8, 10, 0, 0, TimeSpan.Zero);
+        db.Users.Add(new User { Id = 10, Username = "admin", Email = "admin@v3rii.com", PasswordHash = "x", Role = "Admin" });
+        db.Customers.Add(new Customer { Id = 20, BranchCode = "0", CustomerCode = "ABC", CustomerName = "ABC TEDARIK" });
+        db.Warehouses.Add(new WarehouseEntity { Id = 30, BranchCode = "0", WarehouseCode = 1, WarehouseName = "Ana Depo" });
+        db.GoodsReceiptHeaders.AddRange(
+            ReceiptHeader(100, new DateOnly(2026, 8, 3), WarehouseOperationStatus.Completed),
+            ReceiptHeader(101, new DateOnly(2026, 7, 31), WarehouseOperationStatus.Completed),
+            ReceiptHeader(102, new DateOnly(2026, 8, 4), WarehouseOperationStatus.Cancelled));
+        db.GoodsReceiptLines.AddRange(
+            ReceiptLine(200, 100, 5),
+            ReceiptLine(201, 101, 7),
+            ReceiptLine(202, 102, 9),
+            ReceiptLine(203, 100, 0));
+        await db.SaveChangesAsync();
+
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        var service = new WarehouseAssistantService(unitOfWork, new WarehouseAssistantIntentResolver(), new NoopAuditWriter(), new FixedTimeProvider(now));
+
+        var result = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, "01.08.2026 ile 08.08.2026 arasında ABC carisine kaç mal kabul yapıldı, neler alındı?"),
+            10,
+            "0",
+            new WarehouseAssistantAccess(false, false, false, true));
+
+        Assert.Equal(WarehouseAssistantIntent.GoodsReceiptAnalysis, result.Intent);
+        Assert.Equal("authorized-warehouses", result.Scope);
+        var row = Assert.Single(result.GoodsReceipts!);
+        Assert.Equal(100, row.GoodsReceiptId);
+        Assert.Equal(5, row.ReceivedQuantity);
+        Assert.Equal("ABC", row.SupplierCode);
+    }
+
     [Fact]
     public async Task Non_admin_all_users_question_is_forced_to_current_user_scope()
     {
@@ -116,6 +156,7 @@ public sealed class WarehouseAssistantServiceTests
     [InlineData("Barkod GRL-000123 hangi stoka ait?")]
     [InlineData("01/013 stok hareketlerini göster")]
     [InlineData("Bana atanmış açık görevleri göster")]
+    [InlineData("01.08.2026 ile 08.08.2026 arasında kaç mal kabul yapıldı?")]
     public async Task Operational_queries_fail_closed_without_module_permissions(string question)
     {
         await using var db = CreateDbContext();
@@ -139,6 +180,35 @@ public sealed class WarehouseAssistantServiceTests
         Assert.Empty(result.Movements);
         Assert.Empty(result.Tasks);
         Assert.Null(result.Barcode);
+    }
+
+    [Fact]
+    public async Task Valid_parameter_hint_returns_safe_catalog_reference_without_database_query()
+    {
+        await using var db = CreateDbContext();
+        db.Users.Add(new User { Id = 10, Username = "worker", Email = "worker@v3rii.com", PasswordHash = "x", Role = "User" });
+        await db.SaveChangesAsync();
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        var service = new WarehouseAssistantService(
+            unitOfWork,
+            new WarehouseAssistantIntentResolver(),
+            new NoopAuditWriter(),
+            new FixedTimeProvider(new DateTimeOffset(2026, 8, 8, 10, 0, 0, TimeSpan.Zero)));
+
+        var result = await service.AskAsync(
+            new AskWarehouseAssistantRequest(
+                null,
+                "Kalite bekleyen üründe hangi raflar seçilebilir ayarını açarsam ne olur?",
+                new WarehouseAssistantParameterHint("goodsReceipt", "blockPutawayUntilQualityDecision", "true")),
+            10,
+            "0",
+            new WarehouseAssistantAccess(false, false, false, false));
+
+        Assert.Equal(WarehouseAssistantIntent.ParameterHelp, result.Intent);
+        var guide = Assert.Single(result.ParameterGuides!);
+        Assert.Equal("goodsReceipt", guide.Module);
+        Assert.Equal("blockPutawayUntilQualityDecision", guide.Field);
+        Assert.Equal("true", guide.Value);
     }
 
     [Fact]
@@ -188,6 +258,39 @@ public sealed class WarehouseAssistantServiceTests
         PerformedByUserId = userId,
         CreatedBy = userId,
         CreatedDate = createdDate
+    };
+
+    private static GoodsReceiptHeader ReceiptHeader(long id, DateOnly date, WarehouseOperationStatus status) => new()
+    {
+        Id = id,
+        BranchCode = "0",
+        DocumentNo = $"GR-{id}",
+        DocumentDate = date,
+        SupplierId = 20,
+        SupplierCodeSnapshot = "ABC",
+        SupplierNameSnapshot = "ABC TEDARIK",
+        TargetWarehouseId = 30,
+        ReceivingLocationId = 1,
+        Status = status,
+        ReceivedAtUtc = date.ToDateTime(new TimeOnly(10, 0), DateTimeKind.Utc),
+        ReceivedBy = 10
+    };
+
+    private static GoodsReceiptLine ReceiptLine(long id, long headerId, decimal quantity) => new()
+    {
+        Id = id,
+        BranchCode = "0",
+        GrHeaderId = headerId,
+        LineNo = 1,
+        StockId = 500,
+        StockCodeSnapshot = "STK-1",
+        StockNameSnapshot = "Test Stok",
+        UnitCode = "AD",
+        BaseUnitCode = "AD",
+        TargetWarehouseId = 30,
+        ReceivedQuantity = quantity,
+        AcceptedQuantity = quantity,
+        Status = GoodsReceiptLineStatus.Received
     };
 
     private sealed class NoopAuditWriter : IAuditLogWriter
