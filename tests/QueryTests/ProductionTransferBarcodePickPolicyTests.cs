@@ -36,12 +36,12 @@ public sealed class ProductionTransferBarcodePickPolicyTests
     }
 
     [Fact]
-    public void Product_alias_scan_defaults_to_one_without_consuming_a_global_label_capacity()
+    public void Product_alias_scan_uses_requested_pick_quantity()
     {
         var quantity = ProductionTransferBarcodePickPolicy.CalculateQuantity(
-            Policy(SerialQuantityRule.NotApplicable, requireSerial: false), null, 0, 10, 10, false);
+            Policy(SerialQuantityRule.NotApplicable, requireSerial: false), null, 0, 5, 10, false);
 
-        Assert.Equal(1, quantity);
+        Assert.Equal(5, quantity);
     }
 
     [Fact]

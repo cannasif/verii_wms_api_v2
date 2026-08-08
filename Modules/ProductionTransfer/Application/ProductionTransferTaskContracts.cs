@@ -1,3 +1,4 @@
+using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 
@@ -8,6 +9,8 @@ public sealed record ProductionTransferTaskLineDto(
     long TaskLineId, long TransferLineId, string StockCode, string? StockName,
     decimal RequestedQuantity, decimal ReservedQuantity, decimal MissingQuantity, decimal ProcessedQuantity,
     long? SourceLocationId, string? SourceLocationCode, string? SourceLocationName,
+    long? TargetLocationId, string? TargetLocationCode, string? TargetLocationName,
+    string? SerialNo,
     decimal TotalRequestedQuantity);
 public sealed record ProductionTransferTaskDto(
     long TaskId, string TaskNo, WarehouseTransferTaskType TaskType, long WarehouseId, WarehouseTransferTaskStatus Status,
@@ -54,18 +57,65 @@ public sealed record UpdateWarehouseTransferReturnSettingRequest(
     long? DefaultTransferReturnLocationId,
     long? DefaultProductionTransferLocationId);
 
+public sealed record ProductionWorkOrderTransferTaskRowDto(
+    long TaskId,
+    string TaskNo,
+    string DisplayLabel,
+    string? DisplaySuffix,
+    WarehouseTransferTaskType TaskType,
+    WarehouseTransferTaskStatus Status,
+    long WarehouseId,
+    decimal PlannedQuantity,
+    decimal ProcessedQuantity,
+    decimal RemainingQuantity,
+    IReadOnlyList<string> AssignedUsernames,
+    long? PreviousTaskId,
+    long? OriginTaskId,
+    long? OriginUserId,
+    DateTimeOffset? CompletedAtUtc);
+
+public sealed record ProductionWorkOrderTransferHeaderRowDto(
+    long TransferId,
+    string DocumentNo,
+    string? ExternalReferenceNo,
+    WarehouseTransferStatus TransferStatus,
+    ProductionTransferWorkflowStatus WorkflowStatus,
+    long? ProductionOrderId,
+    string? ProductionOrderNo,
+    long? ProductionHeaderId,
+    long? ParentTransferId,
+    long? ResidualTransferId,
+    string? ResidualDocumentNo,
+    bool IsResidualHeader,
+    long SourceWarehouseId,
+    int SourceWarehouseCode,
+    string SourceWarehouseName,
+    long TargetWarehouseId,
+    int TargetWarehouseCode,
+    string TargetWarehouseName,
+    decimal RequestedQuantity,
+    decimal PickedQuantity,
+    DateTime? CreatedDate,
+    IReadOnlyList<ProductionWorkOrderTransferTaskRowDto> Tasks);
+
 public interface IProductionTransferTaskService
 {
     Task<ProductionTransferTaskBoardDto> GetBoardAsync(long transferId, CancellationToken ct = default);
     Task<IReadOnlyList<ProductionTransferTaskPoolRow>> GetPoolAsync(long actor, CancellationToken ct = default);
+    Task<IReadOnlyList<ProductionWorkOrderTransferHeaderRowDto>> GetWorkOrderTransferGroupsAsync(
+        ProductionWorkOrderTransferTab tab,
+        string? search,
+        CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> AssignAsync(long transferId, long taskId, AssignProductionTransferTaskRequest request, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> RemoveAssignmentAsync(long transferId, long taskId, long userId, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> RequestAssignmentReturnAsync(long transferId, long taskId, long userId, long actor, CancellationToken ct = default);
+    Task<ProductionTransferTaskBoardDto> ProcessReturnTaskLineAsync(long transferId, long taskId, long taskLineId, Guid idempotencyKey, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> CompleteAssignmentReturnAsync(long transferId, long taskId, Guid idempotencyKey, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> HandoffAsync(long transferId, long taskId, HandoffProductionTransferTaskRequest request, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> RefreshRouteAsync(long transferId, long taskId, long actor, CancellationToken ct = default);
     Task<ProductionTaskStartCheckDto> CheckStartAsync(long transferId, long taskId, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> AcceptAndStartAsync(long transferId, long taskId, long actor, bool allowPartialStart = false, CancellationToken ct = default);
+    Task ApplyPermanentRouteSplitAsync(long transferId, long taskId, long actor, CancellationToken ct = default);
     Task<IReadOnlyList<WarehouseTransferPickedSourceLocationDto>> GetLinePickedSourcesAsync(long transferId, long lineId, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> CompleteCancellationReturnAsync(long transferId, long taskId, Guid idempotencyKey, long actor, CancellationToken ct = default);
     Task<WarehouseTransferReturnSettingDto> GetReturnSettingAsync(long warehouseId, CancellationToken ct = default);

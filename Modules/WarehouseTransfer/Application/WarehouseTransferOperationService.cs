@@ -641,6 +641,17 @@ public sealed class WarehouseTransferOperationService(
         taskLine.ProcessedQuantity += quantity;
         taskLine.UpdatedBy = actor;
         taskLine.UpdatedDate = DateTime.UtcNow;
+
+        var isProduction = header.BusinessContext is WarehouseTransferBusinessContext.ProductionMaterialSupply
+            or WarehouseTransferBusinessContext.ProductionWipMove
+            or WarehouseTransferBusinessContext.ProductionOutputMove;
+        if (isProduction)
+        {
+            if (task.Status is WarehouseTransferTaskStatus.Open or WarehouseTransferTaskStatus.Assigned)
+                task.Status = WarehouseTransferTaskStatus.InProgress;
+            return;
+        }
+
         if (task!.Lines.All(x => x.ProcessedQuantity >= x.PlannedQuantity))
         {
             task.Status = WarehouseTransferTaskStatus.Completed;

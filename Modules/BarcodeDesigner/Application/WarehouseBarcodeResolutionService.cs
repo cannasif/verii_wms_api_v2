@@ -85,13 +85,15 @@ public sealed class WarehouseBarcodeResolutionService(
                     && x.SerialNo == raw
                     && (!stockId.HasValue || x.StockId == stockId.Value)
                     && (!request.WarehouseId.HasValue || x.WarehouseId == request.WarehouseId.Value)
-                    && (!request.ExpectedLocationId.HasValue || x.LocationId == request.ExpectedLocationId.Value))
-                .OrderBy(x => x.Id)
-                .Take(3)
+                    && (!request.ExpectedLocationId.HasValue || x.LocationId == request.ExpectedLocationId.Value)
+                    && (!request.ExpectedYapCodeId.HasValue || x.YapCodeId == request.ExpectedYapCodeId.Value)
+                    && (string.IsNullOrWhiteSpace(request.ExpectedUnitCode)
+                        || x.UnitCode == request.ExpectedUnitCode))
+                .OrderByDescending(x => x.AvailableQuantity)
+                .ThenBy(x => x.Id)
+                .Take(25)
                 .ToListAsync(cancellationToken);
-            if (serialRows.Count > 1)
-                throw AppException.Conflict("Okutulan seri birden fazla stok boyutuyla eşleşiyor; raf veya stok bağlamı zorunludur.");
-            serialBalance = serialRows.SingleOrDefault();
+            serialBalance = SelectOutboundSerialBalance(serialRows, stockId, request.ExpectedLocationId);
             if (serialBalance is not null)
             {
                 stockId = serialBalance.StockId;
@@ -346,6 +348,34 @@ public sealed class WarehouseBarcodeResolutionService(
         var result = EmptyToNull(value);
         if (result?.Length > max) throw AppException.BadRequest($"Barkod alanı en fazla {max} karakter olabilir.");
         return result;
+    }
+
+    private static LocationStockBalance? SelectOutboundSerialBalance(
+        IReadOnlyList<LocationStockBalance> serialRows,
+        long? expectedStockId,
+        long? expectedLocationId)
+    {
+        if (serialRows.Count == 0) return null;
+        if (serialRows.Count == 1) return serialRows[0];
+
+        var stockIds = serialRows.Select(x => x.StockId).Distinct().ToArray();
+        if (!expectedStockId.HasValue && stockIds.Length > 1)
+            throw AppException.Conflict("Okutulan seri birden fazla stok boyutuyla eşleşiyor; raf veya stok bağlamı zorunludur.");
+
+        var candidates = serialRows.AsEnumerable();
+        if (expectedLocationId.HasValue)
+        {
+            var atLocation = candidates.Where(x => x.LocationId == expectedLocationId.Value).ToArray();
+            if (atLocation.Length > 0)
+                candidates = atLocation;
+        }
+
+        var materialized = candidates.ToArray();
+        if (materialized.Length == 0) return null;
+        return materialized
+            .OrderByDescending(x => x.AvailableQuantity)
+            .ThenBy(x => x.Id)
+            .First();
     }
 
     private sealed record TrackingDateEvidence(

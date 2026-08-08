@@ -19,7 +19,7 @@ internal static class ProductionTransferBarcodePickPolicy
 
         var barcodeCapacity = quantityBoundBarcode
             ? Math.Max(0, (barcodeQuantity ?? 0) - alreadyAcceptedFromBarcode)
-            : barcodeQuantity.GetValueOrDefault(1);
+            : remainingLineQuantity;
         if (barcodeCapacity <= 0)
             throw AppException.Conflict("Bu lojistik etiketin miktarı bu transferde daha önce tamamen toplandı.");
 

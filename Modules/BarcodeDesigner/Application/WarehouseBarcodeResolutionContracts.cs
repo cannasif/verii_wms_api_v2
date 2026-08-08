@@ -13,7 +13,9 @@ public sealed record ResolveWarehouseBarcodeRequest(
     WarehouseBarcodePurpose Purpose,
     long? WarehouseId = null,
     long? ExpectedStockId = null,
-    long? ExpectedLocationId = null);
+    long? ExpectedLocationId = null,
+    long? ExpectedYapCodeId = null,
+    string? ExpectedUnitCode = null);
 
 public sealed record WarehouseBarcodeBalanceCandidate(
     long BalanceId,
