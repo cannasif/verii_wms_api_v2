@@ -79,7 +79,9 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             access.CanViewStockMovements,
             CanQueryAnyTasks(access),
             M(access.CanQueryAllUsers ? ScopeAll : ScopeSelf),
-            examples));
+            examples,
+            access.CanViewGoodsReceipts,
+            true));
     }
 
     public async Task<IReadOnlyList<WarehouseAssistantConversationRow>> GetConversationsAsync(
@@ -138,7 +140,22 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         var now = timeProvider.GetUtcNow().UtcDateTime;
         var conversation = await ResolveConversationAsync(request.ConversationId, message, actorUserId, branchCode, now, ct);
         var context = await GetContextAsync(conversation.Id, branchCode, ct);
-        var resolution = await intentResolver.ResolveAsync(message, context, ct);
+        var parameterHint = ValidateParameterHint(request.ParameterHint);
+        var resolution = parameterHint is null
+            ? await intentResolver.ResolveAsync(message, context, ct)
+            : new WarehouseAssistantIntentResolution(
+                WarehouseAssistantIntent.ParameterHelp,
+                WarehouseAssistantDatePreset.Today,
+                null,
+                null,
+                null,
+                null,
+                false,
+                1m,
+                "catalog",
+                ParameterModule: parameterHint.Module,
+                ParameterField: parameterHint.Field,
+                ParameterValue: parameterHint.Value);
         var correlationId = Guid.NewGuid();
 
         var userMessage = new WarehouseAssistantMessage
@@ -164,6 +181,8 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             Barcode = result.Barcode,
             Movements = result.Movements,
             Tasks = result.Tasks,
+            GoodsReceipts = result.GoodsReceipts ?? [],
+            ParameterGuides = result.ParameterGuides ?? [],
             Suggestions = result.Suggestions
         };
         var assistantMessage = new WarehouseAssistantMessage
@@ -201,6 +220,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                 result.ToolName,
                 ResultCount = result.Activities.Count + result.SerialBalances.Count + result.SerialReceipts.Count
                     + result.StockLocations.Count + result.Movements.Count + result.Tasks.Count
+                    + (result.GoodsReceipts?.Count ?? 0) + (result.ParameterGuides?.Count ?? 0)
                     + (result.Barcode is null ? 0 : 1),
                 CorrelationId = correlationId
             },
@@ -220,7 +240,9 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             result.Barcode,
             result.Movements,
             result.Tasks,
-            result.Suggestions);
+            result.Suggestions,
+            result.GoodsReceipts ?? [],
+            result.ParameterGuides ?? []);
     }
 
     private async Task<ExecutionResult> ExecuteIntentAsync(
@@ -247,6 +269,9 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                 await ExecuteStockMovementHistoryAsync(resolution, originalMessage, actorUserId, branchCode, access, ct),
             WarehouseAssistantIntent.AssignedTasks =>
                 await ExecuteAssignedTasksAsync(resolution, originalMessage, actorUserId, branchCode, access, ct),
+            WarehouseAssistantIntent.GoodsReceiptAnalysis =>
+                await ExecuteGoodsReceiptAnalysisAsync(resolution, originalMessage, actorUserId, branchCode, access, ct),
+            WarehouseAssistantIntent.ParameterHelp => ExecuteParameterHelp(resolution),
             WarehouseAssistantIntent.Help => HelpResult(access),
             _ => UnknownResult(access)
         };
@@ -671,7 +696,9 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                 stored.Barcode,
                 stored.Movements ?? [],
                 stored.Tasks ?? [],
-                stored.Suggestions ?? []);
+                stored.Suggestions ?? [],
+                stored.GoodsReceipts ?? [],
+                stored.ParameterGuides ?? []);
         }
         catch (JsonException)
         {
@@ -700,7 +727,9 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
 
     private async Task<(DateTime StartUtc, DateTime EndUtc, string Label)> ResolveDateRangeAsync(
         WarehouseAssistantDatePreset preset,
-        CancellationToken ct)
+        CancellationToken ct,
+        DateOnly? explicitFrom = null,
+        DateOnly? explicitTo = null)
     {
         var utcNow = timeProvider.GetUtcNow();
         var configuredZone = await unitOfWork.Repository<ProjectSetting>().Query()
@@ -713,7 +742,18 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         DateTime startLocal;
         DateTime endLocal;
         string label;
-        switch (preset)
+        if (explicitFrom.HasValue)
+        {
+            var from = explicitFrom.Value;
+            var to = explicitTo ?? from;
+            if (to < from) (from, to) = (to, from);
+            if (to.DayNumber - from.DayNumber > 366)
+                throw AppException.BadRequest(M(DateRangeTooLarge));
+            startLocal = from.ToDateTime(TimeOnly.MinValue);
+            endLocal = to.AddDays(1).ToDateTime(TimeOnly.MinValue);
+            label = M(DateExplicitRange, from, to);
+        }
+        else switch (preset)
         {
             case WarehouseAssistantDatePreset.Yesterday:
                 startLocal = today.AddDays(-1); endLocal = today; label = M(DateYesterday); break;
@@ -804,6 +844,47 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
     private static bool ContainsAny(string value, IEnumerable<string> candidates) =>
         candidates.Any(candidate => value.Contains(candidate, StringComparison.Ordinal));
 
+    private WarehouseAssistantParameterHint? ValidateParameterHint(WarehouseAssistantParameterHint? hint)
+    {
+        if (hint is null) return null;
+        var modules = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "inbound", "goodsReceipt", "outbound", "shipping", "transfer", "quality", "packing",
+            "project", "subcontracting", "production", "kkd", "procurement", "barcode"
+        };
+        var module = hint.Module?.Trim() ?? string.Empty;
+        var field = hint.Field?.Trim() ?? string.Empty;
+        var value = string.IsNullOrWhiteSpace(hint.Value) ? null : hint.Value.Trim();
+        if (!modules.Contains(module)
+            || !Regex.IsMatch(field, @"^[A-Za-z][A-Za-z0-9]{0,79}$", RegexOptions.CultureInvariant)
+            || (value is not null && !Regex.IsMatch(value, @"^[A-Za-z0-9_.-]{1,80}$", RegexOptions.CultureInvariant)))
+            throw AppException.BadRequest(M(ParameterHintInvalid));
+        return new WarehouseAssistantParameterHint(module, field, value);
+    }
+
+    private ExecutionResult ExecuteParameterHelp(WarehouseAssistantIntentResolution resolution)
+    {
+        if (string.IsNullOrWhiteSpace(resolution.ParameterModule) || string.IsNullOrWhiteSpace(resolution.ParameterField))
+            return MissingEntity(resolution.Intent, M(ParameterHelpRequired));
+        var row = new WarehouseAssistantParameterGuideRow(
+            resolution.ParameterModule,
+            resolution.ParameterField,
+            resolution.ParameterValue);
+        return new ExecutionResult(
+            resolution.Intent,
+            "authorized",
+            "explain-parameter-catalog",
+            M(ParameterHelpAnswer),
+            [], [], [], [], null, [], [],
+            new WarehouseAssistantContext(
+                null, null, null,
+                ParameterModule: row.Module,
+                ParameterField: row.Field,
+                ParameterValue: row.Value),
+            [],
+            ParameterGuides: [row]);
+    }
+
     private string M(string key, params object[] arguments) => localizer is null
         ? key
         : localizer[key, arguments].Value;
@@ -831,7 +912,9 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         IReadOnlyList<WarehouseAssistantMovementRow> Movements,
         IReadOnlyList<WarehouseAssistantTaskRow> Tasks,
         WarehouseAssistantContext Context,
-        IReadOnlyList<string> Suggestions);
+        IReadOnlyList<string> Suggestions,
+        IReadOnlyList<WarehouseAssistantGoodsReceiptRow>? GoodsReceipts = null,
+        IReadOnlyList<WarehouseAssistantParameterGuideRow>? ParameterGuides = null);
 
     private sealed class StoredResponseData
     {
@@ -843,6 +926,8 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         public WarehouseAssistantBarcodeRow? Barcode { get; init; }
         public IReadOnlyList<WarehouseAssistantMovementRow> Movements { get; init; } = [];
         public IReadOnlyList<WarehouseAssistantTaskRow> Tasks { get; init; } = [];
+        public IReadOnlyList<WarehouseAssistantGoodsReceiptRow> GoodsReceipts { get; init; } = [];
+        public IReadOnlyList<WarehouseAssistantParameterGuideRow> ParameterGuides { get; init; } = [];
         public IReadOnlyList<string> Suggestions { get; init; } = [];
     }
 }

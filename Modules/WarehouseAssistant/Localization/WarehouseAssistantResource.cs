@@ -12,6 +12,7 @@ public static class WarehouseAssistantMessageKeys
     public const string CapabilityExampleBarcode = nameof(CapabilityExampleBarcode);
     public const string CapabilityExampleMovement = nameof(CapabilityExampleMovement);
     public const string CapabilityExampleTasks = nameof(CapabilityExampleTasks);
+    public const string CapabilityExampleGoodsReceiptAnalysis = nameof(CapabilityExampleGoodsReceiptAnalysis);
     public const string ScopeAll = nameof(ScopeAll);
     public const string ScopeSelf = nameof(ScopeSelf);
     public const string ActivityNone = nameof(ActivityNone);
@@ -38,6 +39,8 @@ public static class WarehouseAssistantMessageKeys
     public const string DateLastSevenDays = nameof(DateLastSevenDays);
     public const string DateThisWeek = nameof(DateThisWeek);
     public const string DateLastThirtyDays = nameof(DateLastThirtyDays);
+    public const string DateExplicitRange = nameof(DateExplicitRange);
+    public const string DateRangeTooLarge = nameof(DateRangeTooLarge);
     public const string UserNumber = nameof(UserNumber);
     public const string SystemUser = nameof(SystemUser);
     public const string Unassigned = nameof(Unassigned);
@@ -71,6 +74,16 @@ public static class WarehouseAssistantMessageKeys
     public const string TaskNone = nameof(TaskNone);
     public const string TaskFound = nameof(TaskFound);
     public const string TaskForcedSelf = nameof(TaskForcedSelf);
+    public const string GoodsReceiptAnalysisDenied = nameof(GoodsReceiptAnalysisDenied);
+    public const string GoodsReceiptSupplierRequired = nameof(GoodsReceiptSupplierRequired);
+    public const string GoodsReceiptAllSuppliers = nameof(GoodsReceiptAllSuppliers);
+    public const string GoodsReceiptNoQuantity = nameof(GoodsReceiptNoQuantity);
+    public const string GoodsReceiptAnalysisNone = nameof(GoodsReceiptAnalysisNone);
+    public const string GoodsReceiptAnalysisFound = nameof(GoodsReceiptAnalysisFound);
+    public const string GoodsReceiptResultLimited = nameof(GoodsReceiptResultLimited);
+    public const string ParameterHintInvalid = nameof(ParameterHintInvalid);
+    public const string ParameterHelpRequired = nameof(ParameterHelpRequired);
+    public const string ParameterHelpAnswer = nameof(ParameterHelpAnswer);
     public const string InvalidSession = nameof(InvalidSession);
     public const string BranchScopeMissing = nameof(BranchScopeMissing);
 }

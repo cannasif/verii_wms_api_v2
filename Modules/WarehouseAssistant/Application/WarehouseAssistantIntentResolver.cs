@@ -39,6 +39,19 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
         "استلام", "استلام بضاعة", "تم الاستلام", "متى", "من"
     ];
 
+    private static readonly string[] SupplierWords =
+    [
+        "cari", "tedarikci", "firma", "satici", "supplier", "vendor", "customer",
+        "lieferant", "fournisseur", "proveedor", "fornitore", "مورد"
+    ];
+
+    private static readonly string[] ReceiptAnalysisWords =
+    [
+        "kac mal kabul", "kaç mal kabul", "neler alindi", "neler alındı", "hangi urunler alindi", "hangi ürünler alındı",
+        "mal kabul raporu", "mal kabulleri", "goods receipts", "what was received", "received items",
+        "wareneingange", "articles recus", "mercancia recibida", "articoli ricevuti", "إيصالات البضائع"
+    ];
+
     private static readonly string[] ActivityWords =
     [
         "islem", "hareket", "yaptigim", "yapmis", "yapti", "aktivit", "kayit",
@@ -105,6 +118,7 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
         cancellationToken.ThrowIfCancellationRequested();
         var normalized = Normalize(message);
         var datePreset = ResolveDatePreset(normalized);
+        var (dateFrom, dateTo) = ExtractExplicitDateRange(message);
         var containsSerialWord = ContainsAny(normalized, SerialWords);
         var serialNo = containsSerialWord
             ? ExtractSerial(message, normalized) ?? context?.SerialNo
@@ -113,6 +127,9 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
         var hasStock = ContainsAny(normalized, StockWords);
         var hasBalance = ContainsAny(normalized, BalanceWords);
         var hasReceipt = ContainsAny(normalized, ReceiptWords);
+        var hasSupplier = ContainsAny(normalized, SupplierWords);
+        var hasReceiptAnalysis = hasReceipt
+            && (hasSupplier || dateFrom.HasValue || ContainsAny(normalized, ReceiptAnalysisWords));
         var hasActivity = ContainsAny(normalized, ActivityWords);
         var hasMovement = ContainsAny(normalized, MovementWords);
         var hasTask = ContainsAny(normalized, TaskWords);
@@ -158,6 +175,11 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
             intent = WarehouseAssistantIntent.SerialReceiptHistory;
             confidence = string.IsNullOrWhiteSpace(serialNo) ? 0.70m : 0.98m;
         }
+        else if (hasReceiptAnalysis)
+        {
+            intent = WarehouseAssistantIntent.GoodsReceiptAnalysis;
+            confidence = hasSupplier && dateFrom.HasValue ? 0.99m : 0.93m;
+        }
         else if (hasSerial && hasBalance)
         {
             intent = WarehouseAssistantIntent.SerialBalance;
@@ -188,7 +210,10 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
             null,
             requestsAll,
             confidence,
-            "deterministic"));
+            "deterministic",
+            dateFrom,
+            dateTo,
+            hasSupplier ? message.Trim() : context?.SupplierCode));
     }
 
     public static string Normalize(string value)
@@ -215,6 +240,25 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
         if (ContainsAny(normalized, ["son 7 gun", "son yedi gun", "last 7 days", "letzte 7 tage", "7 derniers jours", "ultimos 7 dias", "ultimi 7 giorni", "اخر 7 ايام"]))
             return WarehouseAssistantDatePreset.LastSevenDays;
         return WarehouseAssistantDatePreset.Today;
+    }
+
+    private static (DateOnly? From, DateOnly? To) ExtractExplicitDateRange(string message)
+    {
+        var dates = new List<DateOnly>(2);
+        foreach (Match match in Regex.Matches(message, @"(?<!\d)(\d{1,4})[./-](\d{1,2})[./-](\d{1,4})(?!\d)", RegexOptions.CultureInvariant))
+        {
+            var raw = match.Value;
+            var formats = match.Groups[1].Value.Length == 4
+                ? new[] { "yyyy-M-d", "yyyy-MM-dd", "yyyy.M.d", "yyyy.MM.dd", "yyyy/M/d", "yyyy/MM/dd" }
+                : new[] { "d.M.yyyy", "dd.MM.yyyy", "d/M/yyyy", "dd/MM/yyyy", "d-M-yyyy", "dd-MM-yyyy" };
+            if (DateOnly.TryParseExact(raw, formats, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed))
+                dates.Add(parsed);
+            if (dates.Count == 2) break;
+        }
+
+        if (dates.Count == 0) return (null, null);
+        if (dates.Count == 1) return (dates[0], dates[0]);
+        return dates[0] <= dates[1] ? (dates[0], dates[1]) : (dates[1], dates[0]);
     }
 
     private static string? ExtractSerial(string original, string normalized)

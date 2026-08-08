@@ -73,4 +73,17 @@
   <data name="TaskForcedSelf" xml:space="preserve"><value>Yetkiniz başka kullanıcıların görevlerini görmeye izin vermediği için sonuçlar yalnız size göre sınırlandırıldı.</value></data>
   <data name="InvalidSession" xml:space="preserve"><value>Geçersiz kullanıcı oturumu.</value></data>
   <data name="BranchScopeMissing" xml:space="preserve"><value>Şube kapsamı bulunamadı.</value></data>
+  <data name="CapabilityExampleGoodsReceiptAnalysis" xml:space="preserve"><value>01.08.2026 ile 08.08.2026 arasında ABC carisine kaç mal kabul yapıldı, neler alındı?</value></data>
+  <data name="DateExplicitRange" xml:space="preserve"><value>{0:dd.MM.yyyy} - {1:dd.MM.yyyy}</value></data>
+  <data name="DateRangeTooLarge" xml:space="preserve"><value>Tek sorguda en fazla 367 günlük tarih aralığı kullanılabilir. Daha uzun dönemleri daha küçük aralıklara bölün.</value></data>
+  <data name="GoodsReceiptAnalysisDenied" xml:space="preserve"><value>Mal kabul analizini görmek için mal kabul görüntüleme yetkisi gereklidir.</value></data>
+  <data name="GoodsReceiptSupplierRequired" xml:space="preserve"><value>Yazdığınız cari kodu veya adı bulunamadı. Cari kodunu ya da tam adını daha açık yazar mısınız?</value></data>
+  <data name="GoodsReceiptAllSuppliers" xml:space="preserve"><value>tüm cariler</value></data>
+  <data name="GoodsReceiptNoQuantity" xml:space="preserve"><value>miktar yok</value></data>
+  <data name="GoodsReceiptAnalysisNone" xml:space="preserve"><value>{0} belge tarihi aralığında {1} için, yetkili olduğunuz depolarda fiili miktarı olan mal kabul bulunamadı.</value></data>
+  <data name="GoodsReceiptAnalysisFound" xml:space="preserve"><value>{0} belge tarihi aralığında {1} için {2} mal kabul belgesinde {3} stok kalemi bulundu. Birim bazında kabul toplamı: {4}. Kalem ayrıntıları aşağıdadır.</value></data>
+  <data name="GoodsReceiptResultLimited" xml:space="preserve"><value>Performans için ilk {0} kalem gösteriliyor; toplam kalem sayısı {1}. Tam listeyi Excel veya PDF olarak dışa aktarabilirsiniz.</value></data>
+  <data name="ParameterHintInvalid" xml:space="preserve"><value>Parametre rehberi isteği geçersizdir.</value></data>
+  <data name="ParameterHelpRequired" xml:space="preserve"><value>Hangi parametreyi sorduğunuzu biraz daha açık yazar mısınız? Parametre adını ve mümkünse seçeneği belirtin.</value></data>
+  <data name="ParameterHelpAnswer" xml:space="preserve"><value>Bu parametrenin seçeneklerini; ne zaman seçileceği, hangi ekran ve işlemleri etkilediği, gerçek operasyon örneği ve dikkat edilmesi gereken sonuçlarıyla aşağıda karşılaştırdım.</value></data>
 </root>

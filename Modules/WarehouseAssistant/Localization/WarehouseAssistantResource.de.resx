@@ -39,4 +39,17 @@
   <data name="SerialSubject" xml:space="preserve"><value>Serie {0}</value></data><data name="SuggestionStockMovement" xml:space="preserve"><value>Bestandsbewegungen für {0} anzeigen</value></data><data name="SuggestionSerialBalance" xml:space="preserve"><value>In welchen Lagerplätzen ist Serie {0}?</value></data><data name="SuggestionStockLocation" xml:space="preserve"><value>In welchen Lagerplätzen ist {0}?</value></data>
   <data name="TaskDenied" xml:space="preserve"><value>Zum Anzeigen zugewiesener Aufgaben ist mindestens eine passende Vorgangsberechtigung erforderlich.</value></data><data name="TaskNone" xml:space="preserve"><value>Für {0} wurden in Ihren berechtigten Vorgängen keine offenen Aufgaben gefunden.</value></data><data name="TaskFound" xml:space="preserve"><value>Für {0} wurden {1} offene Aufgaben gefunden. Höhere Priorität und frühere Termine stehen oben.</value></data><data name="TaskForcedSelf" xml:space="preserve"><value>Ihre Berechtigungen erlauben keine Aufgaben anderer Benutzer; die Ergebnisse wurden auf Sie beschränkt.</value></data>
   <data name="InvalidSession" xml:space="preserve"><value>Ungültige Benutzersitzung.</value></data><data name="BranchScopeMissing" xml:space="preserve"><value>Niederlassungsbereich wurde nicht gefunden.</value></data>
+  <data name="CapabilityExampleGoodsReceiptAnalysis" xml:space="preserve"><value>Wie viele Wareneingänge gab es für Lieferant ABC zwischen 01.08.2026 und 08.08.2026 und welche Artikel wurden angenommen?</value></data>
+  <data name="DateExplicitRange" xml:space="preserve"><value>{0:dd.MM.yyyy} - {1:dd.MM.yyyy}</value></data>
+  <data name="DateRangeTooLarge" xml:space="preserve"><value>Eine Abfrage darf höchstens 367 Tage umfassen. Teilen Sie längere Zeiträume auf.</value></data>
+  <data name="GoodsReceiptAnalysisDenied" xml:space="preserve"><value>Für diese Analyse ist die Berechtigung zur Anzeige von Wareneingängen erforderlich.</value></data>
+  <data name="GoodsReceiptSupplierRequired" xml:space="preserve"><value>Lieferantencode oder -name wurde nicht gefunden. Bitte genauer angeben.</value></data>
+  <data name="GoodsReceiptAllSuppliers" xml:space="preserve"><value>alle Lieferanten</value></data>
+  <data name="GoodsReceiptNoQuantity" xml:space="preserve"><value>keine Menge</value></data>
+  <data name="GoodsReceiptAnalysisNone" xml:space="preserve"><value>Für {1} wurden im Belegzeitraum {0} keine Wareneingänge mit gebuchter Menge in berechtigten Lagern gefunden.</value></data>
+  <data name="GoodsReceiptAnalysisFound" xml:space="preserve"><value>Im Belegzeitraum {0} wurden für {1} {2} Wareneingänge mit {3} Positionen gefunden. Mengen nach Einheit: {4}.</value></data>
+  <data name="GoodsReceiptResultLimited" xml:space="preserve"><value>Aus Leistungsgründen werden die ersten {0} von {1} Positionen angezeigt. Excel/PDF kann verwendet werden.</value></data>
+  <data name="ParameterHintInvalid" xml:space="preserve"><value>Die Anfrage zur Parameterhilfe ist ungültig.</value></data>
+  <data name="ParameterHelpRequired" xml:space="preserve"><value>Bitte nennen Sie den Parameter und möglichst die zu erklärende Option.</value></data>
+  <data name="ParameterHelpAnswer" xml:space="preserve"><value>Die Optionen werden unten mit Einsatzzeitpunkt, Auswirkungen, Praxisbeispiel und wichtigen Folgen verglichen.</value></data>
 </root>

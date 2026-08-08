@@ -15,6 +15,8 @@ public enum WarehouseAssistantIntent
     BarcodeLookup = 7,
     StockMovementHistory = 8,
     AssignedTasks = 9,
+    GoodsReceiptAnalysis = 10,
+    ParameterHelp = 11,
     Unknown = 99
 }
 
@@ -38,7 +40,15 @@ public sealed record WarehouseAssistantAccess(
     bool CanViewWarehouseOutbound = false,
     bool CanViewProductionTransfers = false);
 
-public sealed record AskWarehouseAssistantRequest(long? ConversationId, string Message);
+public sealed record WarehouseAssistantParameterHint(
+    string Module,
+    string Field,
+    string? Value = null);
+
+public sealed record AskWarehouseAssistantRequest(
+    long? ConversationId,
+    string Message,
+    WarehouseAssistantParameterHint? ParameterHint = null);
 
 public sealed record WarehouseAssistantCapabilities(
     bool CanQueryAllUsers,
@@ -48,7 +58,9 @@ public sealed record WarehouseAssistantCapabilities(
     bool CanQueryStockMovements,
     bool CanQueryAssignedTasks,
     string ScopeLabel,
-    IReadOnlyList<string> ExampleQuestions);
+    IReadOnlyList<string> ExampleQuestions,
+    bool CanQueryGoodsReceiptAnalysis = false,
+    bool CanExplainParameters = true);
 
 public sealed record WarehouseAssistantConversationRow(
     long Id,
@@ -187,6 +199,37 @@ public sealed record WarehouseAssistantTaskRow(
     long? AssigneeUserId,
     string AssigneeDisplayName);
 
+public sealed record WarehouseAssistantGoodsReceiptRow(
+    long GoodsReceiptId,
+    string DocumentNo,
+    DateOnly DocumentDate,
+    DateTimeOffset? ReceivedAtUtc,
+    long? SupplierId,
+    string SupplierCode,
+    string SupplierName,
+    int WarehouseCode,
+    string WarehouseName,
+    long StockId,
+    string StockCode,
+    string StockName,
+    string? YapCode,
+    string UnitCode,
+    decimal ReceivedQuantity,
+    decimal AcceptedQuantity,
+    decimal RejectedQuantity,
+    decimal QuarantineQuantity,
+    decimal PutawayQuantity,
+    string Status,
+    string QualityStatus,
+    string ErpIntegrationStatus,
+    long? ReceivedByUserId,
+    string ReceivedByDisplayName);
+
+public sealed record WarehouseAssistantParameterGuideRow(
+    string Module,
+    string Field,
+    string? Value);
+
 public sealed record WarehouseAssistantChatResponse(
     long ConversationId,
     long MessageId,
@@ -201,13 +244,23 @@ public sealed record WarehouseAssistantChatResponse(
     WarehouseAssistantBarcodeRow? Barcode,
     IReadOnlyList<WarehouseAssistantMovementRow> Movements,
     IReadOnlyList<WarehouseAssistantTaskRow> Tasks,
-    IReadOnlyList<string> Suggestions);
+    IReadOnlyList<string> Suggestions,
+    IReadOnlyList<WarehouseAssistantGoodsReceiptRow>? GoodsReceipts = null,
+    IReadOnlyList<WarehouseAssistantParameterGuideRow>? ParameterGuides = null);
 
 public sealed record WarehouseAssistantContext(
     string? SerialNo,
     long? StockId,
     string? StockCode,
-    string? Barcode = null);
+    string? Barcode = null,
+    long? SupplierId = null,
+    string? SupplierCode = null,
+    string? SupplierName = null,
+    DateOnly? DateFrom = null,
+    DateOnly? DateTo = null,
+    string? ParameterModule = null,
+    string? ParameterField = null,
+    string? ParameterValue = null);
 
 public sealed record WarehouseAssistantIntentResolution(
     WarehouseAssistantIntent Intent,
@@ -218,7 +271,13 @@ public sealed record WarehouseAssistantIntentResolution(
     string? TargetUserQuery,
     bool RequestsAllUsers,
     decimal Confidence,
-    string ProviderMode);
+    string ProviderMode,
+    DateOnly? DateFrom = null,
+    DateOnly? DateTo = null,
+    string? SupplierQuery = null,
+    string? ParameterModule = null,
+    string? ParameterField = null,
+    string? ParameterValue = null);
 
 public interface IWarehouseAssistantIntentResolver
 {

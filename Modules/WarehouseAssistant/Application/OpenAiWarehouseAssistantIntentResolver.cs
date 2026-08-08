@@ -69,7 +69,10 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
                 NullIfBlank(root.GetProperty("targetUserQuery").GetString()),
                 root.GetProperty("requestsAllUsers").GetBoolean(),
                 0.85m,
-                "openai");
+                "openai",
+                ParseDate(root.GetProperty("dateFrom").GetString()),
+                ParseDate(root.GetProperty("dateTo").GetString()),
+                NullIfBlank(root.GetProperty("supplierQuery").GetString()));
         }
         catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
@@ -85,7 +88,7 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
         max_output_tokens = 300,
         input = new object[]
         {
-            new { role = "system", content = "Classify multilingual WMS questions. Stock, product, item, material, ürün, malzeme and mamul are synonyms. Barcode and label are synonyms. Never decide authorization, never generate SQL, and never infer access rights. Return only the forced function call." },
+            new { role = "system", content = "Classify multilingual WMS questions. Stock, product, item, material, ürün, malzeme and mamul are synonyms. Supplier, vendor, cari and tedarikçi are synonyms. Extract explicit dates as ISO yyyy-MM-dd and keep date ranges inclusive. Never decide authorization, never generate SQL, and never infer access rights. Return only the forced function call." },
             new { role = "user", content = $"Question: {message}\nPrevious entity context: {JsonSerializer.Serialize(context)}" }
         },
         tools = new object[]
@@ -107,9 +110,12 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
                         stockQuery = new { type = new[] { "string", "null" } },
                         barcode = new { type = new[] { "string", "null" } },
                         targetUserQuery = new { type = new[] { "string", "null" } },
-                        requestsAllUsers = new { type = "boolean" }
+                        requestsAllUsers = new { type = "boolean" },
+                        dateFrom = new { type = new[] { "string", "null" }, description = "Inclusive date from as yyyy-MM-dd" },
+                        dateTo = new { type = new[] { "string", "null" }, description = "Inclusive date to as yyyy-MM-dd" },
+                        supplierQuery = new { type = new[] { "string", "null" } }
                     },
-                    required = new[] { "intent", "datePreset", "serialNo", "stockQuery", "barcode", "targetUserQuery", "requestsAllUsers" },
+                    required = new[] { "intent", "datePreset", "serialNo", "stockQuery", "barcode", "targetUserQuery", "requestsAllUsers", "dateFrom", "dateTo", "supplierQuery" },
                     additionalProperties = false
                 }
             }
@@ -132,4 +138,7 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
     }
 
     private static string? NullIfBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private static DateOnly? ParseDate(string? value) =>
+        DateOnly.TryParseExact(value, "yyyy-MM-dd", out var date) ? date : null;
 }
