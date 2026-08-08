@@ -126,7 +126,7 @@ public sealed class KkdController(
 
     [HttpPost("requests/paged")]
     public async Task<IActionResult> RequestsPaged(PagedRequest request, CancellationToken ct)
-    { await Require("WMS.KKD.REQUESTS.VIEW", ct); return Ok(ApiResponse<PagedResponse<KkdRequestGridRow>>.Ok(await requests.GetPagedAsync(request, ct))); }
+    { await Require("WMS.KKD.REQUESTS.VIEW", ct); return Ok(ApiResponse<PagedResponse<KkdRequestGridRow>>.Ok(await requests.GetPagedAsync(request, UserId(), ct))); }
 
     [HttpGet("requests/{id:long}")]
     public async Task<IActionResult> RequestDetail(long id, CancellationToken ct)

@@ -36,9 +36,10 @@ public sealed class KkdRequestService(
     private IGenericRepository<WarehouseEntity> Warehouses => uow.Repository<WarehouseEntity>();
     private IGenericRepository<User> Users => uow.Repository<User>();
 
-    public async Task<PagedResponse<KkdRequestGridRow>> GetPagedAsync(PagedRequest request, CancellationToken ct = default)
+    public async Task<PagedResponse<KkdRequestGridRow>> GetPagedAsync(PagedRequest request, long actor, CancellationToken ct = default)
     {
-        var rows = ApplySearch(Requests.Query(), request).Select(x => new KkdRequestGridRow(
+        var query = await AuthorizedRequestsAsync(actor, ct);
+        var rows = ApplySearch(query, request).Select(x => new KkdRequestGridRow(
             x.Id,
             x.RequestNo,
             x.Status.ToString(),
@@ -281,6 +282,22 @@ public sealed class KkdRequestService(
                 ChangedFields: ["Status", "CancelledAtUtc", "CancellationReason"]), token);
             return await GetDetailAsync(entity.Id, token);
         }, ct, IsolationLevel.Serializable);
+    }
+
+    private async Task<IQueryable<KkdRequest>> AuthorizedRequestsAsync(long actor, CancellationToken ct)
+    {
+        var warehouseIds = await uow.Repository<UserWarehouseAssignment>().Query()
+            .Where(x => x.UserId == actor)
+            .Select(x => x.WarehouseId)
+            .Distinct()
+            .ToArrayAsync(ct);
+        var query = Requests.Query();
+        // Depoya bağlanmamış (henüz triyaj edilmemiş) talepler herkese görünür kalır; depo atanmış
+        // talepler ise yalnızca o depoya yetkili kullanıcılara gösterilir. Depo kısıtlaması olmayan
+        // kullanıcılar (ör. müdür) için filtre uygulanmaz.
+        return warehouseIds.Length == 0
+            ? query
+            : query.Where(x => x.WarehouseId == null || warehouseIds.Contains(x.WarehouseId.Value));
     }
 
     private IQueryable<KkdRequest> ApplySearch(IQueryable<KkdRequest> query, PagedRequest request)

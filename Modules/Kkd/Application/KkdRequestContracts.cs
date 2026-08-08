@@ -126,7 +126,7 @@ public sealed record KkdRequestDetail(
 
 public interface IKkdRequestService
 {
-    Task<PagedResponse<KkdRequestGridRow>> GetPagedAsync(PagedRequest request, CancellationToken ct = default);
+    Task<PagedResponse<KkdRequestGridRow>> GetPagedAsync(PagedRequest request, long actor, CancellationToken ct = default);
     Task<KkdRequestDetail> GetDetailAsync(long id, CancellationToken ct = default);
     Task<KkdRequestDetail> CreateAsync(KkdRequestCreateRequest request, long actor, CancellationToken ct = default);
     Task<KkdRequestDetail> ResolveLineAsync(long requestId, long lineId, KkdRequestResolveLineRequest request, long actor, CancellationToken ct = default);
