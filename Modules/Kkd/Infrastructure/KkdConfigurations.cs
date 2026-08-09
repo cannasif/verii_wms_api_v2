@@ -299,6 +299,46 @@ public sealed class KkdDistributionEntitlementAllocationConfiguration : BaseEnti
     }
 }
 
+public sealed class KkdPreparationTaskConfiguration : BaseEntityConfiguration<KkdPreparationTask>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdPreparationTask> b)
+    {
+        b.ToTable("RII_KKD_PREPARATION_TASK");
+        b.Property(x => x.TaskNo).HasMaxLength(60).IsRequired();
+        b.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+        b.Property(x => x.ClosureReason).HasMaxLength(1000);
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasOne(x => x.Request).WithMany().HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.PreviousTask).WithMany().HasForeignKey(x => x.PreviousTaskId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.Distribution).WithMany().HasForeignKey(x => x.DistributionId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<UserEntity>().WithMany().HasForeignKey(x => x.AssignedUserId).OnDelete(DeleteBehavior.Restrict).IsRequired(false);
+        b.HasOne<WarehouseEntity>().WithMany().HasForeignKey(x => x.WarehouseId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => x.CorrelationId).IsUnique();
+        b.HasIndex(x => new { x.BranchCode, x.TaskNo }).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x => new { x.BranchCode, x.AssignedUserId, x.Status });
+        b.HasIndex(x => new { x.RequestId, x.Status });
+        b.HasIndex(x => x.DistributionId).HasFilter("[DistributionId] IS NOT NULL");
+    }
+}
+
+public sealed class KkdPreparationTaskLineConfiguration : BaseEntityConfiguration<KkdPreparationTaskLine>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdPreparationTaskLine> b)
+    {
+        b.ToTable("RII_KKD_PREPARATION_TASK_LINE", t => t.HasCheckConstraint(
+            "CK_RII_KKD_PREPARATION_TASK_LINE_QTY",
+            "[Quantity] > 0 AND [PreparedQuantity] >= 0 AND [DeliveredQuantity] >= 0"));
+        b.Property(x => x.Quantity).HasPrecision(20, 6);
+        b.Property(x => x.PreparedQuantity).HasPrecision(20, 6);
+        b.Property(x => x.DeliveredQuantity).HasPrecision(20, 6);
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasOne(x => x.Task).WithMany(x => x.Lines).HasForeignKey(x => x.TaskId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.RequestLine).WithMany().HasForeignKey(x => x.RequestLineId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => new { x.TaskId, x.RequestLineId }).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x => x.RequestLineId);
+    }
+}
+
 public sealed class KkdValidationLogConfiguration : BaseEntityConfiguration<KkdValidationLog>
 {
     protected override void ConfigureEntity(EntityTypeBuilder<KkdValidationLog> b)

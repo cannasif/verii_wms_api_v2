@@ -308,6 +308,59 @@ public sealed class KkdEntitlementConsumption : BaseEntity
     public long? ReversesConsumptionId { get; set; }
 }
 
+public enum KkdPreparationTaskStatus
+{
+    Assigned = 1,
+    InPreparation = 2,
+    Completed = 3,
+    Returned = 4,
+    HandedOver = 5,
+    Cancelled = 6
+}
+
+/// <summary>
+/// KKD hazırlama görevi: talebin kalemlerinin (tamamı veya bir kısmı) bir depo kullanıcısına atanmış hali.
+/// Üretim transfer görev modelinin KKD karşılığı; devir zinciri PreviousTaskId ile izlenir.
+/// </summary>
+public sealed class KkdPreparationTask : BaseEntity
+{
+    public Guid CorrelationId { get; set; }
+    public long RequestId { get; set; }
+    public KkdRequest Request { get; set; } = null!;
+    public string TaskNo { get; set; } = string.Empty;
+    /// <summary>Null ise görev kişiye değil depo havuzuna bırakılmıştır; o depodaki herkes üzerine alabilir.</summary>
+    public long? AssignedUserId { get; set; }
+    public long WarehouseId { get; set; }
+    public KkdPreparationTaskStatus Status { get; set; } = KkdPreparationTaskStatus.Assigned;
+    /// <summary>Devirle oluştuysa kaynak görev.</summary>
+    public long? PreviousTaskId { get; set; }
+    public KkdPreparationTask? PreviousTask { get; set; }
+    /// <summary>Devirle oluştuysa işi devreden kullanıcı.</summary>
+    public long? OriginUserId { get; set; }
+    public long? DistributionId { get; set; }
+    public KkdDistribution? Distribution { get; set; }
+    public DateTimeOffset AssignedAtUtc { get; set; }
+    public DateTimeOffset? StartedAtUtc { get; set; }
+    public DateTimeOffset? CompletedAtUtc { get; set; }
+    public DateTimeOffset? ClosedAtUtc { get; set; }
+    public string? ClosureReason { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+    public ICollection<KkdPreparationTaskLine> Lines { get; set; } = [];
+}
+
+public sealed class KkdPreparationTaskLine : BaseEntity
+{
+    public long TaskId { get; set; }
+    public KkdPreparationTask Task { get; set; } = null!;
+    public long RequestLineId { get; set; }
+    public KkdRequestLine RequestLine { get; set; } = null!;
+    /// <summary>Bu göreve düşen miktar; kısmi devirde talep kaleminin kalanı bölünebilir.</summary>
+    public decimal Quantity { get; set; }
+    public decimal PreparedQuantity { get; set; }
+    public decimal DeliveredQuantity { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+}
+
 public sealed class KkdValidationLog : BaseEntity
 {
     public Guid CorrelationId { get; set; }
