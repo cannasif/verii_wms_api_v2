@@ -102,6 +102,10 @@ public sealed class ProductionTransfersController(
     public async Task<IActionResult>CompletePicking(long id,CompleteProductionPickingRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
         return Ok(ApiResponse<ProductionTransferExecutionDto>.Ok(await execution.CompletePickingAsync(id,request,UserId(),ct),"Toplama tamamlandı; transfer teslim onayı bekliyor."));}
+    [HttpPost("{id:long}/resume-picking")]
+    public async Task<IActionResult>ResumePicking(long id,ResumeProductionPickingRequest request,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferExecutionDto>.Ok(await execution.ResumePickingAsync(id,request,UserId(),ct),"Toplamaya geri dönüldü."));}
     [HttpPost("{id:long}/confirm-handover")]
     public async Task<IActionResult>ConfirmHandover(long id,ConfirmProductionHandoverRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
@@ -126,7 +130,12 @@ public sealed class ProductionTransfersController(
         CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.VIEW",ct);
         return Ok(ApiResponse<IReadOnlyList<ProductionWorkOrderTransferHeaderRowDto>>.Ok(
-            await tasks.GetWorkOrderTransferGroupsAsync(tab,search,ct)));}
+            await tasks.GetWorkOrderTransferGroupsAsync(tab,search,UserId(),ct)));}
+    [HttpGet("work-order-transfer-groups/{transferId:long}/tasks")]
+    public async Task<IActionResult>WorkOrderTransferGroupTasks(long transferId,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.VIEW",ct);
+        return Ok(ApiResponse<IReadOnlyList<ProductionWorkOrderTransferTaskRowDto>>.Ok(
+            await tasks.GetWorkOrderTransferHeaderTasksAsync(transferId,ct)));}
     [HttpPost("{id:long}/tasks/{taskId:long}/assign")]
     public async Task<IActionResult>Assign(long id,long taskId,AssignProductionTransferTaskRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);

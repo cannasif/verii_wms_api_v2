@@ -24,8 +24,39 @@ internal static class ProductionTransferPickingSupport
             .OrderByDescending(x => x.Id)
             .ToArray();
         var assigned = tasks.FirstOrDefault(x => x.Assignments.Any(a => !a.IsDeleted && a.UserId == actor));
-        return assigned ?? tasks.FirstOrDefault()
-            ?? throw AppException.Conflict("Bu transfer için aktif toplama görevi bulunamadı.");
+        return assigned
+            ?? throw AppException.Forbidden("Bu transfer için size atanmış aktif toplama görevi bulunamadı.");
+    }
+
+    internal static WarehouseTransferTask ResolveActivePickTaskForResume(
+        WarehouseTransferHeader header,
+        long actor)
+    {
+        var tasks = header.Tasks
+            .Where(x => x.TaskType == WarehouseTransferTaskType.Pick
+                && x.Status is not (WarehouseTransferTaskStatus.Completed or WarehouseTransferTaskStatus.Cancelled))
+            .OrderByDescending(x => x.Id)
+            .ToArray();
+        return tasks.FirstOrDefault(x => x.Assignments.Any(a => !a.IsDeleted && a.UserId == actor))
+            ?? tasks.FirstOrDefault(x => x.StartedBy == actor)
+            ?? tasks.FirstOrDefault()
+            ?? throw AppException.Conflict("Aktif toplama görevi bulunamadı.");
+    }
+
+    internal static WarehouseTransferTask ResolveAssignedPickTaskForLine(
+        WarehouseTransferHeader header,
+        long taskLineId,
+        long actor)
+    {
+        var task = header.Tasks.SingleOrDefault(x =>
+            x.TaskType == WarehouseTransferTaskType.Pick
+            && x.Lines.Any(line => line.Id == taskLineId && !line.IsDeleted))
+            ?? throw AppException.BadRequest("Beklenen toplama satırı bu üretim transferine ait değil.");
+        if (!task.Assignments.Any(a => !a.IsDeleted && a.UserId == actor))
+            throw AppException.Forbidden("Bu toplama görevi size atanmamış veya başka kullanıcıya devredilmiş.");
+        if (task.Status is not (WarehouseTransferTaskStatus.InProgress or WarehouseTransferTaskStatus.PartiallyCompleted))
+            throw AppException.Conflict("Toplama yalnızca başlatılmış görevinizde yapılabilir.");
+        return task;
     }
 
     internal static async Task<PickBalanceContext> LoadBalanceContextAsync(
@@ -77,30 +108,39 @@ internal static class ProductionTransferPickingSupport
             task.Status = WarehouseTransferTaskStatus.Assigned;
     }
 
-    internal static IReadOnlyList<ProductionTransferPickingRowDto> BuildPreviewRows(
+    internal static IReadOnlyList<ProductionTransferPickingRowDto> BuildRecipeRows(
         WarehouseTransferHeader header,
-        WarehouseTransferTask task,
-        PickBalanceContext context,
-        Dictionary<long, string> locationCodes)
+        WarehouseTransferTask task)
     {
         var rows = new List<ProductionTransferPickingRowDto>();
-        foreach (var taskLine in task.Lines.Where(x => !x.IsDeleted).OrderBy(x => x.Id))
+        foreach (var group in task.Lines
+                     .Where(x => !x.IsDeleted)
+                     .GroupBy(x => x.WtLineId)
+                     .OrderBy(x => x.Min(line => line.Id)))
         {
-            var line = ResolveTaskLine(header, taskLine);
-            var remaining = Math.Max(0, taskLine.PlannedQuantity - taskLine.ProcessedQuantity);
-            if (remaining <= 0 && taskLine.ProcessedQuantity <= 0) continue;
+            var anchorTaskLine = group.OrderBy(x => x.Id).First();
+            var line = ResolveTaskLine(header, anchorTaskLine);
+            var planned = group.Sum(x => x.PlannedQuantity);
+            var processed = group.Sum(x => x.ProcessedQuantity);
+            var remaining = Math.Max(0, planned - processed);
+            if (remaining <= 0 && processed <= 0) continue;
 
-            if (line.TrackingType is StockTrackingType.Serial or StockTrackingType.LotAndSerial)
-            {
-                foreach (var chunk in ProductionTransferRouteAllocation.BuildSerialPreviewRows(line, remaining))
-                    rows.Add(ToRow(taskLine.Id, line, chunk, locationCodes, taskLine.ProcessedQuantity, preview: true));
-                continue;
-            }
-
-            foreach (var chunk in ProductionTransferRouteAllocation.AllocateGreedyNonSerial(
-                         remaining, line.StockId, line.YapCodeId, line.UnitCode, context.Balances, context.Locations))
-                rows.Add(ToRow(taskLine.Id, line, chunk, locationCodes, taskLine.ProcessedQuantity, preview: true));
+            rows.Add(new(
+                anchorTaskLine.Id,
+                line.Id,
+                line.LineNo,
+                null,
+                null,
+                line.StockId,
+                line.StockCodeSnapshot,
+                line.StockNameSnapshot,
+                null,
+                planned,
+                remaining,
+                processed,
+                false));
         }
+
         return rows;
     }
 
@@ -145,6 +185,42 @@ internal static class ProductionTransferPickingSupport
         return rows;
     }
 
+    internal static IReadOnlyList<ProductionTransferPickingRowDto> SortDisplayRows(
+        IReadOnlyList<ProductionTransferPickingRowDto> rows,
+        WarehouseTransferHeader header,
+        ProductionTransferHeaderLink link)
+    {
+        var lineById = header.Lines.ToDictionary(x => x.Id);
+        var linkByLineId = link.Lines.ToDictionary(x => x.WarehouseTransferLineId);
+        var groupAnchorLineNo = new Dictionary<RouteSplitGroupKey, int>();
+
+        foreach (var row in rows)
+        {
+            if (!lineById.TryGetValue(row.WtLineId, out var line)) continue;
+            if (!linkByLineId.TryGetValue(row.WtLineId, out var lineLink)) continue;
+            var key = ProductionTransferRouteAllocation.BuildRouteSplitGroupKey(lineLink, line);
+            groupAnchorLineNo[key] = groupAnchorLineNo.TryGetValue(key, out var current)
+                ? Math.Min(current, row.LineNo)
+                : row.LineNo;
+        }
+
+        int AnchorLineNo(ProductionTransferPickingRowDto row)
+        {
+            if (!lineById.TryGetValue(row.WtLineId, out var line)) return row.LineNo;
+            if (!linkByLineId.TryGetValue(row.WtLineId, out var lineLink)) return row.LineNo;
+            var key = ProductionTransferRouteAllocation.BuildRouteSplitGroupKey(lineLink, line);
+            return groupAnchorLineNo.GetValueOrDefault(key, row.LineNo);
+        }
+
+        return rows
+            .OrderBy(AnchorLineNo)
+            .ThenBy(x => x.LineNo)
+            .ThenBy(x => x.TaskLineId)
+            .ThenBy(x => x.SerialNo, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(x => x.SourceLocationCode, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
     internal static ProductionTransferPickingTableDto MapTable(
         WarehouseTransferHeader header,
         ProductionTransferHeaderLink link,
@@ -179,30 +255,5 @@ internal static class ProductionTransferPickingSupport
         return await uow.Repository<WarehouseLocation>().Query()
             .Where(x => ids.Contains(x.Id))
             .ToDictionaryAsync(x => x.Id, x => x.Code, ct);
-    }
-
-    private static ProductionTransferPickingRowDto ToRow(
-        long taskLineId,
-        WarehouseTransferLine line,
-        RouteAllocationChunk chunk,
-        Dictionary<long, string> locationCodes,
-        decimal processedQuantity,
-        bool preview)
-    {
-        var canPick = chunk.LocationId.HasValue && chunk.Quantity > 0;
-        return new(
-            taskLineId,
-            line.Id,
-            line.LineNo,
-            chunk.LocationId,
-            chunk.LocationId.HasValue ? locationCodes.GetValueOrDefault(chunk.LocationId.Value) : null,
-            line.StockId,
-            line.StockCodeSnapshot,
-            line.StockNameSnapshot,
-            chunk.SerialNo,
-            chunk.Quantity,
-            chunk.Quantity,
-            preview ? 0 : processedQuantity,
-            canPick);
     }
 }

@@ -83,6 +83,8 @@ public sealed record CompleteProductionPickingRequest(
     bool ConfirmPartialPicking,
     string? Reason);
 
+public sealed record ResumeProductionPickingRequest(Guid IdempotencyKey);
+
 public sealed record ConfirmProductionHandoverRequest(
     Guid IdempotencyKey,
     bool ConfirmShortage,
@@ -174,5 +176,6 @@ public interface IProductionTransferExecutionService
         long actor,
         CancellationToken ct = default);
     Task<ProductionTransferExecutionDto> CompletePickingAsync(long transferId, CompleteProductionPickingRequest request, long actor, CancellationToken ct = default);
+    Task<ProductionTransferExecutionDto> ResumePickingAsync(long transferId, ResumeProductionPickingRequest request, long actor, CancellationToken ct = default);
     Task<ProductionTransferExecutionDto> ConfirmHandoverAsync(long transferId, ConfirmProductionHandoverRequest request, long actor, bool canOverrideRequester, CancellationToken ct = default);
 }

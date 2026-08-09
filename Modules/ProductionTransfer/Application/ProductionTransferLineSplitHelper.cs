@@ -71,6 +71,70 @@ internal static class ProductionTransferLineSplitHelper
             AddSibling(header, link, task, taskLine, line, sourceLineLink, new(null, shortage, null, null), ref nextLineNo, actor, utcNow);
     }
 
+    internal static void ConsolidateSameLocationOpenTaskLines(
+        WarehouseTransferHeader header,
+        ProductionTransferHeaderLink link,
+        WarehouseTransferTask task,
+        long actor,
+        DateTime utcNow)
+    {
+        var linkByWtLineId = link.Lines
+            .Where(x => !x.IsDeleted)
+            .GroupBy(x => x.WarehouseTransferLineId)
+            .ToDictionary(x => x.Key, x => x.First());
+        var candidates = task.Lines
+            .Where(taskLine => !taskLine.IsDeleted && taskLine.PlannedQuantity - taskLine.ProcessedQuantity > 0)
+            .Select(taskLine =>
+            {
+                var line = taskLine.Line ?? header.Lines.SingleOrDefault(x => x.Id == taskLine.WtLineId);
+                if (line is null || line.IsDeleted || line.Trackings.Count > 0) return null;
+                if (line.PickedQuantity > 0 || taskLine.ProcessedQuantity > 0) return null;
+                if (!linkByWtLineId.TryGetValue(line.Id, out var lineLink)) return null;
+                var locationId = taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
+                if (!locationId.HasValue) return null;
+                var groupKey = ProductionTransferRouteAllocation.BuildRouteSplitGroupKey(lineLink, line);
+                return new MergeCandidate(taskLine, line, lineLink, locationId.Value, groupKey);
+            })
+            .Where(x => x is not null)
+            .Select(x => x!)
+            .GroupBy(x => (x.GroupKey, x.LocationId))
+            .Where(group => group.Count() > 1);
+
+        foreach (var group in candidates)
+        {
+            var members = group.OrderBy(x => x.TaskLine.Id).ToArray();
+            var keeper = members[0];
+            for (var index = 1; index < members.Length; index++)
+            {
+                var mergee = members[index];
+                var openQuantity = mergee.TaskLine.PlannedQuantity - mergee.TaskLine.ProcessedQuantity;
+                if (openQuantity <= 0) continue;
+
+                keeper.TaskLine.PlannedQuantity += openQuantity;
+                keeper.Line.RequestedQuantity += openQuantity;
+                keeper.LineLink.RequiredQuantity += openQuantity;
+                keeper.TaskLine.UpdatedBy = actor;
+                keeper.TaskLine.UpdatedDate = utcNow;
+                keeper.Line.UpdatedBy = actor;
+                keeper.Line.UpdatedDate = utcNow;
+
+                mergee.TaskLine.IsDeleted = true;
+                mergee.TaskLine.DeletedDate = utcNow;
+                mergee.TaskLine.DeletedBy = actor;
+
+                if (mergee.Line.PickedQuantity <= 0)
+                {
+                    mergee.Line.IsDeleted = true;
+                    mergee.Line.DeletedDate = utcNow;
+                    mergee.Line.DeletedBy = actor;
+                    mergee.LineLink.IsDeleted = true;
+                    mergee.LineLink.DeletedDate = utcNow;
+                    mergee.LineLink.DeletedBy = actor;
+                }
+            }
+        }
+    }
+
     internal static void RemoveRedundantShortageSiblings(
         WarehouseTransferHeader header,
         WarehouseTransferTask task,
@@ -107,8 +171,11 @@ internal static class ProductionTransferLineSplitHelper
             line.DeletedDate = utcNow;
         }
 
-        foreach (var lineLink in link.Lines.Where(x => removableLineIds.Contains(x.WarehouseTransferLineId)).ToArray())
-            link.Lines.Remove(lineLink);
+        foreach (var lineLink in link.Lines.Where(x => !x.IsDeleted && removableLineIds.Contains(x.WarehouseTransferLineId)))
+        {
+            lineLink.IsDeleted = true;
+            lineLink.DeletedDate = utcNow;
+        }
     }
 
     internal static void ApplySerialRouteReplacement(
@@ -277,4 +344,11 @@ internal static class ProductionTransferLineSplitHelper
             RequirementReference = source.RequirementReference,
             RequiredQuantity = quantity
         };
+
+    private sealed record MergeCandidate(
+        WarehouseTransferTaskLine TaskLine,
+        WarehouseTransferLine Line,
+        ProductionTransferLineLink LineLink,
+        long LocationId,
+        RouteSplitGroupKey GroupKey);
 }

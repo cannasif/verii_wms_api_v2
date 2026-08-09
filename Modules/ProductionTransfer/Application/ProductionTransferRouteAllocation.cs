@@ -139,6 +139,73 @@ internal static class ProductionTransferRouteAllocation
             line.YapCodeId,
             line.UnitCode.Trim());
 
+    internal static decimal GetRouteRefreshAvailableAtLocation(
+        long locationId,
+        long stockId,
+        long? yapCodeId,
+        string unitCode,
+        IReadOnlyCollection<LocationStockBalance> balances,
+        WarehouseTransferTask task,
+        WarehouseTransferTaskLine currentTaskLine,
+        WarehouseTransferLine line,
+        ProductionTransferHeaderLink link,
+        bool subtractSiblingCommitments)
+    {
+        var raw = balances
+            .Where(x => x.LocationId == locationId
+                && x.StockId == stockId
+                && x.YapCodeId == yapCodeId
+                && string.Equals(x.UnitCode, unitCode, StringComparison.OrdinalIgnoreCase)
+                && string.IsNullOrWhiteSpace(x.SerialNo))
+            .Sum(x => x.AvailableQuantity);
+
+        if (!subtractSiblingCommitments) return raw;
+
+        var lineLink = link.Lines.Single(x => x.WarehouseTransferLineId == line.Id);
+        var groupKey = BuildRouteSplitGroupKey(lineLink, line);
+        var committed = 0m;
+        foreach (var siblingTaskLine in task.Lines.Where(x => !x.IsDeleted && x.Id != currentTaskLine.Id))
+        {
+            var open = siblingTaskLine.PlannedQuantity - siblingTaskLine.ProcessedQuantity;
+            if (open <= 0) continue;
+            var siblingLine = siblingTaskLine.Line;
+            if (siblingLine is null || siblingLine.Trackings.Count > 0) continue;
+            var siblingLink = link.Lines.SingleOrDefault(x => x.WarehouseTransferLineId == siblingLine.Id);
+            if (siblingLink is null) continue;
+            if (BuildRouteSplitGroupKey(siblingLink, siblingLine) != groupKey) continue;
+
+            var siblingLocation = siblingTaskLine.SourceLocationId ?? siblingLine.DefaultSourceLocationId;
+            if (siblingLocation != locationId) continue;
+            committed += open;
+        }
+
+        return Math.Max(0, raw - committed);
+    }
+
+    internal static HashSet<long> GetRouteRefreshExcludedSourceLocationIds(long? currentSourceLocationId) =>
+        currentSourceLocationId.HasValue ? [currentSourceLocationId.Value] : [];
+
+    /// <summary>
+    /// Rota güncellemede kullanıcının seçtiği miktarlar kaynak rafın tamamını karşılamıyorsa,
+    /// kalan miktarı mevcut kaynak rafa ilk parça olarak ekler; böylece orijinal satır orada kalır.
+    /// </summary>
+    internal static RouteAllocationChunk[] BuildRouteRefreshSplitChunks(
+        decimal openQuantity,
+        long? currentSourceLocationId,
+        IEnumerable<RouteAllocationChunk> selectedSplits)
+    {
+        var selected = selectedSplits.Where(x => x.Quantity > 0 && x.LocationId.HasValue).ToArray();
+        var routedTotal = selected.Sum(x => x.Quantity);
+        var remainderOnSource = openQuantity - routedTotal;
+        if (remainderOnSource <= 0.000001m)
+            return selected;
+
+        if (!currentSourceLocationId.HasValue)
+            return selected;
+
+        return [new(currentSourceLocationId.Value, remainderOnSource, null, null), ..selected];
+    }
+
     internal static HashSet<long> GetSiblingCommittedSourceLocationIds(
         WarehouseTransferTask task,
         WarehouseTransferTaskLine taskLine,

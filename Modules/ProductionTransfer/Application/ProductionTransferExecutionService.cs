@@ -68,14 +68,7 @@ public sealed class ProductionTransferExecutionService(
             and not WarehouseTransferTaskStatus.PartiallyCompleted;
         IReadOnlyList<ProductionTransferPickingRowDto> rows;
         if (isLocked)
-        {
-            var context = await ProductionTransferPickingSupport.LoadBalanceContextAsync(
-                uow, aggregate.Header, task.Lines.Where(x => !x.IsDeleted)
-                    .Select(x => ProductionTransferPickingSupport.ResolveTaskLine(aggregate.Header, x)), ct);
-            var locationCodes = await ProductionTransferPickingSupport.LoadLocationCodesAsync(
-                uow, context.Balances.Select(x => (long?)x.LocationId), ct);
-            rows = ProductionTransferPickingSupport.BuildPreviewRows(aggregate.Header, task, context, locationCodes);
-        }
+            rows = ProductionTransferPickingSupport.BuildRecipeRows(aggregate.Header, task);
         else
         {
             var locationIds = task.Lines.SelectMany(x =>
@@ -89,7 +82,8 @@ public sealed class ProductionTransferExecutionService(
         }
 
         return ProductionTransferPickingSupport.MapTable(
-            aggregate.Header, aggregate.Link, task, isLocked, SortPickingRows(rows));
+            aggregate.Header, aggregate.Link, task, isLocked,
+            ProductionTransferPickingSupport.SortDisplayRows(rows, aggregate.Header, aggregate.Link));
     }
 
     public async Task<ResolveProductionTransferBarcodeResult> ResolveBarcodeAsync(
@@ -199,6 +193,11 @@ public sealed class ProductionTransferExecutionService(
 
                 var context = await ProductionTransferPickingSupport.LoadBalanceContextAsync(
                     uow, aggregate.Header, [line], token);
+                var serialCurrentSourceLocationId = tracking.SourceLocationId ?? taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
+                var serialExcludedLocations = ProductionTransferRouteAllocation.GetRouteRefreshExcludedSourceLocationIds(
+                    serialCurrentSourceLocationId);
+                var serialEligibleBalances = ProductionTransferRouteAllocation.ExcludeLocations(
+                    context.Balances, serialExcludedLocations);
                 var assignedSerials = ProductionTransferRouteAllocation.GetAssignedSerialNumbersInGroup(
                     task, line, aggregate.Link, currentSerialNo);
                 var candidates = ProductionTransferRouteAllocation.ListSerialRouteRefreshCandidates(
@@ -207,7 +206,7 @@ public sealed class ProductionTransferExecutionService(
                     line.UnitCode,
                     currentSerialNo,
                     assignedSerials,
-                    context.Balances,
+                    serialEligibleBalances,
                     context.Locations);
 
                 return new ProductionTransferRouteRefreshCandidatesDto(
@@ -226,8 +225,9 @@ public sealed class ProductionTransferExecutionService(
             var remaining = taskLine.PlannedQuantity - taskLine.ProcessedQuantity;
             if (remaining <= 0) throw AppException.Conflict("Seçilen satırın güncellenecek kalan miktarı yok.");
 
-            var excludedLocations = ProductionTransferRouteAllocation.GetSiblingCommittedSourceLocationIds(
-                task, taskLine, line, aggregate.Link);
+            var currentSourceLocationId = taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
+            var excludedLocations = ProductionTransferRouteAllocation.GetRouteRefreshExcludedSourceLocationIds(
+                currentSourceLocationId);
             var nonSerialContext = await ProductionTransferPickingSupport.LoadBalanceContextAsync(
                 uow, aggregate.Header, [line], token);
             var eligibleBalances = ProductionTransferRouteAllocation.ExcludeLocations(
@@ -239,16 +239,35 @@ public sealed class ProductionTransferExecutionService(
                 .Where(x => x.LocationId.HasValue)
                 .GroupBy(x => x.LocationId!.Value)
                 .ToDictionary(g => g.Key, g => g.Sum(x => x.Quantity));
+            var subtractSiblingCommitments = aggregate.Header.ReservationPolicy == WarehouseTransferReservationPolicy.None
+                && aggregate.Header.Lines.All(x => x.ReservedQuantity <= 0);
             return new ProductionTransferRouteRefreshCandidatesDto(
                 taskLineId,
                 remaining,
                 false,
                 null,
-                nonSerialCandidates.Select(x => new ProductionTransferRouteRefreshCandidateDto(
-                    x.LocationId,
-                    nonSerialContext.Locations[x.LocationId].Code,
-                    x.AvailableQuantity,
-                    greedy.GetValueOrDefault(x.LocationId))).ToArray());
+                nonSerialCandidates
+                    .Select(x =>
+                    {
+                        var available = ProductionTransferRouteAllocation.GetRouteRefreshAvailableAtLocation(
+                            x.LocationId,
+                            line.StockId,
+                            line.YapCodeId,
+                            line.UnitCode,
+                            eligibleBalances,
+                            task,
+                            taskLine,
+                            line,
+                            aggregate.Link,
+                            subtractSiblingCommitments);
+                        return new ProductionTransferRouteRefreshCandidateDto(
+                            x.LocationId,
+                            nonSerialContext.Locations[x.LocationId].Code,
+                            available,
+                            Math.Min(greedy.GetValueOrDefault(x.LocationId), available));
+                    })
+                    .Where(x => x.AvailableQuantity > 0)
+                    .ToArray());
         }, ct);
 
     public Task<ProductionTransferPickingTableDto> ApplyRouteRefreshSplitAsync(
@@ -268,6 +287,7 @@ public sealed class ProductionTransferExecutionService(
             var taskLine = task.Lines.SingleOrDefault(x => x.Id == taskLineId && !x.IsDeleted)
                 ?? throw AppException.NotFound("Toplama satırı bulunamadı.");
             var line = ProductionTransferPickingSupport.ResolveTaskLine(aggregate.Header, taskLine);
+            var reservationPrefix = $"WT:{transferId}:ROUTE-SPLIT:{taskLineId}:{request.IdempotencyKey:N}";
 
             if (line.Trackings.Count > 0)
             {
@@ -292,6 +312,10 @@ public sealed class ProductionTransferExecutionService(
                 if (SameTrackingValue(split.SerialNo, request.CurrentSerialNo))
                     throw AppException.BadRequest("Mevcut seri ile aynı seri seçilemez.");
 
+                var serialCurrentSourceLocationId = tracking.SourceLocationId ?? taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
+                if (serialCurrentSourceLocationId == split.LocationId)
+                    throw AppException.Conflict("Kaynak rafa rotalama yapılamaz.");
+
                 var serialContext = await ProductionTransferPickingSupport.LoadBalanceContextAsync(
                     uow, aggregate.Header, [line], token);
                 if (!serialContext.Locations.ContainsKey(split.LocationId))
@@ -313,6 +337,13 @@ public sealed class ProductionTransferExecutionService(
                 if (balance is null || balance.AvailableQuantity + 0.000001m < 1)
                     throw AppException.Conflict($"{serialContext.Locations[split.LocationId].Code} rafında seçilen seri için yeterli stok yok.");
 
+                await ReleaseTransferReservationsAsync(
+                    aggregate.Header,
+                    $"{reservationPrefix}:release",
+                    "Rota güncelleme öncesi rezervasyon salımı",
+                    actor,
+                    token);
+
                 var utcNow = DateTime.UtcNow;
                 ProductionTransferLineSplitHelper.ApplySerialRouteReplacement(
                     tracking,
@@ -326,14 +357,11 @@ public sealed class ProductionTransferExecutionService(
 
                 await uow.SaveChangesAsync(token);
 
-                if (aggregate.Header.ReservationPolicy != WarehouseTransferReservationPolicy.None)
-                {
-                    await reservations.ReserveAsync(
-                        aggregate.Header,
-                        $"WT:{transferId}:RESERVE:ROUTE-SPLIT:{taskLineId}:{request.IdempotencyKey:N}",
-                        actor,
-                        token);
-                }
+                await ReserveTransferReservationsAsync(
+                    aggregate.Header,
+                    $"{reservationPrefix}:reserve",
+                    actor,
+                    token);
                 await uow.SaveChangesAsync(token);
                 return await GetPickingTableAsync(transferId, actor, token);
             }
@@ -349,57 +377,67 @@ public sealed class ProductionTransferExecutionService(
 
             var link = aggregate.Link;
             var sourceLineLink = link.Lines.Single(x => x.WarehouseTransferLineId == line.Id);
-            var excludedLocations = ProductionTransferRouteAllocation.GetSiblingCommittedSourceLocationIds(
-                task, taskLine, line, link);
+            var currentSourceLocationId = taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
+            var excludedLocations = ProductionTransferRouteAllocation.GetRouteRefreshExcludedSourceLocationIds(
+                currentSourceLocationId);
             var context = await ProductionTransferPickingSupport.LoadBalanceContextAsync(uow, aggregate.Header, [line], token);
+            var subtractSiblingCommitments = aggregate.Header.ReservationPolicy == WarehouseTransferReservationPolicy.None
+                && aggregate.Header.Lines.All(x => x.ReservedQuantity <= 0);
             foreach (var split in splits)
             {
                 if (excludedLocations.Contains(split.LocationId))
                 {
                     var blockedCode = context.Locations.GetValueOrDefault(split.LocationId)?.Code ?? split.LocationId.ToString();
-                    throw AppException.Conflict($"{blockedCode} rafı bu kalem için başka bir toplama satırına ayrılmış.");
+                    throw AppException.Conflict($"{blockedCode} kaynak rafından rotalama yapılamaz.");
                 }
                 if (!context.Locations.ContainsKey(split.LocationId))
                     throw AppException.BadRequest("Seçilen kaynak raf geçersiz.");
-                var available = context.Balances
-                    .Where(x => x.LocationId == split.LocationId
-                        && x.StockId == line.StockId
-                        && x.YapCodeId == line.YapCodeId
-                        && string.Equals(x.UnitCode, line.UnitCode, StringComparison.OrdinalIgnoreCase)
-                        && string.IsNullOrWhiteSpace(x.SerialNo))
-                    .Sum(x => x.AvailableQuantity);
+                var available = ProductionTransferRouteAllocation.GetRouteRefreshAvailableAtLocation(
+                    split.LocationId,
+                    line.StockId,
+                    line.YapCodeId,
+                    line.UnitCode,
+                    context.Balances,
+                    task,
+                    taskLine,
+                    line,
+                    link,
+                    subtractSiblingCommitments);
                 if (available + 0.000001m < split.Quantity)
                     throw AppException.Conflict($"{context.Locations[split.LocationId].Code} rafında yeterli stok yok.");
             }
 
-            var chunks = splits
-                .Select(x => new RouteAllocationChunk(x.LocationId, x.Quantity, null, null))
-                .ToArray();
+            var chunks = ProductionTransferRouteAllocation.BuildRouteRefreshSplitChunks(
+                remaining,
+                currentSourceLocationId,
+                splits.Select(x => new RouteAllocationChunk(x.LocationId, x.Quantity, null, null)));
+            if (remaining - total > 0.000001m && !currentSourceLocationId.HasValue)
+                throw AppException.Conflict("Kalan miktar için mevcut kaynak rafı bulunamadı.");
             var nextLineNo = aggregate.Header.Lines.Max(x => x.LineNo);
+            await ReleaseTransferReservationsAsync(
+                aggregate.Header,
+                $"{reservationPrefix}:release",
+                "Rota güncelleme öncesi rezervasyon salımı",
+                actor,
+                token);
+
             ProductionTransferLineSplitHelper.ApplyNonSerialRouteChunks(
                 aggregate.Header, link, task, taskLine, line, sourceLineLink, chunks, ref nextLineNo, actor,
                 DateTime.UtcNow, allowShortageWithoutLocation: false);
+            ProductionTransferLineSplitHelper.ConsolidateSameLocationOpenTaskLines(
+                aggregate.Header, link, task, actor, DateTime.UtcNow);
 
             await uow.SaveChangesAsync(token);
 
-            if (aggregate.Header.ReservationPolicy != WarehouseTransferReservationPolicy.None)
-            {
-                await reservations.ReserveAsync(
-                    aggregate.Header,
-                    $"WT:{transferId}:RESERVE:ROUTE-SPLIT:{taskLineId}:{request.IdempotencyKey:N}",
-                    actor,
-                    token);
-            }
+            await ReserveTransferReservationsAsync(
+                aggregate.Header,
+                $"{reservationPrefix}:reserve",
+                actor,
+                token);
+
             await uow.SaveChangesAsync(token);
             return await GetPickingTableAsync(transferId, actor, token);
         }, ct, IsolationLevel.Serializable);
-
-    private static IReadOnlyList<ProductionTransferPickingRowDto> SortPickingRows(
-        IReadOnlyList<ProductionTransferPickingRowDto> rows) =>
-        rows.OrderBy(x => x.LineNo)
-            .ThenBy(x => x.SerialNo, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(x => x.SourceLocationCode, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
 
     public Task<ProductionTransferScanPickResult> ScanPickAsync(
         long transferId,
@@ -446,6 +484,8 @@ public sealed class ProductionTransferExecutionService(
 
         var aggregate = await LoadAsync(transferId, false, ct);
         EnsurePickingAllowed(aggregate.Link);
+        ProductionTransferPickingSupport.ResolveAssignedPickTaskForLine(
+            aggregate.Header, request.ExpectedTaskLineId, actor);
         var taskLine = aggregate.Header.Tasks
             .SelectMany(x => x.Lines)
             .SingleOrDefault(x => x.Id == request.ExpectedTaskLineId && !x.IsDeleted)
@@ -641,6 +681,46 @@ public sealed class ProductionTransferExecutionService(
             await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("production-transfer.picking.complete", nameof(ProductionTransferHeaderLink), aggregate.Link.Id.ToString(),
                 "Succeeded", "production-transfer", NewValues: new { aggregate.Header.DocumentNo, picked, requested },
+                ChangedFields: ["WorkflowStatus", "TransferStatus"]), token);
+            return await MapAsync(aggregate.Header, aggregate.Link, token);
+        }, ct, IsolationLevel.Serializable);
+
+    public Task<ProductionTransferExecutionDto> ResumePickingAsync(
+        long transferId,
+        ResumeProductionPickingRequest request,
+        long actor,
+        CancellationToken ct = default) =>
+        uow.ExecuteInTransactionAsync(async token =>
+        {
+            if (request.IdempotencyKey == Guid.Empty) throw AppException.BadRequest("İşlem anahtarı zorunludur.");
+            var aggregate = await LoadAsync(transferId, true, token);
+            if (aggregate.Link.WorkflowStatus == ProductionTransferWorkflowStatus.Picking)
+                return await MapAsync(aggregate.Header, aggregate.Link, token);
+            if (aggregate.Link.WorkflowStatus != ProductionTransferWorkflowStatus.AwaitingHandover)
+                throw AppException.Conflict("Transfer toplama aşamasına geri alınamaz.");
+
+            _ = ProductionTransferPickingSupport.ResolveActivePickTaskForResume(aggregate.Header, actor);
+
+            var picked = aggregate.Header.Lines.Where(x => !x.IsDeleted).Sum(x => x.PickedQuantity);
+            if (picked <= 0) throw AppException.Conflict("Toplanmış stok olmadan toplamaya dönülemez.");
+
+            aggregate.Link.WorkflowStatus = ProductionTransferWorkflowStatus.Picking;
+            aggregate.Link.LastPickingCompletionIdempotencyKey = null;
+            aggregate.Link.UpdatedBy = actor;
+            aggregate.Link.UpdatedDate = DateTime.UtcNow;
+
+            var lines = aggregate.Header.Lines.Where(x => !x.IsDeleted).ToArray();
+            aggregate.Header.Status = lines.All(x => x.PickedQuantity >= x.RequestedQuantity)
+                ? WarehouseTransferStatus.Picked
+                : lines.Sum(x => x.PickedQuantity) > 0
+                    ? WarehouseTransferStatus.PartiallyPicked
+                    : WarehouseTransferStatus.Picking;
+            aggregate.Header.UpdatedBy = actor;
+            aggregate.Header.UpdatedDate = DateTime.UtcNow;
+            AddHistory(aggregate.Header, aggregate.Header.Status, request.IdempotencyKey, "Toplamaya geri dönüldü", actor);
+            await uow.SaveChangesAsync(token);
+            await audit.WriteAsync(new("production-transfer.picking.resume", nameof(ProductionTransferHeaderLink), aggregate.Link.Id.ToString(),
+                "Succeeded", "production-transfer", NewValues: new { aggregate.Header.DocumentNo, aggregate.Header.Status },
                 ChangedFields: ["WorkflowStatus", "TransferStatus"]), token);
             return await MapAsync(aggregate.Header, aggregate.Link, token);
         }, ct, IsolationLevel.Serializable);
@@ -892,6 +972,33 @@ public sealed class ProductionTransferExecutionService(
             }
         }
         return rows;
+    }
+
+    private static bool UsesTransferReservations(WarehouseTransferHeader header) =>
+        header.ReservationPolicy != WarehouseTransferReservationPolicy.None
+        || Contexts.Contains(header.BusinessContext);
+
+    private async Task ReleaseTransferReservationsAsync(
+        WarehouseTransferHeader header,
+        string idempotencyKey,
+        string reason,
+        long actor,
+        CancellationToken token)
+    {
+        if (!UsesTransferReservations(header)) return;
+        if (header.Status is WarehouseTransferStatus.Cancelled or WarehouseTransferStatus.Completed) return;
+        await reservations.ReleaseAllAsync(header, idempotencyKey, reason, actor, token);
+    }
+
+    private async Task ReserveTransferReservationsAsync(
+        WarehouseTransferHeader header,
+        string idempotencyKey,
+        long actor,
+        CancellationToken token)
+    {
+        if (!UsesTransferReservations(header)) return;
+        if (header.Status is WarehouseTransferStatus.Cancelled or WarehouseTransferStatus.Completed) return;
+        await reservations.ReserveAsync(header, idempotencyKey, actor, token);
     }
 
     private async Task<(WarehouseTransferHeader Header, ProductionTransferHeaderLink Link)> LoadAsync(

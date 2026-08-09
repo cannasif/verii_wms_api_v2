@@ -95,7 +95,16 @@ public sealed record ProductionWorkOrderTransferHeaderRowDto(
     string TargetWarehouseName,
     decimal RequestedQuantity,
     decimal PickedQuantity,
+    DateOnly DocumentDate,
+    WarehouseTransferInitiationMode InitiationMode,
+    int LineCount,
+    decimal ShippedQuantity,
+    decimal ReceivedQuantity,
+    decimal PutawayQuantity,
+    long? CreatedBy,
     DateTime? CreatedDate,
+    long? UpdatedBy,
+    DateTime? UpdatedDate,
     IReadOnlyList<ProductionWorkOrderTransferTaskRowDto> Tasks);
 
 public interface IProductionTransferTaskService
@@ -105,6 +114,10 @@ public interface IProductionTransferTaskService
     Task<IReadOnlyList<ProductionWorkOrderTransferHeaderRowDto>> GetWorkOrderTransferGroupsAsync(
         ProductionWorkOrderTransferTab tab,
         string? search,
+        long actor,
+        CancellationToken ct = default);
+    Task<IReadOnlyList<ProductionWorkOrderTransferTaskRowDto>> GetWorkOrderTransferHeaderTasksAsync(
+        long transferId,
         CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> AssignAsync(long transferId, long taskId, AssignProductionTransferTaskRequest request, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> RemoveAssignmentAsync(long transferId, long taskId, long userId, long actor, CancellationToken ct = default);

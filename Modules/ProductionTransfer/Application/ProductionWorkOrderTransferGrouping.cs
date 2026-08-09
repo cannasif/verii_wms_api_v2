@@ -8,7 +8,8 @@ public enum ProductionWorkOrderTransferTab
 {
     Picking = 1,
     Completed = 2,
-    Cancelled = 3
+    Cancelled = 3,
+    MyAssignments = 4
 }
 
 public static class ProductionWorkOrderTransferGrouping
@@ -52,6 +53,35 @@ public static class ProductionWorkOrderTransferGrouping
             _ => false
         };
     }
+
+    public static IQueryable<ProductionTransferHeaderLink> ApplyTabFilter(
+        IQueryable<ProductionTransferHeaderLink> query,
+        ProductionWorkOrderTransferTab tab,
+        long? currentUserId = null) =>
+        tab switch
+        {
+            ProductionWorkOrderTransferTab.Completed => query.Where(link =>
+                link.WorkflowStatus == ProductionTransferWorkflowStatus.Completed
+                || link.WorkflowStatus == ProductionTransferWorkflowStatus.CompletedWithShortage),
+            ProductionWorkOrderTransferTab.Cancelled => query.Where(link =>
+                link.WarehouseTransferHeader.Status == WarehouseTransferStatus.Cancelled
+                && !link.WarehouseTransferHeader.Tasks.Any(task => !task.IsDeleted
+                    && task.TaskType == WarehouseTransferTaskType.CancellationReturn
+                    && task.Status != WarehouseTransferTaskStatus.Completed
+                    && task.Status != WarehouseTransferTaskStatus.Cancelled)),
+            ProductionWorkOrderTransferTab.Picking => query.Where(link =>
+                link.WorkflowStatus != ProductionTransferWorkflowStatus.Completed
+                && link.WorkflowStatus != ProductionTransferWorkflowStatus.CompletedWithShortage
+                && (link.WarehouseTransferHeader.Status != WarehouseTransferStatus.Cancelled
+                    || link.WarehouseTransferHeader.Tasks.Any(task => !task.IsDeleted
+                        && task.TaskType == WarehouseTransferTaskType.CancellationReturn
+                        && task.Status != WarehouseTransferTaskStatus.Completed
+                        && task.Status != WarehouseTransferTaskStatus.Cancelled))),
+            ProductionWorkOrderTransferTab.MyAssignments => ApplyTabFilter(query, ProductionWorkOrderTransferTab.Picking)
+                .Where(link => link.WarehouseTransferHeader.Tasks.Any(task => !task.IsDeleted
+                    && task.Assignments.Any(a => !a.IsDeleted && a.UserId == currentUserId))),
+            _ => query
+        };
 
     public static bool MatchesSearch(string? search, WarehouseTransferHeader header, ProductionTransferHeaderLink link)
     {
