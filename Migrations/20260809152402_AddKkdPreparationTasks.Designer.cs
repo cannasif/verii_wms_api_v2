@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 
@@ -11,9 +12,11 @@ using verii_wms_api_v2.Modules.Identity.Infrastructure;
 namespace verii_wms_api_v2.Migrations
 {
     [DbContext(typeof(WmsDbContext))]
-    partial class WmsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260809152402_AddKkdPreparationTasks")]
+    partial class AddKkdPreparationTasks
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -9569,7 +9572,7 @@ namespace verii_wms_api_v2.Migrations
                     b.Property<DateTimeOffset>("AssignedAtUtc")
                         .HasColumnType("datetimeoffset");
 
-                    b.Property<long?>("AssignedUserId")
+                    b.Property<long>("AssignedUserId")
                         .HasColumnType("bigint");
 
                     b.Property<string>("BranchCode")
@@ -23734,7 +23737,8 @@ namespace verii_wms_api_v2.Migrations
                     b.HasOne("verii_wms_api_v2.Modules.Identity.Domain.User", null)
                         .WithMany()
                         .HasForeignKey("AssignedUserId")
-                        .OnDelete(DeleteBehavior.Restrict);
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.HasOne("verii_wms_api_v2.Modules.Kkd.Domain.KkdDistribution", "Distribution")
                         .WithMany()
