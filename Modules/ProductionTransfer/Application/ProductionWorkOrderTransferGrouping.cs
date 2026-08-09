@@ -77,11 +77,23 @@ public static class ProductionWorkOrderTransferGrouping
                         && task.TaskType == WarehouseTransferTaskType.CancellationReturn
                         && task.Status != WarehouseTransferTaskStatus.Completed
                         && task.Status != WarehouseTransferTaskStatus.Cancelled))),
-            ProductionWorkOrderTransferTab.MyAssignments => ApplyTabFilter(query, ProductionWorkOrderTransferTab.Picking)
+            ProductionWorkOrderTransferTab.MyAssignments => ApplyTabFilter(query, ProductionWorkOrderTransferTab.Picking, currentUserId)
                 .Where(link => link.WarehouseTransferHeader.Tasks.Any(task => !task.IsDeleted
-                    && task.Assignments.Any(a => !a.IsDeleted && a.UserId == currentUserId))),
+                    && task.Status != WarehouseTransferTaskStatus.Completed
+                    && task.Status != WarehouseTransferTaskStatus.Cancelled
+                    && task.Assignments.Any(assignment => !assignment.IsDeleted && assignment.UserId == currentUserId))),
             _ => query
         };
+
+    /// <summary>
+    /// Kullanıcının hâlâ üzerinde çalışabileceği (açık / devam eden) bir görev ataması var mı?
+    /// Tamamlanmış veya iptal edilmiş görevlerde kalan atamalar Benim İşlerim'e dahil edilmez.
+    /// </summary>
+    public static bool HasActionableAssignmentForUser(WarehouseTransferTask task, long userId) =>
+        !task.IsDeleted
+        && task.Status is not WarehouseTransferTaskStatus.Completed
+            and not WarehouseTransferTaskStatus.Cancelled
+        && task.Assignments.Any(assignment => !assignment.IsDeleted && assignment.UserId == userId);
 
     public static bool MatchesSearch(string? search, WarehouseTransferHeader header, ProductionTransferHeaderLink link)
     {
@@ -169,6 +181,30 @@ public static class ProductionWorkOrderTransferGrouping
             return documentNo + displaySuffix;
 
         return taskNo + displaySuffix;
+    }
+
+    /// <summary>Aktif atama yoksa (devir / iade sonrası) silinmiş atamaları gösterir.</summary>
+    public static IReadOnlyList<string> ResolveAssignedUsernames(
+        IEnumerable<WarehouseTransferTaskAssignment> assignments,
+        IReadOnlyDictionary<long, string> users)
+    {
+        var assignmentRows = assignments as IReadOnlyCollection<WarehouseTransferTaskAssignment> ?? assignments.ToArray();
+        var active = assignmentRows
+            .Where(x => !x.IsDeleted)
+            .OrderByDescending(x => x.IsPrimary)
+            .ThenByDescending(x => x.AssignedAtUtc)
+            .Select(x => users.GetValueOrDefault(x.UserId, $"Kullanıcı #{x.UserId}"))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (active.Length > 0) return active;
+
+        return assignmentRows
+            .Where(x => x.IsDeleted)
+            .OrderByDescending(x => x.AssignedAtUtc)
+            .Select(x => users.GetValueOrDefault(x.UserId, $"Kullanıcı #{x.UserId}"))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     private static bool IsPostAssignmentReturnUnassigned(

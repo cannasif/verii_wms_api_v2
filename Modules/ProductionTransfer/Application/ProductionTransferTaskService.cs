@@ -1,6 +1,7 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
+using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
@@ -99,6 +100,16 @@ public sealed class ProductionTransferTaskService(
             .Where(x => warehouseIds.Contains(x.Id))
             .ToDictionaryAsync(x => x.Id, x => new { x.WarehouseCode, x.WarehouseName }, ct);
 
+        var transferIds = links.Select(x => x.WarehouseTransferHeaderId).Distinct().ToArray();
+        var erpPostingsByTransferId = transferIds.Length == 0
+            ? new Dictionary<long, ErpPostingRecord>()
+            : (await uow.Repository<ErpPostingRecord>().Query()
+                .Where(x => x.SourceType == ErpPostingSourceType.WarehouseTransfer && transferIds.Contains(x.SourceEntityId))
+                .OrderByDescending(x => x.Id)
+                .ToListAsync(ct))
+                .GroupBy(x => x.SourceEntityId)
+                .ToDictionary(group => group.Key, group => group.First());
+
         var rows = new List<ProductionWorkOrderTransferHeaderRowDto>();
         foreach (var link in links)
         {
@@ -108,6 +119,7 @@ public sealed class ProductionTransferTaskService(
             var source = warehouses.GetValueOrDefault(header.SourceWarehouseId);
             var target = warehouses.GetValueOrDefault(header.TargetWarehouseId);
             var activeLines = header.Lines.Where(x => !x.IsDeleted).ToArray();
+            erpPostingsByTransferId.TryGetValue(header.Id, out var erpPosting);
 
             rows.Add(new ProductionWorkOrderTransferHeaderRowDto(
                 header.Id,
@@ -142,6 +154,12 @@ public sealed class ProductionTransferTaskService(
                 header.CreatedDate,
                 header.UpdatedBy,
                 header.UpdatedDate,
+                link.ErpPostingPolicy,
+                header.ErpIntegrationStatus,
+                erpPosting?.Status,
+                erpPosting?.ErpDocumentNo,
+                erpPosting?.LastErrorCode,
+                erpPosting?.LastErrorMessage,
                 []));
         }
 
@@ -162,8 +180,10 @@ public sealed class ProductionTransferTaskService(
         var header = link.WarehouseTransferHeader;
         var labelContextLinks = await LoadWorkOrderTransferLabelContextLinksAsync([link], ct);
         var labelContext = ProductionWorkOrderTransferGrouping.BuildLabelContext(labelContextLinks);
-        var users = await ResolveWorkOrderTransferTaskUsernamesAsync(header.Tasks, ct);
-        return BuildWorkOrderTransferTaskRows(header, link, labelContext, users);
+        var activeTasks = header.Tasks.Where(x => !x.IsDeleted).ToArray();
+        var assignmentsByTaskId = await LoadTaskAssignmentsIncludingDeletedAsync(activeTasks.Select(x => x.Id), ct);
+        var users = await ResolveWorkOrderTransferTaskUsernamesAsync(assignmentsByTaskId, ct);
+        return BuildWorkOrderTransferTaskRows(header, link, labelContext, users, assignmentsByTaskId);
     }
 
     public Task<ProductionTransferTaskBoardDto> AssignAsync(long transferId, long taskId, AssignProductionTransferTaskRequest request, long actor, CancellationToken ct = default) =>
@@ -431,6 +451,12 @@ public sealed class ProductionTransferTaskService(
             task.Status = WarehouseTransferTaskStatus.Completed;
             task.CompletedAtUtc = now; task.CompletedBy = actor;
             task.UpdatedBy = actor; task.UpdatedDate = utcNow;
+            foreach (var returnAssignment in task.Assignments.Where(x => !x.IsDeleted).ToArray())
+            {
+                returnAssignment.IsDeleted = true;
+                returnAssignment.DeletedBy = actor;
+                returnAssignment.DeletedDate = utcNow;
+            }
 
             // İade edilen stok rafa kondu; transfer satırındaki toplanan miktar düşürülür.
             // Kalan iş, origin görevine geri eklenmez — kimseye atanmamış yeni bir Pick görevi açılır.
@@ -991,13 +1017,29 @@ public sealed class ProductionTransferTaskService(
         ProductionTransferLineSplitHelper.ConsolidateSameLocationOpenTaskLines(header, link, task, actor, utcNow);
     }
 
-    private async Task<Dictionary<long, string>> ResolveWorkOrderTransferTaskUsernamesAsync(
-        IEnumerable<WarehouseTransferTask> tasks,
+    private async Task<IReadOnlyDictionary<long, IReadOnlyList<WarehouseTransferTaskAssignment>>> LoadTaskAssignmentsIncludingDeletedAsync(
+        IEnumerable<long> taskIds,
         CancellationToken ct)
     {
-        var userIds = tasks
-            .Where(x => !x.IsDeleted)
-            .SelectMany(x => x.Assignments.Where(a => !a.IsDeleted))
+        var ids = taskIds.Distinct().ToArray();
+        if (ids.Length == 0) return new Dictionary<long, IReadOnlyList<WarehouseTransferTaskAssignment>>();
+
+        var rows = await uow.Repository<WarehouseTransferTaskAssignment>()
+            .Query(ignoreQueryFilters: true)
+            .Where(x => ids.Contains(x.WtTaskId))
+            .ToListAsync(ct);
+
+        return rows
+            .GroupBy(x => x.WtTaskId)
+            .ToDictionary(group => group.Key, group => (IReadOnlyList<WarehouseTransferTaskAssignment>)group.ToList());
+    }
+
+    private async Task<Dictionary<long, string>> ResolveWorkOrderTransferTaskUsernamesAsync(
+        IReadOnlyDictionary<long, IReadOnlyList<WarehouseTransferTaskAssignment>> assignmentsByTaskId,
+        CancellationToken ct)
+    {
+        var userIds = assignmentsByTaskId.Values
+            .SelectMany(x => x)
             .Select(x => x.UserId)
             .Distinct()
             .ToArray();
@@ -1012,7 +1054,8 @@ public sealed class ProductionTransferTaskService(
         WarehouseTransferHeader header,
         ProductionTransferHeaderLink link,
         ProductionWorkOrderTransferGrouping.LabelContext labelContext,
-        IReadOnlyDictionary<long, string> users)
+        IReadOnlyDictionary<long, string> users,
+        IReadOnlyDictionary<long, IReadOnlyList<WarehouseTransferTaskAssignment>> assignmentsByTaskId)
     {
         var activeTasks = header.Tasks.Where(x => !x.IsDeleted).OrderBy(x => x.Id).ToArray();
         return activeTasks.Select(task =>
@@ -1032,10 +1075,9 @@ public sealed class ProductionTransferTaskService(
                 planned,
                 processed,
                 Math.Max(0, planned - processed),
-                task.Assignments.Where(x => !x.IsDeleted)
-                    .OrderByDescending(x => x.IsPrimary)
-                    .Select(x => users.GetValueOrDefault(x.UserId, $"Kullanıcı #{x.UserId}"))
-                    .ToArray(),
+                ProductionWorkOrderTransferGrouping.ResolveAssignedUsernames(
+                    assignmentsByTaskId.GetValueOrDefault(task.Id) ?? [],
+                    users),
                 task.PreviousTaskId,
                 task.OriginTaskId,
                 task.OriginUserId,
@@ -1103,7 +1145,9 @@ public sealed class ProductionTransferTaskService(
             .Include(x => x.Tasks).ThenInclude(x => x.Lines).ThenInclude(x => x.Line).ThenInclude(x => x.Trackings)
             .SingleOrDefaultAsync(x => x.Id == transferId && Contexts.Contains(x.BusinessContext), ct)
             ?? throw AppException.NotFound("Üretim transferi bulunamadı.");
-        var userIds = header.Tasks.SelectMany(x => x.Assignments.Where(a => !a.IsDeleted)).Select(x => x.UserId).Distinct().ToArray();
+        var activeTaskIds = header.Tasks.Where(x => !x.IsDeleted).Select(x => x.Id).ToArray();
+        var assignmentsByTaskId = await LoadTaskAssignmentsIncludingDeletedAsync(activeTaskIds, ct);
+        var userIds = assignmentsByTaskId.Values.SelectMany(x => x).Select(x => x.UserId).Distinct().ToArray();
         var users = await uow.Repository<User>().Query().Where(x => userIds.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.Username, ct);
         var locationIds = header.Tasks.SelectMany(x => x.Lines)
             .SelectMany(x =>
@@ -1141,11 +1185,7 @@ public sealed class ProductionTransferTaskService(
                 var targetLocation = x.TargetLocationId.HasValue && locations.TryGetValue(x.TargetLocationId.Value, out var targetLoc)
                     ? targetLoc
                     : default;
-                var serialNos = x.Line.Trackings
-                    .Where(t => t.PickedQuantity > 0 && !string.IsNullOrWhiteSpace(t.SerialNo))
-                    .Select(t => t.SerialNo!.Trim())
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToArray();
+                var serialNos = ProductionTransferPickingSupport.ResolveTaskScopedPickedSerialNos(x.Line, x);
                 return new ProductionTransferTaskLineDto(x.Id, x.WtLineId, x.Line.StockCodeSnapshot, x.Line.StockNameSnapshot,
                     x.PlannedQuantity, covered, Math.Max(0, x.PlannedQuantity - covered), x.ProcessedQuantity,
                     x.SourceLocationId,
@@ -1154,9 +1194,12 @@ public sealed class ProductionTransferTaskService(
                     x.TargetLocationId,
                     targetLocation?.Code,
                     targetLocation?.Name,
-                    serialNos.Length == 0 ? null : string.Join(", ", serialNos),
+                    serialNos.Count == 0 ? null : string.Join(", ", serialNos),
                     x.Line.RequestedQuantity);
-            }).ToList())).ToList();
+            }).ToList(),
+            ProductionWorkOrderTransferGrouping.ResolveAssignedUsernames(
+                assignmentsByTaskId.GetValueOrDefault(task.Id) ?? [],
+                users))).ToList();
         var workloadRows = await uow.Repository<WarehouseTransferTask>().Query()
             .Where(x => Contexts.Contains(x.Header.BusinessContext) && x.BranchCode == header.BranchCode)
             .SelectMany(x => x.Assignments.Where(a => !a.IsDeleted).Select(a => new

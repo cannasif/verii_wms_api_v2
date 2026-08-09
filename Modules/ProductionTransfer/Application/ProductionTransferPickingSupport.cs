@@ -153,22 +153,20 @@ internal static class ProductionTransferPickingSupport
         foreach (var taskLine in task.Lines.Where(x => !x.IsDeleted).OrderBy(x => x.Id))
         {
             var line = ResolveTaskLine(header, taskLine);
-            var processed = Math.Max(taskLine.ProcessedQuantity, line.PickedQuantity);
+            var processed = taskLine.ProcessedQuantity;
             var remaining = Math.Max(0, taskLine.PlannedQuantity - processed);
             if (remaining <= 0 && processed <= 0) continue;
 
             if (line.Trackings.Count > 0)
             {
-                foreach (var tracking in line.Trackings.OrderBy(x => x.Id))
+                foreach (var (tracking, trackingProcessed, trackingRemaining) in EnumerateTaskScopedSerialTrackings(line, taskLine))
                 {
-                    var trackingRemaining = tracking.PlannedQuantity - tracking.PickedQuantity;
-                    if (trackingRemaining <= 0 && tracking.PickedQuantity <= 0) continue;
                     var locationId = tracking.SourceLocationId ?? taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
                     rows.Add(new(
                         taskLine.Id, line.Id, line.LineNo, locationId,
                         locationId.HasValue ? locationCodes.GetValueOrDefault(locationId.Value) : null,
                         line.StockId, line.StockCodeSnapshot, line.StockNameSnapshot, tracking.SerialNo,
-                        tracking.PlannedQuantity, Math.Max(0, trackingRemaining), tracking.PickedQuantity,
+                        tracking.PlannedQuantity, trackingRemaining, trackingProcessed,
                         locationId.HasValue && trackingRemaining > 0));
                 }
                 continue;
@@ -179,10 +177,76 @@ internal static class ProductionTransferPickingSupport
                 taskLine.Id, line.Id, line.LineNo, sourceLocationId,
                 sourceLocationId.HasValue ? locationCodes.GetValueOrDefault(sourceLocationId.Value) : null,
                 line.StockId, line.StockCodeSnapshot, line.StockNameSnapshot, null,
-                taskLine.PlannedQuantity, Math.Max(0, taskLine.PlannedQuantity - processed), processed,
+                taskLine.PlannedQuantity, remaining, processed,
                 sourceLocationId.HasValue && remaining > 0));
         }
         return rows;
+    }
+
+    // Serili satırlar transfer satırında paylaşıldığından, devredilen görevde yalnızca bu görevin
+    // plan/processed miktarına denk gelen seriler gösterilir; önceki görevde toplanan seriler gizlenir.
+    internal static IEnumerable<(WarehouseTransferTracking Tracking, decimal Processed, decimal Remaining)>
+        EnumerateTaskScopedSerialTrackings(WarehouseTransferLine line, WarehouseTransferTaskLine taskLine)
+    {
+        var pickedBudget = (int)Math.Floor(taskLine.ProcessedQuantity);
+        var openBudget = (int)Math.Ceiling(Math.Max(0, taskLine.PlannedQuantity - taskLine.ProcessedQuantity));
+
+        foreach (var tracking in line.Trackings.OrderBy(x => x.Id))
+        {
+            if (tracking.PickedQuantity > 0)
+            {
+                if (pickedBudget <= 0) continue;
+                pickedBudget--;
+                yield return (tracking, tracking.PickedQuantity, 0m);
+                continue;
+            }
+
+            var trackingRemaining = tracking.PlannedQuantity - tracking.PickedQuantity;
+            if (trackingRemaining <= 0 || openBudget <= 0) continue;
+            var remaining = Math.Min(trackingRemaining, openBudget);
+            openBudget -= (int)Math.Ceiling(remaining);
+            yield return (tracking, 0m, remaining);
+        }
+    }
+
+    internal static IReadOnlyList<string> ResolveTaskScopedPickedSerialNos(
+        WarehouseTransferLine line,
+        WarehouseTransferTaskLine taskLine)
+    {
+        var pickedBudget = (int)Math.Floor(taskLine.ProcessedQuantity);
+        if (pickedBudget <= 0) return [];
+
+        return line.Trackings
+            .Where(t => t.PickedQuantity > 0 && !string.IsNullOrWhiteSpace(t.SerialNo))
+            .OrderBy(t => t.Id)
+            .Take(pickedBudget)
+            .Select(t => t.SerialNo!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    internal static async Task<PickBalanceContext> LoadSerialRouteRefreshBalanceContextAsync(
+        IUnitOfWork uow,
+        WarehouseTransferHeader header,
+        WarehouseTransferLine line,
+        CancellationToken ct)
+    {
+        // Seri rotası: kaynak depodaki tüm uygun serili bakiyeler; hedef raf vb. genel dışlamalar bu adımda uygulanmaz.
+        var locations = await uow.Repository<WarehouseLocation>().Query()
+            .Where(x => x.WarehouseId == header.SourceWarehouseId && x.IsActive && x.IsPickable && !x.IsQuarantine)
+            .ToDictionaryAsync(x => x.Id, ct);
+        var balances = (await uow.Repository<LocationStockBalance>().Query()
+            .Where(x => x.WarehouseId == header.SourceWarehouseId
+                && x.StockId == line.StockId
+                && locations.Keys.Contains(x.LocationId)
+                && x.StockStatus == "Available"
+                && x.AvailableQuantity > 0
+                && x.SerialNo != null && x.SerialNo != "")
+            .ToListAsync(ct))
+            .Where(x => string.Equals(x.UnitCode, line.UnitCode, StringComparison.OrdinalIgnoreCase)
+                && x.YapCodeId == line.YapCodeId)
+            .ToList();
+        return new([], locations, balances);
     }
 
     internal static IReadOnlyList<ProductionTransferPickingRowDto> SortDisplayRows(

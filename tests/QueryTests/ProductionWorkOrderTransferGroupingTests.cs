@@ -136,14 +136,67 @@ public sealed class ProductionWorkOrderTransferGroupingTests
             kalanTask.TaskNo, "TR-1", suffix));
     }
 
+    [Fact]
+    public void ResolveAssignedUsernames_returns_historical_when_active_assignment_removed()
+    {
+        const long userA = 10;
+        var users = new Dictionary<long, string> { [userA] = "ali" };
+        var task = new WarehouseTransferTask
+        {
+            Assignments =
+            [
+                new WarehouseTransferTaskAssignment
+                {
+                    UserId = userA,
+                    IsDeleted = true,
+                    AssignedAtUtc = DateTimeOffset.UtcNow.AddHours(-1),
+                }
+            ]
+        };
+
+        var usernames = ProductionWorkOrderTransferGrouping.ResolveAssignedUsernames(task.Assignments, users);
+
+        Assert.Equal(["ali"], usernames);
+    }
+
+    [Fact]
+    public void ResolveAssignedUsernames_prefers_active_over_historical()
+    {
+        const long userA = 10;
+        const long userB = 20;
+        var users = new Dictionary<long, string> { [userA] = "ali", [userB] = "veli" };
+        var task = new WarehouseTransferTask
+        {
+            Assignments =
+            [
+                new WarehouseTransferTaskAssignment
+                {
+                    UserId = userA,
+                    IsDeleted = true,
+                    AssignedAtUtc = DateTimeOffset.UtcNow.AddHours(-2),
+                },
+                new WarehouseTransferTaskAssignment
+                {
+                    UserId = userB,
+                    IsDeleted = false,
+                    IsPrimary = true,
+                    AssignedAtUtc = DateTimeOffset.UtcNow,
+                }
+            ]
+        };
+
+        var usernames = ProductionWorkOrderTransferGrouping.ResolveAssignedUsernames(task.Assignments, users);
+
+        Assert.Equal(["veli"], usernames);
+    }
+
     private static bool MatchesMyAssignments(
         WarehouseTransferHeader header,
         ProductionTransferHeaderLink link,
         long userId) =>
         ProductionWorkOrderTransferGrouping.MatchesTab(
             ProductionWorkOrderTransferTab.Picking, header, link)
-        && header.Tasks.Any(task => !task.IsDeleted
-            && task.Assignments.Any(a => !a.IsDeleted && a.UserId == userId));
+        && header.Tasks.Any(task => ProductionWorkOrderTransferGrouping.HasActionableAssignmentForUser(task, userId));
 
     [Fact]
     public void MyAssignments_shows_only_transfers_with_current_user_assignment_in_picking()
@@ -233,7 +286,7 @@ public sealed class ProductionWorkOrderTransferGroupingTests
     }
 
     [Fact]
-    public void MyAssignments_includes_transfer_when_user_has_assignment_on_completed_task()
+    public void MyAssignments_excludes_transfer_when_user_only_has_completed_task_assignment()
     {
         const long userA = 10;
         var header = new WarehouseTransferHeader
@@ -257,6 +310,50 @@ public sealed class ProductionWorkOrderTransferGroupingTests
         };
         var link = new ProductionTransferHeaderLink { WorkflowStatus = ProductionTransferWorkflowStatus.Picking };
 
-        Assert.True(MatchesMyAssignments(header, link, userA));
+        Assert.False(MatchesMyAssignments(header, link, userA));
+    }
+
+    [Fact]
+    public void MyAssignments_excludes_completed_assignment_return_even_when_assignment_remains()
+    {
+        const long userA = 10;
+        var header = new WarehouseTransferHeader
+        {
+            Status = WarehouseTransferStatus.Released,
+            Tasks =
+            [
+                new WarehouseTransferTask
+                {
+                    Id = 1,
+                    TaskType = WarehouseTransferTaskType.AssignmentReturn,
+                    Status = WarehouseTransferTaskStatus.Completed,
+                    Assignments = [new WarehouseTransferTaskAssignment { UserId = userA, IsDeleted = false }]
+                },
+                new WarehouseTransferTask
+                {
+                    Id = 2,
+                    TaskType = WarehouseTransferTaskType.Pick,
+                    Status = WarehouseTransferTaskStatus.Open,
+                    PreviousTaskId = 1,
+                    Assignments = []
+                }
+            ]
+        };
+        var link = new ProductionTransferHeaderLink { WorkflowStatus = ProductionTransferWorkflowStatus.Picking };
+
+        Assert.False(MatchesMyAssignments(header, link, userA));
+    }
+
+    [Fact]
+    public void HasActionableAssignmentForUser_is_true_for_in_progress_pick()
+    {
+        const long userA = 10;
+        var task = new WarehouseTransferTask
+        {
+            Status = WarehouseTransferTaskStatus.InProgress,
+            Assignments = [new WarehouseTransferTaskAssignment { UserId = userA, IsDeleted = false }]
+        };
+
+        Assert.True(ProductionWorkOrderTransferGrouping.HasActionableAssignmentForUser(task, userA));
     }
 }
