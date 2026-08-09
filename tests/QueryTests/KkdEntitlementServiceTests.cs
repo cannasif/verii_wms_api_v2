@@ -1,9 +1,12 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.Localization;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Modules.Kkd.Application;
 using verii_wms_api_v2.Modules.Kkd.Domain;
+using verii_wms_api_v2.Modules.Kkd.Localization;
 using verii_wms_api_v2.Modules.Stock.Domain;
 using verii_wms_api_v2.Shared.Infrastructure.Persistence;
 using Xunit;
@@ -133,7 +136,7 @@ public sealed class KkdEntitlementServiceTests
             Db = db;
             Employee = employee;
             Stock = stock;
-            Service = new KkdEntitlementService(new UnitOfWork(db, new HttpContextAccessor()));
+            Service = new KkdEntitlementService(new UnitOfWork(db, new HttpContextAccessor()), new PassThroughLocalizer<KkdRequestResource>());
         }
 
         public WmsDbContext Db { get; }
@@ -275,5 +278,13 @@ public sealed class KkdEntitlementServiceTests
 
         public Task SaveAsync() => Db.SaveChangesAsync();
         public ValueTask DisposeAsync() => Db.DisposeAsync();
+    }
+
+    private sealed class PassThroughLocalizer<T> : IStringLocalizer<T>
+    {
+        public LocalizedString this[string name] => new(name, name, true);
+        public LocalizedString this[string name, params object[] arguments] =>
+            new(name, string.Format(CultureInfo.InvariantCulture, name, arguments), true);
+        public IEnumerable<LocalizedString> GetAllStrings(bool includeParentCultures) => [];
     }
 }
