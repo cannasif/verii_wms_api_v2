@@ -35,6 +35,44 @@ public sealed class ProductionTransferBarcodeInputTests
     }
 
     [Fact]
+    public void EnsureBarcodeFormat_allows_plain_stock_code_for_single_open_serial_row()
+    {
+        var openRows = new[] { SerialRow("01/026", "UTG-9") };
+
+        var exception = Record.Exception(() =>
+            ProductionTransferBarcodeInput.EnsureBarcodeFormat(
+                ProductionTransferBarcodeInput.Parse("01/026"),
+                openRows));
+
+        Assert.Null(exception);
+    }
+
+    [Fact]
+    public void FindMatchingOpenRow_matches_plain_stock_code_for_single_open_serial_row()
+    {
+        var openRows = new[] { SerialRow("01/026", "UTG-9") };
+
+        var matched = ProductionTransferBarcodeInput.FindMatchingOpenRow(
+            ProductionTransferBarcodeInput.Parse("01/026"),
+            openRows);
+
+        Assert.NotNull(matched);
+        Assert.Equal("UTG-9", matched!.SerialNo);
+    }
+
+    [Fact]
+    public void EnrichFromMatchedRow_adds_serial_context_for_plain_stock_scan()
+    {
+        var enriched = ProductionTransferBarcodeInput.EnrichFromMatchedRow(
+            ProductionTransferBarcodeInput.Parse("01/026"),
+            SerialRow("01/026", "UTG-9"));
+
+        Assert.Equal("01/026", enriched.StockCode);
+        Assert.Equal("UTG-9", enriched.SerialNo);
+        Assert.Equal("UTG-9", enriched.ResolutionBarcode);
+    }
+
+    [Fact]
     public void EnsureBarcodeFormat_requires_composite_format_for_serial_only_open_rows()
     {
         var openRows = new[] { SerialRow("01/013", "UTG-1") };

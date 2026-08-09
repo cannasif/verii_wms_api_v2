@@ -178,10 +178,11 @@ public static class ProductionWorkOrderTransferGrouping
         && task.Status is not WarehouseTransferTaskStatus.Completed
             and not WarehouseTransferTaskStatus.Cancelled
         && !task.Assignments.Any(assignment => !assignment.IsDeleted)
+        && task.PreviousTaskId is long originTaskId
         && allTasks.Any(other => !other.IsDeleted
             && other.TaskType == WarehouseTransferTaskType.AssignmentReturn
             && other.Status == WarehouseTransferTaskStatus.Completed
-            && other.OriginTaskId == task.Id);
+            && other.OriginTaskId == originTaskId);
 
     private static List<ProductionTransferHeaderLink> BuildResidualChain(
         ProductionTransferHeaderLink root,

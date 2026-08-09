@@ -97,33 +97,43 @@ public sealed class ProductionWorkOrderTransferGroupingTests
     [Fact]
     public void GetDisplaySuffix_uses_kalan_after_completed_assignment_return()
     {
-        const long pickTaskId = 100;
+        const long originPickTaskId = 100;
+        const long kalanPickTaskId = 200;
         var link = new ProductionTransferHeaderLink { WarehouseTransferHeaderId = 1, ProductionOrderNo = "WO-2" };
         var context = new ProductionWorkOrderTransferGrouping.LabelContext();
-        var pickTask = new WarehouseTransferTask
+        var kalanTask = new WarehouseTransferTask
         {
-            Id = pickTaskId,
-            TaskNo = "TR-1-1",
+            Id = kalanPickTaskId,
+            TaskNo = "TR-1-2",
             TaskType = WarehouseTransferTaskType.Pick,
             Status = WarehouseTransferTaskStatus.Open,
+            PreviousTaskId = originPickTaskId,
             Assignments = []
         };
         var tasks = new WarehouseTransferTask[]
         {
-            pickTask,
+            kalanTask,
+            new()
+            {
+                Id = originPickTaskId,
+                TaskNo = "TR-1-1",
+                TaskType = WarehouseTransferTaskType.Pick,
+                Status = WarehouseTransferTaskStatus.Completed,
+                Assignments = []
+            },
             new()
             {
                 TaskType = WarehouseTransferTaskType.AssignmentReturn,
                 Status = WarehouseTransferTaskStatus.Completed,
-                OriginTaskId = pickTaskId
+                OriginTaskId = originPickTaskId
             }
         };
 
-        var suffix = ProductionWorkOrderTransferGrouping.GetDisplaySuffix(pickTask, link, context, tasks);
+        var suffix = ProductionWorkOrderTransferGrouping.GetDisplaySuffix(kalanTask, link, context, tasks);
 
         Assert.Equal("-KALANTRANSFER", suffix);
         Assert.Equal("TR-1-KALANTRANSFER", ProductionWorkOrderTransferGrouping.BuildDisplayLabel(
-            pickTask.TaskNo, "TR-1", suffix));
+            kalanTask.TaskNo, "TR-1", suffix));
     }
 
     private static bool MatchesMyAssignments(

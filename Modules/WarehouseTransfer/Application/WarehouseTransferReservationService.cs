@@ -16,6 +16,10 @@ public interface IWarehouseTransferReservationService
 
 public sealed class WarehouseTransferReservationService(IStockBalanceService balances, IUnitOfWork uow) : IWarehouseTransferReservationService
 {
+    internal static bool UsesTransferReservations(WarehouseTransferHeader header) =>
+        header.ReservationPolicy != WarehouseTransferReservationPolicy.None
+        || AllowsPartialProductionReservation(header);
+
     private static bool AllowsPartialProductionReservation(WarehouseTransferHeader header) =>
         header.BusinessContext is WarehouseTransferBusinessContext.ProductionMaterialSupply
             or WarehouseTransferBusinessContext.ProductionWipMove
@@ -89,7 +93,7 @@ public sealed class WarehouseTransferReservationService(IStockBalanceService bal
     public async Task ConsumeAsync(WarehouseTransferHeader header, IReadOnlyDictionary<long, WarehouseTransferOperationLineRequest> lines,
         string idempotencyKey, long actor, CancellationToken ct)
     {
-        if (header.ReservationPolicy == WarehouseTransferReservationPolicy.None) return;
+        if (!UsesTransferReservations(header)) return;
         var drafts = new List<(WarehouseTransferLine Line, WarehouseTransferTracking? Tracking, StockReservationLineRequest Request)>();
         foreach (var line in header.Lines.Where(x => lines.ContainsKey(x.Id)))
         {

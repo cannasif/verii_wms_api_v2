@@ -48,8 +48,32 @@ internal static class ProductionTransferBarcodeInput
             && SameStockCode(x.StockCode, input.Raw)))
             return;
 
+        var matchingSerialRows = openRows
+            .Where(x => x.CanPick
+                && !string.IsNullOrWhiteSpace(x.SerialNo)
+                && SameStockCode(x.StockCode, input.Raw))
+            .ToArray();
+        if (matchingSerialRows.Length == 1)
+            return;
+
         if (openRows.Any(x => x.CanPick && !string.IsNullOrWhiteSpace(x.SerialNo)))
             throw AppException.BadRequest(SerialCompositeFormatMessage);
+    }
+
+    internal static Parsed EnrichFromMatchedRow(Parsed input, ProductionTransferPickingRowDto? matchedRow)
+    {
+        if (matchedRow is null || string.IsNullOrWhiteSpace(matchedRow.SerialNo))
+            return input;
+        if (!string.IsNullOrWhiteSpace(input.StockCode) || !string.IsNullOrWhiteSpace(input.SerialNo))
+            return input;
+        if (!SameStockCode(matchedRow.StockCode, input.Raw))
+            return input;
+
+        return input with
+        {
+            StockCode = matchedRow.StockCode,
+            SerialNo = matchedRow.SerialNo,
+        };
     }
 
     internal static void EnsureResolvableBarcode(
@@ -193,9 +217,19 @@ internal static class ProductionTransferBarcodeInput
 
         if (input.StockCode is null)
         {
-            return openRows.FirstOrDefault(x => x.CanPick
+            var nonSerialMatch = openRows.FirstOrDefault(x => x.CanPick
                 && string.IsNullOrWhiteSpace(x.SerialNo)
                 && SameStockCode(x.StockCode, input.Raw));
+            if (nonSerialMatch is not null)
+                return nonSerialMatch;
+
+            var serialMatches = openRows
+                .Where(x => x.CanPick
+                    && !string.IsNullOrWhiteSpace(x.SerialNo)
+                    && SameStockCode(x.StockCode, input.Raw))
+                .ToArray();
+            if (serialMatches.Length == 1)
+                return serialMatches[0];
         }
 
         return null;

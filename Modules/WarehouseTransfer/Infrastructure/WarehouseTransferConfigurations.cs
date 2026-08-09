@@ -112,7 +112,7 @@ public sealed class WarehouseTransferTaskLineConfiguration : BaseEntityConfigura
         b.ToTable("RII_WT_TASK_LINE",t=>t.HasCheckConstraint("CK_RII_WT_TASK_LINE_QTY","[PlannedQuantity] > 0 AND [ProcessedQuantity] >= 0")); b.Property(x=>x.PlannedQuantity).HasPrecision(20,6); b.Property(x=>x.ProcessedQuantity).HasPrecision(20,6); b.Property(x=>x.RowVersion).IsRowVersion();
         b.HasOne(x=>x.Task).WithMany(x=>x.Lines).HasForeignKey(x=>x.WtTaskId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne(x=>x.Line).WithMany(x=>x.TaskLines).HasForeignKey(x=>x.WtLineId).OnDelete(DeleteBehavior.Restrict);
-        b.HasIndex(x=>new{x.WtTaskId,x.WtLineId}).IsUnique();
+        b.HasIndex(x=>new{x.WtTaskId,x.WtLineId}).IsUnique().HasFilter("[IsDeleted] = 0");
     }
 }
 

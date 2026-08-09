@@ -102,32 +102,30 @@ public sealed class ProductionTransferExecutionService(
         var openRows = allRows.Where(x => x.RemainingQuantity > 0).OrderBy(x => x.LineNo).ToArray();
 
         var input = ProductionTransferBarcodeInput.Parse(request.Barcode);
+        var matchedRow = ProductionTransferBarcodeInput.FindMatchingOpenRow(input, openRows);
+        input = ProductionTransferBarcodeInput.EnrichFromMatchedRow(input, matchedRow);
         ProductionTransferBarcodeInput.EnsureResolvableBarcode(input, openRows, allRows);
 
         if (openRows.Length == 0)
             throw AppException.Conflict("Toplanacak açık satır bulunmuyor.");
 
-        var matchedRow = ProductionTransferBarcodeInput.FindMatchingOpenRow(input, openRows);
+        matchedRow = ProductionTransferBarcodeInput.FindMatchingOpenRow(input, openRows);
         if (matchedRow is null)
             throw AppException.Conflict("Okutulan barkod tablodaki açık satırlardan biriyle eşleşmedi.");
 
-        WarehouseTransferLine? matchedLine = matchedRow is null
-            ? null
-            : aggregate.Header.Lines.Single(x => x.Id == matchedRow.WtLineId);
+        WarehouseTransferLine matchedLine = aggregate.Header.Lines.Single(x => x.Id == matchedRow.WtLineId);
         var resolveContext = ProductionTransferBarcodeInput.BuildResolveContext(
             input, openRows, aggregate.Header, matchedLine, matchedRow);
         if (input.StockCode is not null && resolveContext.StockId is null)
             throw AppException.Conflict("Okutulan stok kodu tablodaki açık satırlarla eşleşmedi.");
 
-        var resolved = await barcodeResolver.ResolveAsync(new(
-            input.ResolutionBarcode,
-            aggregate.Header.BranchCode,
-            WarehouseBarcodePurpose.Outbound,
-            aggregate.Header.SourceWarehouseId,
-            resolveContext.StockId,
-            resolveContext.LocationId,
-            resolveContext.YapCodeId,
-            resolveContext.UnitCode), ct);
+        var resolved = await ResolveTransferPickBarcodeAsync(
+            aggregate.Header,
+            matchedLine,
+            matchedRow,
+            input,
+            resolveContext,
+            ct);
         if (!resolved.CanExecute || resolved.MissingFields.Count > 0)
             throw AppException.Conflict("Okutulan barkod tablodaki açık satırlardan biriyle eşleşmedi.");
 
@@ -149,7 +147,9 @@ public sealed class ProductionTransferExecutionService(
 
             var expectedSourceLocationId = row.SourceLocationId ?? line.DefaultSourceLocationId;
             if (expectedSourceLocationId.HasValue
-                && !resolved.BalanceCandidates.Any(x => x.LocationId == expectedSourceLocationId.Value))
+                && !resolved.BalanceCandidates.Any(x => x.LocationId == expectedSourceLocationId.Value)
+                && !ProductionTransferPickingBalanceSupport.HasPickableBalanceAtLocation(
+                    line, expectedSourceLocationId.Value, resolved.BalanceCandidates))
                 continue;
 
             return new(
@@ -160,6 +160,51 @@ public sealed class ProductionTransferExecutionService(
         }
 
         throw AppException.Conflict("Okutulan barkod tablodaki açık satırlardan biriyle eşleşmedi.");
+    }
+
+    private async Task<ResolvedWarehouseBarcode> ResolveTransferPickBarcodeAsync(
+        WarehouseTransferHeader header,
+        WarehouseTransferLine matchedLine,
+        ProductionTransferPickingRowDto matchedRow,
+        ProductionTransferBarcodeInput.Parsed input,
+        ProductionTransferBarcodeInput.ResolveContext resolveContext,
+        CancellationToken ct)
+    {
+        var resolved = await barcodeResolver.ResolveAsync(new(
+            input.ResolutionBarcode,
+            header.BranchCode,
+            WarehouseBarcodePurpose.Outbound,
+            header.SourceWarehouseId,
+            resolveContext.StockId,
+            resolveContext.LocationId,
+            resolveContext.YapCodeId,
+            resolveContext.UnitCode), ct);
+
+        var expectedLocationId = matchedRow.SourceLocationId ?? matchedLine.DefaultSourceLocationId;
+        if (!expectedLocationId.HasValue)
+            return resolved;
+
+        var pickBalances = await ProductionTransferPickingBalanceSupport.FindPickBalanceCandidatesAsync(
+            uow,
+            header,
+            matchedLine,
+            expectedLocationId.Value,
+            resolved.LotNo,
+            matchedRow.SerialNo ?? resolved.SerialNo,
+            ct);
+        if (pickBalances.Count == 0)
+            return resolved;
+
+        var missing = resolved.MissingFields
+            .Where(x => !string.Equals(x, "Kullanılabilir raf bakiyesi", StringComparison.Ordinal))
+            .ToArray();
+        return resolved with
+        {
+            BalanceCandidates = pickBalances,
+            MissingFields = missing,
+            SuggestedLocationId = expectedLocationId,
+            CanExecute = missing.Length == 0,
+        };
     }
 
     public Task<ProductionTransferRouteRefreshCandidatesDto> GetRouteRefreshCandidatesAsync(
@@ -513,10 +558,13 @@ public sealed class ProductionTransferExecutionService(
             var openRows = (await GetPickingTableAsync(transferId, actor, ct)).Rows
                 .Where(x => x.RemainingQuantity > 0)
                 .ToArray();
+            var matchedRow = ProductionTransferBarcodeInput.FindMatchingOpenRow(input, openRows);
+            input = ProductionTransferBarcodeInput.EnrichFromMatchedRow(input, matchedRow);
             var unavailableRow = ProductionTransferBarcodeInput.FindUnavailableRow(input, openRows);
             if (unavailableRow is not null)
                 throw ProductionTransferBarcodeInput.UnavailableBalance(unavailableRow);
-            throw AppException.BadRequest(ProductionTransferBarcodeInput.SerialCompositeFormatMessage);
+            if (matchedRow is null)
+                throw AppException.BadRequest(ProductionTransferBarcodeInput.SerialCompositeFormatMessage);
         }
 
         if (line.Trackings.Count == 0 && input.StockCode is null && !string.IsNullOrWhiteSpace(input.Raw))
@@ -530,15 +578,36 @@ public sealed class ProductionTransferExecutionService(
         }
 
         var expectedSourceLocationId = request.SourceLocationId ?? taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
-        var resolved = await barcodeResolver.ResolveAsync(new(
-            input.ResolutionBarcode,
-            aggregate.Header.BranchCode,
-            WarehouseBarcodePurpose.Outbound,
-            aggregate.Header.SourceWarehouseId,
-            line.StockId,
-            expectedSourceLocationId,
-            line.YapCodeId,
-            line.UnitCode), ct);
+        var pickRows = (await GetPickingTableAsync(transferId, actor, ct)).Rows
+            .Where(x => x.TaskLineId == taskLine.Id && x.RemainingQuantity > 0)
+            .ToArray();
+        var matchedPickRow = ProductionTransferBarcodeInput.FindMatchingOpenRow(input, pickRows)
+            ?? pickRows.FirstOrDefault();
+        input = ProductionTransferBarcodeInput.EnrichFromMatchedRow(input, matchedPickRow);
+        var resolved = await ResolveTransferPickBarcodeAsync(
+            aggregate.Header,
+            line,
+            matchedPickRow ?? new ProductionTransferPickingRowDto(
+                taskLine.Id,
+                line.Id,
+                line.LineNo,
+                expectedSourceLocationId,
+                null,
+                line.StockId,
+                line.StockCodeSnapshot,
+                line.StockNameSnapshot,
+                null,
+                taskLine.PlannedQuantity,
+                remaining,
+                taskLine.ProcessedQuantity,
+                expectedSourceLocationId.HasValue && remaining > 0),
+            input,
+            new ProductionTransferBarcodeInput.ResolveContext(
+                line.StockId,
+                expectedSourceLocationId,
+                line.YapCodeId,
+                line.UnitCode),
+            ct);
         if (!resolved.CanExecute || resolved.MissingFields.Count > 0)
             throw AppException.Conflict($"Barkod toplama için uygun değil: {string.Join(", ", resolved.MissingFields)}.");
         ValidateDimensions(line, resolved);

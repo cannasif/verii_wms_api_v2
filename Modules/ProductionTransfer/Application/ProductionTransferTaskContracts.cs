@@ -37,6 +37,10 @@ public sealed record ProductionTransferTaskBoardDto(
 public sealed record AssignProductionTransferTaskRequest(long UserId, bool IsPrimary = false);
 public sealed record HandoffProductionTransferTaskRequest(long TargetUserId, string? Reason);
 public sealed record StartProductionTransferTaskRequest(Guid IdempotencyKey, bool AllowPartialStart = false);
+public sealed record CompleteProductionReturnLineRequest(long TaskLineId, long TargetLocationId);
+public sealed record CompleteProductionReturnRequest(
+    Guid IdempotencyKey,
+    IReadOnlyList<CompleteProductionReturnLineRequest> Lines);
 
 public sealed record ProductionTaskStockShortageDto(
     long TaskLineId,
@@ -123,14 +127,14 @@ public interface IProductionTransferTaskService
     Task<ProductionTransferTaskBoardDto> RemoveAssignmentAsync(long transferId, long taskId, long userId, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> RequestAssignmentReturnAsync(long transferId, long taskId, long userId, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> ProcessReturnTaskLineAsync(long transferId, long taskId, long taskLineId, Guid idempotencyKey, long actor, CancellationToken ct = default);
-    Task<ProductionTransferTaskBoardDto> CompleteAssignmentReturnAsync(long transferId, long taskId, Guid idempotencyKey, long actor, CancellationToken ct = default);
+    Task<ProductionTransferTaskBoardDto> CompleteAssignmentReturnAsync(long transferId, long taskId, CompleteProductionReturnRequest request, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> HandoffAsync(long transferId, long taskId, HandoffProductionTransferTaskRequest request, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> RefreshRouteAsync(long transferId, long taskId, long actor, CancellationToken ct = default);
     Task<ProductionTaskStartCheckDto> CheckStartAsync(long transferId, long taskId, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> AcceptAndStartAsync(long transferId, long taskId, long actor, bool allowPartialStart = false, CancellationToken ct = default);
     Task ApplyPermanentRouteSplitAsync(long transferId, long taskId, long actor, CancellationToken ct = default);
     Task<IReadOnlyList<WarehouseTransferPickedSourceLocationDto>> GetLinePickedSourcesAsync(long transferId, long lineId, CancellationToken ct = default);
-    Task<ProductionTransferTaskBoardDto> CompleteCancellationReturnAsync(long transferId, long taskId, Guid idempotencyKey, long actor, CancellationToken ct = default);
+    Task<ProductionTransferTaskBoardDto> CompleteCancellationReturnAsync(long transferId, long taskId, CompleteProductionReturnRequest request, long actor, CancellationToken ct = default);
     Task<WarehouseTransferReturnSettingDto> GetReturnSettingAsync(long warehouseId, CancellationToken ct = default);
     Task<WarehouseTransferReturnSettingDto> UpdateReturnSettingAsync(UpdateWarehouseTransferReturnSettingRequest request, long actor, CancellationToken ct = default);
 }
