@@ -20,7 +20,11 @@ public sealed class VehicleCheckInService(IUnitOfWork uow,IProjectSettingsServic
     {
         var normalized=NormalizePlate(plateNo);if(normalized.Length<5)throw AppException.BadRequest("Geçerli bir plaka giriniz.");
         var day=await BusinessDateAsync(ct);var branch=NormalizeBranch(branchCode);
-        var header=await Headers.Query().FirstOrDefaultAsync(x=>x.BranchCode==branch&&x.PlateNoNormalized==normalized&&x.BusinessDate==day,ct);
+        var header=await Headers.Query()
+            .Where(x=>x.BranchCode==branch&&x.PlateNoNormalized==normalized&&x.BusinessDate==day)
+            .OrderByDescending(x=>x.CheckedInAtUtc)
+            .ThenByDescending(x=>x.Id)
+            .FirstOrDefaultAsync(ct);
         return header is null?null:await DetailAsync(header,ct);
     }
 
@@ -30,9 +34,11 @@ public sealed class VehicleCheckInService(IUnitOfWork uow,IProjectSettingsServic
             if(plate.Length<5||plate.Length>25)throw AppException.BadRequest("Plaka 5-25 karakter arasında olmalıdır.");
             if(request.SteelSheetCount<=0||request.SteelSheetCount>100000)throw AppException.BadRequest("Sac levha adedi 1-100.000 arasında olmalıdır.");
             var day=await BusinessDateAsync(token);var now=DateTimeOffset.UtcNow;
+            // Her fiziksel geliş ayrı bir aggregate kaydıdır. Aynı plakanın aynı iş günündeki
+            // önceki gelişi yalnızca açıkça Id gönderildiğinde güncellenebilir.
             var entity=request.Id.HasValue
                 ?await Headers.FindByIdAsync(request.Id.Value,true,token)
-                :await Headers.Query(true).FirstOrDefaultAsync(x=>x.BranchCode==branch&&x.PlateNoNormalized==plate&&x.BusinessDate==day,token);
+                :null;
             if(request.Id.HasValue&&entity is null)throw AppException.NotFound("Güncellenecek araç giriş kaydı bulunamadı.");
             if(entity is not null&&entity.BranchCode!=branch)throw AppException.BadRequest("Araç giriş kaydının şubesi değiştirilemez.");
             if(request.Id.HasValue)
@@ -41,8 +47,6 @@ public sealed class VehicleCheckInService(IUnitOfWork uow,IProjectSettingsServic
                 byte[] expected;try{expected=Convert.FromBase64String(request.RowVersion);}catch{throw AppException.Conflict("Kayıt sürüm bilgisi geçersiz. Ekranı yenileyip tekrar deneyin.");}
                 if(!entity!.RowVersion.SequenceEqual(expected))throw AppException.Conflict("Araç kaydı başka bir kullanıcı tarafından değiştirildi. Ekranı yenileyip tekrar deneyin.");
             }
-            if(await Headers.AnyAsync(x=>x.Id!=(entity==null?0:entity.Id)&&x.BranchCode==branch&&x.PlateNoNormalized==plate&&x.BusinessDate==(entity==null?day:entity.BusinessDate),token))
-                throw AppException.Conflict("Bu plaka için aynı iş gününde başka bir araç giriş kaydı bulunuyor.");
             var effectiveCustomerId=ResolveCustomerId(request.CustomerId,entity?.CustomerId);
             var customer=effectiveCustomerId.HasValue?await uow.Repository<verii_wms_api_v2.Modules.Customer.Domain.Customer>().FindByIdAsync(effectiveCustomerId.Value,false,token):null;
             if(request.CustomerId.HasValue&&(customer is null||customer.BranchCode!=branch))throw AppException.BadRequest("Seçilen cari bu şubede bulunamadı.");
