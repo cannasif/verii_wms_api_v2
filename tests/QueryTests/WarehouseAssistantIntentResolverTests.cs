@@ -22,6 +22,11 @@ public sealed class WarehouseAssistantIntentResolverTests
     [InlineData("Bu hafta yapılan normal depolar arası transferleri göster", WarehouseAssistantIntent.WarehouseTransferAnalysis)]
     [InlineData("Bu hafta kaç üretime transfer yapıldı?", WarehouseAssistantIntent.WarehouseTransferAnalysis)]
     [InlineData("Bana atanmış açık üretime transfer görevlerini göster", WarehouseAssistantIntent.AssignedTasks)]
+    [InlineData("Vardiya özetimi ve öncelikli işlerimi göster", WarehouseAssistantIntent.ShiftBrief)]
+    [InlineData("Müdahale edilmesi gereken operasyon sorunlarını göster", WarehouseAssistantIntent.OperationalExceptions)]
+    [InlineData("DTG-1 serisinin uçtan uca izlenebilirliğini göster", WarehouseAssistantIntent.Traceability)]
+    [InlineData("GRI-2026-0001 belgesi neden tamamlanamıyor?", WarehouseAssistantIntent.ProcessBlockers)]
+    [InlineData("34 ABC 123 plakasının sac mal kabul geçmişini göster", WarehouseAssistantIntent.SteelVehicleAnalysis)]
     public async Task Resolves_supported_turkish_warehouse_questions(string message, WarehouseAssistantIntent expected)
     {
         var result = await resolver.ResolveAsync(message, null);

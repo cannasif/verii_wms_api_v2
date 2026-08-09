@@ -4,9 +4,13 @@ using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.Audit.Domain;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
+using verii_wms_api_v2.Modules.Location.Domain;
+using verii_wms_api_v2.Modules.Packing.Domain;
 using verii_wms_api_v2.Modules.Customer.Domain;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.SteelReceipt.Domain;
+using verii_wms_api_v2.Modules.StockBalance.Domain;
+using verii_wms_api_v2.Modules.StockMovement.Domain;
 using verii_wms_api_v2.Modules.VehicleCheckIn.Domain;
 using verii_wms_api_v2.Modules.WarehouseAssistant.Application;
 using verii_wms_api_v2.Modules.WarehouseAssistant.Domain;
@@ -413,6 +417,138 @@ public sealed class WarehouseAssistantServiceTests
         Assert.Empty(todayHistoricalDocument.Transfers!);
         Assert.Equal(WarehouseAssistantTransferScope.Production,
             (await new WarehouseAssistantIntentResolver().ResolveAsync("Bugün kaç üretime transfer yapıldı?", null)).TransferScope);
+    }
+
+    [Fact]
+    public async Task Operational_exception_center_reports_balance_integrity_with_evidence()
+    {
+        await using var db = CreateDbContext();
+        var now = new DateTimeOffset(2026, 8, 9, 9, 0, 0, TimeSpan.Zero);
+        db.Users.Add(new User { Id = 10, Username = "worker", Email = "worker@v3rii.com", PasswordHash = "x", Role = "User" });
+        db.Warehouses.Add(new WarehouseEntity { Id = 30, BranchCode = "0", WarehouseCode = 1, WarehouseName = "Ana Depo" });
+        db.Set<WarehouseLocation>().Add(new WarehouseLocation { Id = 40, BranchCode = "0", WarehouseId = 30, Code = "R-01", Name = "Raf 1" });
+        db.Set<StockEntity>().Add(new StockEntity { Id = 50, BranchCode = "0", ErpStockCode = "STK-1", StockName = "Test stok" });
+        db.Set<LocationStockBalance>().Add(new LocationStockBalance
+        {
+            Id = 60, BranchCode = "0", WarehouseId = 30, LocationId = 40, StockId = 50,
+            DimensionKey = "test", UnitCode = "AD", Quantity = 2, ReservedQuantity = 3,
+            AvailableQuantity = -1, LastTransactionDate = now.UtcDateTime.AddMinutes(-5)
+        });
+        await db.SaveChangesAsync();
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        var service = new WarehouseAssistantService(unitOfWork, new WarehouseAssistantIntentResolver(), new NoopAuditWriter(), new FixedTimeProvider(now));
+
+        var result = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, "Müdahale edilmesi gereken operasyon sorunlarını göster"),
+            10, "0", new WarehouseAssistantAccess(false, true, false, false));
+
+        Assert.Equal(WarehouseAssistantIntent.OperationalExceptions, result.Intent);
+        var issue = Assert.Single(result.Exceptions!);
+        Assert.Equal("BALANCE_INTEGRITY", issue.Code);
+        Assert.Equal("Critical", issue.Severity);
+        Assert.Single(result.Evidence!);
+    }
+
+    [Fact]
+    public async Task Operational_exception_center_reports_failed_packing_print_jobs_in_branch_scope()
+    {
+        await using var db = CreateDbContext();
+        var now = new DateTimeOffset(2026, 8, 9, 9, 0, 0, TimeSpan.Zero);
+        db.Users.Add(new User { Id = 10, Username = "worker", Email = "worker@v3rii.com", PasswordHash = "x", Role = "User" });
+        db.Warehouses.Add(new WarehouseEntity { Id = 30, BranchCode = "0", WarehouseCode = 1, WarehouseName = "Ana Depo" });
+        db.Set<PackingSession>().Add(new PackingSession
+        {
+            Id = 70, BranchCode = "0", PackingNo = "PK-2026-0001", WarehouseId = 30,
+            PackingStationId = 90, IdempotencyKey = Guid.NewGuid(), OpenedAtUtc = now.AddHours(-1)
+        });
+        db.Set<HandlingUnit>().Add(new HandlingUnit
+        {
+            Id = 71, BranchCode = "0", PackingSessionId = 70, PackagingMaterialId = 1,
+            HandlingUnitNo = "HU-0001"
+        });
+        db.Set<PackingPrintJob>().Add(new PackingPrintJob
+        {
+            Id = 72, BranchCode = "0", HandlingUnitId = 71, PackingStationId = 90,
+            Status = PackingPrintJobStatus.Failed, Copies = 1, PayloadJson = "{}",
+            IdempotencyKey = Guid.NewGuid(), AttemptCount = 3, RequestedAtUtc = now.AddMinutes(-20),
+            LastError = "Printer offline"
+        });
+        await db.SaveChangesAsync();
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        var service = new WarehouseAssistantService(unitOfWork, new WarehouseAssistantIntentResolver(), new NoopAuditWriter(), new FixedTimeProvider(now));
+
+        var result = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, "Müdahale edilmesi gereken operasyon sorunlarını göster"),
+            10, "0", new WarehouseAssistantAccess(false, false, false, false, CanViewPacking: true));
+
+        var issue = Assert.Single(result.Exceptions!);
+        Assert.Equal("PACKING_PRINT_FAILED", issue.Code);
+        Assert.Equal("PK-2026-0001", issue.DocumentNo);
+        Assert.Equal("High", issue.Severity);
+    }
+
+    [Fact]
+    public async Task Process_blocker_analysis_explains_quality_and_erp_gates()
+    {
+        await using var db = CreateDbContext();
+        var now = new DateTimeOffset(2026, 8, 9, 9, 0, 0, TimeSpan.Zero);
+        db.Users.Add(new User { Id = 10, Username = "worker", Email = "worker@v3rii.com", PasswordHash = "x", Role = "User" });
+        db.Warehouses.Add(new WarehouseEntity { Id = 30, BranchCode = "0", WarehouseCode = 1, WarehouseName = "Ana Depo" });
+        db.GoodsReceiptHeaders.Add(new GoodsReceiptHeader
+        {
+            Id = 70, BranchCode = "0", DocumentSeriesId = 1, DocumentNo = "GRI-2026-0001",
+            DocumentDate = new DateOnly(2026, 8, 9), TargetWarehouseId = 30, ReceivingLocationId = 40,
+            Status = WarehouseOperationStatus.Processed, RequireQualityControl = true,
+            QualityStatus = OperationQualityStatus.Pending, RequirePutaway = false,
+            ErpIntegrationStatus = ErpIntegrationStatus.Failed, CreatedDate = now.UtcDateTime.AddHours(-2)
+        });
+        await db.SaveChangesAsync();
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        var service = new WarehouseAssistantService(unitOfWork, new WarehouseAssistantIntentResolver(), new NoopAuditWriter(), new FixedTimeProvider(now));
+
+        var result = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, "GRI-2026-0001 belgesi neden tamamlanamıyor?"),
+            10, "0", new WarehouseAssistantAccess(false, false, false, true));
+
+        Assert.Equal(WarehouseAssistantIntent.ProcessBlockers, result.Intent);
+        Assert.Contains(result.Exceptions!, x => x.Code == "GR_QUALITY");
+        Assert.Contains(result.Exceptions!, x => x.Code == "GR_ERP" && x.Severity == "Critical");
+    }
+
+    [Fact]
+    public async Task Serial_traceability_returns_ordered_movement_ledger_events()
+    {
+        await using var db = CreateDbContext();
+        var now = new DateTimeOffset(2026, 8, 9, 9, 0, 0, TimeSpan.Zero);
+        db.Users.Add(new User { Id = 10, Username = "worker", Email = "worker@v3rii.com", PasswordHash = "x", Role = "User" });
+        db.Warehouses.Add(new WarehouseEntity { Id = 30, BranchCode = "0", WarehouseCode = 1, WarehouseName = "Ana Depo" });
+        db.Set<WarehouseLocation>().Add(new WarehouseLocation { Id = 40, BranchCode = "0", WarehouseId = 30, Code = "R-01", Name = "Raf 1" });
+        db.Set<StockEntity>().Add(new StockEntity { Id = 50, BranchCode = "0", ErpStockCode = "STK-1", StockName = "Test stok" });
+        db.Set<StockMovementOperation>().Add(new StockMovementOperation
+        {
+            Id = 80, BranchCode = "0", IdempotencyKey = "trace-1", RequestHash = "hash",
+            OperationType = StockMovementTypes.Receipt, Status = StockMovementStatuses.Posted,
+            ReferenceType = "GoodsReceipt", ReferenceId = 70, ReferenceNo = "GRI-2026-0001",
+            OccurredAt = now.UtcDateTime.AddHours(-1), CreatedBy = 10
+        });
+        db.Set<StockMovementEntry>().Add(new StockMovementEntry
+        {
+            Id = 81, BranchCode = "0", OperationId = 80, LineNo = 1, StockId = 50,
+            WarehouseId = 30, LocationId = 40, QuantityDelta = 1, UnitCode = "AD",
+            SerialNo = "DTG-1", OccurredAt = now.UtcDateTime.AddHours(-1)
+        });
+        await db.SaveChangesAsync();
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        var service = new WarehouseAssistantService(unitOfWork, new WarehouseAssistantIntentResolver(), new NoopAuditWriter(), new FixedTimeProvider(now));
+
+        var result = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, "DTG-1 serisinin uçtan uca izlenebilirliğini göster"),
+            10, "0", new WarehouseAssistantAccess(false, true, true, false));
+
+        Assert.Equal(WarehouseAssistantIntent.Traceability, result.Intent);
+        var trace = Assert.Single(result.TraceabilityEvents!);
+        Assert.Equal("GRI-2026-0001", trace.DocumentNo);
+        Assert.Equal("DTG-1", trace.SerialNo);
     }
 
     private static WmsDbContext CreateDbContext()
