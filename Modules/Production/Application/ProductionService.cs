@@ -11,6 +11,7 @@ using verii_wms_api_v2.Modules.Production.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.Stock.Application;
 using verii_wms_api_v2.Modules.StockTracking.Application;
+using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -71,8 +72,60 @@ public sealed class ProductionService(
                     x.UnitCode,x.RecipeLines.Count,x.WorkOrderDate,x.DeliveryDate,x.ProjectCode,
                     x.TargetWarehouseCode,x.SourceWarehouseCode,false)));
         }
-        return result.OrderByDescending(x=>x.WorkOrderDate).ThenBy(x=>x.WorkOrderNumber)
+
+        var ordered=result.OrderByDescending(x=>x.WorkOrderDate).ThenBy(x=>x.WorkOrderNumber)
             .ThenBy(x=>x.SourceSystemCode).Take(boundedTake).ToArray();
+        var assignedWorkOrders=await LoadAssignedSourceWorkOrderNumbersAsync(
+            branch,
+            ordered.Select(x=>x.WorkOrderNumber).ToArray(),
+            ct);
+        return ProductionSourceWorkOrderAssignmentFilter.ExcludeAssigned(ordered, assignedWorkOrders);
+    }
+
+    private async Task<HashSet<string>> LoadAssignedSourceWorkOrderNumbersAsync(
+        string branch,
+        IReadOnlyCollection<string> candidateWorkOrderNumbers,
+        CancellationToken ct)
+    {
+        var candidates=candidateWorkOrderNumbers
+            .Where(x=>!string.IsNullOrWhiteSpace(x))
+            .Select(x=>x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if(candidates.Length==0)
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var contexts=ProductionSourceWorkOrderAssignmentFilter.ProductionContexts;
+        var assigned=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        var linkedOrderNos=await uow.Repository<ProductionTransferHeaderLink>().Query()
+            .AsNoTracking()
+            .Where(x=>x.BranchCode==branch
+                && contexts.Contains(x.WarehouseTransferHeader.BusinessContext)
+                && x.WarehouseTransferHeader.Status!=WarehouseTransferStatus.Cancelled
+                && x.WorkflowStatus!=ProductionTransferWorkflowStatus.Cancelled
+                && x.ProductionOrderNo!=null
+                && candidates.Contains(x.ProductionOrderNo))
+            .Select(x=>x.ProductionOrderNo!)
+            .Distinct()
+            .ToListAsync(ct);
+        foreach(var workOrderNumber in linkedOrderNos)
+            assigned.Add(workOrderNumber.Trim());
+
+        var externalRefs=await uow.Repository<WarehouseTransferHeader>().Query()
+            .AsNoTracking()
+            .Where(x=>x.BranchCode==branch
+                && contexts.Contains(x.BusinessContext)
+                && x.Status!=WarehouseTransferStatus.Cancelled
+                && x.ExternalReferenceNo!=null
+                && candidates.Contains(x.ExternalReferenceNo))
+            .Select(x=>x.ExternalReferenceNo!)
+            .Distinct()
+            .ToListAsync(ct);
+        foreach(var workOrderNumber in externalRefs)
+            assigned.Add(workOrderNumber.Trim());
+
+        return assigned;
     }
 
     public async Task<PreparedNetsisProductionWorkOrder> PrepareSourceWorkOrderAsync(

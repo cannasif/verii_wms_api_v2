@@ -355,6 +355,120 @@ public sealed class ProductionTransferRouteAllocationTests
         Assert.Contains("UTG-2", assigned);
     }
 
+    [Fact]
+    public void GetAssignedSerialNumbersInGroup_ignores_open_serials_outside_task_scope()
+    {
+        var link = new ProductionTransferHeaderLink
+        {
+            Lines =
+            [
+                new() { WarehouseTransferLineId = 10, ProductionConsumptionId = 100, RequirementReference = "REQ-1", RequiredQuantity = 5 },
+            ],
+        };
+        var line = new WarehouseTransferLine
+        {
+            Id = 10,
+            StockId = 13,
+            UnitCode = "ADET",
+            Trackings =
+            [
+                new() { SerialNo = "SN-1", PlannedQuantity = 1, PickedQuantity = 0 },
+                new() { SerialNo = "SN-2", PlannedQuantity = 1, PickedQuantity = 0 },
+                new() { SerialNo = "SN-3", PlannedQuantity = 1, PickedQuantity = 0 },
+                new() { SerialNo = "SN-4", PlannedQuantity = 1, PickedQuantity = 0 },
+                new() { SerialNo = "SN-5", PlannedQuantity = 1, PickedQuantity = 0 },
+            ],
+        };
+        var task = new WarehouseTransferTask
+        {
+            Lines =
+            [
+                new()
+                {
+                    Id = 1000,
+                    WtLineId = 10,
+                    Line = line,
+                    PlannedQuantity = 4,
+                    ProcessedQuantity = 0,
+                },
+            ],
+        };
+
+        var assigned = ProductionTransferRouteAllocation.GetAssignedSerialNumbersInGroup(
+            task,
+            line,
+            link,
+            exceptSerialNo: "SN-1");
+
+        Assert.Equal(3, assigned.Count);
+        Assert.Contains("SN-2", assigned);
+        Assert.Contains("SN-3", assigned);
+        Assert.Contains("SN-4", assigned);
+        Assert.DoesNotContain("SN-5", assigned);
+    }
+
+    [Fact]
+    public void BuildAssignedSerialNumbersFromPickingRows_uses_open_table_rows_only()
+    {
+        var link = new ProductionTransferHeaderLink
+        {
+            Lines =
+            [
+                new() { WarehouseTransferLineId = 10, ProductionConsumptionId = 100, RequirementReference = "REQ-1", RequiredQuantity = 5 },
+            ],
+        };
+        var line = new WarehouseTransferLine
+        {
+            Id = 10,
+            StockId = 13,
+            UnitCode = "ADET",
+            LineNo = 1,
+        };
+        var header = new WarehouseTransferHeader { Lines = [line] };
+        var pickingRows = new List<ProductionTransferPickingRowDto>
+        {
+            new(1000, 10, 1, 1, "A1", 13, "ASD", "Ürün", "SN-1", 1, 1, 0, true),
+            new(1000, 10, 1, 2, "A2", 13, "ASD", "Ürün", "SN-2", 1, 1, 0, true),
+            new(1000, 10, 1, 2, "A2", 13, "ASD", "Ürün", "SN-3", 1, 1, 0, true),
+            new(1000, 10, 1, 2, "A2", 13, "ASD", "Ürün", "SN-4", 1, 1, 0, true),
+        };
+
+        var assigned = ProductionTransferRouteAllocation.BuildAssignedSerialNumbersFromPickingRows(
+            header, link, line, pickingRows, exceptSerialNo: "SN-1");
+
+        Assert.Equal(3, assigned.Count);
+        Assert.Contains("SN-2", assigned);
+        Assert.Contains("SN-3", assigned);
+        Assert.Contains("SN-4", assigned);
+    }
+
+    [Fact]
+    public void ListSerialRouteRefreshCandidates_lists_unassigned_serials_on_other_locations()
+    {
+        const long a1 = 1;
+        const long a2 = 2;
+        var locations = new Dictionary<long, verii_wms_api_v2.Modules.Location.Domain.WarehouseLocation>
+        {
+            [a1] = new() { Id = a1, Code = "A1" },
+            [a2] = new() { Id = a2, Code = "A2" },
+        };
+        var balances = new[]
+        {
+            SerialBalance(a1, 13, "SN-1", 1),
+            SerialBalance(a1, 13, "SN-2", 1),
+            SerialBalance(a2, 13, "SN-99", 1),
+        };
+        var eligible = ProductionTransferRouteAllocation.ExcludeLocations(balances, new HashSet<long> { a1 });
+        var assigned = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "SN-2" };
+
+        var candidates = ProductionTransferRouteAllocation.ListSerialRouteRefreshCandidates(
+            13, null, "ADET", "SN-1", assigned, eligible, locations);
+
+        Assert.Single(candidates);
+        Assert.Equal("SN-99", candidates[0].SerialNo);
+        Assert.Equal(a2, candidates[0].LocationId);
+    }
+
     private static verii_wms_api_v2.Modules.StockBalance.Domain.LocationStockBalance SerialBalance(
         long locationId,
         long stockId,

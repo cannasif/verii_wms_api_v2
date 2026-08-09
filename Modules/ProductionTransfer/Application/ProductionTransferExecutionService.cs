@@ -236,15 +236,24 @@ public sealed class ProductionTransferExecutionService(
                 if (trackingRemaining <= 0)
                     throw AppException.Conflict("Seçilen serinin güncellenecek kalan miktarı yok.");
 
-                var context = await ProductionTransferPickingSupport.LoadBalanceContextAsync(
-                    uow, aggregate.Header, [line], token);
+                var serialContext = await ProductionTransferPickingSupport.LoadSerialRouteRefreshBalanceContextAsync(
+                    uow, aggregate.Header, line, token);
+                var locationIds = task.Lines.SelectMany(x =>
+                {
+                    var taskLineRef = x;
+                    var taskLineEntity = ProductionTransferPickingSupport.ResolveTaskLine(aggregate.Header, taskLineRef);
+                    return new long?[] { x.SourceLocationId, taskLineEntity.DefaultSourceLocationId }
+                        .Concat(taskLineEntity.Trackings.Select(t => t.SourceLocationId));
+                });
+                var locationCodes = await ProductionTransferPickingSupport.LoadLocationCodesAsync(uow, locationIds, token);
+                var pickingRows = ProductionTransferPickingSupport.BuildPersistedRows(aggregate.Header, task, locationCodes);
                 var serialCurrentSourceLocationId = tracking.SourceLocationId ?? taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
                 var serialExcludedLocations = ProductionTransferRouteAllocation.GetRouteRefreshExcludedSourceLocationIds(
                     serialCurrentSourceLocationId);
                 var serialEligibleBalances = ProductionTransferRouteAllocation.ExcludeLocations(
-                    context.Balances, serialExcludedLocations);
-                var assignedSerials = ProductionTransferRouteAllocation.GetAssignedSerialNumbersInGroup(
-                    task, line, aggregate.Link, currentSerialNo);
+                    serialContext.Balances, serialExcludedLocations);
+                var assignedSerials = ProductionTransferRouteAllocation.BuildAssignedSerialNumbersFromPickingRows(
+                    aggregate.Header, aggregate.Link, line, pickingRows, currentSerialNo);
                 var candidates = ProductionTransferRouteAllocation.ListSerialRouteRefreshCandidates(
                     line.StockId,
                     line.YapCodeId,
@@ -252,7 +261,7 @@ public sealed class ProductionTransferExecutionService(
                     currentSerialNo,
                     assignedSerials,
                     serialEligibleBalances,
-                    context.Locations);
+                    serialContext.Locations);
 
                 return new ProductionTransferRouteRefreshCandidatesDto(
                     taskLineId,
@@ -261,7 +270,7 @@ public sealed class ProductionTransferExecutionService(
                     currentSerialNo.Trim(),
                     candidates.Select(x => new ProductionTransferRouteRefreshCandidateDto(
                         x.LocationId,
-                        context.Locations[x.LocationId].Code,
+                        serialContext.Locations[x.LocationId].Code,
                         x.AvailableQuantity,
                         1,
                         x.SerialNo)).ToArray());
@@ -361,13 +370,22 @@ public sealed class ProductionTransferExecutionService(
                 if (serialCurrentSourceLocationId == split.LocationId)
                     throw AppException.Conflict("Kaynak rafa rotalama yapılamaz.");
 
-                var serialContext = await ProductionTransferPickingSupport.LoadBalanceContextAsync(
-                    uow, aggregate.Header, [line], token);
+                var serialContext = await ProductionTransferPickingSupport.LoadSerialRouteRefreshBalanceContextAsync(
+                    uow, aggregate.Header, line, token);
                 if (!serialContext.Locations.ContainsKey(split.LocationId))
                     throw AppException.BadRequest("Seçilen kaynak raf geçersiz.");
 
-                var assignedSerials = ProductionTransferRouteAllocation.GetAssignedSerialNumbersInGroup(
-                    task, line, aggregate.Link, request.CurrentSerialNo);
+                var locationIds = task.Lines.SelectMany(x =>
+                {
+                    var taskLineRef = x;
+                    var taskLineEntity = ProductionTransferPickingSupport.ResolveTaskLine(aggregate.Header, taskLineRef);
+                    return new long?[] { x.SourceLocationId, taskLineEntity.DefaultSourceLocationId }
+                        .Concat(taskLineEntity.Trackings.Select(t => t.SourceLocationId));
+                });
+                var locationCodes = await ProductionTransferPickingSupport.LoadLocationCodesAsync(uow, locationIds, token);
+                var pickingRows = ProductionTransferPickingSupport.BuildPersistedRows(aggregate.Header, task, locationCodes);
+                var assignedSerials = ProductionTransferRouteAllocation.BuildAssignedSerialNumbersFromPickingRows(
+                    aggregate.Header, aggregate.Link, line, pickingRows, request.CurrentSerialNo);
                 if (assignedSerials.Contains(ProductionTransferRouteAllocation.NormalizeSerial(split.SerialNo)))
                     throw AppException.Conflict("Seçilen seri zaten toplama listesinde.");
 

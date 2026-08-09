@@ -201,6 +201,103 @@ public sealed class ProductionTransferPickingSupportTests
     }
 
     [Fact]
+    public void BuildPersistedRows_after_handoff_hides_parent_picked_serials_from_child_task()
+    {
+        const long locationId = 9001;
+        var line = new WarehouseTransferLine
+        {
+            Id = 102,
+            LineNo = 1,
+            StockId = 11,
+            StockCodeSnapshot = "ASD",
+            StockNameSnapshot = "Ürün ASD",
+            TrackingType = StockTrackingType.Serial,
+            PickedQuantity = 1,
+            DefaultSourceLocationId = locationId,
+            Trackings =
+            [
+                new WarehouseTransferTracking { Id = 1, SerialNo = "SN-1", PlannedQuantity = 1, PickedQuantity = 1, SourceLocationId = locationId },
+                new WarehouseTransferTracking { Id = 2, SerialNo = "SN-2", PlannedQuantity = 1, PickedQuantity = 0, SourceLocationId = locationId },
+                new WarehouseTransferTracking { Id = 3, SerialNo = "SN-3", PlannedQuantity = 1, PickedQuantity = 0, SourceLocationId = locationId },
+                new WarehouseTransferTracking { Id = 4, SerialNo = "SN-4", PlannedQuantity = 1, PickedQuantity = 0, SourceLocationId = locationId },
+                new WarehouseTransferTracking { Id = 5, SerialNo = "SN-5", PlannedQuantity = 1, PickedQuantity = 0, SourceLocationId = locationId },
+            ],
+        };
+        var header = new WarehouseTransferHeader { Lines = [line] };
+        var childTask = new WarehouseTransferTask
+        {
+            Id = 2,
+            PreviousTaskId = 1,
+            Lines =
+            [
+                new WarehouseTransferTaskLine
+                {
+                    Id = 502,
+                    WtLineId = 102,
+                    PlannedQuantity = 4,
+                    ProcessedQuantity = 0,
+                    Line = line,
+                },
+            ],
+        };
+        var locationCodes = new Dictionary<long, string> { [locationId] = "A1" };
+
+        var rows = ProductionTransferPickingSupport.BuildPersistedRows(header, childTask, locationCodes);
+
+        Assert.Equal(4, rows.Count);
+        Assert.All(rows, row => Assert.Equal(0, row.ProcessedQuantity));
+        Assert.DoesNotContain(rows, row => row.SerialNo == "SN-1");
+        Assert.Equal(["SN-2", "SN-3", "SN-4", "SN-5"], rows.Select(x => x.SerialNo).OrderBy(x => x).ToArray());
+    }
+
+    [Fact]
+    public void BuildPersistedRows_keeps_partially_picked_serials_on_active_task()
+    {
+        const long locationId = 9001;
+        var line = new WarehouseTransferLine
+        {
+            Id = 102,
+            LineNo = 1,
+            StockId = 11,
+            StockCodeSnapshot = "ASD",
+            TrackingType = StockTrackingType.Serial,
+            PickedQuantity = 1,
+            DefaultSourceLocationId = locationId,
+            Trackings =
+            [
+                new WarehouseTransferTracking { Id = 1, SerialNo = "SN-1", PlannedQuantity = 1, PickedQuantity = 1, SourceLocationId = locationId },
+                new WarehouseTransferTracking { Id = 2, SerialNo = "SN-2", PlannedQuantity = 1, PickedQuantity = 0, SourceLocationId = locationId },
+            ],
+        };
+        var header = new WarehouseTransferHeader { Lines = [line] };
+        var task = new WarehouseTransferTask
+        {
+            Lines =
+            [
+                new WarehouseTransferTaskLine
+                {
+                    Id = 501,
+                    WtLineId = 102,
+                    PlannedQuantity = 5,
+                    ProcessedQuantity = 1,
+                    Line = line,
+                },
+            ],
+        };
+        var locationCodes = new Dictionary<long, string> { [locationId] = "A1" };
+
+        var rows = ProductionTransferPickingSupport.BuildPersistedRows(header, task, locationCodes);
+
+        Assert.Equal(2, rows.Count);
+        var picked = Assert.Single(rows.Where(x => x.SerialNo == "SN-1"));
+        Assert.Equal(1, picked.ProcessedQuantity);
+        Assert.Equal(0, picked.RemainingQuantity);
+        var open = Assert.Single(rows.Where(x => x.SerialNo == "SN-2"));
+        Assert.Equal(0, open.ProcessedQuantity);
+        Assert.Equal(1, open.RemainingQuantity);
+    }
+
+    [Fact]
     public void SortDisplayRows_keeps_route_split_rows_after_anchor_line()
     {
         var link = new ProductionTransferHeaderLink

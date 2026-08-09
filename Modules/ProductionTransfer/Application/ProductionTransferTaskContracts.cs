@@ -1,4 +1,6 @@
+using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
+using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 
@@ -18,7 +20,8 @@ public sealed record ProductionTransferTaskDto(
     DateTimeOffset? CompletedAtUtc, long? CompletedBy,
     long? OriginTaskId, long? OriginUserId, long? PreviousTaskId,
     IReadOnlyList<ProductionTransferTaskAssignmentDto> Assignments,
-    IReadOnlyList<ProductionTransferTaskLineDto> Lines);
+    IReadOnlyList<ProductionTransferTaskLineDto> Lines,
+    IReadOnlyList<string> AssignedUsernames);
 public sealed record ProductionTransferWorkloadDto(
     long UserId, string Username, int AssignedTaskCount, int CompletedTaskCount,
     decimal PlannedQuantity, decimal ProcessedQuantity, decimal CompletionPercent);
@@ -109,6 +112,12 @@ public sealed record ProductionWorkOrderTransferHeaderRowDto(
     DateTime? CreatedDate,
     long? UpdatedBy,
     DateTime? UpdatedDate,
+    ProductionTransferErpPostingPolicy ErpPostingPolicy,
+    ErpIntegrationStatus ErpIntegrationStatus,
+    ErpPostingStatus? ErpPostingStatus,
+    string? ErpDocumentNo,
+    string? ErpErrorCode,
+    string? ErpErrorMessage,
     IReadOnlyList<ProductionWorkOrderTransferTaskRowDto> Tasks);
 
 public interface IProductionTransferTaskService

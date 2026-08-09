@@ -73,14 +73,49 @@ internal static class ProductionTransferRouteAllocation
             if (siblingLink is null) continue;
             if (BuildRouteSplitGroupKey(siblingLink, siblingLine) != groupKey) continue;
 
-            foreach (var tracking in siblingLine.Trackings)
+            if (siblingLine.Trackings.Count > 0)
             {
-                if (tracking.PlannedQuantity - tracking.PickedQuantity <= 0) continue;
-                if (string.IsNullOrWhiteSpace(tracking.SerialNo)) continue;
-                var normalized = NormalizeSerial(tracking.SerialNo);
-                if (except.Length > 0 && string.Equals(normalized, except, StringComparison.OrdinalIgnoreCase)) continue;
-                assigned.Add(normalized);
+                // Yalnızca bu görev satırının toplama tablosunda görünen açık serileri hariç tut;
+                // transfer satırındaki tüm planlı serileri değil (devretme / plan paydası farkları).
+                foreach (var (tracking, _, trackingRemaining) in ProductionTransferPickingSupport.EnumerateTaskScopedSerialTrackings(
+                             siblingLine, siblingTaskLine))
+                {
+                    if (trackingRemaining <= 0) continue;
+                    if (string.IsNullOrWhiteSpace(tracking.SerialNo)) continue;
+                    var normalized = NormalizeSerial(tracking.SerialNo);
+                    if (except.Length > 0 && string.Equals(normalized, except, StringComparison.OrdinalIgnoreCase)) continue;
+                    assigned.Add(normalized);
+                }
             }
+        }
+
+        return assigned;
+    }
+
+    internal static HashSet<string> BuildAssignedSerialNumbersFromPickingRows(
+        WarehouseTransferHeader header,
+        ProductionTransferHeaderLink link,
+        WarehouseTransferLine line,
+        IReadOnlyList<ProductionTransferPickingRowDto> pickingRows,
+        string? exceptSerialNo = null)
+    {
+        var lineLink = link.Lines.Single(x => x.WarehouseTransferLineId == line.Id);
+        var groupKey = BuildRouteSplitGroupKey(lineLink, line);
+        var lineById = header.Lines.ToDictionary(x => x.Id);
+        var linkByLineId = link.Lines.ToDictionary(x => x.WarehouseTransferLineId);
+        var except = NormalizeSerial(exceptSerialNo);
+        var assigned = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var row in pickingRows)
+        {
+            if (row.RemainingQuantity <= 0 || string.IsNullOrWhiteSpace(row.SerialNo)) continue;
+            if (!lineById.TryGetValue(row.WtLineId, out var rowLine)) continue;
+            if (!linkByLineId.TryGetValue(row.WtLineId, out var rowLink)) continue;
+            if (BuildRouteSplitGroupKey(rowLink, rowLine) != groupKey) continue;
+
+            var normalized = NormalizeSerial(row.SerialNo);
+            if (except.Length > 0 && string.Equals(normalized, except, StringComparison.OrdinalIgnoreCase)) continue;
+            assigned.Add(normalized);
         }
 
         return assigned;
