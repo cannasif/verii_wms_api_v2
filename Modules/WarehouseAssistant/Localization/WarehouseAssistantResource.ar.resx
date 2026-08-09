@@ -52,4 +52,82 @@
   <data name="EntityClarificationNotFound" xml:space="preserve"><value>لم أجد صنفًا أو عميلاً مشابهًا لعبارة «{0}». أعد المحاولة بثلاثة أحرف على الأقل من الرمز أو الاسم.</value></data>
   <data name="EntitySelectionStock" xml:space="preserve"><value>{0}&#10;رمز الصنف الذي قصدته هو «{1}».</value></data>
   <data name="EntitySelectionCustomer" xml:space="preserve"><value>{0}&#10;رمز العميل الذي قصدته هو «{1}».</value></data>
+  <data name="ExceptionPackingPrintTitle" xml:space="preserve"><value>فشلت طباعة ملصق وحدة المناولة {0}</value></data>
+  <data name="ExceptionPackingPrintDescription" xml:space="preserve"><value>تمت محاولة مهمة ملصق التعبئة {0} عدد {1} مرات. آخر خطأ: {2}</value></data>
+  <data name="ExceptionPackingPrintUnknownError" xml:space="preserve"><value>لم يتم تسجيل تفاصيل الخطأ</value></data>
+  <data name="ExceptionPackingPrintAction" xml:space="preserve"><value>تحقق من اتصال الطابعة والقالب، ثم أعد محاولة المهمة نفسها بأمان بعد حل المشكلة.</value></data>
+  <data name="CapabilityExampleShiftBrief" xml:space="preserve"><value>اعرض ملخص الوردية والمهام ذات الأولوية</value></data>
+  <data name="CapabilityExampleOperationalExceptions" xml:space="preserve"><value>اعرض مشكلات التشغيل التي تحتاج إلى تدخل الآن</value></data>
+  <data name="CapabilityExampleTraceability" xml:space="preserve"><value>اعرض التتبع الكامل للرقم التسلسلي DTG-1</value></data>
+  <data name="CapabilityExampleProcessBlockers" xml:space="preserve"><value>لماذا لا يمكن إكمال المستند GRI-2026-0001؟</value></data>
+  <data name="MetricOpenTasks" xml:space="preserve"><value>مهامي المفتوحة</value></data>
+  <data name="MetricRemainingQuantity" xml:space="preserve"><value>كمية التشغيل المتبقية</value></data>
+  <data name="MetricCriticalExceptions" xml:space="preserve"><value>مشكلات حرجة</value></data>
+  <data name="MetricHighExceptions" xml:space="preserve"><value>مشكلات عالية الأولوية</value></data>
+  <data name="MetricQualityWaiting" xml:space="preserve"><value>بانتظار الجودة</value></data>
+  <data name="MetricErpFailures" xml:space="preserve"><value>أخطاء ترحيل ERP</value></data>
+  <data name="UnitTask" xml:space="preserve"><value>مهمة</value></data>
+  <data name="UnitQuantity" xml:space="preserve"><value>كمية</value></data>
+  <data name="UnitRecord" xml:space="preserve"><value>سجل</value></data>
+  <data name="ShiftBriefAnswer" xml:space="preserve"><value>ملخص الوردية جاهز: {0} مهام مفتوحة و{1} تنبيهات تشغيل و{2} مشكلات حرجة أو عالية الأولوية. ابدأ بالبطاقات الحرجة.</value></data>
+  <data name="OperationalExceptionsDenied" xml:space="preserve"><value>يلزم تصريح عرض في وحدة مستودع واحدة مرتبطة على الأقل لرؤية مشكلات التشغيل.</value></data>
+  <data name="OperationalExceptionsNone" xml:space="preserve"><value>لم يتم العثور على مشكلة تحتاج إلى تدخل في المستودعات والوحدات المصرح بها.</value></data>
+  <data name="OperationalExceptionsFound" xml:space="preserve"><value>تم العثور على {0} مشكلات تشغيل؛ منها {1} حرجة أو عالية الأولوية.</value></data>
+  <data name="ExceptionBalanceTitle" xml:space="preserve"><value>مشكلة في سلامة رصيد المخزون</value></data>
+  <data name="ExceptionBalanceDescription" xml:space="preserve"><value>الكمية الفعلية {0}، المحجوزة {1}، المتاحة {2}. تم اكتشاف كمية سالبة أو حجز يتجاوز الرصيد.</value></data>
+  <data name="ExceptionBalanceAction" xml:space="preserve"><value>طابق رصيد الموقع مع دفتر الحركات وامنع أي صرف جديد حتى معالجة الفرق.</value></data>
+  <data name="ExceptionGrErpTitle" xml:space="preserve"><value>مشكلة ترحيل ERP في الاستلام {0}</value></data>
+  <data name="ExceptionGrErpDescription" xml:space="preserve"><value>حالة ترحيل ERP هي {0}. يجب التحقق من مستند ERP حتى لو اكتمل الاستلام في WMS.</value></data>
+  <data name="ExceptionGrErpAction" xml:space="preserve"><value>راجع سجل REST وERP؛ عند النتيجة غير المؤكدة لا تعد الإرسال قبل التحقق من المستند في ERP.</value></data>
+  <data name="ExceptionQualityTitle" xml:space="preserve"><value>{0} بانتظار قرار الجودة</value></data>
+  <data name="ExceptionQualityDescription" xml:space="preserve"><value>حالة الجودة {0}. قد تتوقف العمليات التالية بسبب بوابة الجودة.</value></data>
+  <data name="ExceptionQualityAction" xml:space="preserve"><value>افتح فحص الجودة وأكمل العينات وقرارات البنود.</value></data>
+  <data name="ExceptionPutawayTitle" xml:space="preserve"><value>لم يكتمل تخزين {0}</value></data>
+  <data name="ExceptionPutawayDescription" xml:space="preserve"><value>حالة التخزين {0}. الموقع النهائي للمواد المستلمة غير مسجل.</value></data>
+  <data name="ExceptionPutawayAction" xml:space="preserve"><value>ضع الكمية المتبقية في الموقع المناسب وتحقق منها بالباركود.</value></data>
+  <data name="ExceptionTransferErpTitle" xml:space="preserve"><value>مشكلة ERP في التحويل {0}</value></data>
+  <data name="ExceptionTransferErpDescription" xml:space="preserve"><value>حالة ERP للتحويل هي {0}.</value></data>
+  <data name="ExceptionTransferErpAction" xml:space="preserve"><value>تحقق من نتيجة مستند ERP واستخدم إعادة الإرسال الآمنة.</value></data>
+  <data name="ExceptionTransferOverdueTitle" xml:space="preserve"><value>تجاوز التحويل {0} الوقت المخطط</value></data>
+  <data name="ExceptionTransferOverdueDescription" xml:space="preserve"><value>لا يزال التحويل في حالة {0} ولم يكتمل الإرسال أو الاستلام المخطط.</value></data>
+  <data name="ExceptionTransferOverdueAction" xml:space="preserve"><value>تحقق من الموظف المكلف وموقع المصدر والحالة الفعلية للمواد.</value></data>
+  <data name="ExceptionShipmentErpTitle" xml:space="preserve"><value>مشكلة ERP في الشحنة {0}</value></data>
+  <data name="ExceptionShipmentErpDescription" xml:space="preserve"><value>حالة ERP للشحنة هي {0}.</value></data>
+  <data name="ExceptionShipmentErpAction" xml:space="preserve"><value>تحقق من مستند التسليم في ERP وأعد المحاولة دون إنشاء سجل مكرر.</value></data>
+  <data name="ExceptionShipmentOverdueTitle" xml:space="preserve"><value>تجاوزت الشحنة {0} الوقت المخطط</value></data>
+  <data name="ExceptionShipmentOverdueDescription" xml:space="preserve"><value>لا تزال الشحنة في حالة {0}.</value></data>
+  <data name="ExceptionShipmentOverdueAction" xml:space="preserve"><value>تحقق من الالتقاط والتعبئة والتحميل وبيانات المركبة.</value></data>
+  <data name="ExceptionInspectionTitle" xml:space="preserve"><value>فحص الجودة {0} قيد الانتظار</value></data>
+  <data name="ExceptionInspectionDescription" xml:space="preserve"><value>حالة جودة المستند المصدر {0} هي {1}.</value></data>
+  <data name="ProcessBlockersDenied" xml:space="preserve"><value>يلزم تصريح عرض في وحدة التشغيل المرتبطة لرؤية عوائق المستند.</value></data>
+  <data name="ProcessDocumentRequired" xml:space="preserve"><value>أدخل رقم المستند لتحليل سبب عدم تقدم العملية.</value></data>
+  <data name="ProcessDocumentNotFound" xml:space="preserve"><value>لم يتم العثور على المستند {0} في المستودعات والوحدات المصرح بها.</value></data>
+  <data name="ProcessBlockersNone" xml:space="preserve"><value>لا يوجد عائق مفتوح يمنع تقدم المستند {0}.</value></data>
+  <data name="ProcessBlockersFound" xml:space="preserve"><value>تم العثور على {1} مشكلات تؤثر في تقدم المستند {0}.</value></data>
+  <data name="BlockerApprovalTitle" xml:space="preserve"><value>بانتظار موافقة مستخدم مخول</value></data>
+  <data name="BlockerApprovalDescription" xml:space="preserve"><value>لا يمكن للعملية الانتقال إلى الخطوة المنضبطة التالية دون موافقة.</value></data>
+  <data name="BlockerApprovalAction" xml:space="preserve"><value>اطلب من مستخدم مخول مراجعة المستند وتسجيل الموافقة أو الرفض.</value></data>
+  <data name="BlockerQualityTitle" xml:space="preserve"><value>لم تكتمل بوابة الجودة</value></data>
+  <data name="BlockerQualityDescription" xml:space="preserve"><value>حالة الجودة الحالية {0}.</value></data>
+  <data name="BlockerQualityAction" xml:space="preserve"><value>أكمل جميع البنود المعلقة في فحص الجودة.</value></data>
+  <data name="BlockerPutawayTitle" xml:space="preserve"><value>لم يكتمل التخزين</value></data>
+  <data name="BlockerPutawayDescription" xml:space="preserve"><value>حالة التخزين الحالية {0}.</value></data>
+  <data name="BlockerPutawayAction" xml:space="preserve"><value>ضع جميع كميات الاستلام المتبقية في المواقع الهدف.</value></data>
+  <data name="BlockerErpTitle" xml:space="preserve"><value>لم يتم التحقق من تكامل ERP</value></data>
+  <data name="BlockerErpDescription" xml:space="preserve"><value>حالة ERP الحالية {0}.</value></data>
+  <data name="BlockerErpAction" xml:space="preserve"><value>تحقق من المستند في ERP وأعد المحاولة بأمان وفق سجل الخطأ.</value></data>
+  <data name="BlockerTransferTitle" xml:space="preserve"><value>لم يكتمل التحويل الفعلي</value></data>
+  <data name="BlockerTransferDescription" xml:space="preserve"><value>التحويل متوقف عند الخطوة {0}.</value></data>
+  <data name="BlockerTransferAction" xml:space="preserve"><value>تحقق بالتسلسل من كميات الالتقاط والإرسال والاستلام والتخزين.</value></data>
+  <data name="BlockerShipmentTitle" xml:space="preserve"><value>لم تكتمل الشحنة فعليًا</value></data>
+  <data name="BlockerShipmentDescription" xml:space="preserve"><value>الشحنة متوقفة عند الخطوة {0}.</value></data>
+  <data name="BlockerShipmentAction" xml:space="preserve"><value>أكمل بالتسلسل الالتقاط والتعبئة والتحميل وتأكيد الشحن.</value></data>
+  <data name="TraceabilityDenied" xml:space="preserve"><value>يتطلب التتبع الكامل تصريحي عرض حركات المخزون وأرصدة المخزون.</value></data>
+  <data name="TraceabilitySubjectRequired" xml:space="preserve"><value>أدخل رقمًا تسلسليًا أو باركود للتتبع.</value></data>
+  <data name="TraceabilityNone" xml:space="preserve"><value>لم يتم العثور على أثر حركة لـ {0} في المستودعات المصرح بها.</value></data>
+  <data name="TraceabilityFound" xml:space="preserve"><value>تم العثور على {1} أحداث تتبع لـ {0}. أول حدث {2:g} وآخر حدث {3:g}.</value></data>
+  <data name="TraceStageMovement" xml:space="preserve"><value>حركة مخزون</value></data>
+  <data name="TraceDocumentUnknown" xml:space="preserve"><value>عملية بلا مستند</value></data>
+  <data name="EvidenceOperationalDatabase" xml:space="preserve"><value>قاعدة بيانات عمليات WMS</value></data>
+  <data name="EvidenceAuthorizedScope" xml:space="preserve"><value>تم تطبيق الفرع النشط وصلاحيات المستخدم والمستودعات المسموح بها.</value></data>
 </root>

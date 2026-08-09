@@ -80,7 +80,8 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
                     : context?.TransferScope ?? WarehouseAssistantTransferScope.All,
                 HasExplicitDateFilter: deterministic.HasExplicitDateFilter
                     || !string.IsNullOrWhiteSpace(root.GetProperty("dateFrom").GetString())
-                    || !string.IsNullOrWhiteSpace(root.GetProperty("dateTo").GetString()));
+                    || !string.IsNullOrWhiteSpace(root.GetProperty("dateTo").GetString()),
+                DocumentQuery: NullIfBlank(root.GetProperty("documentQuery").GetString()) ?? context?.DocumentNo);
         }
         catch (Exception exception) when (exception is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
@@ -105,7 +106,7 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
             {
                 type = "function",
                 name = "resolve_wms_question",
-                description = "Resolve a warehouse assistant question to one safe read-only intent.",
+                description = "Resolve a warehouse assistant question to one safe read-only intent. Use ShiftBrief for workload summaries, OperationalExceptions for failures or overdue work, Traceability for end-to-end serial/lot/barcode history, and ProcessBlockers when a named document cannot progress.",
                 strict = true,
                 parameters = new
                 {
@@ -124,9 +125,10 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
                         supplierQuery = new { type = new[] { "string", "null" } },
                         vehiclePlateQuery = new { type = new[] { "string", "null" } },
                         transferDocumentQuery = new { type = new[] { "string", "null" } },
-                        transferScope = new { type = "string", @enum = Enum.GetNames<WarehouseAssistantTransferScope>() }
+                        transferScope = new { type = "string", @enum = Enum.GetNames<WarehouseAssistantTransferScope>() },
+                        documentQuery = new { type = new[] { "string", "null" } }
                     },
-                    required = new[] { "intent", "datePreset", "serialNo", "stockQuery", "barcode", "targetUserQuery", "requestsAllUsers", "dateFrom", "dateTo", "supplierQuery", "vehiclePlateQuery", "transferDocumentQuery", "transferScope" },
+                    required = new[] { "intent", "datePreset", "serialNo", "stockQuery", "barcode", "targetUserQuery", "requestsAllUsers", "dateFrom", "dateTo", "supplierQuery", "vehiclePlateQuery", "transferDocumentQuery", "transferScope", "documentQuery" },
                     additionalProperties = false
                 }
             }

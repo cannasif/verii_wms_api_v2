@@ -19,6 +19,10 @@ public enum WarehouseAssistantIntent
     ParameterHelp = 11,
     SteelVehicleAnalysis = 12,
     WarehouseTransferAnalysis = 13,
+    ShiftBrief = 14,
+    OperationalExceptions = 15,
+    Traceability = 16,
+    ProcessBlockers = 17,
     Unknown = 99
 }
 
@@ -48,7 +52,12 @@ public sealed record WarehouseAssistantAccess(
     bool CanViewWarehouseInbound = false,
     bool CanViewWarehouseOutbound = false,
     bool CanViewProductionTransfers = false,
-    bool CanViewSteelVehicles = false);
+    bool CanViewSteelVehicles = false,
+    bool CanViewQuality = false,
+    bool CanViewPacking = false,
+    bool CanViewProcurement = false,
+    bool CanViewKkd = false,
+    bool CanViewSystemHealth = false);
 
 public sealed record WarehouseAssistantParameterHint(
     string Module,
@@ -72,7 +81,11 @@ public sealed record WarehouseAssistantCapabilities(
     bool CanQueryGoodsReceiptAnalysis = false,
     bool CanExplainParameters = true,
     bool CanQuerySteelVehicleAnalysis = false,
-    bool CanQueryTransferAnalysis = false);
+    bool CanQueryTransferAnalysis = false,
+    bool CanQueryShiftBrief = true,
+    bool CanQueryOperationalExceptions = false,
+    bool CanQueryTraceability = false,
+    bool CanQueryProcessBlockers = false);
 
 public sealed record WarehouseAssistantConversationRow(
     long Id,
@@ -289,6 +302,65 @@ public sealed record WarehouseAssistantEntityCandidateRow(
     decimal MatchScore,
     string SelectionMessage);
 
+public sealed record WarehouseAssistantSummaryMetricRow(
+    string Key,
+    string Label,
+    decimal Value,
+    string Unit,
+    string Severity,
+    string Module,
+    string? Route = null);
+
+public sealed record WarehouseAssistantExceptionRow(
+    string Code,
+    string Severity,
+    string Module,
+    string Title,
+    string Description,
+    string EntityType,
+    long? EntityId,
+    string? DocumentNo,
+    string Status,
+    DateTimeOffset? DetectedAtUtc,
+    decimal? AgeHours,
+    string SuggestedAction,
+    string? Route = null);
+
+public sealed record WarehouseAssistantTraceabilityEventRow(
+    string EventKey,
+    DateTimeOffset OccurredAtUtc,
+    string Stage,
+    string EventType,
+    string DocumentType,
+    long? DocumentId,
+    string? DocumentNo,
+    long StockId,
+    string StockCode,
+    string StockName,
+    string? SerialNo,
+    string? LotNo,
+    decimal Quantity,
+    string UnitCode,
+    int? WarehouseCode,
+    string? WarehouseName,
+    string? LocationCode,
+    string? LocationName,
+    string Status,
+    string ActorDisplayName,
+    bool IsReversal,
+    string? Route = null);
+
+public sealed record WarehouseAssistantEvidenceRow(
+    string Source,
+    string Tool,
+    int RecordCount,
+    DateTimeOffset GeneratedAtUtc,
+    DateTimeOffset? DataAsOfUtc,
+    string Scope,
+    string Filters,
+    bool IsTruncated,
+    string? Route = null);
+
 public sealed record WarehouseAssistantChatResponse(
     long ConversationId,
     long MessageId,
@@ -308,7 +380,11 @@ public sealed record WarehouseAssistantChatResponse(
     IReadOnlyList<WarehouseAssistantParameterGuideRow>? ParameterGuides = null,
     IReadOnlyList<WarehouseAssistantSteelVehicleRow>? SteelVehicles = null,
     IReadOnlyList<WarehouseAssistantTransferRow>? Transfers = null,
-    IReadOnlyList<WarehouseAssistantEntityCandidateRow>? EntityCandidates = null);
+    IReadOnlyList<WarehouseAssistantEntityCandidateRow>? EntityCandidates = null,
+    IReadOnlyList<WarehouseAssistantSummaryMetricRow>? SummaryMetrics = null,
+    IReadOnlyList<WarehouseAssistantExceptionRow>? Exceptions = null,
+    IReadOnlyList<WarehouseAssistantTraceabilityEventRow>? TraceabilityEvents = null,
+    IReadOnlyList<WarehouseAssistantEvidenceRow>? Evidence = null);
 
 public sealed record WarehouseAssistantContext(
     string? SerialNo,
@@ -325,7 +401,8 @@ public sealed record WarehouseAssistantContext(
     string? ParameterValue = null,
     string? VehiclePlate = null,
     string? TransferDocumentNo = null,
-    WarehouseAssistantTransferScope? TransferScope = null);
+    WarehouseAssistantTransferScope? TransferScope = null,
+    string? DocumentNo = null);
 
 public sealed record WarehouseAssistantIntentResolution(
     WarehouseAssistantIntent Intent,
@@ -346,7 +423,8 @@ public sealed record WarehouseAssistantIntentResolution(
     string? VehiclePlateQuery = null,
     string? TransferDocumentQuery = null,
     WarehouseAssistantTransferScope TransferScope = WarehouseAssistantTransferScope.All,
-    bool HasExplicitDateFilter = false);
+    bool HasExplicitDateFilter = false,
+    string? DocumentQuery = null);
 
 public interface IWarehouseAssistantIntentResolver
 {

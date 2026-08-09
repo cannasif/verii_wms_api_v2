@@ -52,4 +52,82 @@
   <data name="EntityClarificationNotFound" xml:space="preserve"><value>No encontré ningún artículo o cliente similar a «{0}». Inténtelo de nuevo con al menos tres caracteres del código o nombre.</value></data>
   <data name="EntitySelectionStock" xml:space="preserve"><value>{0}&#10;El código de artículo que quise decir es «{1}».</value></data>
   <data name="EntitySelectionCustomer" xml:space="preserve"><value>{0}&#10;El código de cliente que quise decir es «{1}».</value></data>
+  <data name="CapabilityExampleShiftBrief" xml:space="preserve"><value>Mostrar el resumen de mi turno y las tareas prioritarias</value></data>
+  <data name="CapabilityExampleOperationalExceptions" xml:space="preserve"><value>Mostrar operaciones que requieren atención</value></data>
+  <data name="CapabilityExampleTraceability" xml:space="preserve"><value>Mostrar el historial completo de la serie DTG-1</value></data>
+  <data name="CapabilityExampleProcessBlockers" xml:space="preserve"><value>¿Por qué no se puede completar el documento GRI-2026-0001?</value></data>
+  <data name="MetricOpenTasks" xml:space="preserve"><value>Mis tareas abiertas</value></data>
+  <data name="MetricRemainingQuantity" xml:space="preserve"><value>Cantidad restante</value></data>
+  <data name="MetricCriticalExceptions" xml:space="preserve"><value>Problemas críticos</value></data>
+  <data name="MetricHighExceptions" xml:space="preserve"><value>Problemas de alta prioridad</value></data>
+  <data name="MetricQualityWaiting" xml:space="preserve"><value>En espera de calidad</value></data>
+  <data name="MetricErpFailures" xml:space="preserve"><value>Errores de envío al ERP</value></data>
+  <data name="UnitTask" xml:space="preserve"><value>tareas</value></data>
+  <data name="UnitQuantity" xml:space="preserve"><value>cantidad</value></data>
+  <data name="UnitRecord" xml:space="preserve"><value>registros</value></data>
+  <data name="ShiftBriefAnswer" xml:space="preserve"><value>Resumen listo: {0} tareas abiertas, {1} alertas y {2} asuntos altos/críticos. Atienda primero las tarjetas críticas.</value></data>
+  <data name="OperationalExceptionsDenied" xml:space="preserve"><value>Se requiere permiso de lectura en al menos un módulo de almacén relacionado.</value></data>
+  <data name="OperationalExceptionsNone" xml:space="preserve"><value>No hay problemas que requieran atención en sus almacenes y módulos autorizados.</value></data>
+  <data name="OperationalExceptionsFound" xml:space="preserve"><value>Se encontraron {0} problemas; {1} son altos o críticos.</value></data>
+  <data name="ExceptionBalanceTitle" xml:space="preserve"><value>Problema de integridad del stock</value></data>
+  <data name="ExceptionBalanceDescription" xml:space="preserve"><value>Físico {0}, reservado {1}, disponible {2}. Se detectó saldo negativo o reserva excesiva.</value></data>
+  <data name="ExceptionBalanceAction" xml:space="preserve"><value>Conciliar la ubicación con el libro de movimientos y bloquear salidas hasta resolverlo.</value></data>
+  <data name="ExceptionGrErpTitle" xml:space="preserve"><value>Problema ERP en la recepción {0}</value></data>
+  <data name="ExceptionGrErpDescription" xml:space="preserve"><value>El estado ERP es {0}. Verifique el documento aunque la operación WMS esté completa.</value></data>
+  <data name="ExceptionGrErpAction" xml:space="preserve"><value>Revise el error REST/ERP; si el resultado es incierto, verifique ERP antes de reintentar.</value></data>
+  <data name="ExceptionQualityTitle" xml:space="preserve"><value>{0} espera decisión de calidad</value></data>
+  <data name="ExceptionQualityDescription" xml:space="preserve"><value>El estado de calidad es {0}. Los pasos posteriores pueden quedar retenidos.</value></data>
+  <data name="ExceptionQualityAction" xml:space="preserve"><value>Abra la inspección y complete muestras y decisiones.</value></data>
+  <data name="ExceptionPutawayTitle" xml:space="preserve"><value>La ubicación de {0} está incompleta</value></data>
+  <data name="ExceptionPutawayDescription" xml:space="preserve"><value>El estado de ubicación es {0}. Falta el registro final.</value></data>
+  <data name="ExceptionPutawayAction" xml:space="preserve"><value>Ubique la cantidad restante y confirme por código de barras.</value></data>
+  <data name="ExceptionTransferErpTitle" xml:space="preserve"><value>Problema ERP en la transferencia {0}</value></data>
+  <data name="ExceptionTransferErpDescription" xml:space="preserve"><value>El estado ERP de la transferencia es {0}.</value></data>
+  <data name="ExceptionTransferErpAction" xml:space="preserve"><value>Verifique el documento ERP y use el reintento seguro.</value></data>
+  <data name="ExceptionTransferOverdueTitle" xml:space="preserve"><value>La transferencia {0} está atrasada</value></data>
+  <data name="ExceptionTransferOverdueDescription" xml:space="preserve"><value>Sigue en {0}; el despacho o la llegada previstos no terminaron.</value></data>
+  <data name="ExceptionTransferOverdueAction" xml:space="preserve"><value>Compruebe responsable, ubicación origen y material físico.</value></data>
+  <data name="ExceptionShipmentErpTitle" xml:space="preserve"><value>Problema ERP en el envío {0}</value></data>
+  <data name="ExceptionShipmentErpDescription" xml:space="preserve"><value>El estado ERP del envío es {0}.</value></data>
+  <data name="ExceptionShipmentErpAction" xml:space="preserve"><value>Verifique el albarán ERP y reintente sin duplicarlo.</value></data>
+  <data name="ExceptionShipmentOverdueTitle" xml:space="preserve"><value>El envío {0} está atrasado</value></data>
+  <data name="ExceptionShipmentOverdueDescription" xml:space="preserve"><value>El envío sigue en {0}.</value></data>
+  <data name="ExceptionShipmentOverdueAction" xml:space="preserve"><value>Revise preparación, embalaje, carga y vehículo.</value></data>
+  <data name="ExceptionInspectionTitle" xml:space="preserve"><value>La inspección de calidad {0} está esperando</value></data>
+  <data name="ExceptionInspectionDescription" xml:space="preserve"><value>El estado de calidad del documento {0} es {1}.</value></data>
+  <data name="ProcessBlockersDenied" xml:space="preserve"><value>Se requiere permiso de lectura en el módulo de la operación.</value></data>
+  <data name="ProcessDocumentRequired" xml:space="preserve"><value>Introduzca un número de documento para analizar el bloqueo.</value></data>
+  <data name="ProcessDocumentNotFound" xml:space="preserve"><value>No se encontró el documento {0} en sus módulos y almacenes autorizados.</value></data>
+  <data name="ProcessBlockersNone" xml:space="preserve"><value>No hay bloqueos abiertos para el documento {0}.</value></data>
+  <data name="ProcessBlockersFound" xml:space="preserve"><value>Se encontraron {1} asuntos que afectan al documento {0}.</value></data>
+  <data name="BlockerApprovalTitle" xml:space="preserve"><value>Aprobación autorizada pendiente</value></data>
+  <data name="BlockerApprovalDescription" xml:space="preserve"><value>La operación no puede avanzar al siguiente paso controlado sin aprobación.</value></data>
+  <data name="BlockerApprovalAction" xml:space="preserve"><value>Solicite a un usuario autorizado que apruebe o rechace.</value></data>
+  <data name="BlockerQualityTitle" xml:space="preserve"><value>Control de calidad incompleto</value></data>
+  <data name="BlockerQualityDescription" xml:space="preserve"><value>El estado actual de calidad es {0}.</value></data>
+  <data name="BlockerQualityAction" xml:space="preserve"><value>Complete todas las líneas pendientes de la inspección.</value></data>
+  <data name="BlockerPutawayTitle" xml:space="preserve"><value>Ubicación incompleta</value></data>
+  <data name="BlockerPutawayDescription" xml:space="preserve"><value>El estado actual de ubicación es {0}.</value></data>
+  <data name="BlockerPutawayAction" xml:space="preserve"><value>Ubique las cantidades restantes en sus destinos.</value></data>
+  <data name="BlockerErpTitle" xml:space="preserve"><value>Integración ERP sin verificar</value></data>
+  <data name="BlockerErpDescription" xml:space="preserve"><value>El estado ERP actual es {0}.</value></data>
+  <data name="BlockerErpAction" xml:space="preserve"><value>Compruebe ERP y reintente de forma segura según el error.</value></data>
+  <data name="BlockerTransferTitle" xml:space="preserve"><value>Transferencia física incompleta</value></data>
+  <data name="BlockerTransferDescription" xml:space="preserve"><value>La transferencia espera en el paso {0}.</value></data>
+  <data name="BlockerTransferAction" xml:space="preserve"><value>Revise en orden cantidades preparadas, enviadas, recibidas y ubicadas.</value></data>
+  <data name="BlockerShipmentTitle" xml:space="preserve"><value>Envío físico incompleto</value></data>
+  <data name="BlockerShipmentDescription" xml:space="preserve"><value>El envío espera en el paso {0}.</value></data>
+  <data name="BlockerShipmentAction" xml:space="preserve"><value>Complete preparación, embalaje, carga y confirmación.</value></data>
+  <data name="TraceabilityDenied" xml:space="preserve"><value>La trazabilidad requiere permisos de movimientos y saldos de stock.</value></data>
+  <data name="TraceabilitySubjectRequired" xml:space="preserve"><value>Introduzca una serie o código de barras.</value></data>
+  <data name="TraceabilityNone" xml:space="preserve"><value>No se encontró rastro para {0} en sus almacenes autorizados.</value></data>
+  <data name="TraceabilityFound" xml:space="preserve"><value>Se encontraron {1} eventos para {0}. Primero {2:g}, último {3:g}.</value></data>
+  <data name="TraceStageMovement" xml:space="preserve"><value>Movimiento de stock</value></data>
+  <data name="TraceDocumentUnknown" xml:space="preserve"><value>Operación sin documento</value></data>
+  <data name="EvidenceOperationalDatabase" xml:space="preserve"><value>Base de datos operativa WMS</value></data>
+  <data name="EvidenceAuthorizedScope" xml:space="preserve"><value>Se aplicaron sucursal activa, permisos y almacenes autorizados.</value></data>
+  <data name="ExceptionPackingPrintTitle" xml:space="preserve"><value>Falló la impresión de la etiqueta de la unidad logística {0}</value></data>
+  <data name="ExceptionPackingPrintDescription" xml:space="preserve"><value>El trabajo de etiqueta del embalaje {0} se intentó {1} veces. Último error: {2}</value></data>
+  <data name="ExceptionPackingPrintUnknownError" xml:space="preserve"><value>No se registraron detalles del error</value></data>
+  <data name="ExceptionPackingPrintAction" xml:space="preserve"><value>Revise la conexión de la impresora y la plantilla; después vuelva a intentar el mismo trabajo de forma segura.</value></data>
 </root>

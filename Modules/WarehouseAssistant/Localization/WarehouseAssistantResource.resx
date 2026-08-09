@@ -113,4 +113,82 @@
   <data name="EntityClarificationNotFound" xml:space="preserve"><value>“{0}” ifadesine benzeyen bir stok veya cari kartı bulamadım. Kodun ya da adın en az üç karakterini yazarak tekrar deneyin.</value></data>
   <data name="EntitySelectionStock" xml:space="preserve"><value>{0}&#10;Kastettiğim stok kodu: “{1}”.</value></data>
   <data name="EntitySelectionCustomer" xml:space="preserve"><value>{0}&#10;Kastettiğim cari kodu: “{1}”.</value></data>
+  <data name="CapabilityExampleShiftBrief" xml:space="preserve"><value>Vardiya özetimi ve öncelikli işlerimi göster</value></data>
+  <data name="CapabilityExampleOperationalExceptions" xml:space="preserve"><value>Şu anda müdahale edilmesi gereken operasyon sorunlarını göster</value></data>
+  <data name="CapabilityExampleTraceability" xml:space="preserve"><value>DTG-1 serisinin girişten bugüne izini göster</value></data>
+  <data name="CapabilityExampleProcessBlockers" xml:space="preserve"><value>GRI-2026-0001 belgesi neden tamamlanamıyor?</value></data>
+  <data name="MetricOpenTasks" xml:space="preserve"><value>Açık görevlerim</value></data>
+  <data name="MetricRemainingQuantity" xml:space="preserve"><value>Kalan işlem miktarı</value></data>
+  <data name="MetricCriticalExceptions" xml:space="preserve"><value>Kritik sorunlar</value></data>
+  <data name="MetricHighExceptions" xml:space="preserve"><value>Yüksek öncelikli sorunlar</value></data>
+  <data name="MetricQualityWaiting" xml:space="preserve"><value>Kalite bekleyenler</value></data>
+  <data name="MetricErpFailures" xml:space="preserve"><value>ERP aktarım hataları</value></data>
+  <data name="UnitTask" xml:space="preserve"><value>görev</value></data>
+  <data name="UnitQuantity" xml:space="preserve"><value>miktar</value></data>
+  <data name="UnitRecord" xml:space="preserve"><value>kayıt</value></data>
+  <data name="ShiftBriefAnswer" xml:space="preserve"><value>Vardiya özetiniz hazır: {0} açık görev, {1} operasyon uyarısı ve {2} yüksek/kritik konu var. Önce kritik kartları ele alın.</value></data>
+  <data name="OperationalExceptionsDenied" xml:space="preserve"><value>Operasyon sorunlarını görmek için ilgili depo modüllerinden en az birinde görüntüleme yetkisi gerekir.</value></data>
+  <data name="OperationalExceptionsNone" xml:space="preserve"><value>Yetkili olduğunuz depo ve modüllerde şu anda müdahale gerektiren bir sorun bulunamadı.</value></data>
+  <data name="OperationalExceptionsFound" xml:space="preserve"><value>{0} operasyon sorunu bulundu; bunların {1} tanesi yüksek veya kritik önceliklidir.</value></data>
+  <data name="ExceptionBalanceTitle" xml:space="preserve"><value>Stok bakiyesi veri bütünlüğü sorunu</value></data>
+  <data name="ExceptionBalanceDescription" xml:space="preserve"><value>Fiziksel miktar {0}, rezerve {1}, kullanılabilir {2}. Negatif ya da miktarı aşan rezervasyon tespit edildi.</value></data>
+  <data name="ExceptionBalanceAction" xml:space="preserve"><value>Raf bakiyesini hareket defteriyle uzlaştırın; fark çözülmeden yeni çıkış yaptırmayın.</value></data>
+  <data name="ExceptionGrErpTitle" xml:space="preserve"><value>{0} mal kabulünde ERP aktarım sorunu</value></data>
+  <data name="ExceptionGrErpDescription" xml:space="preserve"><value>ERP aktarım durumu {0}. Belge WMS'de tamamlanmış olsa bile ERP kaydı doğrulanmalıdır.</value></data>
+  <data name="ExceptionGrErpAction" xml:space="preserve"><value>REST/ERP hata kaydını inceleyin; belirsiz sonuçta ERP'de belgeyi doğrulamadan tekrar göndermeyin.</value></data>
+  <data name="ExceptionQualityTitle" xml:space="preserve"><value>{0} kalite kararı bekliyor</value></data>
+  <data name="ExceptionQualityDescription" xml:space="preserve"><value>Kalite durumu {0}. Onay kapısı açık olduğu için sonraki süreçler bekleyebilir.</value></data>
+  <data name="ExceptionQualityAction" xml:space="preserve"><value>Kalite incelemesini açın, numune ve karar kalemlerini tamamlayın.</value></data>
+  <data name="ExceptionPutawayTitle" xml:space="preserve"><value>{0} raflama işlemi tamamlanmadı</value></data>
+  <data name="ExceptionPutawayDescription" xml:space="preserve"><value>Raflama durumu {0}. Kabul edilen ürünün nihai raf kaydı eksik.</value></data>
+  <data name="ExceptionPutawayAction" xml:space="preserve"><value>Kalan miktarı uygun hedef rafa yerleştirip barkodla doğrulayın.</value></data>
+  <data name="ExceptionTransferErpTitle" xml:space="preserve"><value>{0} transferinde ERP aktarım sorunu</value></data>
+  <data name="ExceptionTransferErpDescription" xml:space="preserve"><value>Transferin ERP durumu {0}.</value></data>
+  <data name="ExceptionTransferErpAction" xml:space="preserve"><value>ERP belge sonucunu doğrulayın ve güvenli tekrar gönderme akışını kullanın.</value></data>
+  <data name="ExceptionTransferOverdueTitle" xml:space="preserve"><value>{0} transferi planlanan zamanı aştı</value></data>
+  <data name="ExceptionTransferOverdueDescription" xml:space="preserve"><value>Transfer hâlâ {0} durumunda ve planlanan sevk/varış tamamlanmadı.</value></data>
+  <data name="ExceptionTransferOverdueAction" xml:space="preserve"><value>Atanan kişiyi, kaynak rafı ve fiziksel malzeme durumunu kontrol edin.</value></data>
+  <data name="ExceptionShipmentErpTitle" xml:space="preserve"><value>{0} sevkinde ERP aktarım sorunu</value></data>
+  <data name="ExceptionShipmentErpDescription" xml:space="preserve"><value>Sevkin ERP durumu {0}.</value></data>
+  <data name="ExceptionShipmentErpAction" xml:space="preserve"><value>ERP irsaliye sonucunu doğrulayın; mükerrer kayıt oluşturmadan yeniden deneyin.</value></data>
+  <data name="ExceptionShipmentOverdueTitle" xml:space="preserve"><value>{0} sevki planlanan zamanı aştı</value></data>
+  <data name="ExceptionShipmentOverdueDescription" xml:space="preserve"><value>Sevk hâlâ {0} durumunda.</value></data>
+  <data name="ExceptionShipmentOverdueAction" xml:space="preserve"><value>Toplama, paketleme, yükleme ve araç bilgisi adımlarını kontrol edin.</value></data>
+  <data name="ExceptionInspectionTitle" xml:space="preserve"><value>{0} kalite incelemesi bekliyor</value></data>
+  <data name="ExceptionInspectionDescription" xml:space="preserve"><value>{0} kaynak belgesinin kalite durumu {1}.</value></data>
+  <data name="ProcessBlockersDenied" xml:space="preserve"><value>Belge engellerini görmek için ilgili operasyon modülünde görüntüleme yetkisi gerekir.</value></data>
+  <data name="ProcessDocumentRequired" xml:space="preserve"><value>Neden ilerlemediğini incelemek için belge numarasını yazın.</value></data>
+  <data name="ProcessDocumentNotFound" xml:space="preserve"><value>{0} numarasıyla yetkili olduğunuz depo ve modüllerde belge bulunamadı.</value></data>
+  <data name="ProcessBlockersNone" xml:space="preserve"><value>{0} belgesi için sistemi durduran açık bir engel bulunamadı.</value></data>
+  <data name="ProcessBlockersFound" xml:space="preserve"><value>{0} belgesinin ilerlemesini etkileyen {1} konu bulundu.</value></data>
+  <data name="BlockerApprovalTitle" xml:space="preserve"><value>Yetkili onayı bekleniyor</value></data>
+  <data name="BlockerApprovalDescription" xml:space="preserve"><value>Operasyon, onay verilmeden sonraki kontrollü adıma geçemez.</value></data>
+  <data name="BlockerApprovalAction" xml:space="preserve"><value>Belgeyi yetkili kullanıcıya inceletip onay veya ret kararı verin.</value></data>
+  <data name="BlockerQualityTitle" xml:space="preserve"><value>Kalite kapısı tamamlanmadı</value></data>
+  <data name="BlockerQualityDescription" xml:space="preserve"><value>Mevcut kalite durumu {0}.</value></data>
+  <data name="BlockerQualityAction" xml:space="preserve"><value>Kalite incelemesindeki tüm bekleyen kalemleri sonuçlandırın.</value></data>
+  <data name="BlockerPutawayTitle" xml:space="preserve"><value>Raflama tamamlanmadı</value></data>
+  <data name="BlockerPutawayDescription" xml:space="preserve"><value>Mevcut raflama durumu {0}.</value></data>
+  <data name="BlockerPutawayAction" xml:space="preserve"><value>Kalan kabul miktarlarını hedef raflara yerleştirin.</value></data>
+  <data name="BlockerErpTitle" xml:space="preserve"><value>ERP entegrasyonu doğrulanamadı</value></data>
+  <data name="BlockerErpDescription" xml:space="preserve"><value>Mevcut ERP durumu {0}.</value></data>
+  <data name="BlockerErpAction" xml:space="preserve"><value>ERP'de belgeyi kontrol edin, hata kaydına göre güvenli yeniden deneme yapın.</value></data>
+  <data name="BlockerTransferTitle" xml:space="preserve"><value>Transfer fiziksel olarak tamamlanmadı</value></data>
+  <data name="BlockerTransferDescription" xml:space="preserve"><value>Transfer {0} adımında bekliyor.</value></data>
+  <data name="BlockerTransferAction" xml:space="preserve"><value>Toplama, sevk, teslim alma ve raflama miktarlarını sırayla kontrol edin.</value></data>
+  <data name="BlockerShipmentTitle" xml:space="preserve"><value>Sevk fiziksel olarak tamamlanmadı</value></data>
+  <data name="BlockerShipmentDescription" xml:space="preserve"><value>Sevk {0} adımında bekliyor.</value></data>
+  <data name="BlockerShipmentAction" xml:space="preserve"><value>Toplama, paketleme, yükleme ve sevk onayını sırayla tamamlayın.</value></data>
+  <data name="TraceabilityDenied" xml:space="preserve"><value>Uçtan uca izlenebilirlik için stok hareketi ve stok bakiyesi görüntüleme yetkileri gerekir.</value></data>
+  <data name="TraceabilitySubjectRequired" xml:space="preserve"><value>İzini aramak için seri numarasını veya barkodu yazın.</value></data>
+  <data name="TraceabilityNone" xml:space="preserve"><value>{0} için yetkili olduğunuz depolarda hareket izi bulunamadı.</value></data>
+  <data name="TraceabilityFound" xml:space="preserve"><value>{0} için {1} izlenebilirlik olayı bulundu. İlk olay {2:g}, son olay {3:g}.</value></data>
+  <data name="TraceStageMovement" xml:space="preserve"><value>Stok hareketi</value></data>
+  <data name="TraceDocumentUnknown" xml:space="preserve"><value>Belgesiz işlem</value></data>
+  <data name="EvidenceOperationalDatabase" xml:space="preserve"><value>WMS operasyon veritabanı</value></data>
+  <data name="EvidenceAuthorizedScope" xml:space="preserve"><value>Aktif şube, kullanıcı yetkileri ve izinli depolar uygulandı.</value></data>
+  <data name="ExceptionPackingPrintTitle" xml:space="preserve"><value>{0} taşıma biriminin etiket baskısı başarısız</value></data>
+  <data name="ExceptionPackingPrintDescription" xml:space="preserve"><value>{0} paketleme kaydındaki etiket işi {1} kez denendi. Son hata: {2}</value></data>
+  <data name="ExceptionPackingPrintUnknownError" xml:space="preserve"><value>Hata ayrıntısı kaydedilmedi</value></data>
+  <data name="ExceptionPackingPrintAction" xml:space="preserve"><value>Yazıcı bağlantısını ve şablonu kontrol edin; sorun giderildikten sonra aynı işi güvenli biçimde yeniden deneyin.</value></data>
 </root>

@@ -138,6 +138,35 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
         "aiuto", "cosa posso chiedere", "مساعدة", "ماذا يمكنني ان اسال"
     ];
 
+    private static readonly string[] ShiftBriefWords =
+    [
+        "vardiya ozeti", "gunluk depo ozeti", "bugunku islerimi ozetle", "bugun ne yapacagim", "bugun ne yapmaliyim",
+        "deponun bugunku durumu", "operasyon ozeti", "shift brief", "shift summary", "today s workload", "warehouse summary",
+        "schichtubersicht", "resume de l equipe", "resumen del turno", "riepilogo turno"
+    ];
+
+    private static readonly string[] OperationalExceptionWords =
+    [
+        "mudahale gereken", "mudahele gereken", "operasyon sorunlari", "kritik sorun", "istisna merkezi",
+        "erp ye gitmeyen", "erp aktarimi basarisiz", "basarisiz job", "hangfire hatasi", "bakiye tutarsiz",
+        "kalitede bekleyen", "geciken sevk", "takilan islemler", "exception center", "operational exceptions",
+        "failed erp", "failed jobs", "stuck operations", "warehouse issues"
+    ];
+
+    private static readonly string[] TraceabilityWords =
+    [
+        "izlenebilirlik", "urun hikayesi", "serinin hikayesi", "barkodun hikayesi", "uctan uca", "nereden geldi nereye gitti",
+        "hangi islemlerden gecti", "gecmisini goster", "traceability", "trace history", "end to end history", "where did it come from",
+        "ruckverfolgbarkeit", "tracabilite", "trazabilidad", "tracciabilita"
+    ];
+
+    private static readonly string[] ProcessBlockerWords =
+    [
+        "neden bekliyor", "neden tamamlanamiyor", "neden ilerlemiyor", "neden takildi", "ne engelliyor", "engel nedir",
+        "neden erp ye gitmiyor", "why is it waiting", "why is it blocked", "why can t it complete", "blocking reason",
+        "warum blockiert", "pourquoi bloque", "por que bloqueado", "perche bloccato"
+    ];
+
     private static readonly string[] AllUsersWords =
     [
         "herkes", "tum kullanici", "butun kullanici", "tum personel", "ekipteki herkes",
@@ -201,6 +230,11 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
                 && (extractedBarcode.Any(char.IsDigit) || extractedBarcode.IndexOfAny(['-', '/', '.']) >= 0));
         var barcode = hasBarcodeLookup ? extractedBarcode ?? context?.Barcode : null;
         var requestsAll = ContainsAny(normalized, AllUsersWords);
+        var hasShiftBrief = ContainsAny(normalized, ShiftBriefWords);
+        var hasOperationalExceptions = ContainsAny(normalized, OperationalExceptionWords);
+        var hasTraceability = ContainsAny(normalized, TraceabilityWords);
+        var hasProcessBlocker = ContainsAny(normalized, ProcessBlockerWords);
+        var documentQuery = ExtractProcessDocument(message) ?? context?.DocumentNo;
 
         WarehouseAssistantIntent intent;
         decimal confidence;
@@ -208,6 +242,26 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
         {
             intent = WarehouseAssistantIntent.Help;
             confidence = 1m;
+        }
+        else if (hasShiftBrief)
+        {
+            intent = WarehouseAssistantIntent.ShiftBrief;
+            confidence = 0.99m;
+        }
+        else if (hasOperationalExceptions)
+        {
+            intent = WarehouseAssistantIntent.OperationalExceptions;
+            confidence = 0.98m;
+        }
+        else if (hasProcessBlocker)
+        {
+            intent = WarehouseAssistantIntent.ProcessBlockers;
+            confidence = string.IsNullOrWhiteSpace(documentQuery) ? 0.72m : 0.99m;
+        }
+        else if (hasTraceability && !hasSteelVehicle && !hasTransferAnalysis)
+        {
+            intent = WarehouseAssistantIntent.Traceability;
+            confidence = string.IsNullOrWhiteSpace(serialNo) && string.IsNullOrWhiteSpace(extractedBarcode) ? 0.75m : 0.99m;
         }
         else if (hasBarcodeLookup)
         {
@@ -281,7 +335,8 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
             VehiclePlateQuery: vehiclePlate ?? context?.VehiclePlate,
             TransferDocumentQuery: transferDocument ?? context?.TransferDocumentNo,
             TransferScope: hasTransfer ? transferScope : context?.TransferScope ?? WarehouseAssistantTransferScope.All,
-            HasExplicitDateFilter: hasExplicitDateFilter));
+            HasExplicitDateFilter: hasExplicitDateFilter,
+            DocumentQuery: documentQuery));
     }
 
     public static string Normalize(string value)
@@ -399,6 +454,29 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
         var prefixed = Regex.Match(
             original,
             @"\b(?:WT|PT|DAT|TR|MK)(?=[-_]?[A-Za-z0-9._/-]*\d)[-_]?[A-Za-z0-9._/-]{3,60}\b",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return prefixed.Success ? prefixed.Value.Trim() : null;
+    }
+
+    private static string? ExtractProcessDocument(string original)
+    {
+        var quoted = Regex.Match(original,
+            """(?:belge|dokuman|irsaliye|mal\s*kabul|transfer|sevk|paket|emir)\s*(?:no|numarasi|number)?\s*(?:[:=#]\s*)?["']([A-Za-z0-9][A-Za-z0-9._/\-]{2,99})["']""",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (quoted.Success) return quoted.Groups[1].Value.Trim();
+
+        var explicitDocument = Regex.Match(original,
+            @"(?:belge|dokuman|irsaliye|mal\s*kabul|transfer|sevk|paket|emir)\s*(?:no|numarasi|number)?\s*(?:[:=#]\s*)?([A-Za-z][A-Za-z0-9._/\-]{2,99})",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (explicitDocument.Success)
+        {
+            var value = explicitDocument.Groups[1].Value.Trim(' ', '.', ',', ';', ':');
+            if (!ContainsAny(Normalize(value), ["neden", "bekliyor", "tamamlanamiyor", "ilerlemiyor", "durum", "goster"]))
+                return value;
+        }
+
+        var prefixed = Regex.Match(original,
+            @"\b(?:GRI|GR|WT|PT|DAT|SHP|WI|WO|PKG|QC|KKD)[-_][A-Za-z0-9._/\-]{3,99}\b",
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         return prefixed.Success ? prefixed.Value.Trim() : null;
     }

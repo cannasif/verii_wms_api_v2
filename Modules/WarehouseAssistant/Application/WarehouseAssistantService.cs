@@ -76,6 +76,13 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             examples.Add(M(CapabilityExampleWarehouseTransfers));
         if (access.CanViewProductionTransfers)
             examples.Add(M(CapabilityExampleProductionTransfers));
+        examples.Add(M(CapabilityExampleShiftBrief));
+        if (CanQueryOperationalExceptions(access))
+            examples.Add(M(CapabilityExampleOperationalExceptions));
+        if (access.CanViewStockMovements && access.CanViewStockBalances)
+            examples.Add(M(CapabilityExampleTraceability));
+        if (CanQueryProcessBlockers(access))
+            examples.Add(M(CapabilityExampleProcessBlockers));
 
         return Task.FromResult(new WarehouseAssistantCapabilities(
             access.CanQueryAllUsers,
@@ -89,7 +96,11 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             access.CanViewGoodsReceipts,
             true,
             access.CanViewSteelVehicles,
-            access.CanViewWarehouseTransfers || access.CanViewProductionTransfers));
+            access.CanViewWarehouseTransfers || access.CanViewProductionTransfers,
+            true,
+            CanQueryOperationalExceptions(access),
+            access.CanViewStockMovements && access.CanViewStockBalances,
+            CanQueryProcessBlockers(access)));
     }
 
     public async Task<IReadOnlyList<WarehouseAssistantConversationRow>> GetConversationsAsync(
@@ -179,6 +190,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         await unitOfWork.Repository<WarehouseAssistantMessage>().AddAsync(userMessage, ct);
 
         var result = await ExecuteIntentAsync(resolution, message, actorUserId, branchCode, access, ct);
+        result = result with { Evidence = BuildEvidence(result) };
         var responseData = new StoredResponseData
         {
             ProviderMode = resolution.ProviderMode,
@@ -194,6 +206,10 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             SteelVehicles = result.SteelVehicles ?? [],
             Transfers = result.Transfers ?? [],
             EntityCandidates = result.EntityCandidates ?? [],
+            SummaryMetrics = result.SummaryMetrics ?? [],
+            Exceptions = result.Exceptions ?? [],
+            TraceabilityEvents = result.TraceabilityEvents ?? [],
+            Evidence = result.Evidence ?? [],
             Suggestions = result.Suggestions
         };
         var assistantMessage = new WarehouseAssistantMessage
@@ -233,6 +249,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                     + result.StockLocations.Count + result.Movements.Count + result.Tasks.Count
                     + (result.GoodsReceipts?.Count ?? 0) + (result.ParameterGuides?.Count ?? 0)
                     + (result.SteelVehicles?.Count ?? 0) + (result.Transfers?.Count ?? 0)
+                    + (result.Exceptions?.Count ?? 0) + (result.TraceabilityEvents?.Count ?? 0)
                     + (result.Barcode is null ? 0 : 1),
                 CorrelationId = correlationId
             },
@@ -257,7 +274,11 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             result.ParameterGuides ?? [],
             result.SteelVehicles ?? [],
             result.Transfers ?? [],
-            result.EntityCandidates ?? []);
+            result.EntityCandidates ?? [],
+            result.SummaryMetrics ?? [],
+            result.Exceptions ?? [],
+            result.TraceabilityEvents ?? [],
+            result.Evidence ?? []);
     }
 
     private async Task<ExecutionResult> ExecuteIntentAsync(
@@ -290,6 +311,14 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                 await ExecuteSteelVehicleAnalysisAsync(resolution, branchCode, access, ct),
             WarehouseAssistantIntent.WarehouseTransferAnalysis =>
                 await ExecuteWarehouseTransferAnalysisAsync(resolution, actorUserId, branchCode, access, ct),
+            WarehouseAssistantIntent.ShiftBrief =>
+                await ExecuteShiftBriefAsync(resolution, originalMessage, actorUserId, branchCode, access, ct),
+            WarehouseAssistantIntent.OperationalExceptions =>
+                await ExecuteOperationalExceptionsAsync(actorUserId, branchCode, access, ct),
+            WarehouseAssistantIntent.Traceability =>
+                await ExecuteTraceabilityAsync(resolution, actorUserId, branchCode, access, ct),
+            WarehouseAssistantIntent.ProcessBlockers =>
+                await ExecuteProcessBlockersAsync(resolution, actorUserId, branchCode, access, ct),
             WarehouseAssistantIntent.ParameterHelp => ExecuteParameterHelp(resolution),
             WarehouseAssistantIntent.Help => HelpResult(access),
             _ => UnknownResult(access)
@@ -683,7 +712,11 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                 stored.ParameterGuides ?? [],
                 stored.SteelVehicles ?? [],
                 stored.Transfers ?? [],
-                stored.EntityCandidates ?? []);
+                stored.EntityCandidates ?? [],
+                stored.SummaryMetrics ?? [],
+                stored.Exceptions ?? [],
+                stored.TraceabilityEvents ?? [],
+                stored.Evidence ?? []);
         }
         catch (JsonException)
         {
@@ -882,6 +915,23 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         || access.CanViewWarehouseOutbound
         || access.CanViewProductionTransfers;
 
+    private static bool CanQueryOperationalExceptions(WarehouseAssistantAccess access) =>
+        access.CanViewStockBalances
+        || access.CanViewGoodsReceipts
+        || access.CanViewWarehouseTransfers
+        || access.CanViewProductionTransfers
+        || access.CanViewShipping
+        || access.CanViewQuality
+        || access.CanViewPacking;
+
+    private static bool CanQueryProcessBlockers(WarehouseAssistantAccess access) =>
+        access.CanViewGoodsReceipts
+        || access.CanViewWarehouseTransfers
+        || access.CanViewProductionTransfers
+        || access.CanViewShipping
+        || access.CanViewQuality
+        || access.CanViewPacking;
+
     private sealed record ActivityTarget(long? UserId, bool AllUsers, string DisplayName, bool RequestedAnotherUser);
 
     private sealed record ExecutionResult(
@@ -902,7 +952,11 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         IReadOnlyList<WarehouseAssistantParameterGuideRow>? ParameterGuides = null,
         IReadOnlyList<WarehouseAssistantSteelVehicleRow>? SteelVehicles = null,
         IReadOnlyList<WarehouseAssistantTransferRow>? Transfers = null,
-        IReadOnlyList<WarehouseAssistantEntityCandidateRow>? EntityCandidates = null);
+        IReadOnlyList<WarehouseAssistantEntityCandidateRow>? EntityCandidates = null,
+        IReadOnlyList<WarehouseAssistantSummaryMetricRow>? SummaryMetrics = null,
+        IReadOnlyList<WarehouseAssistantExceptionRow>? Exceptions = null,
+        IReadOnlyList<WarehouseAssistantTraceabilityEventRow>? TraceabilityEvents = null,
+        IReadOnlyList<WarehouseAssistantEvidenceRow>? Evidence = null);
 
     private sealed class StoredResponseData
     {
@@ -919,6 +973,10 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         public IReadOnlyList<WarehouseAssistantSteelVehicleRow> SteelVehicles { get; init; } = [];
         public IReadOnlyList<WarehouseAssistantTransferRow> Transfers { get; init; } = [];
         public IReadOnlyList<WarehouseAssistantEntityCandidateRow> EntityCandidates { get; init; } = [];
+        public IReadOnlyList<WarehouseAssistantSummaryMetricRow> SummaryMetrics { get; init; } = [];
+        public IReadOnlyList<WarehouseAssistantExceptionRow> Exceptions { get; init; } = [];
+        public IReadOnlyList<WarehouseAssistantTraceabilityEventRow> TraceabilityEvents { get; init; } = [];
+        public IReadOnlyList<WarehouseAssistantEvidenceRow> Evidence { get; init; } = [];
         public IReadOnlyList<string> Suggestions { get; init; } = [];
     }
 }
