@@ -27,4 +27,25 @@ public static class KkdRequestMessageKeys
     public const string Resolved = nameof(Resolved);
     public const string Assigned = nameof(Assigned);
     public const string Cancelled = nameof(Cancelled);
+    public const string TaskNotFound = nameof(TaskNotFound);
+    public const string TaskNotActive = nameof(TaskNotActive);
+    public const string TaskHasProgress = nameof(TaskHasProgress);
+    public const string TaskGroupsRequired = nameof(TaskGroupsRequired);
+    public const string DuplicateAssignee = nameof(DuplicateAssignee);
+    public const string DuplicateLineAssignment = nameof(DuplicateLineAssignment);
+    public const string LineAlreadyAssigned = nameof(LineAlreadyAssigned);
+    public const string AllLinesMustBeAssigned = nameof(AllLinesMustBeAssigned);
+    public const string NothingToAssign = nameof(NothingToAssign);
+    public const string NothingToHandoff = nameof(NothingToHandoff);
+    public const string HandoffSameUser = nameof(HandoffSameUser);
+    public const string TasksAssigned = nameof(TasksAssigned);
+    public const string TaskClaimed = nameof(TaskClaimed);
+    public const string TaskHandedOver = nameof(TaskHandedOver);
+    public const string TaskReturned = nameof(TaskReturned);
+    public const string DuplicatePoolGroup = nameof(DuplicatePoolGroup);
+    public const string TaskAlreadyClaimed = nameof(TaskAlreadyClaimed);
+    public const string TaskNotPooled = nameof(TaskNotPooled);
+    public const string WarehouseAccessDenied = nameof(WarehouseAccessDenied);
+    public const string TaskClaimedFromPool = nameof(TaskClaimedFromPool);
+    public const string PoolLabel = nameof(PoolLabel);
 }

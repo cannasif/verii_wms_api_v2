@@ -27,4 +27,25 @@
   <data name="Resolved" xml:space="preserve"><value>KKD talep kaleminin stok/beden seçimi kaydedildi.</value></data>
   <data name="Assigned" xml:space="preserve"><value>KKD talebi hazırlama sorumlusuna atandı.</value></data>
   <data name="Cancelled" xml:space="preserve"><value>KKD talebi iptal edildi.</value></data>
+  <data name="TaskNotFound" xml:space="preserve"><value>KKD hazırlama görevi bulunamadı.</value></data>
+  <data name="TaskNotActive" xml:space="preserve"><value>Bu hazırlama görevi artık aktif değil.</value></data>
+  <data name="TaskHasProgress" xml:space="preserve"><value>Hazırlığı başlamış görev havuza iade edilemez. Kalan işi devretmeyi kullanın.</value></data>
+  <data name="TaskGroupsRequired" xml:space="preserve"><value>En az bir atama grubu ve her grupta en az bir kalem seçilmelidir.</value></data>
+  <data name="DuplicateAssignee" xml:space="preserve"><value>Aynı kullanıcıya birden fazla atama grubu oluşturulamaz.</value></data>
+  <data name="DuplicateLineAssignment" xml:space="preserve"><value>Bir kalem birden fazla kişiye atanamaz.</value></data>
+  <data name="LineAlreadyAssigned" xml:space="preserve"><value>Seçilen kalemlerden bazıları zaten aktif bir göreve atanmış. Ekranı yenileyin.</value></data>
+  <data name="AllLinesMustBeAssigned" xml:space="preserve"><value>Kayıt için talebin tüm açık kalemleri atanmış olmalıdır.</value></data>
+  <data name="NothingToAssign" xml:space="preserve"><value>Bu talepte atanabilecek açık kalem bulunmuyor.</value></data>
+  <data name="NothingToHandoff" xml:space="preserve"><value>Bu görevde devredilebilecek kalan iş bulunmuyor.</value></data>
+  <data name="HandoffSameUser" xml:space="preserve"><value>İş zaten bu kullanıcının üzerinde.</value></data>
+  <data name="TasksAssigned" xml:space="preserve"><value>KKD hazırlama görevleri oluşturuldu.</value></data>
+  <data name="TaskClaimed" xml:space="preserve"><value>KKD talebi üzerinize alındı.</value></data>
+  <data name="TaskHandedOver" xml:space="preserve"><value>Kalan iş devredildi.</value></data>
+  <data name="TaskReturned" xml:space="preserve"><value>Görev havuza iade edildi.</value></data>
+  <data name="DuplicatePoolGroup" xml:space="preserve"><value>Bir atamada yalnızca bir depo havuzu grubu oluşturulabilir.</value></data>
+  <data name="TaskAlreadyClaimed" xml:space="preserve"><value>Bu görev başka bir kullanıcı tarafından zaten üzerine alınmış.</value></data>
+  <data name="TaskNotPooled" xml:space="preserve"><value>Bu görevin zaten bir sahibi var; havuz işlemleri kullanılamaz.</value></data>
+  <data name="WarehouseAccessDenied" xml:space="preserve"><value>Bu depoya erişim yetkiniz yok.</value></data>
+  <data name="TaskClaimedFromPool" xml:space="preserve"><value>Görev depo havuzundan üzerinize alındı.</value></data>
+  <data name="PoolLabel" xml:space="preserve"><value>Depo Havuzu</value></data>
 </root>

@@ -27,4 +27,25 @@
   <data name="Resolved" xml:space="preserve"><value>The stock/size selection for the PPE request line was saved.</value></data>
   <data name="Assigned" xml:space="preserve"><value>The PPE request was assigned to a preparation owner.</value></data>
   <data name="Cancelled" xml:space="preserve"><value>PPE request was cancelled.</value></data>
+  <data name="TaskNotFound" xml:space="preserve"><value>PPE preparation task was not found.</value></data>
+  <data name="TaskNotActive" xml:space="preserve"><value>This preparation task is no longer active.</value></data>
+  <data name="TaskHasProgress" xml:space="preserve"><value>A task with preparation progress cannot be returned to the pool. Use remaining-work handoff instead.</value></data>
+  <data name="TaskGroupsRequired" xml:space="preserve"><value>At least one assignment group with at least one line is required.</value></data>
+  <data name="DuplicateAssignee" xml:space="preserve"><value>Multiple assignment groups cannot target the same user.</value></data>
+  <data name="DuplicateLineAssignment" xml:space="preserve"><value>A line cannot be assigned to more than one user.</value></data>
+  <data name="LineAlreadyAssigned" xml:space="preserve"><value>Some selected lines are already assigned to an active task. Refresh the page.</value></data>
+  <data name="AllLinesMustBeAssigned" xml:space="preserve"><value>All open lines of the request must be assigned before saving.</value></data>
+  <data name="NothingToAssign" xml:space="preserve"><value>There are no open lines to assign on this request.</value></data>
+  <data name="NothingToHandoff" xml:space="preserve"><value>There is no remaining work to hand over on this task.</value></data>
+  <data name="HandoffSameUser" xml:space="preserve"><value>The work is already assigned to this user.</value></data>
+  <data name="TasksAssigned" xml:space="preserve"><value>PPE preparation tasks were created.</value></data>
+  <data name="TaskClaimed" xml:space="preserve"><value>The PPE request was claimed for you.</value></data>
+  <data name="TaskHandedOver" xml:space="preserve"><value>Remaining work was handed over.</value></data>
+  <data name="TaskReturned" xml:space="preserve"><value>The task was returned to the pool.</value></data>
+  <data name="DuplicatePoolGroup" xml:space="preserve"><value>Only one warehouse-pool group can be created per assignment.</value></data>
+  <data name="TaskAlreadyClaimed" xml:space="preserve"><value>This task has already been claimed by another user.</value></data>
+  <data name="TaskNotPooled" xml:space="preserve"><value>This task already has an owner; pool actions are not available.</value></data>
+  <data name="WarehouseAccessDenied" xml:space="preserve"><value>You do not have access to this warehouse.</value></data>
+  <data name="TaskClaimedFromPool" xml:space="preserve"><value>The task was claimed from the warehouse pool.</value></data>
+  <data name="PoolLabel" xml:space="preserve"><value>Warehouse Pool</value></data>
 </root>
