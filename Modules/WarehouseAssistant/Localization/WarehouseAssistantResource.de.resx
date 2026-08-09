@@ -75,4 +75,8 @@
   <data name="TransferResultLimited" xml:space="preserve"><value>Die neuesten {0} von {1} Belegen werden angezeigt.</value></data>
   <data name="TransferDocumentAnalysisNone" xml:space="preserve"><value>Für Beleg {0} wurde kein Datensatz im Bereich {1} gefunden.</value></data>
   <data name="TransferDocumentAnalysisFound" xml:space="preserve"><value>Für Beleg {0} wurden im Bereich {1} {2} Transferbeleg(e) gefunden. Mengen je Einheit (angefordert/kommissioniert/empfangen/fehlgeschlossen): {3}.</value></data>
+  <data name="EntityClarificationFound" xml:space="preserve"><value>Für „{0}“ wurden ähnliche Datensätze gefunden. Wählen Sie unten, ob Sie einen Artikel oder Kunden meinten, sowie den richtigen Code/Namen. Ohne exakte Übereinstimmung wurde nichts automatisch ausgewählt.</value></data>
+  <data name="EntityClarificationNotFound" xml:space="preserve"><value>Kein ähnlicher Artikel oder Kunde für „{0}“ gefunden. Versuchen Sie es mit mindestens drei Zeichen aus Code oder Name erneut.</value></data>
+  <data name="EntitySelectionStock" xml:space="preserve"><value>{0}&#10;Der gemeinte Artikelcode ist „{1}“.</value></data>
+  <data name="EntitySelectionCustomer" xml:space="preserve"><value>{0}&#10;Der gemeinte Kundencode ist „{1}“.</value></data>
 </root>

@@ -48,4 +48,8 @@
   <data name="TransferResultLimited" xml:space="preserve"><value>Se muestran los {0} documentos más recientes de {1}.</value></data>
   <data name="TransferDocumentAnalysisNone" xml:space="preserve"><value>No se encontró ningún registro de {1} para el documento {0}.</value></data>
   <data name="TransferDocumentAnalysisFound" xml:space="preserve"><value>Para el documento {0} se encontraron {2} documento(s) de transferencia en el ámbito {1}. Cantidades por unidad (solicitada/preparada/recibida/faltante cerrada): {3}.</value></data>
+  <data name="EntityClarificationFound" xml:space="preserve"><value>Encontré registros similares para «{0}». Indique abajo si se refería a un artículo o a un cliente y elija el código/nombre correcto. No seleccioné ningún registro sin una coincidencia exacta.</value></data>
+  <data name="EntityClarificationNotFound" xml:space="preserve"><value>No encontré ningún artículo o cliente similar a «{0}». Inténtelo de nuevo con al menos tres caracteres del código o nombre.</value></data>
+  <data name="EntitySelectionStock" xml:space="preserve"><value>{0}&#10;El código de artículo que quise decir es «{1}».</value></data>
+  <data name="EntitySelectionCustomer" xml:space="preserve"><value>{0}&#10;El código de cliente que quise decir es «{1}».</value></data>
 </root>

@@ -109,4 +109,8 @@
   <data name="TransferResultLimited" xml:space="preserve"><value>The newest {0} of {1} documents are shown.</value></data>
   <data name="TransferDocumentAnalysisNone" xml:space="preserve"><value>No {1} record was found for document {0}.</value></data>
   <data name="TransferDocumentAnalysisFound" xml:space="preserve"><value>For document {0}, {2} transfer document(s) were found in the {1} scope. Quantities by unit (requested/picked/received/short-closed): {3}.</value></data>
+  <data name="EntityClarificationFound" xml:space="preserve"><value>I found similar records for “{0}”. Select whether you meant an item or a customer and choose the correct code/name below. I did not select a record on your behalf because there was no exact match.</value></data>
+  <data name="EntityClarificationNotFound" xml:space="preserve"><value>I could not find an item or customer similar to “{0}”. Try again with at least three characters from its code or name.</value></data>
+  <data name="EntitySelectionStock" xml:space="preserve"><value>{0}&#10;The item code I meant is “{1}”.</value></data>
+  <data name="EntitySelectionCustomer" xml:space="preserve"><value>{0}&#10;The customer code I meant is “{1}”.</value></data>
 </root>

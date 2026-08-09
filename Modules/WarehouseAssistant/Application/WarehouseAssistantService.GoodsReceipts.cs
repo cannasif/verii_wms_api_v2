@@ -4,7 +4,6 @@ using verii_wms_api_v2.Modules.Identity.Application;
 using verii_wms_api_v2.Modules.ProjectSettings.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
-using CustomerEntity = verii_wms_api_v2.Modules.Customer.Domain.Customer;
 using static verii_wms_api_v2.Modules.WarehouseAssistant.Localization.WarehouseAssistantMessageKeys;
 
 namespace verii_wms_api_v2.Modules.WarehouseAssistant.Application;
@@ -22,14 +21,63 @@ public sealed partial class WarehouseAssistantService
         if (!access.CanViewGoodsReceipts)
             return Denied(resolution.Intent, M(GoodsReceiptAnalysisDenied));
 
-        var supplier = await ResolveSupplierAsync(resolution.SupplierQuery, branchCode, ct);
-        if (!string.IsNullOrWhiteSpace(resolution.SupplierQuery) && supplier is null)
-            return MissingEntity(resolution.Intent, M(GoodsReceiptSupplierRequired));
+        EntityLookupResult<SupplierMatch>? supplierLookup = null;
+        SupplierMatch? supplier = null;
+        if (!string.IsNullOrWhiteSpace(resolution.SupplierQuery)
+            && HasExplicitEntityReference(message, EntityKind.Customer))
+        {
+            supplierLookup = await ResolveSupplierAsync(resolution.SupplierQuery, message, branchCode, ct);
+            supplier = supplierLookup.Entity;
+        }
+        if (supplierLookup is not null && supplier is null)
+            return string.IsNullOrWhiteSpace(supplierLookup.SearchTerm)
+                ? MissingEntity(resolution.Intent, M(GoodsReceiptSupplierRequired))
+                : EntityClarification(resolution.Intent, supplierLookup.SearchTerm, supplierLookup.Candidates);
 
-        var stockCandidates = ExtractStockCandidates(message);
-        var stock = stockCandidates.Count > 0
-            ? await ResolveStockAsync(message, branchCode, ct)
-            : null;
+        EntityLookupResult<verii_wms_api_v2.Modules.Stock.Domain.Stock>? stockLookup = null;
+        verii_wms_api_v2.Modules.Stock.Domain.Stock? stock = null;
+        if (!string.IsNullOrWhiteSpace(resolution.StockQuery)
+            && HasExplicitEntityReference(message, EntityKind.Stock))
+        {
+            stockLookup = await ResolveStockAsync(resolution.StockQuery, message, branchCode, ct);
+            stock = stockLookup.Entity;
+        }
+        if (stockLookup is not null && stock is null)
+            return EntityClarification(resolution.Intent, stockLookup.SearchTerm, stockLookup.Candidates);
+
+        if (supplierLookup is null && stockLookup is null)
+        {
+            var untypedReference = ExtractUntypedEntityReference(message);
+            if (!string.IsNullOrWhiteSpace(untypedReference))
+            {
+                var possibleStock = await ResolveStockAsync(untypedReference, untypedReference, branchCode, ct);
+                var possibleSupplier = await ResolveSupplierAsync(untypedReference, untypedReference, branchCode, ct);
+                var candidates = new List<WarehouseAssistantEntityCandidateRow>();
+                if (possibleStock.Entity is not null)
+                    candidates.Add(ToExactCandidate(EntityKind.Stock, possibleStock.Entity.Id, possibleStock.Entity.ErpStockCode, possibleStock.Entity.StockName, message));
+                else
+                    candidates.AddRange(possibleStock.Candidates.Select(x => x with
+                    {
+                        SelectionMessage = BuildEntitySelectionMessage(EntityKind.Stock, message, x.Code)
+                    }));
+                if (possibleSupplier.Entity is not null)
+                    candidates.Add(ToExactCandidate(EntityKind.Customer, possibleSupplier.Entity.Id, possibleSupplier.Entity.Code, possibleSupplier.Entity.Name, message));
+                else
+                    candidates.AddRange(possibleSupplier.Candidates.Select(x => x with
+                    {
+                        SelectionMessage = BuildEntitySelectionMessage(EntityKind.Customer, message, x.Code)
+                    }));
+                if (candidates.Count > 0)
+                    return EntityClarification(
+                        resolution.Intent,
+                        untypedReference,
+                        candidates
+                            .OrderByDescending(x => x.MatchScore)
+                            .ThenBy(x => x.EntityType)
+                            .Take(MaximumEntitySuggestions)
+                            .ToArray());
+            }
+        }
         var (dateFrom, dateTo, periodLabel) = await ResolveDocumentDateRangeAsync(resolution, ct);
         var warehouseAccess = await UserWarehouseAccessService.ResolveAsync(unitOfWork, actorUserId, branchCode, ct);
 
@@ -156,36 +204,6 @@ public sealed partial class WarehouseAssistantService
             GoodsReceipts: rows);
     }
 
-    private async Task<SupplierMatch?> ResolveSupplierAsync(string? query, string branchCode, CancellationToken ct)
-    {
-        if (string.IsNullOrWhiteSpace(query)) return null;
-        var normalized = WarehouseAssistantIntentResolver.Normalize(query);
-        var customers = await unitOfWork.Repository<CustomerEntity>().Query()
-            .Where(x => x.BranchCode == branchCode)
-            .Select(x => new SupplierMatch(x.Id, x.CustomerCode, x.CustomerName))
-            .Take(5000)
-            .ToListAsync(ct);
-        var matched = customers
-            .Where(x => IsSupplierMentioned(normalized, x.Code, x.Name))
-            .OrderByDescending(x => Math.Max(x.Code.Length, x.Name.Length))
-            .FirstOrDefault();
-        if (matched is not null) return matched;
-
-        var historical = await unitOfWork.Repository<GoodsReceiptHeader>().Query()
-            .Where(x => x.BranchCode == branchCode
-                && x.SupplierCodeSnapshot != null
-                && x.SupplierNameSnapshot != null)
-            .Select(x => new { x.SupplierId, Code = x.SupplierCodeSnapshot!, Name = x.SupplierNameSnapshot! })
-            .Distinct()
-            .Take(1000)
-            .ToListAsync(ct);
-        return historical
-            .Select(x => new SupplierMatch(x.SupplierId, x.Code, x.Name))
-            .Where(x => IsSupplierMentioned(normalized, x.Code, x.Name))
-            .OrderByDescending(x => Math.Max(x.Code.Length, x.Name.Length))
-            .FirstOrDefault();
-    }
-
     private async Task<(DateOnly From, DateOnly To, string Label)> ResolveDocumentDateRangeAsync(
         WarehouseAssistantIntentResolution resolution,
         CancellationToken ct)
@@ -203,14 +221,6 @@ public sealed partial class WarehouseAssistantService
         var from = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(startUtc, zone));
         var to = DateOnly.FromDateTime(TimeZoneInfo.ConvertTimeFromUtc(endUtc.AddTicks(-1), zone));
         return (from, to, label);
-    }
-
-    private static bool IsSupplierMentioned(string normalizedMessage, string code, string name)
-    {
-        var normalizedCode = WarehouseAssistantIntentResolver.Normalize(code);
-        var normalizedName = WarehouseAssistantIntentResolver.Normalize(name);
-        return (!string.IsNullOrWhiteSpace(normalizedCode) && normalizedMessage.Contains(normalizedCode, StringComparison.Ordinal))
-            || (normalizedName.Length >= 3 && normalizedMessage.Contains(normalizedName, StringComparison.Ordinal));
     }
 
     private sealed record SupplierMatch(long? Id, string Code, string Name);

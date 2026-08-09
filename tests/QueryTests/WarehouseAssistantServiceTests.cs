@@ -13,6 +13,7 @@ using verii_wms_api_v2.Modules.WarehouseAssistant.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
+using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 using verii_wms_api_v2.Shared.Infrastructure.Persistence;
 using Xunit;
@@ -21,6 +22,91 @@ namespace verii_wms_api_v2.QueryTests;
 
 public sealed class WarehouseAssistantServiceTests
 {
+    [Fact]
+    public async Task Misspelled_stock_reference_returns_ranked_choice_and_selected_choice_runs_original_question()
+    {
+        await using var db = CreateDbContext();
+        db.Users.Add(new User { Id = 10, Username = "worker", Email = "worker@v3rii.com", PasswordHash = "x", Role = "User" });
+        db.Set<StockEntity>().AddRange(
+            new StockEntity { Id = 50, BranchCode = "0", ErpStockCode = "TEST-001", StockName = "Test Malzeme" },
+            new StockEntity { Id = 51, BranchCode = "0", ErpStockCode = "BASKA-001", StockName = "Başka Malzeme" });
+        await db.SaveChangesAsync();
+
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        var service = new WarehouseAssistantService(
+            unitOfWork,
+            new WarehouseAssistantIntentResolver(),
+            new NoopAuditWriter(),
+            new FixedTimeProvider(new DateTimeOffset(2026, 8, 9, 10, 0, 0, TimeSpan.Zero)));
+
+        var clarification = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, "Tset stoku hangi rafta?"),
+            10, "0", new WarehouseAssistantAccess(false, true, false, false));
+
+        var candidate = Assert.Single(clarification.EntityCandidates!);
+        Assert.Equal("stock", candidate.EntityType);
+        Assert.Equal("TEST-001", candidate.Code);
+        Assert.Equal("name", candidate.MatchedBy);
+        Assert.Contains("Tset stoku hangi rafta?", candidate.SelectionMessage);
+
+        var resolved = await service.AskAsync(
+            new AskWarehouseAssistantRequest(clarification.ConversationId, candidate.SelectionMessage),
+            10, "0", new WarehouseAssistantAccess(false, true, false, false));
+
+        Assert.Equal(WarehouseAssistantIntent.StockLocationBalance, resolved.Intent);
+        Assert.Empty(resolved.EntityCandidates!);
+    }
+
+    [Fact]
+    public async Task Misspelled_customer_code_does_not_silently_select_a_goods_receipt_supplier()
+    {
+        await using var db = CreateDbContext();
+        db.Users.Add(new User { Id = 10, Username = "worker", Email = "worker@v3rii.com", PasswordHash = "x", Role = "User" });
+        db.Customers.Add(new Customer { Id = 20, BranchCode = "0", CustomerCode = "ABC", CustomerName = "ABC Tedarik" });
+        await db.SaveChangesAsync();
+
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        var service = new WarehouseAssistantService(
+            unitOfWork,
+            new WarehouseAssistantIntentResolver(),
+            new NoopAuditWriter(),
+            new FixedTimeProvider(new DateTimeOffset(2026, 8, 9, 10, 0, 0, TimeSpan.Zero)));
+
+        var result = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, "ACB carisine kaç mal kabul yapıldı?"),
+            10, "0", new WarehouseAssistantAccess(false, false, false, true));
+
+        var candidate = Assert.Single(result.EntityCandidates!);
+        Assert.Equal("customer", candidate.EntityType);
+        Assert.Equal("ABC", candidate.Code);
+        Assert.Empty(result.GoodsReceipts!);
+    }
+
+    [Fact]
+    public async Task Untyped_goods_receipt_reference_asks_whether_code_is_stock_or_customer()
+    {
+        await using var db = CreateDbContext();
+        db.Users.Add(new User { Id = 10, Username = "worker", Email = "worker@v3rii.com", PasswordHash = "x", Role = "User" });
+        db.Customers.Add(new Customer { Id = 20, BranchCode = "0", CustomerCode = "ABC", CustomerName = "ABC Tedarik" });
+        db.Set<StockEntity>().Add(new StockEntity { Id = 50, BranchCode = "0", ErpStockCode = "ABC", StockName = "ABC Malzeme" });
+        await db.SaveChangesAsync();
+
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        var service = new WarehouseAssistantService(
+            unitOfWork,
+            new WarehouseAssistantIntentResolver(),
+            new NoopAuditWriter(),
+            new FixedTimeProvider(new DateTimeOffset(2026, 8, 9, 10, 0, 0, TimeSpan.Zero)));
+
+        var result = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, "ABC için kaç mal kabul yapıldı?"),
+            10, "0", new WarehouseAssistantAccess(false, false, false, true));
+
+        Assert.Equal(2, result.EntityCandidates!.Count);
+        Assert.Contains(result.EntityCandidates, x => x.EntityType == "stock" && x.Code == "ABC");
+        Assert.Contains(result.EntityCandidates, x => x.EntityType == "customer" && x.Code == "ABC");
+    }
+
     [Fact]
     public async Task Goods_receipt_analysis_filters_by_document_date_supplier_and_received_quantity()
     {

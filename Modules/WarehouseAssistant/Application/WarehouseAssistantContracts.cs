@@ -280,6 +280,15 @@ public sealed record WarehouseAssistantTransferRow(
     string? ExternalReferenceNo,
     DateTimeOffset? CompletedAtUtc);
 
+public sealed record WarehouseAssistantEntityCandidateRow(
+    string EntityType,
+    long? EntityId,
+    string Code,
+    string Name,
+    string MatchedBy,
+    decimal MatchScore,
+    string SelectionMessage);
+
 public sealed record WarehouseAssistantChatResponse(
     long ConversationId,
     long MessageId,
@@ -298,7 +307,8 @@ public sealed record WarehouseAssistantChatResponse(
     IReadOnlyList<WarehouseAssistantGoodsReceiptRow>? GoodsReceipts = null,
     IReadOnlyList<WarehouseAssistantParameterGuideRow>? ParameterGuides = null,
     IReadOnlyList<WarehouseAssistantSteelVehicleRow>? SteelVehicles = null,
-    IReadOnlyList<WarehouseAssistantTransferRow>? Transfers = null);
+    IReadOnlyList<WarehouseAssistantTransferRow>? Transfers = null,
+    IReadOnlyList<WarehouseAssistantEntityCandidateRow>? EntityCandidates = null);
 
 public sealed record WarehouseAssistantContext(
     string? SerialNo,

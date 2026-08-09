@@ -48,4 +48,8 @@
   <data name="TransferResultLimited" xml:space="preserve"><value>يتم عرض أحدث {0} مستند من أصل {1}.</value></data>
   <data name="TransferDocumentAnalysisNone" xml:space="preserve"><value>لم يتم العثور على سجل {1} للمستند {0}.</value></data>
   <data name="TransferDocumentAnalysisFound" xml:space="preserve"><value>للمستند {0} تم العثور على {2} مستند تحويل ضمن نطاق {1}. الكميات حسب الوحدة (المطلوبة/المجمعة/المستلمة/النقص المغلق): {3}.</value></data>
+  <data name="EntityClarificationFound" xml:space="preserve"><value>وجدت سجلات مشابهة لعبارة «{0}». اختر أدناه ما إذا كنت تقصد صنفًا أو عميلاً، ثم اختر الرمز/الاسم الصحيح. لم أحدد سجلاً تلقائيًا لعدم وجود تطابق تام.</value></data>
+  <data name="EntityClarificationNotFound" xml:space="preserve"><value>لم أجد صنفًا أو عميلاً مشابهًا لعبارة «{0}». أعد المحاولة بثلاثة أحرف على الأقل من الرمز أو الاسم.</value></data>
+  <data name="EntitySelectionStock" xml:space="preserve"><value>{0}&#10;رمز الصنف الذي قصدته هو «{1}».</value></data>
+  <data name="EntitySelectionCustomer" xml:space="preserve"><value>{0}&#10;رمز العميل الذي قصدته هو «{1}».</value></data>
 </root>

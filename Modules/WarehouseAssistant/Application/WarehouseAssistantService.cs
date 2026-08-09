@@ -193,6 +193,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             ParameterGuides = result.ParameterGuides ?? [],
             SteelVehicles = result.SteelVehicles ?? [],
             Transfers = result.Transfers ?? [],
+            EntityCandidates = result.EntityCandidates ?? [],
             Suggestions = result.Suggestions
         };
         var assistantMessage = new WarehouseAssistantMessage
@@ -255,7 +256,8 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             result.GoodsReceipts ?? [],
             result.ParameterGuides ?? [],
             result.SteelVehicles ?? [],
-            result.Transfers ?? []);
+            result.Transfers ?? [],
+            result.EntityCandidates ?? []);
     }
 
     private async Task<ExecutionResult> ExecuteIntentAsync(
@@ -481,9 +483,12 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         if (!access.CanViewStockBalances)
             return Denied(resolution.Intent, M(StockBalanceDenied));
 
-        var stock = await ResolveStockAsync(message, branchCode, ct);
+        var stockLookup = await ResolveStockAsync(resolution.StockQuery, message, branchCode, ct);
+        var stock = stockLookup.Entity;
         if (stock is null)
-            return MissingEntity(resolution.Intent, M(StockRequired));
+            return string.IsNullOrWhiteSpace(stockLookup.SearchTerm)
+                ? MissingEntity(resolution.Intent, M(StockRequired))
+                : EntityClarification(resolution.Intent, stockLookup.SearchTerm, stockLookup.Candidates);
 
         var warehouseAccess = await UserWarehouseAccessService.ResolveAsync(unitOfWork, actorUserId, branchCode, ct);
         var balances = unitOfWork.Repository<LocationStockBalance>().Query()
@@ -587,46 +592,6 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         return new ActivityTarget(actorUserId, false, await GetUserDisplayNameAsync(actorUserId, ct), false);
     }
 
-    private async Task<StockEntity?> ResolveStockAsync(string message, string branchCode, CancellationToken ct)
-    {
-        var candidates = ExtractStockCandidates(message);
-        foreach (var candidate in candidates)
-        {
-            var upper = candidate.ToUpper();
-            var exact = await unitOfWork.Repository<StockEntity>().Query()
-                .FirstOrDefaultAsync(x => x.BranchCode == branchCode && x.ErpStockCode.ToUpper() == upper, ct);
-            if (exact is not null) return exact;
-        }
-
-        var search = candidates.FirstOrDefault();
-        if (string.IsNullOrWhiteSpace(search)) return null;
-        var normalizedSearch = search.ToUpper();
-        return await unitOfWork.Repository<StockEntity>().Query()
-            .Where(x => x.BranchCode == branchCode
-                && (x.ErpStockCode.ToUpper().Contains(normalizedSearch) || x.StockName.ToUpper().Contains(normalizedSearch)))
-            .OrderBy(x => x.ErpStockCode)
-            .FirstOrDefaultAsync(ct);
-    }
-
-    private static IReadOnlyList<string> ExtractStockCandidates(string message)
-    {
-        var result = new List<string>();
-        var quoted = Regex.Matches(message, "[\"']([^\"']{2,100})[\"']").Select(x => x.Groups[1].Value.Trim());
-        result.AddRange(quoted);
-        var codeLike = Regex.Matches(message, @"\b[A-Za-z0-9]+(?:[-/._][A-Za-z0-9]+)+\b").Select(x => x.Value.Trim());
-        result.AddRange(codeLike);
-        var explicitMatch = Regex.Match(message,
-            @"(?:stok|ürün|urun|malzeme|mamul|parça|parca)\s*(?:kodu|kod|adı|adi|no)?\s*(?:[:=#]\s*)?([A-Za-z0-9][A-Za-z0-9._/\-]{1,80})",
-            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
-        if (explicitMatch.Success)
-        {
-            var value = explicitMatch.Groups[1].Value.Trim();
-            if (!ContainsAny(WarehouseAssistantIntentResolver.Normalize(value), ["bakiye", "nerede", "hangi", "miktar", "kac"]))
-                result.Add(value);
-        }
-        return result.Where(x => !string.IsNullOrWhiteSpace(x)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-    }
-
     private async Task<WarehouseAssistantConversation> ResolveConversationAsync(
         long? conversationId,
         string message,
@@ -717,7 +682,8 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                 stored.GoodsReceipts ?? [],
                 stored.ParameterGuides ?? [],
                 stored.SteelVehicles ?? [],
-                stored.Transfers ?? []);
+                stored.Transfers ?? [],
+                stored.EntityCandidates ?? []);
         }
         catch (JsonException)
         {
@@ -935,7 +901,8 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         IReadOnlyList<WarehouseAssistantGoodsReceiptRow>? GoodsReceipts = null,
         IReadOnlyList<WarehouseAssistantParameterGuideRow>? ParameterGuides = null,
         IReadOnlyList<WarehouseAssistantSteelVehicleRow>? SteelVehicles = null,
-        IReadOnlyList<WarehouseAssistantTransferRow>? Transfers = null);
+        IReadOnlyList<WarehouseAssistantTransferRow>? Transfers = null,
+        IReadOnlyList<WarehouseAssistantEntityCandidateRow>? EntityCandidates = null);
 
     private sealed class StoredResponseData
     {
@@ -951,6 +918,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         public IReadOnlyList<WarehouseAssistantParameterGuideRow> ParameterGuides { get; init; } = [];
         public IReadOnlyList<WarehouseAssistantSteelVehicleRow> SteelVehicles { get; init; } = [];
         public IReadOnlyList<WarehouseAssistantTransferRow> Transfers { get; init; } = [];
+        public IReadOnlyList<WarehouseAssistantEntityCandidateRow> EntityCandidates { get; init; } = [];
         public IReadOnlyList<string> Suggestions { get; init; } = [];
     }
 }

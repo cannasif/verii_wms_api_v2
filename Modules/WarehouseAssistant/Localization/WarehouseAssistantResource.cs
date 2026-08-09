@@ -109,4 +109,8 @@ public static class WarehouseAssistantMessageKeys
     public const string ParameterHelpAnswer = nameof(ParameterHelpAnswer);
     public const string InvalidSession = nameof(InvalidSession);
     public const string BranchScopeMissing = nameof(BranchScopeMissing);
+    public const string EntityClarificationFound = nameof(EntityClarificationFound);
+    public const string EntityClarificationNotFound = nameof(EntityClarificationNotFound);
+    public const string EntitySelectionStock = nameof(EntitySelectionStock);
+    public const string EntitySelectionCustomer = nameof(EntitySelectionCustomer);
 }

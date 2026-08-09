@@ -109,4 +109,8 @@
   <data name="TransferResultLimited" xml:space="preserve"><value>Toplam {1} belgeden en yeni {0} belge gösteriliyor.</value></data>
   <data name="TransferDocumentAnalysisNone" xml:space="preserve"><value>{0} numaralı belge için {1} kaydı bulunamadı.</value></data>
   <data name="TransferDocumentAnalysisFound" xml:space="preserve"><value>{0} numaralı belge için {1} kapsamında {2} transfer belgesi bulundu. Birim bazında miktarlar (istenen/toplanan/teslim alınan/eksik kapatılan): {3}.</value></data>
+  <data name="EntityClarificationFound" xml:space="preserve"><value>“{0}” ifadesi için benzer kayıtlar buldum. Stok mu cari mi demek istediğinizi ve doğru kod/adı aşağıdan seçin. Kesin eşleşme olmadığı için sizin yerinize kayıt seçmedim.</value></data>
+  <data name="EntityClarificationNotFound" xml:space="preserve"><value>“{0}” ifadesine benzeyen bir stok veya cari kartı bulamadım. Kodun ya da adın en az üç karakterini yazarak tekrar deneyin.</value></data>
+  <data name="EntitySelectionStock" xml:space="preserve"><value>{0}&#10;Kastettiğim stok kodu: “{1}”.</value></data>
+  <data name="EntitySelectionCustomer" xml:space="preserve"><value>{0}&#10;Kastettiğim cari kodu: “{1}”.</value></data>
 </root>

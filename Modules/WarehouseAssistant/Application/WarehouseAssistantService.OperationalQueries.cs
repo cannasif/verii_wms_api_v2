@@ -133,10 +133,16 @@ public sealed partial class WarehouseAssistantService
 
         StockEntity? stock = null;
         var serialNo = string.IsNullOrWhiteSpace(resolution.SerialNo) ? null : resolution.SerialNo.Trim();
+        EntityLookupResult<StockEntity>? stockLookup = null;
         if (serialNo is null)
-            stock = await ResolveStockAsync(message, branchCode, ct);
+        {
+            stockLookup = await ResolveStockAsync(resolution.StockQuery, message, branchCode, ct);
+            stock = stockLookup.Entity;
+        }
         if (serialNo is null && stock is null)
-            return MissingEntity(resolution.Intent, M(MovementSubjectRequired));
+            return stockLookup is not null && !string.IsNullOrWhiteSpace(stockLookup.SearchTerm)
+                ? EntityClarification(resolution.Intent, stockLookup.SearchTerm, stockLookup.Candidates)
+                : MissingEntity(resolution.Intent, M(MovementSubjectRequired));
 
         var (startUtc, endUtc, periodLabel) = await ResolveDateRangeAsync(resolution.DatePreset, ct);
         var warehouseAccess = await UserWarehouseAccessService.ResolveAsync(unitOfWork, actorUserId, branchCode, ct);
