@@ -1,5 +1,6 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
+using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.Kkd.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
@@ -15,7 +16,7 @@ public interface IKkdDistributionCompletionService
     Task<KkdDistributionCompleteResult?> CompleteByWarehouseOutboundAsync(long warehouseOutboundId, Guid idempotencyKey, long actor, CancellationToken ct = default);
 }
 
-public sealed class KkdDistributionCompletionService(IUnitOfWork uow, IErpPostingService erp)
+public sealed class KkdDistributionCompletionService(IUnitOfWork uow, IErpPostingService erp, IAuditLogWriter audit)
     : IKkdDistributionCompletionService
 {
     public async Task<KkdDistributionCompleteResult?> CompleteByWarehouseOutboundAsync(
@@ -91,6 +92,12 @@ public sealed class KkdDistributionCompletionService(IUnitOfWork uow, IErpPostin
                     request.UpdatedBy = actor;
                     request.UpdatedDate = now.UtcDateTime;
                     KkdRequestStateMachine.Refresh(request, now);
+                    await KkdPreparationTaskProgress.ApplyDeliveryAsync(
+                        uow,
+                        entity.Lines.Where(x => x.KkdRequestLineId.HasValue)
+                            .GroupBy(x => x.KkdRequestLineId!.Value)
+                            .ToDictionary(x => x.Key, x => x.Sum(item => item.Quantity)),
+                        actor, now, token);
                 }
                 await uow.SaveChangesAsync(token);
             }
@@ -99,6 +106,11 @@ public sealed class KkdDistributionCompletionService(IUnitOfWork uow, IErpPostin
 
         var erpResult = await erp.PostWarehouseOutboundAsync(
             completed.Entity.WarehouseOutboundId!.Value, idempotencyKey, actor, ct);
+        if (!completed.Replayed)
+            await audit.WriteAsync(new AuditLogWriteEntry(
+                "kkd.distribution.complete", nameof(KkdDistribution), completed.Entity.Id.ToString(), "Succeeded", "kkd-distribution",
+                NewValues: new { completed.Entity.Status, ErpStatus = erpResult.Status.ToString() },
+                ChangedFields: ["Status"]), ct);
         return new(completed.Entity.Id, completed.Entity.DocumentNo, completed.Entity.Status.ToString(),
             completed.Entity.WarehouseOutboundId.Value, WarehouseOutboundStatus.Shipped.ToString(),
             erpResult.Status.ToString(), completed.Replayed);

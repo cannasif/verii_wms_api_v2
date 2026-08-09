@@ -1,25 +1,29 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 using verii_wms_api_v2.Modules.Kkd.Domain;
+using verii_wms_api_v2.Modules.Kkd.Localization;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
 
 namespace verii_wms_api_v2.Modules.Kkd.Application;
 
-public sealed class KkdEntitlementService(IUnitOfWork uow) : IKkdEntitlementService
+public sealed class KkdEntitlementService(IUnitOfWork uow, IStringLocalizer<KkdRequestResource> localizer) : IKkdEntitlementService
 {
+    private string Message(string key, params object[] args) => localizer[key, args].Value;
+
     public async Task<KkdEntitlementCheckResult> CheckAsync(KkdEntitlementCheckRequest request, CancellationToken cancellationToken = default)
     {
-        if (request.Quantity <= 0) throw AppException.BadRequest("KKD miktarı sıfırdan büyük olmalıdır.");
+        if (request.Quantity <= 0) throw AppException.BadRequest(Message(KkdRequestMessageKeys.InvalidQuantity));
         var date = request.AtDate ?? DateOnly.FromDateTime(DateTime.UtcNow);
         var employee = await uow.Repository<KkdEmployee>().Query()
             .SingleOrDefaultAsync(x => x.Id == request.EmployeeId, cancellationToken)
-            ?? throw AppException.NotFound("KKD personeli bulunamadı.");
+            ?? throw AppException.NotFound(Message(KkdRequestMessageKeys.EmployeeNotFound));
         if (!employee.IsActive) return Denied(request, employee.Id, string.Empty, "EMPLOYEE_INACTIVE", "Personel aktif değil.");
         if (date < employee.EmploymentStartDate) return Denied(request, employee.Id, string.Empty, "EMPLOYMENT_NOT_STARTED", "Personelin işe giriş tarihi henüz gelmedi.");
 
         var stock = await uow.Repository<StockEntity>().Query().SingleOrDefaultAsync(x => x.Id == request.StockId, cancellationToken)
-            ?? throw AppException.NotFound("Stok bulunamadı.");
+            ?? throw AppException.NotFound(Message(KkdRequestMessageKeys.StockNotFound));
         var groupCode = Normalize(stock.GroupCode);
         if (groupCode.Length == 0) return Denied(request, employee.Id, groupCode, "STOCK_GROUP_MISSING", "Stok kartında KKD grup kodu bulunmuyor.");
 

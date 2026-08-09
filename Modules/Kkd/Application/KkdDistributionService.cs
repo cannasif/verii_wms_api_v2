@@ -1,8 +1,11 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
+using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Kkd.Domain;
+using verii_wms_api_v2.Modules.Kkd.Localization;
 using verii_wms_api_v2.Modules.NetsisRead.Application;
 using verii_wms_api_v2.Modules.NetsisRead.Application.Dtos;
 using verii_wms_api_v2.Modules.StockTracking.Application;
@@ -25,8 +28,22 @@ public sealed class KkdDistributionService(
     IOperationCancellationCoordinator cancellations,
     INetsisReadService netsis,
     IStockTrackingPolicyResolver trackingPolicies,
-    IKkdPolicyService policies) : IKkdDistributionService
+    IKkdPolicyService policies,
+    IAuditLogWriter audit,
+    IStringLocalizer<KkdRequestResource> localizer) : IKkdDistributionService
 {
+    private void CheckVersion(byte[] current, string? expected)
+    {
+        if (string.IsNullOrWhiteSpace(expected)) return;
+        byte[] decoded;
+        try { decoded = Convert.FromBase64String(expected); }
+        catch { throw AppException.Conflict(Message(KkdRequestMessageKeys.ConcurrencyConflict)); }
+        if (!current.SequenceEqual(decoded))
+            throw AppException.Conflict(Message(KkdRequestMessageKeys.ConcurrencyConflict));
+    }
+
+    private string Message(string key, params object[] args) => localizer[key, args].Value;
+
     public async Task<KkdDistributionContext> GetContextAsync(
         long employeeId,
         bool includeOpenOrders = true,
@@ -370,6 +387,12 @@ public sealed class KkdDistributionService(
                 trackedRequest.UpdatedBy = actor;
                 trackedRequest.UpdatedDate = DateTime.UtcNow;
                 KkdRequestStateMachine.Refresh(trackedRequest, DateTimeOffset.UtcNow);
+                await KkdPreparationTaskProgress.ApplyPreparationAsync(
+                    uow,
+                    request.Lines
+                        .GroupBy(x => x.KkdRequestLineId!.Value)
+                        .ToDictionary(x => x.Key, x => x.Sum(item => item.Quantity)),
+                    distribution, actor, DateTimeOffset.UtcNow, token);
             }
             await uow.Repository<KkdDistribution>().AddAsync(distribution, token);
             if (requiresExcessApproval)
@@ -383,6 +406,19 @@ public sealed class KkdDistributionService(
                 outboundHeader.UpdatedDate = now;
             }
             await uow.SaveChangesAsync(token);
+            await audit.WriteAsync(new AuditLogWriteEntry(
+                "kkd.distribution.create", nameof(KkdDistribution), distribution.Id.ToString(), "Succeeded", "kkd-distribution",
+                NewValues: new
+                {
+                    distribution.DocumentNo,
+                    distribution.EmployeeId,
+                    distribution.WarehouseId,
+                    distribution.WarehouseOutboundId,
+                    distribution.KkdRequestId,
+                    TotalQuantity = distribution.Lines.Sum(l => l.Quantity),
+                    ExcessQuantity = distribution.Lines.Sum(l => l.ExcessQuantity),
+                },
+                ChangedFields: ["DocumentNo", "WarehouseOutboundId", "Lines"]), token);
             return CreateResult(distribution, false);
         }, ct, IsolationLevel.Serializable);
     }
@@ -404,7 +440,7 @@ public sealed class KkdDistributionService(
                 x.Lines.Sum(l => l.Quantity), x.Lines.Sum(l => l.EntitledQuantity),
                 x.Lines.Sum(l => l.ExcessQuantity), x.ExcessApprovalStatus.ToString(),
                 x.ExcessApprovalReason, x.ExcessApprovedBy, x.ExcessApprovedAtUtc,
-                x.CreatedDate, x.CompletedAtUtc))
+                x.CreatedDate, x.CompletedAtUtc, Convert.ToBase64String(x.RowVersion)))
             .ToListAsync(ct);
     }
 
@@ -417,7 +453,7 @@ public sealed class KkdDistributionService(
                 x.Lines.Sum(l => l.Quantity), x.Lines.Sum(l => l.EntitledQuantity),
                 x.Lines.Sum(l => l.ExcessQuantity), x.ExcessApprovalStatus.ToString(),
                 x.ExcessApprovalReason, x.ExcessApprovedBy, x.ExcessApprovedAtUtc,
-                x.CreatedDate, x.CompletedAtUtc))
+                x.CreatedDate, x.CompletedAtUtc, Convert.ToBase64String(x.RowVersion)))
             .ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["documentNo"] = nameof(KkdDistributionRow.DocumentNo),
@@ -440,7 +476,8 @@ public sealed class KkdDistributionService(
                 x.Lines.OrderBy(l => l.LineNo).Select(l => new KkdDistributionLineDetail(
                     l.Id, l.LineNo, l.StockId, l.StockCodeSnapshot, l.StockNameSnapshot ?? string.Empty,
                     l.GroupCode, l.Quantity, l.EntitledQuantity, l.ExcessQuantity, l.SourceLocationId,
-                    l.LotNo, l.SerialNo, l.OpenOrderNo, l.OpenOrderLineId)).ToArray()))
+                    l.LotNo, l.SerialNo, l.OpenOrderNo, l.OpenOrderLineId)).ToArray(),
+                Convert.ToBase64String(x.RowVersion)))
             .SingleOrDefaultAsync(ct)
             ?? throw AppException.NotFound("KKD dağıtım kaydı bulunamadı veya bu depoya erişiminiz yok.");
     }
@@ -480,6 +517,7 @@ public sealed class KkdDistributionService(
 
             var desired = request.Approve ? KkdExcessApprovalStatus.Approved : KkdExcessApprovalStatus.Rejected;
             if (entity.ExcessApprovalStatus == desired) return true;
+            CheckVersion(entity.RowVersion, request.ExpectedRowVersion);
 
             var outbound = entity.WarehouseOutboundId.HasValue
                 ? await uow.Repository<WarehouseOutboundHeader>().Query(true)
@@ -603,6 +641,8 @@ public sealed class KkdDistributionService(
                             trackedRequest.UpdatedDate = now.UtcDateTime;
                             KkdRequestStateMachine.Refresh(trackedRequest, now);
                         }
+                        await KkdPreparationTaskProgress.RevertAsync(
+                            uow, discardedByRequestLineId, wasCompleted: false, entity.Id, actor, now, token);
                     }
 
                     // Kalan kalemler için aşım artık yok; bu tek çıkış normal akışla (release/pick/pack/ship) devam edebilir.
@@ -612,6 +652,11 @@ public sealed class KkdDistributionService(
             }
 
             await uow.SaveChangesAsync(token);
+            await audit.WriteAsync(new AuditLogWriteEntry(
+                "kkd.distribution.excess-approval", nameof(KkdDistribution), entity.Id.ToString(), "Succeeded", "kkd-distribution",
+                Reason: request.Reason.Trim(),
+                NewValues: new { entity.ExcessApprovalStatus, entity.ExcessApprovedBy, entity.ExcessApprovedAtUtc },
+                ChangedFields: ["ExcessApprovalStatus", "ExcessApprovedBy", "ExcessApprovedAtUtc"]), token);
             return true;
         }, ct, IsolationLevel.Serializable);
 
@@ -623,9 +668,15 @@ public sealed class KkdDistributionService(
         KkdDistributionCompleteRequest request,
         long actor,
         CancellationToken ct = default)
-        => await completion.CompleteByDistributionAsync(id, request.IdempotencyKey, actor, ct);
+    {
+        var currentVersion = await uow.Repository<KkdDistribution>().Query()
+            .Where(x => x.Id == id).Select(x => x.RowVersion).SingleOrDefaultAsync(ct)
+            ?? throw AppException.NotFound("KKD dağıtımı bulunamadı.");
+        CheckVersion(currentVersion, request.ExpectedRowVersion);
+        return await completion.CompleteByDistributionAsync(id, request.IdempotencyKey, actor, ct);
+    }
 
-    public async Task CancelAsync(long id, Guid idempotencyKey, string reason, long actor, CancellationToken ct = default)
+    public async Task CancelAsync(long id, Guid idempotencyKey, string reason, string? expectedRowVersion, long actor, CancellationToken ct = default)
     {
         if (id <= 0 || idempotencyKey == Guid.Empty || string.IsNullOrWhiteSpace(reason))
             throw AppException.BadRequest("Dağıtım, idempotency anahtarı ve iptal nedeni zorunludur.");
@@ -633,6 +684,7 @@ public sealed class KkdDistributionService(
             .SingleOrDefaultAsync(x => x.Id == id, ct)
             ?? throw AppException.NotFound("KKD dağıtımı bulunamadı.");
         if (entity.Status == KkdDistributionStatus.Cancelled) return;
+        CheckVersion(entity.RowVersion, expectedRowVersion);
         if (entity.WarehouseOutboundId.HasValue)
         {
             var cancellation = await cancellations.CancelWarehouseOutboundAsync(entity.WarehouseOutboundId.Value,
@@ -701,11 +753,22 @@ public sealed class KkdDistributionService(
                 request.UpdatedBy = actor;
                 request.UpdatedDate = now.UtcDateTime;
                 KkdRequestStateMachine.Refresh(request, now);
+                await KkdPreparationTaskProgress.RevertAsync(
+                    uow,
+                    entity.Lines.Where(x => x.KkdRequestLineId.HasValue)
+                        .GroupBy(x => x.KkdRequestLineId!.Value)
+                        .ToDictionary(x => x.Key, x => x.Sum(item => item.Quantity)),
+                    wasCompleted, entity.Id, actor, now, token);
             }
             entity.Status = KkdDistributionStatus.Cancelled;
             entity.UpdatedBy = actor;
             entity.UpdatedDate = DateTime.UtcNow;
             await uow.SaveChangesAsync(token);
+            await audit.WriteAsync(new AuditLogWriteEntry(
+                "kkd.distribution.cancel", nameof(KkdDistribution), entity.Id.ToString(), "Succeeded", "kkd-distribution",
+                Reason: reason.Trim(),
+                NewValues: new { entity.Status },
+                ChangedFields: ["Status"]), token);
             return true;
         }, ct, IsolationLevel.Serializable);
     }
@@ -813,7 +876,7 @@ public sealed class KkdDistributionService(
                 x.Lines.Sum(l => l.Quantity), x.Lines.Sum(l => l.EntitledQuantity),
                 x.Lines.Sum(l => l.ExcessQuantity), x.ExcessApprovalStatus.ToString(),
                 x.ExcessApprovalReason, x.ExcessApprovedBy, x.ExcessApprovedAtUtc,
-                x.CreatedDate, x.CompletedAtUtc))
+                x.CreatedDate, x.CompletedAtUtc, Convert.ToBase64String(x.RowVersion)))
             .SingleAsync(ct);
 
     internal static void ValidateCreateEnvelope(KkdDistributionCreateRequest request)

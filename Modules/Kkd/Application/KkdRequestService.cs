@@ -36,9 +36,10 @@ public sealed class KkdRequestService(
     private IGenericRepository<WarehouseEntity> Warehouses => uow.Repository<WarehouseEntity>();
     private IGenericRepository<User> Users => uow.Repository<User>();
 
-    public async Task<PagedResponse<KkdRequestGridRow>> GetPagedAsync(PagedRequest request, long actor, CancellationToken ct = default)
+    public async Task<PagedResponse<KkdRequestGridRow>> GetPagedAsync(PagedRequest request, long actor, KkdRequestBoardTab tab = KkdRequestBoardTab.All, CancellationToken ct = default)
     {
-        var query = await AuthorizedRequestsAsync(actor, ct);
+        var warehouseScope = await ActorWarehouseScopeAsync(actor, ct);
+        var query = ApplyTabFilter(await AuthorizedRequestsAsync(actor, warehouseScope, ct), tab, actor, warehouseScope);
         var rows = ApplySearch(query, request).Select(x => new KkdRequestGridRow(
             x.Id,
             x.RequestNo,
@@ -65,16 +66,153 @@ public sealed class KkdRequestService(
             x.UpdatedBy,
             x.UpdatedDate));
 
-        return await rows
+        var page = await rows
             .ApplyAdvancedFilters(request)
             .ApplySort(request, nameof(KkdRequestGridRow.RequestedAtUtc))
             .ToPagedResponseAsync(request, ct);
+        return await EnrichPageAsync(page, actor, ct);
     }
 
-    public async Task<KkdRequestDetail> GetDetailAsync(long id, CancellationToken ct = default)
+    public async Task<KkdRequestTabCounts> GetTabCountsAsync(long actor, CancellationToken ct = default)
+    {
+        var warehouseScope = await ActorWarehouseScopeAsync(actor, ct);
+        var query = await AuthorizedRequestsAsync(actor, warehouseScope, ct);
+        var pending = await ApplyTabFilter(query, KkdRequestBoardTab.Pending, actor, warehouseScope).CountAsync(ct);
+        var preparing = await ApplyTabFilter(query, KkdRequestBoardTab.Preparing, actor, warehouseScope).CountAsync(ct);
+        var completed = await ApplyTabFilter(query, KkdRequestBoardTab.Completed, actor, warehouseScope).CountAsync(ct);
+        var cancelled = await ApplyTabFilter(query, KkdRequestBoardTab.Cancelled, actor, warehouseScope).CountAsync(ct);
+        var mine = await ApplyTabFilter(query, KkdRequestBoardTab.Mine, actor, warehouseScope).CountAsync(ct);
+        return new KkdRequestTabCounts(pending, preparing, completed, cancelled, mine);
+    }
+
+    /// <summary>
+    /// Beklemede = henüz görevlenmemiş açık kalemleri olan talepler,
+    /// Hazırlamada = aktif görevi olan talepler,
+    /// Benim İşlerim = aktöre atanmış görevler + (depo kısıtlı kullanıcıda) kendi depolarındaki havuz görevleri.
+    /// </summary>
+    private IQueryable<KkdRequest> ApplyTabFilter(
+        IQueryable<KkdRequest> query,
+        KkdRequestBoardTab tab,
+        long actor,
+        ActorWarehouseScope warehouseScope)
+    {
+        var tasks = uow.Repository<KkdPreparationTask>().Query();
+        var restricted = warehouseScope.IsRestricted;
+        var warehouseIds = warehouseScope.WarehouseIds;
+        return tab switch
+        {
+            KkdRequestBoardTab.Pending => query.Where(x =>
+                x.Status != KkdRequestStatus.Completed && x.Status != KkdRequestStatus.Cancelled
+                && x.AssignedUserId == null
+                && x.Lines.Any(line =>
+                    line.Status != KkdRequestLineStatus.Cancelled && line.Status != KkdRequestLineStatus.Completed
+                    && !tasks.Any(task =>
+                        (task.Status == KkdPreparationTaskStatus.Assigned || task.Status == KkdPreparationTaskStatus.InPreparation)
+                        && task.Lines.Any(taskLine => taskLine.RequestLineId == line.Id)))),
+            KkdRequestBoardTab.Preparing => query.Where(x =>
+                x.Status != KkdRequestStatus.Completed && x.Status != KkdRequestStatus.Cancelled
+                && (x.AssignedUserId != null || tasks.Any(task => task.RequestId == x.Id
+                    && (task.Status == KkdPreparationTaskStatus.Assigned || task.Status == KkdPreparationTaskStatus.InPreparation)))),
+            KkdRequestBoardTab.Completed => query.Where(x => x.Status == KkdRequestStatus.Completed),
+            KkdRequestBoardTab.Cancelled => query.Where(x => x.Status == KkdRequestStatus.Cancelled),
+            // Depoya bırakılan havuz görevleri, o depoya yetkili kullanıcıların Benim İşlerim'inde görünür.
+            KkdRequestBoardTab.Mine => query.Where(x =>
+                x.Status != KkdRequestStatus.Completed && x.Status != KkdRequestStatus.Cancelled
+                && (x.AssignedUserId == actor || tasks.Any(task => task.RequestId == x.Id
+                    && (task.Status == KkdPreparationTaskStatus.Assigned || task.Status == KkdPreparationTaskStatus.InPreparation)
+                    && (task.AssignedUserId == actor
+                        || (task.AssignedUserId == null && restricted && warehouseIds.Contains(task.WarehouseId)))))),
+            _ => query,
+        };
+    }
+
+    /// <summary>Sayfadaki satırlara atanan kullanıcı adı, satır sürümü, bağlı dağıtım/ambar çıkışı ve görev bilgilerini ekler.</summary>
+    private async Task<PagedResponse<KkdRequestGridRow>> EnrichPageAsync(PagedResponse<KkdRequestGridRow> page, long actor, CancellationToken ct)
+    {
+        if (page.Items.Count == 0) return page;
+
+        var requestIds = page.Items.Select(x => x.Id).ToArray();
+
+        var rowVersions = await Requests.Query().Where(x => requestIds.Contains(x.Id))
+            .Select(x => new { x.Id, x.RowVersion })
+            .ToDictionaryAsync(x => x.Id, x => x.RowVersion, ct);
+
+        var distributions = await uow.Repository<KkdDistribution>().Query()
+            .Where(x => x.KkdRequestId.HasValue && requestIds.Contains(x.KkdRequestId.Value))
+            .OrderByDescending(x => x.Id)
+            .Select(x => new { RequestId = x.KkdRequestId!.Value, x.Id, x.WarehouseOutboundId, x.Status, x.FailureReason })
+            .ToListAsync(ct);
+        var latestDistribution = distributions
+            .GroupBy(x => x.RequestId)
+            .ToDictionary(x => x.Key, x => x.First());
+
+        var activeTasks = await uow.Repository<KkdPreparationTask>().Query()
+            .Where(x => requestIds.Contains(x.RequestId)
+                && (x.Status == KkdPreparationTaskStatus.Assigned || x.Status == KkdPreparationTaskStatus.InPreparation))
+            .Select(x => new { x.RequestId, x.Id, x.AssignedUserId, LineIds = x.Lines.Select(l => l.RequestLineId) })
+            .ToListAsync(ct);
+        var tasksByRequest = activeTasks.ToLookup(x => x.RequestId);
+        var coveredLineIds = activeTasks.SelectMany(x => x.LineIds).ToHashSet();
+
+        var openLines = await uow.Repository<KkdRequestLine>().Query()
+            .Where(x => requestIds.Contains(x.RequestId)
+                && x.Status != KkdRequestLineStatus.Cancelled && x.Status != KkdRequestLineStatus.Completed)
+            .Select(x => new { x.RequestId, x.Id })
+            .ToListAsync(ct);
+        var unassignedByRequest = openLines
+            .Where(x => !coveredLineIds.Contains(x.Id))
+            .GroupBy(x => x.RequestId)
+            .ToDictionary(x => x.Key, x => x.Count());
+
+        var userIds = page.Items.Where(x => x.AssignedUserId.HasValue).Select(x => x.AssignedUserId!.Value)
+            .Concat(activeTasks.Where(x => x.AssignedUserId.HasValue).Select(x => x.AssignedUserId!.Value))
+            .Distinct().ToArray();
+        var usernames = userIds.Length == 0
+            ? new Dictionary<long, string>()
+            : await Users.Query().Where(x => userIds.Contains(x.Id))
+                .Select(x => new { x.Id, x.Username })
+                .ToDictionaryAsync(x => x.Id, x => x.Username, ct);
+
+        var items = page.Items.Select(item =>
+        {
+            var requestTasks = tasksByRequest[item.Id].ToArray();
+            var assigneeNames = requestTasks
+                .Where(x => x.AssignedUserId.HasValue)
+                .Select(x => usernames.GetValueOrDefault(x.AssignedUserId!.Value, $"#{x.AssignedUserId}"))
+                .Distinct().ToArray();
+            var poolTask = requestTasks.FirstOrDefault(x => !x.AssignedUserId.HasValue);
+            return item with
+            {
+                AssignedUserName = item.AssignedUserId.HasValue ? usernames.GetValueOrDefault(item.AssignedUserId.Value) : null,
+                RowVersion = rowVersions.TryGetValue(item.Id, out var version) ? Convert.ToBase64String(version) : string.Empty,
+                LinkedDistributionId = latestDistribution.TryGetValue(item.Id, out var distribution) ? distribution.Id : null,
+                LinkedDistributionStatus = latestDistribution.TryGetValue(item.Id, out var status) ? status.Status.ToString() : null,
+                LinkedDistributionFailureReason = latestDistribution.TryGetValue(item.Id, out var failure) ? failure.FailureReason : null,
+                WarehouseOutboundId = latestDistribution.TryGetValue(item.Id, out var linked) ? linked.WarehouseOutboundId : null,
+                ActiveTaskCount = requestTasks.Length,
+                UnassignedLineCount = unassignedByRequest.GetValueOrDefault(item.Id),
+                MyActiveTaskId = requestTasks.FirstOrDefault(x => x.AssignedUserId == actor)?.Id,
+                ActiveAssigneeNames = assigneeNames,
+                HasPoolTask = poolTask is not null,
+                PoolTaskId = poolTask?.Id,
+            };
+        }).ToArray();
+
+        return new PagedResponse<KkdRequestGridRow>
+        {
+            Items = items,
+            TotalCount = page.TotalCount,
+            PageNumber = page.PageNumber,
+            PageSize = page.PageSize,
+        };
+    }
+
+    public async Task<KkdRequestDetail> GetDetailAsync(long id, long actor, CancellationToken ct = default)
     {
         var entity = await DetailQuery(false).SingleOrDefaultAsync(x => x.Id == id, ct)
             ?? throw AppException.NotFound(Message(KkdRequestMessageKeys.NotFound));
+        if (entity.WarehouseId.HasValue)
+            await EnsureWarehouseAccessAsync(actor, entity.WarehouseId.Value, ct);
         return MapDetail(entity);
     }
 
@@ -84,14 +222,14 @@ public sealed class KkdRequestService(
         return await uow.ExecuteInTransactionAsync(async token =>
         {
             var existing = await Requests.Query().SingleOrDefaultAsync(x => x.CorrelationId == request.IdempotencyKey, token);
-            if (existing is not null) return await GetDetailAsync(existing.Id, token);
+            if (existing is not null) return await GetDetailAsync(existing.Id, actor, token);
 
             var employee = await Employees.Query().Include(x => x.Department).Include(x => x.Role)
                 .SingleOrDefaultAsync(x => x.Id == request.EmployeeId, token)
                 ?? throw AppException.NotFound(Message(KkdRequestMessageKeys.EmployeeNotFound));
             if (!employee.IsActive) throw AppException.Conflict(Message(KkdRequestMessageKeys.EmployeeInactive));
 
-            await ValidateAssignmentAsync(request.WarehouseId, request.AssignedUserId, token);
+            await ValidateAssignmentAsync(request.WarehouseId, request.AssignedUserId, actor, token);
             var now = DateTimeOffset.UtcNow;
             var entity = new KkdRequest
             {
@@ -148,7 +286,7 @@ public sealed class KkdRequestService(
             await audit.WriteAsync(new AuditLogWriteEntry(
                 "kkd.request.create", nameof(KkdRequest), entity.Id.ToString(), "Succeeded", "kkd-request",
                 NewValues: Snapshot(entity), ChangedFields: RequestFields), token);
-            return await GetDetailAsync(entity.Id, token);
+            return await GetDetailAsync(entity.Id, actor, token);
         }, ct, IsolationLevel.Serializable);
     }
 
@@ -169,13 +307,15 @@ public sealed class KkdRequestService(
             {
                 if (prior.RequestLineId != lineId || prior.RequestLine.RequestId != requestId)
                     throw AppException.Conflict(Message(KkdRequestMessageKeys.InvalidIdempotencyKey));
-                return await GetDetailAsync(requestId, token);
+                return await GetDetailAsync(requestId, actor, token);
             }
 
             var entity = await Requests.Query(true).Include(x => x.Employee).Include(x => x.Lines)
                 .SingleOrDefaultAsync(x => x.Id == requestId, token)
                 ?? throw AppException.NotFound(Message(KkdRequestMessageKeys.NotFound));
             EnsureMutable(entity);
+            if (entity.WarehouseId.HasValue)
+                await EnsureWarehouseAccessAsync(actor, entity.WarehouseId.Value, token);
             var line = entity.Lines.SingleOrDefault(x => x.Id == lineId)
                 ?? throw AppException.NotFound(Message(KkdRequestMessageKeys.LineNotFound));
             CheckVersion(line.RowVersion, request.ExpectedRowVersion);
@@ -218,7 +358,7 @@ public sealed class KkdRequestService(
                 Reason: request.Reason.Trim(), OldValues: old,
                 NewValues: new { line.StockId, line.StockCodeSnapshot, line.StockNameSnapshot, line.Status },
                 ChangedFields: ["StockId", "StockCodeSnapshot", "StockNameSnapshot", "UnitCode", "Status"]), token);
-            return await GetDetailAsync(entity.Id, token);
+            return await GetDetailAsync(entity.Id, actor, token);
         }, ct, IsolationLevel.Serializable);
     }
 
@@ -230,8 +370,12 @@ public sealed class KkdRequestService(
                 .SingleOrDefaultAsync(x => x.Id == id, token)
                 ?? throw AppException.NotFound(Message(KkdRequestMessageKeys.NotFound));
             EnsureMutable(entity);
+            // Aynı hedef durum tekrar istenirse (ör. ağ zaman aşımı sonrası yeniden deneme), RowVersion
+            // uyuşmazlığına düşmeden başarı döndür — talep zaten istenen durumda.
+            if (entity.WarehouseId == request.WarehouseId && entity.AssignedUserId == request.AssignedUserId)
+                return await GetDetailAsync(entity.Id, actor, token);
             CheckVersion(entity.RowVersion, request.ExpectedRowVersion);
-            await ValidateAssignmentAsync(request.WarehouseId, request.AssignedUserId, token);
+            await ValidateAssignmentAsync(request.WarehouseId, request.AssignedUserId, actor, token);
             var old = new { entity.WarehouseId, entity.AssignedUserId };
             entity.WarehouseId = request.WarehouseId;
             entity.AssignedUserId = request.AssignedUserId;
@@ -243,8 +387,38 @@ public sealed class KkdRequestService(
                 "kkd.request.assign", nameof(KkdRequest), entity.Id.ToString(), "Succeeded", "kkd-request",
                 OldValues: old, NewValues: new { entity.WarehouseId, entity.AssignedUserId },
                 ChangedFields: ["WarehouseId", "AssignedUserId"]), token);
-            return await GetDetailAsync(entity.Id, token);
+            return await GetDetailAsync(entity.Id, actor, token);
         }, ct, IsolationLevel.Serializable);
+    }
+
+    /// <summary>Üretimdeki iptal precheck karşılığı: ilerlemesi olan talep iptal edilemez, engel listesi döner.</summary>
+    public async Task<KkdRequestCancelPrecheckResult> GetCancelPrecheckAsync(long id, CancellationToken ct = default)
+    {
+        var entity = await Requests.Query().Include(x => x.Lines)
+            .SingleOrDefaultAsync(x => x.Id == id, ct)
+            ?? throw AppException.NotFound(Message(KkdRequestMessageKeys.NotFound));
+
+        var blockers = new List<string>();
+        long? activeDistributionId = null;
+        long? activeOutboundId = null;
+
+        if (entity.Status is KkdRequestStatus.Completed or KkdRequestStatus.Cancelled)
+            blockers.Add(Message(KkdRequestMessageKeys.ClosedRequestCannotChange));
+
+        if (entity.Lines.Any(x => x.AllocatedQuantity > 0 || x.DeliveredQuantity > 0))
+        {
+            blockers.Add(Message(KkdRequestMessageKeys.RequestHasProgress));
+            var activeDistribution = await uow.Repository<KkdDistribution>().Query()
+                .Where(x => x.KkdRequestId == id
+                    && x.Status != KkdDistributionStatus.Cancelled && x.Status != KkdDistributionStatus.Failed)
+                .OrderByDescending(x => x.Id)
+                .Select(x => new { x.Id, x.WarehouseOutboundId })
+                .FirstOrDefaultAsync(ct);
+            activeDistributionId = activeDistribution?.Id;
+            activeOutboundId = activeDistribution?.WarehouseOutboundId;
+        }
+
+        return new KkdRequestCancelPrecheckResult(blockers.Count == 0, blockers, activeDistributionId, activeOutboundId);
     }
 
     public async Task<KkdRequestDetail> CancelAsync(long id, KkdRequestCancelRequest request, long actor, CancellationToken ct = default)
@@ -256,8 +430,10 @@ public sealed class KkdRequestService(
             var entity = await Requests.Query(true).Include(x => x.Lines)
                 .SingleOrDefaultAsync(x => x.Id == id, token)
                 ?? throw AppException.NotFound(Message(KkdRequestMessageKeys.NotFound));
-            if (entity.Status == KkdRequestStatus.Cancelled) return await GetDetailAsync(entity.Id, token);
+            if (entity.Status == KkdRequestStatus.Cancelled) return await GetDetailAsync(entity.Id, actor, token);
             EnsureMutable(entity);
+            if (entity.WarehouseId.HasValue)
+                await EnsureWarehouseAccessAsync(actor, entity.WarehouseId.Value, token);
             CheckVersion(entity.RowVersion, request.ExpectedRowVersion);
             if (entity.Lines.Any(x => x.AllocatedQuantity > 0 || x.DeliveredQuantity > 0))
                 throw AppException.Conflict(Message(KkdRequestMessageKeys.RequestHasProgress));
@@ -275,29 +451,63 @@ public sealed class KkdRequestService(
                 line.UpdatedBy = actor;
                 line.UpdatedDate = now.UtcDateTime;
             }
+            // Talep iptalinde açık hazırlama görevleri de kapanır.
+            var openTasks = await uow.Repository<KkdPreparationTask>().Query(true)
+                .Where(x => x.RequestId == entity.Id
+                    && (x.Status == KkdPreparationTaskStatus.Assigned || x.Status == KkdPreparationTaskStatus.InPreparation))
+                .ToListAsync(token);
+            foreach (var task in openTasks)
+            {
+                task.Status = KkdPreparationTaskStatus.Cancelled;
+                task.ClosedAtUtc = now;
+                task.ClosureReason = request.Reason.Trim();
+                task.UpdatedBy = actor;
+                task.UpdatedDate = now.UtcDateTime;
+            }
             await SaveAsync(token);
             await audit.WriteAsync(new AuditLogWriteEntry(
                 "kkd.request.cancel", nameof(KkdRequest), entity.Id.ToString(), "Succeeded", "kkd-request",
                 Reason: request.Reason.Trim(), OldValues: old, NewValues: Snapshot(entity),
                 ChangedFields: ["Status", "CancelledAtUtc", "CancellationReason"]), token);
-            return await GetDetailAsync(entity.Id, token);
+            return await GetDetailAsync(entity.Id, actor, token);
         }, ct, IsolationLevel.Serializable);
     }
 
-    private async Task<IQueryable<KkdRequest>> AuthorizedRequestsAsync(long actor, CancellationToken ct)
+    private sealed record ActorWarehouseScope(bool IsRestricted, long[] WarehouseIds);
+
+    /// <summary>
+    /// Depo ataması yoksa (veya süperadmin) kısıtsız = müdür görünümü.
+    /// En az bir depoya bağlıysa sadece o depoların işlerini görür.
+    /// </summary>
+    private async Task<ActorWarehouseScope> ActorWarehouseScopeAsync(long actor, CancellationToken ct)
     {
+        var role = await Users.Query().Where(x => x.Id == actor && x.IsActive).Select(x => x.Role).FirstOrDefaultAsync(ct);
+        if (!string.IsNullOrWhiteSpace(role)
+            && (role.Equals("Admin", StringComparison.OrdinalIgnoreCase)
+                || role.Equals("superadmin", StringComparison.OrdinalIgnoreCase)))
+            return new ActorWarehouseScope(false, []);
+
         var warehouseIds = await uow.Repository<UserWarehouseAssignment>().Query()
             .Where(x => x.UserId == actor)
             .Select(x => x.WarehouseId)
             .Distinct()
             .ToArrayAsync(ct);
+        return warehouseIds.Length == 0
+            ? new ActorWarehouseScope(false, [])
+            : new ActorWarehouseScope(true, warehouseIds);
+    }
+
+    private Task<IQueryable<KkdRequest>> AuthorizedRequestsAsync(long actor, ActorWarehouseScope scope, CancellationToken ct)
+    {
+        _ = actor;
+        _ = ct;
         var query = Requests.Query();
         // Depoya bağlanmamış (henüz triyaj edilmemiş) talepler herkese görünür kalır; depo atanmış
         // talepler ise yalnızca o depoya yetkili kullanıcılara gösterilir. Depo kısıtlaması olmayan
         // kullanıcılar (ör. müdür) için filtre uygulanmaz.
-        return warehouseIds.Length == 0
-            ? query
-            : query.Where(x => x.WarehouseId == null || warehouseIds.Contains(x.WarehouseId.Value));
+        if (!scope.IsRestricted) return Task.FromResult(query);
+        var warehouseIds = scope.WarehouseIds;
+        return Task.FromResult(query.Where(x => x.WarehouseId == null || warehouseIds.Contains(x.WarehouseId.Value)));
     }
 
     private IQueryable<KkdRequest> ApplySearch(IQueryable<KkdRequest> query, PagedRequest request)
@@ -359,12 +569,27 @@ public sealed class KkdRequestService(
         return stock;
     }
 
-    private async Task ValidateAssignmentAsync(long? warehouseId, long? assignedUserId, CancellationToken ct)
+    private async Task ValidateAssignmentAsync(long? warehouseId, long? assignedUserId, long actor, CancellationToken ct)
     {
         if (warehouseId.HasValue && !await Warehouses.AnyAsync(x => x.Id == warehouseId.Value, ct))
             throw AppException.NotFound(Message(KkdRequestMessageKeys.NotFound));
         if (assignedUserId.HasValue && !await Users.AnyAsync(x => x.Id == assignedUserId.Value && x.IsActive, ct))
             throw AppException.NotFound(Message(KkdRequestMessageKeys.UserNotFound));
+        if (warehouseId.HasValue)
+        {
+            await EnsureWarehouseAccessAsync(actor, warehouseId.Value, ct);
+            if (assignedUserId.HasValue)
+                await EnsureWarehouseAccessAsync(assignedUserId.Value, warehouseId.Value, ct);
+        }
+    }
+
+    /// <summary>Depo kısıtı olan (müdür olmayan) kullanıcılar yalnızca kendi depolarına ait talepleri görüp yönetebilir.</summary>
+    private async Task EnsureWarehouseAccessAsync(long userId, long warehouseId, CancellationToken ct)
+    {
+        var warehouseIds = await uow.Repository<UserWarehouseAssignment>().Query().Where(x => x.UserId == userId)
+            .Select(x => x.WarehouseId).ToArrayAsync(ct);
+        if (warehouseIds.Length > 0 && !warehouseIds.Contains(warehouseId))
+            throw AppException.Forbidden(Message(KkdRequestMessageKeys.WarehouseAccessDenied));
     }
 
     private async Task UpsertPreferenceAsync(long employeeId, string groupCode, long stockId, DateTimeOffset at, CancellationToken ct)

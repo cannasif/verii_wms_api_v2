@@ -18,6 +18,7 @@ public sealed class KkdController(
     IKkdEntitlementService entitlements,
     IKkdDistributionService distributions,
     IKkdRequestService requests,
+    IKkdPreparationTaskService preparationTasks,
     IKkdReportService reports,
     IKkdPolicyService policy,
     IWarehouseBarcodeResolver barcodeResolver,
@@ -81,7 +82,7 @@ public sealed class KkdController(
 
     [HttpPost("employees/qr-resolve")]
     public async Task<IActionResult> ResolveEmployeeByQr(KkdEmployeeQrResolveRequest request, CancellationToken ct)
-    { await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct); return Ok(ApiResponse<KkdEmployeeRow>.Ok(await definitions.ResolveEmployeeByQrAsync(request.QrCode, ct))); }
+    { await Require("WMS.KKD.EMPLOYEES.VIEW", ct); return Ok(ApiResponse<KkdEmployeeRow>.Ok(await definitions.ResolveEmployeeByQrAsync(request.QrCode, ct))); }
 
     [HttpGet("matrices")]
     public async Task<IActionResult> Matrices(CancellationToken ct)
@@ -125,12 +126,20 @@ public sealed class KkdController(
     { await Require("WMS.KKD.ENTITLEMENT.CHECK", ct); return Ok(ApiResponse<KkdEntitlementCheckResult>.Ok(await entitlements.CheckAsync(request, ct))); }
 
     [HttpPost("requests/paged")]
-    public async Task<IActionResult> RequestsPaged(PagedRequest request, CancellationToken ct)
-    { await Require("WMS.KKD.REQUESTS.VIEW", ct); return Ok(ApiResponse<PagedResponse<KkdRequestGridRow>>.Ok(await requests.GetPagedAsync(request, UserId(), ct))); }
+    public async Task<IActionResult> RequestsPaged(PagedRequest request, [FromQuery] string? tab, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.VIEW", ct);
+        var boardTab = Enum.TryParse<KkdRequestBoardTab>(tab, ignoreCase: true, out var parsed) ? parsed : KkdRequestBoardTab.All;
+        return Ok(ApiResponse<PagedResponse<KkdRequestGridRow>>.Ok(await requests.GetPagedAsync(request, UserId(), boardTab, ct)));
+    }
+
+    [HttpGet("requests/tab-counts")]
+    public async Task<IActionResult> RequestTabCounts(CancellationToken ct)
+    { await Require("WMS.KKD.REQUESTS.VIEW", ct); return Ok(ApiResponse<KkdRequestTabCounts>.Ok(await requests.GetTabCountsAsync(UserId(), ct))); }
 
     [HttpGet("requests/{id:long}")]
     public async Task<IActionResult> RequestDetail(long id, CancellationToken ct)
-    { await Require("WMS.KKD.REQUESTS.VIEW", ct); return Ok(ApiResponse<KkdRequestDetail>.Ok(await requests.GetDetailAsync(id, ct))); }
+    { await Require("WMS.KKD.REQUESTS.VIEW", ct); return Ok(ApiResponse<KkdRequestDetail>.Ok(await requests.GetDetailAsync(id, UserId(), ct))); }
 
     [HttpPost("requests")]
     public async Task<IActionResult> CreateRequest(KkdRequestCreateRequest request, CancellationToken ct)
@@ -152,6 +161,54 @@ public sealed class KkdController(
         await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
         return Ok(ApiResponse<KkdRequestDetail>.Ok(await requests.AssignAsync(id, request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.Assigned)));
     }
+
+    [HttpGet("requests/{id:long}/preparation-tasks")]
+    public async Task<IActionResult> RequestPreparationTasks(long id, CancellationToken ct)
+    { await Require("WMS.KKD.REQUESTS.VIEW", ct); return Ok(ApiResponse<IReadOnlyList<KkdPreparationTaskRow>>.Ok(await preparationTasks.GetByRequestAsync(id, UserId(), ct))); }
+
+    [HttpPost("requests/{id:long}/preparation-tasks")]
+    public async Task<IActionResult> AssignPreparationTasks(long id, KkdPreparationAssignRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
+        return Ok(ApiResponse<IReadOnlyList<KkdPreparationTaskRow>>.Ok(
+            await preparationTasks.AssignAsync(id, request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.TasksAssigned)));
+    }
+
+    [HttpPost("requests/{id:long}/claim")]
+    public async Task<IActionResult> ClaimRequest(long id, KkdPreparationClaimRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
+        return Ok(ApiResponse<KkdPreparationTaskRow>.Ok(
+            await preparationTasks.ClaimAsync(id, request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.TaskClaimed)));
+    }
+
+    [HttpPost("preparation-tasks/{id:long}/claim")]
+    public async Task<IActionResult> ClaimPreparationTask(long id, KkdPreparationClaimTaskRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
+        return Ok(ApiResponse<KkdPreparationTaskRow>.Ok(
+            await preparationTasks.ClaimTaskAsync(id, request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.TaskClaimedFromPool)));
+    }
+
+    [HttpPost("preparation-tasks/{id:long}/handoff")]
+    public async Task<IActionResult> HandoffPreparationTask(long id, KkdPreparationHandoffRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
+        return Ok(ApiResponse<KkdPreparationTaskRow>.Ok(
+            await preparationTasks.HandoffAsync(id, request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.TaskHandedOver)));
+    }
+
+    [HttpPost("preparation-tasks/{id:long}/return")]
+    public async Task<IActionResult> ReturnPreparationTask(long id, KkdPreparationReturnRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
+        await preparationTasks.ReturnAsync(id, request, UserId(), ct);
+        return Ok(ApiResponse<object?>.Ok(null, RequestMessage(KkdRequestMessageKeys.TaskReturned)));
+    }
+
+    [HttpGet("requests/{id:long}/cancel-precheck")]
+    public async Task<IActionResult> RequestCancelPrecheck(long id, CancellationToken ct)
+    { await Require("WMS.KKD.REQUESTS.CANCEL", ct); return Ok(ApiResponse<KkdRequestCancelPrecheckResult>.Ok(await requests.GetCancelPrecheckAsync(id, ct))); }
 
     [HttpPost("requests/{id:long}/cancel")]
     public async Task<IActionResult> CancelRequest(long id, KkdRequestCancelRequest request, CancellationToken ct)
@@ -221,7 +278,7 @@ public sealed class KkdController(
     [HttpPost("distributions/{id:long}/excess-approval")]
     public async Task<IActionResult> DecideExcessApproval(long id, KkdExcessApprovalRequest request, CancellationToken ct)
     {
-        await Require("WMS.KKD.OVERRIDES.MANAGE", ct);
+        await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct);
         var result = await distributions.DecideExcessApprovalAsync(id, request, UserId(), ct);
         return Ok(ApiResponse<KkdDistributionRow>.Ok(result,
             request.Approve ? "KKD kota aşımı onaylandı." : "KKD kota aşımı reddedildi."));
@@ -229,7 +286,7 @@ public sealed class KkdController(
 
     [HttpPost("distributions/{id:long}/cancel")]
     public async Task<IActionResult> CancelDistribution(long id, KkdDistributionCancelRequest request, CancellationToken ct)
-    { await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct); await distributions.CancelAsync(id, request.IdempotencyKey, request.Reason, UserId(), ct); return Ok(ApiResponse<object?>.Ok(null, "KKD dağıtımı iptal edildi ve ayrılan hak serbest bırakıldı.")); }
+    { await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct); await distributions.CancelAsync(id, request.IdempotencyKey, request.Reason, request.ExpectedRowVersion, UserId(), ct); return Ok(ApiResponse<object?>.Ok(null, "KKD dağıtımı iptal edildi ve ayrılan hak serbest bırakıldı.")); }
 
     [HttpGet("reports/validation-logs")]
     public async Task<IActionResult> ValidationLogs([FromQuery] int take = 250, CancellationToken ct = default)
