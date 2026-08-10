@@ -673,13 +673,8 @@ public sealed class ProductionTransferTaskService(
                 var trackingLocations = new HashSet<long>();
                 foreach (var tracking in line.Trackings.Where(x => x.PickedQuantity == 0 && x.ReservedQuantity == 0))
                 {
-                    var best = balances.Where(x => x.StockId == line.StockId && x.YapCodeId == line.YapCodeId
-                            && string.Equals(x.UnitCode, line.UnitCode, StringComparison.OrdinalIgnoreCase)
-                            && string.Equals(x.LotNo, tracking.LotNo ?? string.Empty, StringComparison.OrdinalIgnoreCase)
-                            && string.Equals(x.SerialNo, tracking.SerialNo ?? string.Empty, StringComparison.OrdinalIgnoreCase))
-                        .OrderByDescending(x => x.AvailableQuantity)
-                        .ThenBy(x => locations[x.LocationId].Code, StringComparer.OrdinalIgnoreCase)
-                        .FirstOrDefault();
+                    var best = ProductionTransferLineSplitHelper.FindSerialTrackingBalance(
+                        line, tracking, balances, locations);
                     if (best is null) continue;
                     trackingLocations.Add(best.LocationId);
                     if (tracking.SourceLocationId == best.LocationId) continue;
@@ -1375,13 +1370,16 @@ public sealed class ProductionTransferTaskService(
             return [];
         var stockIds = task.Lines.Where(x => !x.IsDeleted).Select(x => x.Line.StockId).Distinct().ToArray();
         var warehouseAvailable = await LoadWarehouseAvailableAsync(task.WarehouseId, stockIds, ct);
+        var serialWarehouseAvailable = await LoadSerialWarehouseAvailableAsync(task.WarehouseId, stockIds, ct);
         var shortages = new List<ProductionTaskStockShortageDto>();
         foreach (var taskLine in task.Lines.Where(x => !x.IsDeleted))
         {
             var needed = taskLine.PlannedQuantity - taskLine.ProcessedQuantity;
             if (needed <= 0) continue;
             var line = taskLine.Line;
-            var available = warehouseAvailable.GetValueOrDefault((line.StockId, line.YapCodeId, line.UnitCode));
+            var available = ProductionTransferLineSplitHelper.IsSerialTrackedLine(line)
+                ? serialWarehouseAvailable.GetValueOrDefault((line.StockId, line.YapCodeId, line.UnitCode))
+                : warehouseAvailable.GetValueOrDefault((line.StockId, line.YapCodeId, line.UnitCode));
             if (available + 0.000001m >= needed) continue;
             shortages.Add(new ProductionTaskStockShortageDto(
                 taskLine.Id,
@@ -1400,20 +1398,40 @@ public sealed class ProductionTransferTaskService(
         long[] stockIds,
         CancellationToken ct)
     {
+        var balances = await LoadPickableBalancesAsync(warehouseId, stockIds, ct);
+        return balances
+            .GroupBy(x => (x.StockId, x.YapCodeId, x.UnitCode))
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.AvailableQuantity));
+    }
+
+    private async Task<Dictionary<(long StockId, long? YapCodeId, string UnitCode), decimal>> LoadSerialWarehouseAvailableAsync(
+        long warehouseId,
+        long[] stockIds,
+        CancellationToken ct)
+    {
+        var balances = await LoadPickableBalancesAsync(warehouseId, stockIds, ct);
+        return balances
+            .Where(x => !string.IsNullOrWhiteSpace(x.SerialNo))
+            .GroupBy(x => (x.StockId, x.YapCodeId, x.UnitCode))
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.AvailableQuantity));
+    }
+
+    private async Task<List<LocationStockBalance>> LoadPickableBalancesAsync(
+        long warehouseId,
+        long[] stockIds,
+        CancellationToken ct)
+    {
         if (stockIds.Length == 0) return [];
         var locationIds = await uow.Repository<WarehouseLocation>().Query()
             .Where(x => x.WarehouseId == warehouseId && x.IsActive && x.IsPickable && !x.IsQuarantine)
             .Select(x => x.Id)
             .ToArrayAsync(ct);
-        var balances = await uow.Repository<LocationStockBalance>().Query()
+        return await uow.Repository<LocationStockBalance>().Query()
             .Where(x => x.WarehouseId == warehouseId
                 && stockIds.Contains(x.StockId)
                 && locationIds.Contains(x.LocationId)
                 && x.StockStatus == "Available"
                 && x.AvailableQuantity > 0)
             .ToListAsync(ct);
-        return balances
-            .GroupBy(x => (x.StockId, x.YapCodeId, x.UnitCode))
-            .ToDictionary(g => g.Key, g => g.Sum(x => x.AvailableQuantity));
     }
 }

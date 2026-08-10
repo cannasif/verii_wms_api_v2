@@ -1,5 +1,8 @@
+using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Application;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
+using verii_wms_api_v2.Modules.StockBalance.Domain;
+using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using Xunit;
 
@@ -163,5 +166,166 @@ public sealed class ProductionTransferLineSplitHelperTests
         var siblingTaskLine = task.Lines.Single(x => x.WtLineId == sibling.Id);
         Assert.Equal(2, siblingTaskLine.PlannedQuantity);
         Assert.Equal(a2, siblingTaskLine.SourceLocationId);
+    }
+
+    [Fact]
+    public void RefreshSerialSources_skips_shortage_trackings_and_ignores_non_serial_balances()
+    {
+        const long serialShelf = 10;
+        const long nonSerialShelf = 20;
+        var line = new WarehouseTransferLine
+        {
+            Id = 10,
+            StockId = 13,
+            UnitCode = "ADET",
+            TrackingType = StockTrackingType.Serial,
+            RequireSerial = true,
+            Trackings =
+            [
+                new()
+                {
+                    PlannedQuantity = 1,
+                    SerialNo = "SER-1",
+                },
+                new()
+                {
+                    PlannedQuantity = 1,
+                    SerialNo = null,
+                    SourceLocationId = nonSerialShelf,
+                },
+            ],
+        };
+        var taskLine = new WarehouseTransferTaskLine
+        {
+            WtLineId = 10,
+            Line = line,
+            PlannedQuantity = 2,
+        };
+        var context = new PickBalanceContext(
+            [],
+            new Dictionary<long, WarehouseLocation>
+            {
+                [serialShelf] = new() { Id = serialShelf, Code = "A-01" },
+                [nonSerialShelf] = new() { Id = nonSerialShelf, Code = "B-01" },
+            },
+            [
+                new()
+                {
+                    StockId = 13,
+                    LocationId = serialShelf,
+                    UnitCode = "ADET",
+                    SerialNo = "SER-1",
+                    AvailableQuantity = 1,
+                },
+                new()
+                {
+                    StockId = 13,
+                    LocationId = nonSerialShelf,
+                    UnitCode = "ADET",
+                    SerialNo = null,
+                    AvailableQuantity = 5,
+                },
+            ]);
+
+        ProductionTransferLineSplitHelper.RefreshSerialSources(taskLine, line, context, actor: 1, utcNow: DateTime.UtcNow);
+
+        var serialTracking = line.Trackings.Single(x => x.SerialNo == "SER-1");
+        var shortageTracking = line.Trackings.Single(x => string.IsNullOrWhiteSpace(x.SerialNo));
+        Assert.Equal(serialShelf, serialTracking.SourceLocationId);
+        Assert.Null(shortageTracking.SourceLocationId);
+    }
+
+    [Fact]
+    public void FindSerialTrackingBalance_returns_null_for_shortage_tracking()
+    {
+        var line = new WarehouseTransferLine
+        {
+            StockId = 13,
+            UnitCode = "ADET",
+            TrackingType = StockTrackingType.Serial,
+            RequireSerial = true,
+        };
+        var tracking = new WarehouseTransferTracking { SerialNo = null, PlannedQuantity = 1 };
+        var balance = new LocationStockBalance
+        {
+            StockId = 13,
+            LocationId = 20,
+            UnitCode = "ADET",
+            SerialNo = null,
+            AvailableQuantity = 5,
+        };
+
+        var result = ProductionTransferLineSplitHelper.FindSerialTrackingBalance(
+            line,
+            tracking,
+            [balance],
+            new Dictionary<long, WarehouseLocation> { [20] = new() { Id = 20, Code = "B-01" } });
+
+        Assert.Null(result);
+    }
+
+    [Fact]
+    public void ApplySerialShortageRouteChunks_moves_shortage_quantity_to_non_serial_siblings()
+    {
+        const long serialShelf = 10;
+        const long bulkShelf = 20;
+        var header = new WarehouseTransferHeader { BranchCode = "0", Lines = [] };
+        var link = new ProductionTransferHeaderLink { BranchCode = "0", Lines = [] };
+        var task = new WarehouseTransferTask { BranchCode = "0", Lines = [] };
+        var line = new WarehouseTransferLine
+        {
+            Id = 10,
+            LineNo = 1,
+            StockId = 13,
+            UnitCode = "ADET",
+            TrackingType = StockTrackingType.Serial,
+            RequireSerial = true,
+            RequestedQuantity = 4,
+            DefaultSourceLocationId = serialShelf,
+            Trackings =
+            [
+                new() { Id = 1, PlannedQuantity = 1, SerialNo = "SER-1", SourceLocationId = serialShelf },
+                new() { Id = 2, PlannedQuantity = 3, SerialNo = null },
+            ],
+        };
+        header.Lines.Add(line);
+        var sourceLineLink = new ProductionTransferLineLink
+        {
+            BranchCode = "0",
+            WarehouseTransferLine = line,
+            RequiredQuantity = 4,
+        };
+        link.Lines.Add(sourceLineLink);
+        var taskLine = new WarehouseTransferTaskLine
+        {
+            Id = 100,
+            BranchCode = "0",
+            WtLineId = 10,
+            Line = line,
+            PlannedQuantity = 4,
+            SourceLocationId = serialShelf,
+        };
+        task.Lines.Add(taskLine);
+        var nextLineNo = 1;
+
+        ProductionTransferLineSplitHelper.ApplySerialShortageRouteChunks(
+            header,
+            link,
+            task,
+            taskLine,
+            line,
+            sourceLineLink,
+            [new(bulkShelf, 2, null, null), new(bulkShelf + 1, 1, null, null)],
+            ref nextLineNo,
+            actor: 1,
+            utcNow: DateTime.UtcNow);
+
+        Assert.Equal(1, line.RequestedQuantity);
+        Assert.Equal(1, taskLine.PlannedQuantity);
+        Assert.Equal(serialShelf, taskLine.SourceLocationId);
+        Assert.True(line.Trackings.Single(x => x.SerialNo == "SER-1").PlannedQuantity > 0);
+        Assert.True(line.Trackings.Single(x => string.IsNullOrWhiteSpace(x.SerialNo)).IsDeleted);
+        Assert.Equal(2, header.Lines.Count(x => x.Id != 10));
+        Assert.All(header.Lines.Where(x => x.Id != 10), sibling => Assert.Empty(sibling.Trackings));
     }
 }

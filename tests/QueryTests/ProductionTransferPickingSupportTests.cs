@@ -386,4 +386,83 @@ public sealed class ProductionTransferPickingSupportTests
 
         Assert.Equal([1, 2, 3, 4, 8, 5, 6, 7], sorted.Select(x => x.LineNo).ToArray());
     }
+
+    [Fact]
+    public void BuildPersistedRows_consolidates_serial_shortage_into_single_row_without_line_location_fallback()
+    {
+        const long a1 = 9001;
+        var line = new WarehouseTransferLine
+        {
+            Id = 101,
+            LineNo = 1,
+            StockId = 10,
+            StockCodeSnapshot = "01/013",
+            TrackingType = StockTrackingType.Serial,
+            RequireSerial = true,
+            DefaultSourceLocationId = a1,
+            Trackings =
+            [
+                new() { Id = 1, PlannedQuantity = 1, SerialNo = "SER-1", SourceLocationId = a1 },
+                new() { Id = 2, PlannedQuantity = 1, SerialNo = "SER-2", SourceLocationId = a1 },
+                new() { Id = 3, PlannedQuantity = 1, SerialNo = null },
+                new() { Id = 4, PlannedQuantity = 1, SerialNo = null },
+            ],
+        };
+        var header = new WarehouseTransferHeader { Lines = [line] };
+        var task = new WarehouseTransferTask
+        {
+            Lines =
+            [
+                new WarehouseTransferTaskLine
+                {
+                    Id = 501,
+                    WtLineId = 101,
+                    PlannedQuantity = 4,
+                    ProcessedQuantity = 0,
+                    SourceLocationId = a1,
+                    Line = line,
+                },
+            ],
+        };
+        var locationCodes = new Dictionary<long, string> { [a1] = "A1" };
+
+        var rows = ProductionTransferPickingSupport.BuildPersistedRows(header, task, locationCodes);
+
+        Assert.Equal(3, rows.Count);
+        Assert.Equal(2, rows.Count(x => !string.IsNullOrWhiteSpace(x.SerialNo)));
+        var shortage = Assert.Single(rows.Where(x => string.IsNullOrWhiteSpace(x.SerialNo)));
+        Assert.Equal(2, shortage.RequestedQuantity);
+        Assert.Equal(2, shortage.RemainingQuantity);
+        Assert.Null(shortage.SourceLocationId);
+        Assert.False(shortage.CanPick);
+    }
+
+    [Fact]
+    public void GetSerialShortageRemaining_sums_only_task_scoped_shortage_trackings()
+    {
+        const long a1 = 9001;
+        var line = new WarehouseTransferLine
+        {
+            Id = 101,
+            StockId = 10,
+            TrackingType = StockTrackingType.Serial,
+            RequireSerial = true,
+            Trackings =
+            [
+                new() { Id = 1, PlannedQuantity = 1, SerialNo = "SER-1", SourceLocationId = a1 },
+                new() { Id = 2, PlannedQuantity = 1, SerialNo = null },
+                new() { Id = 3, PlannedQuantity = 1, SerialNo = null },
+            ],
+        };
+        var taskLine = new WarehouseTransferTaskLine
+        {
+            Id = 501,
+            WtLineId = 101,
+            PlannedQuantity = 3,
+            ProcessedQuantity = 0,
+            Line = line,
+        };
+
+        Assert.Equal(2, ProductionTransferPickingSupport.GetSerialShortageRemaining(line, taskLine));
+    }
 }

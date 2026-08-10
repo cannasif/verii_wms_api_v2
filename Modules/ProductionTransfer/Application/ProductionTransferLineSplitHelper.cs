@@ -1,10 +1,112 @@
+using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
+using verii_wms_api_v2.Modules.StockBalance.Domain;
+using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 
 namespace verii_wms_api_v2.Modules.ProductionTransfer.Application;
 
 internal static class ProductionTransferLineSplitHelper
 {
+    internal static bool IsSerialTrackedLine(WarehouseTransferLine line) =>
+        line.TrackingType is StockTrackingType.Serial or StockTrackingType.LotAndSerial
+        || line.RequireSerial;
+
+    internal static bool IsSerialShortageTracking(WarehouseTransferTracking tracking) =>
+        string.IsNullOrWhiteSpace(tracking.SerialNo);
+
+    internal static LocationStockBalance? FindSerialTrackingBalance(
+        WarehouseTransferLine line,
+        WarehouseTransferTracking tracking,
+        IEnumerable<LocationStockBalance> balances,
+        IReadOnlyDictionary<long, WarehouseLocation> locations)
+    {
+        if (IsSerialShortageTracking(tracking)) return null;
+
+        return balances
+            .Where(x => x.StockId == line.StockId
+                && x.YapCodeId == line.YapCodeId
+                && string.Equals(x.UnitCode, line.UnitCode, StringComparison.OrdinalIgnoreCase)
+                && !string.IsNullOrWhiteSpace(x.SerialNo)
+                && string.Equals(x.SerialNo.Trim(), tracking.SerialNo!.Trim(), StringComparison.OrdinalIgnoreCase)
+                && string.Equals(x.LotNo ?? string.Empty, tracking.LotNo ?? string.Empty, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(x => x.AvailableQuantity)
+            .ThenBy(x => locations[x.LocationId].Code, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault();
+    }
+    internal static void ApplySerialShortageRouteChunks(
+        WarehouseTransferHeader header,
+        ProductionTransferHeaderLink link,
+        WarehouseTransferTask task,
+        WarehouseTransferTaskLine taskLine,
+        WarehouseTransferLine line,
+        ProductionTransferLineLink sourceLineLink,
+        IReadOnlyList<RouteAllocationChunk> chunks,
+        ref int nextLineNo,
+        long actor,
+        DateTime utcNow)
+    {
+        var located = chunks.Where(x => x.Quantity > 0 && x.LocationId.HasValue).ToArray();
+        var total = located.Sum(x => x.Quantity);
+        if (total <= 0) return;
+
+        var toConsume = total;
+        foreach (var tracking in line.Trackings
+                     .Where(x => !x.IsDeleted && x.PickedQuantity <= 0 && IsSerialShortageTracking(x))
+                     .OrderBy(x => x.Id)
+                     .ToArray())
+        {
+            var open = tracking.PlannedQuantity - tracking.PickedQuantity;
+            if (open <= 0) continue;
+            var take = Math.Min(open, toConsume);
+            tracking.PlannedQuantity -= take;
+            tracking.UpdatedBy = actor;
+            tracking.UpdatedDate = utcNow;
+            if (tracking.PlannedQuantity <= 0 && tracking.PickedQuantity <= 0 && tracking.ReservedQuantity <= 0)
+            {
+                tracking.IsDeleted = true;
+                tracking.DeletedDate = utcNow;
+                tracking.DeletedBy = actor;
+            }
+
+            toConsume -= take;
+            if (toConsume <= 0) break;
+        }
+
+        foreach (var chunk in located)
+            AddSibling(header, link, task, taskLine, line, sourceLineLink, chunk, ref nextLineNo, actor, utcNow);
+
+        var serialTrackings = line.Trackings.Where(x => !x.IsDeleted && !IsSerialShortageTracking(x)).ToArray();
+        var serialOpen = serialTrackings.Sum(x => Math.Max(0, x.PlannedQuantity - x.PickedQuantity));
+        var serialProcessed = serialTrackings.Sum(x => x.PickedQuantity);
+        var openQty = serialOpen + serialProcessed;
+        line.RequestedQuantity = openQty;
+        taskLine.PlannedQuantity = openQty;
+        sourceLineLink.RequiredQuantity = openQty;
+        line.UpdatedBy = actor;
+        line.UpdatedDate = utcNow;
+        taskLine.UpdatedBy = actor;
+        taskLine.UpdatedDate = utcNow;
+
+        var trackingLocations = serialTrackings
+            .Where(x => x.PickedQuantity <= 0 && x.PlannedQuantity - x.PickedQuantity > 0)
+            .Select(x => x.SourceLocationId ?? taskLine.SourceLocationId ?? line.DefaultSourceLocationId)
+            .Where(x => x.HasValue)
+            .Select(x => x!.Value)
+            .Distinct()
+            .ToArray();
+        if (trackingLocations.Length == 1)
+        {
+            taskLine.SourceLocationId = trackingLocations[0];
+            line.DefaultSourceLocationId = trackingLocations[0];
+        }
+        else if (trackingLocations.Length > 1)
+        {
+            taskLine.SourceLocationId = null;
+            line.DefaultSourceLocationId = null;
+        }
+    }
+
     internal static void ApplyNonSerialRouteChunks(
         WarehouseTransferHeader header,
         ProductionTransferHeaderLink link,
@@ -261,15 +363,16 @@ internal static class ProductionTransferLineSplitHelper
         var trackingLocations = new HashSet<long>();
         foreach (var tracking in line.Trackings.Where(x => x.PickedQuantity == 0))
         {
-            var best = context.Balances
-                .Where(x => x.StockId == line.StockId
-                    && x.YapCodeId == line.YapCodeId
-                    && string.Equals(x.UnitCode, line.UnitCode, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(x.SerialNo ?? string.Empty, tracking.SerialNo ?? string.Empty, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(x.LotNo ?? string.Empty, tracking.LotNo ?? string.Empty, StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(x => x.AvailableQuantity)
-                .ThenBy(x => context.Locations[x.LocationId].Code, StringComparer.OrdinalIgnoreCase)
-                .FirstOrDefault();
+            if (IsSerialShortageTracking(tracking))
+            {
+                if (!tracking.SourceLocationId.HasValue) continue;
+                tracking.SourceLocationId = null;
+                tracking.UpdatedBy = actor;
+                tracking.UpdatedDate = utcNow;
+                continue;
+            }
+
+            var best = FindSerialTrackingBalance(line, tracking, context.Balances, context.Locations);
             if (best is null) continue;
             trackingLocations.Add(best.LocationId);
             if (tracking.SourceLocationId == best.LocationId) continue;

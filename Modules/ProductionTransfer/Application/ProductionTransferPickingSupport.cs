@@ -159,16 +159,39 @@ internal static class ProductionTransferPickingSupport
 
             if (line.Trackings.Count > 0)
             {
+                decimal shortageRequested = 0;
+                decimal shortageRemaining = 0;
+                decimal shortageProcessed = 0;
+
                 foreach (var (tracking, trackingProcessed, trackingRemaining) in EnumerateTaskScopedSerialTrackings(line, taskLine))
                 {
+                    if (ProductionTransferLineSplitHelper.IsSerialShortageTracking(tracking))
+                    {
+                        shortageRequested += trackingProcessed + trackingRemaining;
+                        shortageRemaining += trackingRemaining;
+                        shortageProcessed += trackingProcessed;
+                        continue;
+                    }
+
                     var locationId = tracking.SourceLocationId ?? taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
                     rows.Add(new(
                         taskLine.Id, line.Id, line.LineNo, locationId,
                         locationId.HasValue ? locationCodes.GetValueOrDefault(locationId.Value) : null,
                         line.StockId, line.StockCodeSnapshot, line.StockNameSnapshot, tracking.SerialNo,
-                        tracking.PlannedQuantity, trackingRemaining, trackingProcessed,
+                        trackingProcessed + trackingRemaining, trackingRemaining, trackingProcessed,
                         locationId.HasValue && trackingRemaining > 0));
                 }
+
+                if (shortageRemaining > 0 || shortageProcessed > 0)
+                {
+                    rows.Add(new(
+                        taskLine.Id, line.Id, line.LineNo,
+                        null, null,
+                        line.StockId, line.StockCodeSnapshot, line.StockNameSnapshot, null,
+                        shortageRequested, shortageRemaining, shortageProcessed,
+                        false));
+                }
+
                 continue;
             }
 
@@ -202,6 +225,16 @@ internal static class ProductionTransferPickingSupport
 
     // Serili satırlar transfer satırında paylaşıldığından, devredilen görevde yalnızca bu görevin
     // plan/processed miktarına denk gelen seriler gösterilir; önceki görevde toplanan seriler gizlenir.
+    internal static decimal GetSerialShortageRemaining(
+        WarehouseTransferLine line,
+        WarehouseTransferTaskLine taskLine)
+    {
+        if (line.Trackings.Count == 0) return 0;
+        return EnumerateTaskScopedSerialTrackings(line, taskLine)
+            .Where(x => ProductionTransferLineSplitHelper.IsSerialShortageTracking(x.Tracking))
+            .Sum(x => x.Remaining);
+    }
+
     internal static IEnumerable<(WarehouseTransferTracking Tracking, decimal Processed, decimal Remaining)>
         EnumerateTaskScopedSerialTrackings(WarehouseTransferLine line, WarehouseTransferTaskLine taskLine)
     {
@@ -330,6 +363,36 @@ internal static class ProductionTransferPickingSupport
             overIssueLines.Sum(x => x.OverIssueQuantity),
             overIssueLines,
             rows);
+    }
+
+    internal static async Task<ProductionTransferPickingTableDto> BuildInlinePickingTableAsync(
+        IUnitOfWork uow,
+        WarehouseTransferHeader header,
+        ProductionTransferHeaderLink link,
+        WarehouseTransferTask task,
+        CancellationToken ct)
+    {
+        var policy = await ProductionTransferOverIssueSupport.LoadPolicyAsync(uow, header.BranchCode, ct);
+        var isLocked = task.Status is not WarehouseTransferTaskStatus.InProgress
+            and not WarehouseTransferTaskStatus.PartiallyCompleted;
+        IReadOnlyList<ProductionTransferPickingRowDto> rows;
+        if (isLocked)
+            rows = BuildRecipeRows(header, task);
+        else
+        {
+            var locationIds = task.Lines.SelectMany(x =>
+            {
+                var line = ResolveTaskLine(header, x);
+                return new long?[] { x.SourceLocationId, line.DefaultSourceLocationId }
+                    .Concat(line.Trackings.Select(t => t.SourceLocationId));
+            });
+            var locationCodes = await LoadLocationCodesAsync(uow, locationIds, ct);
+            rows = BuildPersistedRows(header, task, locationCodes);
+        }
+
+        return MapTable(
+            header, link, task, isLocked, policy,
+            SortDisplayRows(rows, header, link));
     }
 
     internal static async Task<Dictionary<long, string>> LoadLocationCodesAsync(

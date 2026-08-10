@@ -9,7 +9,21 @@ public sealed record ProductionTransferScanPickRequest(
     long ExpectedTaskLineId,
     string Barcode,
     decimal? Quantity = null,
-    long? SourceLocationId = null);
+    long? SourceLocationId = null,
+    bool ConfirmAboveThreshold = false);
+
+public sealed record ProductionTransferScanPickSummaryDelta(
+    ProductionTransferWorkflowStatus WorkflowStatus,
+    decimal PickedQuantity,
+    decimal ShortageQuantity,
+    decimal OverIssueQuantity,
+    bool CanCompletePicking);
+
+public sealed record ProductionTransferScanPickExecutionLineDelta(
+    long LineId,
+    decimal PickedQuantity,
+    decimal RemainingToPickQuantity,
+    decimal OverIssueQuantity);
 
 public sealed record ResolveProductionTransferBarcodeRequest(string Barcode);
 
@@ -171,7 +185,9 @@ public sealed record ProductionTransferExecutionDto(
     IReadOnlyList<ProductionTransferExecutionLineDto> Lines);
 
 public sealed record ProductionTransferScanPickResult(
-    ProductionTransferExecutionDto Execution,
+    ProductionTransferPickingRowDto Row,
+    ProductionTransferScanPickSummaryDelta Summary,
+    ProductionTransferScanPickExecutionLineDelta ExecutionLine,
     long LineId,
     string StockCode,
     decimal AcceptedQuantity,
