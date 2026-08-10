@@ -130,4 +130,5 @@
   <data name="TraceDocumentUnknown" xml:space="preserve"><value>عملية بلا مستند</value></data>
   <data name="EvidenceOperationalDatabase" xml:space="preserve"><value>قاعدة بيانات عمليات WMS</value></data>
   <data name="EvidenceAuthorizedScope" xml:space="preserve"><value>تم تطبيق الفرع النشط وصلاحيات المستخدم والمستودعات المسموح بها.</value></data>
+  <data name="DateLastWeek" xml:space="preserve"><value>الأسبوع الماضي</value></data>
 </root>

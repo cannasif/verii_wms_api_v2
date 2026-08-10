@@ -16,14 +16,22 @@ public static class WarehouseAssistantModule
             .Validate(options => Uri.TryCreate(options.BaseUrl, UriKind.Absolute, out var uri)
                     && uri.Scheme == Uri.UriSchemeHttps,
                 "WarehouseAssistant:BaseUrl must be an absolute HTTPS URL.")
-            .Validate(options => !options.EnableOpenAiIntentResolution
-                    || (!string.IsNullOrWhiteSpace(options.Model) && !string.IsNullOrWhiteSpace(options.ApiKey)),
-                "WarehouseAssistant model and API key are required when OpenAI intent resolution is enabled.")
+            .Validate(options => !options.EnableOpenAiIntentResolution || !string.IsNullOrWhiteSpace(options.Model),
+                "WarehouseAssistant model is required when semantic intent resolution is enabled.")
+            .Validate(options => options.MinimumSemanticConfidence is >= 0.50m and <= 0.95m,
+                "WarehouseAssistant:MinimumSemanticConfidence must be between 0.50 and 0.95.")
             .ValidateOnStart();
+        services.PostConfigure<WarehouseAssistantOptions>(options =>
+        {
+            if (string.IsNullOrWhiteSpace(options.ApiKey))
+                options.ApiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY") ?? string.Empty;
+        });
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<WarehouseAssistantIntentResolver>();
         services.AddHttpClient<OpenAiWarehouseAssistantIntentResolver>();
         services.AddScoped<IWarehouseAssistantIntentResolver>(provider =>
+            provider.GetRequiredService<OpenAiWarehouseAssistantIntentResolver>());
+        services.AddScoped<IWarehouseAssistantRoutingDiagnostics>(provider =>
             provider.GetRequiredService<OpenAiWarehouseAssistantIntentResolver>());
         services.AddScoped<IWarehouseAssistantService, WarehouseAssistantService>();
         return services;

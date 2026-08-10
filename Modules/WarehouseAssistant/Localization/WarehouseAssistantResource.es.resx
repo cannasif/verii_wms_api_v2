@@ -130,4 +130,5 @@
   <data name="ExceptionPackingPrintDescription" xml:space="preserve"><value>El trabajo de etiqueta del embalaje {0} se intentó {1} veces. Último error: {2}</value></data>
   <data name="ExceptionPackingPrintUnknownError" xml:space="preserve"><value>No se registraron detalles del error</value></data>
   <data name="ExceptionPackingPrintAction" xml:space="preserve"><value>Revise la conexión de la impresora y la plantilla; después vuelva a intentar el mismo trabajo de forma segura.</value></data>
+  <data name="DateLastWeek" xml:space="preserve"><value>la semana pasada</value></data>
 </root>

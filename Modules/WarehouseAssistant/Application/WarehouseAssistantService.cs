@@ -33,6 +33,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
     private readonly TimeProvider timeProvider;
     private readonly IWarehouseBarcodeResolver? barcodeResolver;
     private readonly IStringLocalizer<WarehouseAssistantResource>? localizer;
+    private readonly IWarehouseAssistantRoutingDiagnostics? routingDiagnostics;
 
     public WarehouseAssistantService(
         IUnitOfWork unitOfWork,
@@ -40,7 +41,8 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         IAuditLogWriter audit,
         TimeProvider timeProvider,
         IWarehouseBarcodeResolver? barcodeResolver = null,
-        IStringLocalizer<WarehouseAssistantResource>? localizer = null)
+        IStringLocalizer<WarehouseAssistantResource>? localizer = null,
+        IWarehouseAssistantRoutingDiagnostics? routingDiagnostics = null)
     {
         this.unitOfWork = unitOfWork;
         this.intentResolver = intentResolver;
@@ -48,6 +50,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         this.timeProvider = timeProvider;
         this.barcodeResolver = barcodeResolver;
         this.localizer = localizer;
+        this.routingDiagnostics = routingDiagnostics;
     }
 
     public Task<WarehouseAssistantCapabilities> GetCapabilitiesAsync(
@@ -84,6 +87,8 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         if (CanQueryProcessBlockers(access))
             examples.Add(M(CapabilityExampleProcessBlockers));
 
+        var routing = routingDiagnostics?.GetRoutingInfo()
+            ?? new WarehouseAssistantRoutingInfo("2.1.0", "DeterministicOnly", false, null);
         return Task.FromResult(new WarehouseAssistantCapabilities(
             access.CanQueryAllUsers,
             access.CanViewStockBalances,
@@ -100,7 +105,11 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             true,
             CanQueryOperationalExceptions(access),
             access.CanViewStockMovements && access.CanViewStockBalances,
-            CanQueryProcessBlockers(access)));
+            CanQueryProcessBlockers(access),
+            routing.Version,
+            routing.RoutingMode,
+            routing.SemanticRoutingAvailable,
+            routing.SemanticModel));
     }
 
     public async Task<IReadOnlyList<WarehouseAssistantConversationRow>> GetConversationsAsync(
@@ -190,7 +199,11 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         await unitOfWork.Repository<WarehouseAssistantMessage>().AddAsync(userMessage, ct);
 
         var result = await ExecuteIntentAsync(resolution, message, actorUserId, branchCode, access, ct);
-        result = result with { Evidence = BuildEvidence(result) };
+        result = result with
+        {
+            Evidence = BuildEvidence(result),
+            Context = result.Context with { LastIntent = result.Intent }
+        };
         var responseData = new StoredResponseData
         {
             ProviderMode = resolution.ProviderMode,
@@ -321,7 +334,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                 await ExecuteProcessBlockersAsync(resolution, actorUserId, branchCode, access, ct),
             WarehouseAssistantIntent.ParameterHelp => ExecuteParameterHelp(resolution),
             WarehouseAssistantIntent.Help => HelpResult(access),
-            _ => UnknownResult(access)
+            _ => UnknownResult(access, resolution.ClarificationQuestion)
         };
     }
 
@@ -558,14 +571,14 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             [], [], [], [], null, [], [], new WarehouseAssistantContext(null, null, null), suggestions);
     }
 
-    private ExecutionResult UnknownResult(WarehouseAssistantAccess access)
+    private ExecutionResult UnknownResult(WarehouseAssistantAccess access, string? clarificationQuestion = null)
     {
         var help = HelpResult(access);
         return help with
         {
             Intent = WarehouseAssistantIntent.Unknown,
             ToolName = "none",
-            Answer = M(UnknownAnswer)
+            Answer = string.IsNullOrWhiteSpace(clarificationQuestion) ? M(UnknownAnswer) : clarificationQuestion.Trim()
         };
     }
 
@@ -780,6 +793,12 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             case WarehouseAssistantDatePreset.ThisWeek:
                 var offset = ((int)today.DayOfWeek + 6) % 7;
                 startLocal = today.AddDays(-offset); endLocal = today.AddDays(1); label = M(DateThisWeek); break;
+            case WarehouseAssistantDatePreset.LastWeek:
+                var currentWeekOffset = ((int)today.DayOfWeek + 6) % 7;
+                endLocal = today.AddDays(-currentWeekOffset);
+                startLocal = endLocal.AddDays(-7);
+                label = M(DateLastWeek);
+                break;
             case WarehouseAssistantDatePreset.LastThirtyDays:
                 startLocal = today.AddDays(-29); endLocal = today.AddDays(1); label = M(DateLastThirtyDays); break;
             default:

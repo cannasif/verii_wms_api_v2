@@ -157,4 +157,5 @@
   <data name="ExceptionPackingPrintDescription" xml:space="preserve"><value>Der Etikettenauftrag für Verpackung {0} wurde {1}-mal versucht. Letzter Fehler: {2}</value></data>
   <data name="ExceptionPackingPrintUnknownError" xml:space="preserve"><value>Keine Fehlerdetails gespeichert</value></data>
   <data name="ExceptionPackingPrintAction" xml:space="preserve"><value>Druckerverbindung und Vorlage prüfen und denselben Auftrag nach der Behebung sicher erneut ausführen.</value></data>
+  <data name="DateLastWeek" xml:space="preserve"><value>letzte Woche</value></data>
 </root>

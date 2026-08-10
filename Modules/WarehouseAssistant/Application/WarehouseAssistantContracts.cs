@@ -39,8 +39,22 @@ public enum WarehouseAssistantDatePreset
     Yesterday = 2,
     LastSevenDays = 3,
     ThisWeek = 4,
-    LastThirtyDays = 5
+    LastThirtyDays = 5,
+    LastWeek = 6
 }
+
+public enum WarehouseAssistantRoutingStrategy
+{
+    DeterministicOnly = 1,
+    Hybrid = 2,
+    SemanticFirst = 3
+}
+
+public sealed record WarehouseAssistantRoutingInfo(
+    string Version,
+    string RoutingMode,
+    bool SemanticRoutingAvailable,
+    string? SemanticModel);
 
 public sealed record WarehouseAssistantAccess(
     bool CanQueryAllUsers,
@@ -85,7 +99,11 @@ public sealed record WarehouseAssistantCapabilities(
     bool CanQueryShiftBrief = true,
     bool CanQueryOperationalExceptions = false,
     bool CanQueryTraceability = false,
-    bool CanQueryProcessBlockers = false);
+    bool CanQueryProcessBlockers = false,
+    string AssistantVersion = "2.1.0",
+    string RoutingMode = "deterministic",
+    bool SemanticRoutingAvailable = false,
+    string? SemanticModel = null);
 
 public sealed record WarehouseAssistantConversationRow(
     long Id,
@@ -402,7 +420,8 @@ public sealed record WarehouseAssistantContext(
     string? VehiclePlate = null,
     string? TransferDocumentNo = null,
     WarehouseAssistantTransferScope? TransferScope = null,
-    string? DocumentNo = null);
+    string? DocumentNo = null,
+    WarehouseAssistantIntent? LastIntent = null);
 
 public sealed record WarehouseAssistantIntentResolution(
     WarehouseAssistantIntent Intent,
@@ -424,7 +443,8 @@ public sealed record WarehouseAssistantIntentResolution(
     string? TransferDocumentQuery = null,
     WarehouseAssistantTransferScope TransferScope = WarehouseAssistantTransferScope.All,
     bool HasExplicitDateFilter = false,
-    string? DocumentQuery = null);
+    string? DocumentQuery = null,
+    string? ClarificationQuestion = null);
 
 public interface IWarehouseAssistantIntentResolver
 {
@@ -432,6 +452,11 @@ public interface IWarehouseAssistantIntentResolver
         string message,
         WarehouseAssistantContext? context,
         CancellationToken cancellationToken = default);
+}
+
+public interface IWarehouseAssistantRoutingDiagnostics
+{
+    WarehouseAssistantRoutingInfo GetRoutingInfo();
 }
 
 public interface IWarehouseAssistantService

@@ -130,4 +130,5 @@
   <data name="TraceDocumentUnknown" xml:space="preserve"><value>Operazione senza documento</value></data>
   <data name="EvidenceOperationalDatabase" xml:space="preserve"><value>Database operativo WMS</value></data>
   <data name="EvidenceAuthorizedScope" xml:space="preserve"><value>Sono stati applicati filiale attiva, autorizzazioni utente e magazzini consentiti.</value></data>
+  <data name="DateLastWeek" xml:space="preserve"><value>la settimana scorsa</value></data>
 </root>

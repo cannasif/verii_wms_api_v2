@@ -191,4 +191,5 @@
   <data name="ExceptionPackingPrintDescription" xml:space="preserve"><value>{0} paketleme kaydındaki etiket işi {1} kez denendi. Son hata: {2}</value></data>
   <data name="ExceptionPackingPrintUnknownError" xml:space="preserve"><value>Hata ayrıntısı kaydedilmedi</value></data>
   <data name="ExceptionPackingPrintAction" xml:space="preserve"><value>Yazıcı bağlantısını ve şablonu kontrol edin; sorun giderildikten sonra aynı işi güvenli biçimde yeniden deneyin.</value></data>
+  <data name="DateLastWeek" xml:space="preserve"><value>Geçen hafta</value></data>
 </root>

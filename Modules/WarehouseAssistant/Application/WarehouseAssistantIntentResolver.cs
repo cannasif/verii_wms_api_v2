@@ -54,7 +54,7 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
 
     private static readonly string[] ActivityWords =
     [
-        "islem", "hareket", "yaptigim", "yapmis", "yapti", "aktivit", "kayit",
+        "islem", "hareket", "yaptigim", "yapmis", "yapti", "aktivit", "kayit", "neyle ugrastim", "neyle ugrasmis", "ne yapmis", "neler yapmis", "ne is yapmis",
         "activity", "activities", "actions", "operations", "did today",
         "aktivitat", "aktionen", "vorgange", "activite", "actions", "operations",
         "actividad", "acciones", "operaciones", "attivita", "azioni", "operazioni",
@@ -73,7 +73,7 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
     private static readonly string[] TaskWords =
     [
         "atanan emir", "atanmis emir", "atanan gorev", "atanmis gorev", "bana atanan", "bana atanmis",
-        "gorevlerim", "gorev list", "bekleyen gorev", "acik gorev", "toplama emri", "is emirlerim", "is emri list",
+        "gorevlerim", "gorev list", "bekleyen gorev", "acik gorev", "toplama emri", "is emirlerim", "is emri list", "benden beklenen", "siradaki islerim", "yapmam gereken emir",
         "assigned task", "my tasks", "open tasks", "pending tasks", "picking task", "work orders",
         "zugewiesene aufgabe", "meine aufgaben", "offene aufgaben", "meine offenen aufgaben", "kommissionierauftrag",
         "tache assignee", "mes taches", "taches ouvertes", "ordre de preparation",
@@ -141,6 +141,7 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
     private static readonly string[] ShiftBriefWords =
     [
         "vardiya ozeti", "gunluk depo ozeti", "bugunku islerimi ozetle", "bugun ne yapacagim", "bugun ne yapmaliyim",
+        "mesaiye basladim", "once neye bakayim", "once ne yapayim", "onceligim ne", "nereden baslamaliyim", "bugun beni ne bekliyor", "ilk hangi isi yapayim",
         "deponun bugunku durumu", "operasyon ozeti", "shift brief", "shift summary", "today s workload", "warehouse summary",
         "schichtubersicht", "resume de l equipe", "resumen del turno", "riepilogo turno"
     ];
@@ -149,21 +150,22 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
     [
         "mudahale gereken", "mudahele gereken", "operasyon sorunlari", "kritik sorun", "istisna merkezi",
         "erp ye gitmeyen", "erp aktarimi basarisiz", "basarisiz job", "hangfire hatasi", "bakiye tutarsiz",
-        "kalitede bekleyen", "geciken sevk", "takilan islemler", "exception center", "operational exceptions",
+        "kalitede bekleyen", "geciken sevk", "takilan islemler", "ters giden", "aksayan is", "sorunlu islemler", "yolunda gitmeyen", "acil bakmam gereken",
+        "exception center", "operational exceptions",
         "failed erp", "failed jobs", "stuck operations", "warehouse issues"
     ];
 
     private static readonly string[] TraceabilityWords =
     [
         "izlenebilirlik", "urun hikayesi", "serinin hikayesi", "barkodun hikayesi", "uctan uca", "nereden geldi nereye gitti",
-        "hangi islemlerden gecti", "gecmisini goster", "traceability", "trace history", "end to end history", "where did it come from",
+        "hangi islemlerden gecti", "hangi yollardan gecti", "basina neler geldi", "tum yolculugu", "ilk giristen simdiye", "gecmisini goster", "traceability", "trace history", "end to end history", "where did it come from",
         "ruckverfolgbarkeit", "tracabilite", "trazabilidad", "tracciabilita"
     ];
 
     private static readonly string[] ProcessBlockerWords =
     [
         "neden bekliyor", "neden tamamlanamiyor", "neden ilerlemiyor", "neden takildi", "ne engelliyor", "engel nedir",
-        "neden erp ye gitmiyor", "why is it waiting", "why is it blocked", "why can t it complete", "blocking reason",
+        "hangi adimda kaldi", "onunde ne var", "neye takildi", "niye bitmiyor", "devam etmesini ne durduruyor", "neden erp ye gitmiyor", "why is it waiting", "why is it blocked", "why can t it complete", "blocking reason",
         "warum blockiert", "pourquoi bloque", "por que bloqueado", "perche bloccato"
     ];
 
@@ -313,6 +315,17 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
             intent = requestsAll ? WarehouseAssistantIntent.UserActivities : WarehouseAssistantIntent.MyActivities;
             confidence = 0.92m;
         }
+        else if (context?.LastIntent is { } lastIntent
+            && lastIntent is not WarehouseAssistantIntent.Unknown and not WarehouseAssistantIntent.Help
+            && (hasExplicitDateFilter || ContainsAny(normalized,
+            [
+                "peki", "ya onceki", "ya gecen", "bir de", "ayni sorgu", "aynisini", "bunlar", "onlar",
+                "what about", "and previous", "same query", "wie sieht", "et pour", "y que", "e invece"
+            ])))
+        {
+            intent = lastIntent;
+            confidence = 0.82m;
+        }
         else
         {
             intent = WarehouseAssistantIntent.Unknown;
@@ -356,6 +369,8 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
     {
         if (ContainsAny(normalized, ["dun", "yesterday", "gestern", "hier", "ayer", "ieri", "امس"]))
             return (WarehouseAssistantDatePreset.Yesterday, true);
+        if (ContainsAny(normalized, ["gecen hafta", "last week", "letzte woche", "semaine derniere", "semana pasada", "settimana scorsa", "الأسبوع الماضي"]))
+            return (WarehouseAssistantDatePreset.LastWeek, true);
         if (ContainsAny(normalized, ["bu hafta", "this week", "diese woche", "cette semaine", "esta semana", "questa settimana", "هذا الاسبوع"]))
             return (WarehouseAssistantDatePreset.ThisWeek, true);
         if (ContainsAny(normalized, ["son 30 gun", "son otuz gun", "bu ay", "last 30 days", "this month", "letzte 30 tage", "diesen monat", "30 derniers jours", "ce mois", "ultimos 30 dias", "este mes", "ultimi 30 giorni", "questo mese", "اخر 30 يوم", "هذا الشهر"]))

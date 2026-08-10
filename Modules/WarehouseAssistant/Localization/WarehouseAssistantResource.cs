@@ -41,6 +41,7 @@ public static class WarehouseAssistantMessageKeys
     public const string DateYesterday = nameof(DateYesterday);
     public const string DateLastSevenDays = nameof(DateLastSevenDays);
     public const string DateThisWeek = nameof(DateThisWeek);
+    public const string DateLastWeek = nameof(DateLastWeek);
     public const string DateLastThirtyDays = nameof(DateLastThirtyDays);
     public const string DateExplicitRange = nameof(DateExplicitRange);
     public const string DateRangeTooLarge = nameof(DateRangeTooLarge);

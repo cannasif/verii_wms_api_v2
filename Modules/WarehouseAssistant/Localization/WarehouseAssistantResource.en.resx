@@ -191,4 +191,5 @@
   <data name="ExceptionPackingPrintDescription" xml:space="preserve"><value>The label job for packing record {0} was attempted {1} times. Last error: {2}</value></data>
   <data name="ExceptionPackingPrintUnknownError" xml:space="preserve"><value>No error details were recorded</value></data>
   <data name="ExceptionPackingPrintAction" xml:space="preserve"><value>Check the printer connection and template, then safely retry the same job after resolving the issue.</value></data>
+  <data name="DateLastWeek" xml:space="preserve"><value>last week</value></data>
 </root>
