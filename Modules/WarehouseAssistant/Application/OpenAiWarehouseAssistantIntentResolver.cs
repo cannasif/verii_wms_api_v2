@@ -9,7 +9,7 @@ namespace verii_wms_api_v2.Modules.WarehouseAssistant.Application;
 public sealed class WarehouseAssistantOptions
 {
     public const string SectionName = "WarehouseAssistant";
-    public string Version { get; set; } = "2.2.0";
+    public string Version { get; set; } = "2.3.0";
     public bool EnableOpenAiIntentResolution { get; set; }
     public string BaseUrl { get; set; } = "https://api.openai.com/v1";
     public string Model { get; set; } = "gpt-5.6-luna";
@@ -32,7 +32,7 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
         var available = IsSemanticRoutingAvailable();
         return new WarehouseAssistantRoutingInfo(
             settings.Version,
-            available ? settings.RoutingStrategy.ToString() : "DeterministicOnly",
+            available ? settings.RoutingStrategy.ToString() : "LocalSemantic",
             available,
             available ? settings.Model : null);
     }
@@ -147,7 +147,7 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
 
         return resolved[0] with
         {
-            ProviderMode = "deterministic-compound-v2.2",
+            ProviderMode = "local-semantic-compound-v2.3",
             AdditionalQueries = resolved.Skip(1).Take(2).ToArray()
         };
     }

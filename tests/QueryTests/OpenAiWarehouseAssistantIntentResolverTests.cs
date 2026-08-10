@@ -11,6 +11,29 @@ namespace verii_wms_api_v2.QueryTests;
 public sealed class OpenAiWarehouseAssistantIntentResolverTests
 {
     [Fact]
+    public async Task Disabled_external_provider_uses_only_the_advanced_local_engine()
+    {
+        var handler = new CaptureHandler();
+        using var httpClient = new HttpClient(handler);
+        var resolver = new OpenAiWarehouseAssistantIntentResolver(
+            httpClient,
+            Options.Create(new WarehouseAssistantOptions()),
+            new WarehouseAssistantIntentResolver(),
+            NullLogger<OpenAiWarehouseAssistantIntentResolver>.Instance);
+
+        var routing = resolver.GetRoutingInfo();
+        var result = await resolver.ResolveAsync("01/013 depoda nerelere dağılmış?", null);
+
+        Assert.Equal("2.3.0", routing.Version);
+        Assert.Equal("LocalSemantic", routing.RoutingMode);
+        Assert.False(routing.SemanticRoutingAvailable);
+        Assert.Null(routing.SemanticModel);
+        Assert.Equal(WarehouseAssistantIntent.StockLocationBalance, result.Intent);
+        Assert.Equal("local-semantic-v2.3", result.ProviderMode);
+        Assert.Null(handler.RequestBody);
+    }
+
+    [Fact]
     public async Task External_intent_request_disables_storage_and_forces_a_strict_read_only_contract()
     {
         var handler = new CaptureHandler();
@@ -160,7 +183,7 @@ public sealed class OpenAiWarehouseAssistantIntentResolverTests
             null);
 
         Assert.Equal(WarehouseAssistantIntent.MyActivities, result.Intent);
-        Assert.Equal("deterministic-compound-v2.2", result.ProviderMode);
+        Assert.Equal("local-semantic-compound-v2.3", result.ProviderMode);
         Assert.Equal(WarehouseAssistantIntent.AssignedTasks, Assert.Single(result.AdditionalQueries!).Intent);
     }
 

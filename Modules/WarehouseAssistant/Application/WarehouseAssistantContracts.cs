@@ -101,8 +101,8 @@ public sealed record WarehouseAssistantCapabilities(
     bool CanQueryOperationalExceptions = false,
     bool CanQueryTraceability = false,
     bool CanQueryProcessBlockers = false,
-    string AssistantVersion = "2.2.0",
-    string RoutingMode = "deterministic",
+    string AssistantVersion = "2.3.0",
+    string RoutingMode = "LocalSemantic",
     bool SemanticRoutingAvailable = false,
     string? SemanticModel = null,
     bool CanRunCompoundQueries = true);
