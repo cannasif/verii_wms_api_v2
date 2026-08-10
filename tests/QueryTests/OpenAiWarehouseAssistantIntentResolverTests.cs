@@ -35,12 +35,17 @@ public sealed class OpenAiWarehouseAssistantIntentResolverTests
         var root = document.RootElement;
         Assert.False(root.GetProperty("store").GetBoolean());
         Assert.False(root.GetProperty("parallel_tool_calls").GetBoolean());
-        Assert.Equal(300, root.GetProperty("max_output_tokens").GetInt32());
+        Assert.Equal(900, root.GetProperty("max_output_tokens").GetInt32());
+        Assert.Equal("low", root.GetProperty("reasoning").GetProperty("effort").GetString());
         var tool = root.GetProperty("tools")[0];
         Assert.True(tool.GetProperty("strict").GetBoolean());
         Assert.False(tool.GetProperty("parameters").GetProperty("additionalProperties").GetBoolean());
         Assert.Contains("confidence", tool.GetProperty("parameters").GetProperty("required").EnumerateArray().Select(x => x.GetString()));
         Assert.Contains("requiresClarification", tool.GetProperty("parameters").GetProperty("required").EnumerateArray().Select(x => x.GetString()));
+        Assert.Contains("additionalQueries", tool.GetProperty("parameters").GetProperty("required").EnumerateArray().Select(x => x.GetString()));
+        var additionalItems = tool.GetProperty("parameters").GetProperty("properties")
+            .GetProperty("additionalQueries").GetProperty("items");
+        Assert.False(additionalItems.GetProperty("additionalProperties").GetBoolean());
     }
 
     [Fact]
@@ -55,7 +60,7 @@ public sealed class OpenAiWarehouseAssistantIntentResolverTests
         var result = await resolver.ResolveAsync("Bugün yaptığım işlere bakınca önce neye yetişmem gerekiyor?", null);
 
         Assert.Equal(WarehouseAssistantIntent.ShiftBrief, result.Intent);
-        Assert.Equal("semantic-v2", result.ProviderMode);
+        Assert.Equal("semantic-v2.2", result.ProviderMode);
         Assert.NotNull(handler.RequestBody);
     }
 
@@ -73,7 +78,7 @@ public sealed class OpenAiWarehouseAssistantIntentResolverTests
         var result = await resolver.ResolveAsync("Şu malzeme nerede kaldı?", null);
 
         Assert.Equal(WarehouseAssistantIntent.Unknown, result.Intent);
-        Assert.Equal("semantic-clarification-v2", result.ProviderMode);
+        Assert.Equal("semantic-clarification-v2.2", result.ProviderMode);
         Assert.Equal("Hangi stok kodunu veya stok adını arıyorsunuz?", result.ClarificationQuestion);
     }
 
@@ -89,6 +94,74 @@ public sealed class OpenAiWarehouseAssistantIntentResolverTests
         Assert.Equal(WarehouseAssistantIntent.BarcodeLookup, result.Intent);
         Assert.Equal("deterministic-fast-path", result.ProviderMode);
         Assert.Null(handler.RequestBody);
+    }
+
+    [Fact]
+    public async Task Semantic_router_returns_a_bounded_compound_read_plan()
+    {
+        var additional = new[]
+        {
+            SemanticQuery(WarehouseAssistantIntent.AssignedTasks, 0.93m)
+        };
+        var handler = new CaptureHandler(SemanticResponse(
+            WarehouseAssistantIntent.MyActivities,
+            confidence: 0.96m,
+            additionalQueries: additional));
+        using var httpClient = new HttpClient(handler);
+        var resolver = CreateResolver(httpClient);
+
+        var result = await resolver.ResolveAsync(
+            "Hem bugün yaptığım işlemleri hem de bana atanan açık emirleri getir",
+            null);
+
+        Assert.Equal(WarehouseAssistantIntent.MyActivities, result.Intent);
+        Assert.Equal("semantic-compound-v2.2", result.ProviderMode);
+        var query = Assert.Single(result.AdditionalQueries!);
+        Assert.Equal(WarehouseAssistantIntent.AssignedTasks, query.Intent);
+    }
+
+    [Fact]
+    public async Task Ambiguous_item_in_compound_plan_blocks_the_entire_plan()
+    {
+        var additional = new[]
+        {
+            SemanticQuery(
+                WarehouseAssistantIntent.Unknown,
+                0.40m,
+                requiresClarification: true,
+                clarificationQuestion: "İkinci soruda hangi malzemeyi kastediyorsunuz?")
+        };
+        var handler = new CaptureHandler(SemanticResponse(
+            WarehouseAssistantIntent.MyActivities,
+            confidence: 0.96m,
+            additionalQueries: additional));
+        using var httpClient = new HttpClient(handler);
+        var resolver = CreateResolver(httpClient);
+
+        var result = await resolver.ResolveAsync("İşlemlerimi getir; ayrıca bu malzemeye bak", null);
+
+        Assert.Equal(WarehouseAssistantIntent.Unknown, result.Intent);
+        Assert.Null(result.AdditionalQueries);
+        Assert.Equal("İkinci soruda hangi malzemeyi kastediyorsunuz?", result.ClarificationQuestion);
+    }
+
+    [Fact]
+    public async Task Deterministic_router_supports_explicit_compound_questions_without_provider_access()
+    {
+        using var httpClient = new HttpClient(new CaptureHandler());
+        var resolver = new OpenAiWarehouseAssistantIntentResolver(
+            httpClient,
+            Options.Create(new WarehouseAssistantOptions()),
+            new WarehouseAssistantIntentResolver(),
+            NullLogger<OpenAiWarehouseAssistantIntentResolver>.Instance);
+
+        var result = await resolver.ResolveAsync(
+            "Bugün yaptığım işlemleri göster; ayrıca bana atanan emirleri getir",
+            null);
+
+        Assert.Equal(WarehouseAssistantIntent.MyActivities, result.Intent);
+        Assert.Equal("deterministic-compound-v2.2", result.ProviderMode);
+        Assert.Equal(WarehouseAssistantIntent.AssignedTasks, Assert.Single(result.AdditionalQueries!).Intent);
     }
 
     private static OpenAiWarehouseAssistantIntentResolver CreateResolver(HttpClient httpClient) => new(
@@ -108,30 +181,40 @@ public sealed class OpenAiWarehouseAssistantIntentResolverTests
         WarehouseAssistantIntent intent,
         decimal confidence,
         bool requiresClarification = false,
-        string? clarificationQuestion = null)
+        string? clarificationQuestion = null,
+        object[]? additionalQueries = null)
     {
-        var arguments = JsonSerializer.Serialize(new
-        {
-            intent = intent.ToString(),
-            datePreset = WarehouseAssistantDatePreset.Today.ToString(),
-            serialNo = (string?)null,
-            stockQuery = (string?)null,
-            barcode = (string?)null,
-            targetUserQuery = (string?)null,
-            requestsAllUsers = false,
-            dateFrom = (string?)null,
-            dateTo = (string?)null,
-            supplierQuery = (string?)null,
-            vehiclePlateQuery = (string?)null,
-            transferDocumentQuery = (string?)null,
-            transferScope = WarehouseAssistantTransferScope.All.ToString(),
-            documentQuery = (string?)null,
-            confidence,
-            requiresClarification,
-            clarificationQuestion
-        });
+        var query = SemanticQuery(intent, confidence, requiresClarification, clarificationQuestion);
+        var values = JsonSerializer.Deserialize<Dictionary<string, object?>>(JsonSerializer.Serialize(query))!;
+        values["additionalQueries"] = additionalQueries ?? [];
+        var arguments = JsonSerializer.Serialize(values);
         return JsonSerializer.Serialize(new { output = new[] { new { type = "function_call", arguments } } });
     }
+
+    private static object SemanticQuery(
+        WarehouseAssistantIntent intent,
+        decimal confidence,
+        bool requiresClarification = false,
+        string? clarificationQuestion = null) => new
+    {
+        intent = intent.ToString(),
+        datePreset = WarehouseAssistantDatePreset.Today.ToString(),
+        serialNo = (string?)null,
+        stockQuery = (string?)null,
+        barcode = (string?)null,
+        targetUserQuery = (string?)null,
+        requestsAllUsers = false,
+        dateFrom = (string?)null,
+        dateTo = (string?)null,
+        supplierQuery = (string?)null,
+        vehiclePlateQuery = (string?)null,
+        transferDocumentQuery = (string?)null,
+        transferScope = WarehouseAssistantTransferScope.All.ToString(),
+        documentQuery = (string?)null,
+        confidence,
+        requiresClarification,
+        clarificationQuestion
+    };
 
     private sealed class CaptureHandler(string responseBody = "{\"output\":[]}") : HttpMessageHandler
     {

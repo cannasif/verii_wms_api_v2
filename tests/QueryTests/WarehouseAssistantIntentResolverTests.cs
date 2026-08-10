@@ -67,6 +67,41 @@ public sealed class WarehouseAssistantIntentResolverTests
     }
 
     [Fact]
+    public async Task Uses_a_short_clarification_answer_with_the_pending_question()
+    {
+        var context = new WarehouseAssistantContext(
+            null,
+            null,
+            null,
+            PendingQuestion: "Hangi stokun depo ve raf bakiyesini görmek istiyorsunuz?");
+
+        var result = await resolver.ResolveAsync("STK-1", context);
+
+        Assert.Equal(WarehouseAssistantIntent.StockLocationBalance, result.Intent);
+        Assert.Contains("STK-1", result.StockQuery);
+    }
+
+    [Fact]
+    public async Task Keeps_a_selected_user_only_for_an_explicit_follow_up()
+    {
+        var context = new WarehouseAssistantContext(
+            null,
+            null,
+            null,
+            LastIntent: WarehouseAssistantIntent.UserActivities,
+            TargetUserQuery: "Ahmet Yılmaz",
+            RequestsAllUsers: false);
+
+        var followUp = await resolver.ResolveAsync("Peki dün?", context);
+        var newQuestion = await resolver.ResolveAsync("Bugün yaptığım işlemleri göster", context);
+
+        Assert.Equal("Ahmet Yılmaz", followUp.TargetUserQuery);
+        Assert.False(followUp.RequestsAllUsers);
+        Assert.Null(newQuestion.TargetUserQuery);
+        Assert.False(newQuestion.RequestsAllUsers);
+    }
+
+    [Fact]
     public async Task Extracts_inclusive_explicit_date_range_for_goods_receipt_analysis()
     {
         var result = await resolver.ResolveAsync(

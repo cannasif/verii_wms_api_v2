@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.Audit.Domain;
 using verii_wms_api_v2.Modules.Identity.Domain;
@@ -60,6 +61,15 @@ public sealed class WarehouseAssistantServiceTests
         Assert.Equal(clarification, result.Answer);
         Assert.Empty(result.SerialBalances);
         Assert.Empty(result.Activities);
+        var storedContextJson = await db.Set<WarehouseAssistantMessage>()
+            .Where(x => x.Role == "assistant")
+            .Select(x => x.ContextJson)
+            .SingleAsync();
+        var storedContext = JsonSerializer.Deserialize<WarehouseAssistantContext>(
+            storedContextJson!,
+            new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.Equal("Buna bir bakar mısın?", storedContext!.PendingQuestion);
+        Assert.Null(storedContext.LastResolvedQuestion);
     }
 
     [Fact]
@@ -76,10 +86,66 @@ public sealed class WarehouseAssistantServiceTests
 
         var result = await service.GetCapabilitiesAsync(new WarehouseAssistantAccess(false, true, true, true));
 
-        Assert.Equal("2.1.0", result.AssistantVersion);
+        Assert.Equal("2.2.0", result.AssistantVersion);
         Assert.Equal("Hybrid", result.RoutingMode);
         Assert.True(result.SemanticRoutingAvailable);
         Assert.Equal("test-semantic-model", result.SemanticModel);
+        Assert.True(result.CanRunCompoundQueries);
+    }
+
+    [Fact]
+    public async Task Compound_plan_executes_each_authorized_read_query_and_returns_one_response()
+    {
+        await using var db = CreateDbContext();
+        var now = new DateTimeOffset(2026, 8, 10, 10, 0, 0, TimeSpan.Zero);
+        db.Users.Add(new User { Id = 10, Username = "worker", Email = "worker@v3rii.com", PasswordHash = "x", Role = "User" });
+        db.AuditLogs.Add(Activity(10, "goods-receipt.completed", now.UtcDateTime.AddMinutes(-5)));
+        db.Warehouses.Add(new WarehouseEntity { Id = 30, BranchCode = "0", WarehouseCode = 1, WarehouseName = "Ana Depo" });
+        db.Set<WarehouseLocation>().Add(new WarehouseLocation { Id = 40, BranchCode = "0", WarehouseId = 30, Code = "R-01", Name = "Raf 1" });
+        db.Set<StockEntity>().Add(new StockEntity { Id = 50, BranchCode = "0", ErpStockCode = "STK-1", StockName = "Test stok" });
+        db.Set<LocationStockBalance>().Add(new LocationStockBalance
+        {
+            Id = 60,
+            BranchCode = "0",
+            WarehouseId = 30,
+            LocationId = 40,
+            StockId = 50,
+            UnitCode = "AD",
+            Quantity = 7,
+            AvailableQuantity = 7,
+            LastTransactionDate = now.UtcDateTime
+        });
+        await db.SaveChangesAsync();
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        var resolution = new WarehouseAssistantIntentResolution(
+            WarehouseAssistantIntent.MyActivities,
+            WarehouseAssistantDatePreset.Today,
+            null, null, null, null, false, 0.98m, "semantic-compound-v2.2",
+            AdditionalQueries:
+            [
+                new WarehouseAssistantIntentResolution(
+                    WarehouseAssistantIntent.StockLocationBalance,
+                    WarehouseAssistantDatePreset.Today,
+                    null, "STK-1", null, null, false, 0.97m, "semantic-compound-item-v2.2")
+            ]);
+        var service = new WarehouseAssistantService(
+            unitOfWork,
+            new FixedIntentResolver(resolution),
+            new NoopAuditWriter(),
+            new FixedTimeProvider(now));
+
+        var result = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, "Bugünkü işlemlerimi ve STK-1 raf bakiyesini göster"),
+            10,
+            "0",
+            new WarehouseAssistantAccess(false, true, false, false));
+
+        Assert.Equal(WarehouseAssistantIntent.Composite, result.Intent);
+        Assert.Single(result.Activities);
+        Assert.Single(result.StockLocations);
+        Assert.Equal(7, result.StockLocations[0].AvailableQuantity);
+        Assert.Equal("semantic-compound-v2.2", result.ProviderMode);
+        Assert.Single(result.Evidence!);
     }
 
     [Fact]
@@ -766,7 +832,7 @@ public sealed class WarehouseAssistantServiceTests
     private sealed class FixedRoutingDiagnostics : IWarehouseAssistantRoutingDiagnostics
     {
         public WarehouseAssistantRoutingInfo GetRoutingInfo() =>
-            new("2.1.0", "Hybrid", true, "test-semantic-model");
+            new("2.2.0", "Hybrid", true, "test-semantic-model");
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
