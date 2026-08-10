@@ -23,6 +23,7 @@ public enum WarehouseAssistantIntent
     OperationalExceptions = 15,
     Traceability = 16,
     ProcessBlockers = 17,
+    Composite = 18,
     Unknown = 99
 }
 
@@ -100,10 +101,11 @@ public sealed record WarehouseAssistantCapabilities(
     bool CanQueryOperationalExceptions = false,
     bool CanQueryTraceability = false,
     bool CanQueryProcessBlockers = false,
-    string AssistantVersion = "2.1.0",
+    string AssistantVersion = "2.2.0",
     string RoutingMode = "deterministic",
     bool SemanticRoutingAvailable = false,
-    string? SemanticModel = null);
+    string? SemanticModel = null,
+    bool CanRunCompoundQueries = true);
 
 public sealed record WarehouseAssistantConversationRow(
     long Id,
@@ -421,7 +423,12 @@ public sealed record WarehouseAssistantContext(
     string? TransferDocumentNo = null,
     WarehouseAssistantTransferScope? TransferScope = null,
     string? DocumentNo = null,
-    WarehouseAssistantIntent? LastIntent = null);
+    WarehouseAssistantIntent? LastIntent = null,
+    string? LastResolvedQuestion = null,
+    string? PendingQuestion = null,
+    string? TargetUserQuery = null,
+    bool? RequestsAllUsers = null,
+    WarehouseAssistantDatePreset? LastDatePreset = null);
 
 public sealed record WarehouseAssistantIntentResolution(
     WarehouseAssistantIntent Intent,
@@ -444,7 +451,8 @@ public sealed record WarehouseAssistantIntentResolution(
     WarehouseAssistantTransferScope TransferScope = WarehouseAssistantTransferScope.All,
     bool HasExplicitDateFilter = false,
     string? DocumentQuery = null,
-    string? ClarificationQuestion = null);
+    string? ClarificationQuestion = null,
+    IReadOnlyList<WarehouseAssistantIntentResolution>? AdditionalQueries = null);
 
 public interface IWarehouseAssistantIntentResolver
 {

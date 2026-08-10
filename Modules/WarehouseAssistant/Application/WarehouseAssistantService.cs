@@ -86,9 +86,11 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             examples.Add(M(CapabilityExampleTraceability));
         if (CanQueryProcessBlockers(access))
             examples.Add(M(CapabilityExampleProcessBlockers));
+        if (examples.Count >= 2)
+            examples.Add(string.Join("; ", examples.Take(2)));
 
         var routing = routingDiagnostics?.GetRoutingInfo()
-            ?? new WarehouseAssistantRoutingInfo("2.1.0", "DeterministicOnly", false, null);
+            ?? new WarehouseAssistantRoutingInfo("2.2.0", "DeterministicOnly", false, null);
         return Task.FromResult(new WarehouseAssistantCapabilities(
             access.CanQueryAllUsers,
             access.CanViewStockBalances,
@@ -185,6 +187,10 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                 ParameterField: parameterHint.Field,
                 ParameterValue: parameterHint.Value);
         var correlationId = Guid.NewGuid();
+        var queryPlan = ExpandQueryPlan(resolution);
+        var providerMode = queryPlan.Count > 1 && !resolution.ProviderMode.Contains("compound", StringComparison.OrdinalIgnoreCase)
+            ? $"{resolution.ProviderMode}-compound"
+            : resolution.ProviderMode;
 
         var userMessage = new WarehouseAssistantMessage
         {
@@ -198,15 +204,15 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         };
         await unitOfWork.Repository<WarehouseAssistantMessage>().AddAsync(userMessage, ct);
 
-        var result = await ExecuteIntentAsync(resolution, message, actorUserId, branchCode, access, ct);
+        var result = await ExecuteQueryPlanAsync(queryPlan, message, actorUserId, branchCode, access, ct);
         result = result with
         {
             Evidence = BuildEvidence(result),
-            Context = result.Context with { LastIntent = result.Intent }
+            Context = BuildConversationContext(context, result.Context, queryPlan, message, result.Intent)
         };
         var responseData = new StoredResponseData
         {
-            ProviderMode = resolution.ProviderMode,
+            ProviderMode = providerMode,
             Activities = result.Activities,
             SerialBalances = result.SerialBalances,
             SerialReceipts = result.SerialReceipts,
@@ -256,8 +262,11 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             NewValues: new
             {
                 Intent = result.Intent.ToString(),
+                QueryIntents = queryPlan.Select(x => x.Intent.ToString()).ToArray(),
+                ProviderMode = providerMode,
                 result.Scope,
                 result.ToolName,
+                QueryCount = queryPlan.Count,
                 ResultCount = result.Activities.Count + result.SerialBalances.Count + result.SerialReceipts.Count
                     + result.StockLocations.Count + result.Movements.Count + result.Tasks.Count
                     + (result.GoodsReceipts?.Count ?? 0) + (result.ParameterGuides?.Count ?? 0)
@@ -266,7 +275,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                     + (result.Barcode is null ? 0 : 1),
                 CorrelationId = correlationId
             },
-            ChangedFields: ["Intent", "Scope", "ToolName"]), ct);
+            ChangedFields: ["Intent", "QueryIntents", "ProviderMode", "Scope", "ToolName"]), ct);
 
         return new WarehouseAssistantChatResponse(
             conversation.Id,
@@ -274,7 +283,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             result.Answer,
             result.Intent,
             result.Scope,
-            resolution.ProviderMode,
+            providerMode,
             result.Activities,
             result.SerialBalances,
             result.SerialReceipts,
@@ -400,7 +409,12 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             null,
             [],
             [],
-            new WarehouseAssistantContext(null, null, null),
+            new WarehouseAssistantContext(
+                null,
+                null,
+                null,
+                TargetUserQuery: target.UserId == actorUserId ? null : target.DisplayName,
+                RequestsAllUsers: target.AllUsers),
             [M(CapabilityExampleMyActivities), M(CapabilityExampleMyActivities)]);
     }
 
@@ -605,6 +619,9 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             return new ActivityTarget(actorUserId, false, selfName, !canQueryAllUsers && !requestsSelf && resolution.Intent == WarehouseAssistantIntent.UserActivities);
         }
 
+        var targetText = string.IsNullOrWhiteSpace(resolution.TargetUserQuery)
+            ? message
+            : resolution.TargetUserQuery;
         var users = await (from user in unitOfWork.Repository<User>().Query()
                            join detail in unitOfWork.Repository<UserDetail>().Query() on user.Id equals detail.UserId into details
                            from detail in details.DefaultIfEmpty()
@@ -618,7 +635,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                 User = x,
                 FullName = $"{x.FirstName} {x.LastName}".Trim(),
                 MatchLength = new[] { x.Username, x.Email, $"{x.FirstName} {x.LastName}".Trim() }
-                    .Where(v => !string.IsNullOrWhiteSpace(v) && WarehouseAssistantIntentResolver.Normalize(message).Contains(WarehouseAssistantIntentResolver.Normalize(v), StringComparison.Ordinal))
+                    .Where(v => !string.IsNullOrWhiteSpace(v) && WarehouseAssistantIntentResolver.Normalize(targetText).Contains(WarehouseAssistantIntentResolver.Normalize(v), StringComparison.Ordinal))
                     .Select(v => v.Length)
                     .DefaultIfEmpty(0)
                     .Max()

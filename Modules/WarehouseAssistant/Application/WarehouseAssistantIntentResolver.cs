@@ -183,13 +183,18 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
         CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var normalized = Normalize(message);
+        var usesPendingQuestion = ShouldUsePendingQuestion(message, context);
+        var analysisMessage = usesPendingQuestion
+            ? $"{context!.PendingQuestion} {message}"
+            : message;
+        var normalized = Normalize(analysisMessage);
+        var isFollowUp = usesPendingQuestion || IsConversationFollowUp(normalized);
         var (datePreset, hasExplicitDatePreset) = ResolveDatePreset(normalized);
-        var (dateFrom, dateTo) = ExtractExplicitDateRange(message);
+        var (dateFrom, dateTo) = ExtractExplicitDateRange(analysisMessage);
         var hasExplicitDateFilter = hasExplicitDatePreset || dateFrom.HasValue;
         var containsSerialWord = ContainsAny(normalized, SerialWords);
         var serialNo = containsSerialWord
-            ? ExtractSerial(message, normalized) ?? context?.SerialNo
+            ? ExtractSerial(analysisMessage, normalized) ?? context?.SerialNo
             : null;
         var hasSerial = containsSerialWord || (normalized.Contains("bu seri", StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(context?.SerialNo));
         var hasStock = ContainsAny(normalized, StockWords);
@@ -216,9 +221,9 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
             : ContainsAny(normalized, InterWarehouseTransferWords)
                 ? WarehouseAssistantTransferScope.InterWarehouse
                 : WarehouseAssistantTransferScope.All;
-        var vehiclePlate = hasSteelVehicle ? ExtractVehiclePlate(message) : null;
-        var transferDocument = hasTransfer ? ExtractTransferDocument(message) : null;
-        var extractedBarcode = ExtractBarcode(message);
+        var vehiclePlate = hasSteelVehicle ? ExtractVehiclePlate(analysisMessage) : null;
+        var transferDocument = hasTransfer ? ExtractTransferDocument(analysisMessage) : null;
+        var extractedBarcode = ExtractBarcode(analysisMessage);
         var hasBarcodeLookup = ContainsAny(normalized, BarcodeLookupWords)
             || (ContainsAny(normalized, BarcodeWords)
                 && ContainsAny(normalized,
@@ -236,7 +241,7 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
         var hasOperationalExceptions = ContainsAny(normalized, OperationalExceptionWords);
         var hasTraceability = ContainsAny(normalized, TraceabilityWords);
         var hasProcessBlocker = ContainsAny(normalized, ProcessBlockerWords);
-        var documentQuery = ExtractProcessDocument(message) ?? context?.DocumentNo;
+        var documentQuery = ExtractProcessDocument(analysisMessage) ?? context?.DocumentNo;
 
         WarehouseAssistantIntent intent;
         decimal confidence;
@@ -317,11 +322,7 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
         }
         else if (context?.LastIntent is { } lastIntent
             && lastIntent is not WarehouseAssistantIntent.Unknown and not WarehouseAssistantIntent.Help
-            && (hasExplicitDateFilter || ContainsAny(normalized,
-            [
-                "peki", "ya onceki", "ya gecen", "bir de", "ayni sorgu", "aynisini", "bunlar", "onlar",
-                "what about", "and previous", "same query", "wie sieht", "et pour", "y que", "e invece"
-            ])))
+            && (hasExplicitDateFilter || IsConversationFollowUp(normalized)))
         {
             intent = lastIntent;
             confidence = 0.82m;
@@ -336,21 +337,31 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
             intent,
             datePreset,
             serialNo,
-            hasStock ? message.Trim() : context?.StockCode,
+            hasStock ? analysisMessage.Trim() : context?.StockCode,
             barcode,
-            null,
-            requestsAll,
+            isFollowUp ? context?.TargetUserQuery : null,
+            requestsAll || (isFollowUp && context?.RequestsAllUsers == true),
             confidence,
             "deterministic",
             dateFrom,
             dateTo,
-            hasSupplier ? message.Trim() : context?.SupplierCode,
+            hasSupplier ? analysisMessage.Trim() : context?.SupplierCode,
             VehiclePlateQuery: vehiclePlate ?? context?.VehiclePlate,
             TransferDocumentQuery: transferDocument ?? context?.TransferDocumentNo,
             TransferScope: hasTransfer ? transferScope : context?.TransferScope ?? WarehouseAssistantTransferScope.All,
             HasExplicitDateFilter: hasExplicitDateFilter,
             DocumentQuery: documentQuery));
     }
+
+    private static bool ShouldUsePendingQuestion(string message, WarehouseAssistantContext? context) =>
+        !string.IsNullOrWhiteSpace(context?.PendingQuestion)
+        && message.Trim().Length <= 160;
+
+    private static bool IsConversationFollowUp(string normalized) => ContainsAny(normalized,
+    [
+        "peki", "ya onceki", "ya gecen", "bir de", "ayni sorgu", "aynisini", "bunlar", "onlar",
+        "what about", "and previous", "same query", "wie sieht", "et pour", "y que", "e invece"
+    ]);
 
     public static string Normalize(string value)
     {
