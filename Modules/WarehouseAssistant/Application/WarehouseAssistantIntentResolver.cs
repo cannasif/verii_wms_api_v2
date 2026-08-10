@@ -188,64 +188,70 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
             ? $"{context!.PendingQuestion} {message}"
             : message;
         var normalized = Normalize(analysisMessage);
+        var language = new LocalWarehouseQuestion(normalized);
         var isFollowUp = usesPendingQuestion || IsConversationFollowUp(normalized);
         var (datePreset, hasExplicitDatePreset) = ResolveDatePreset(normalized);
         var (dateFrom, dateTo) = ExtractExplicitDateRange(analysisMessage);
         var hasExplicitDateFilter = hasExplicitDatePreset || dateFrom.HasValue;
-        var containsSerialWord = ContainsAny(normalized, SerialWords);
+        var containsSerialWord = language.HasAny(SerialWords);
         var serialNo = containsSerialWord
             ? ExtractSerial(analysisMessage, normalized) ?? context?.SerialNo
             : null;
         var hasSerial = containsSerialWord || (normalized.Contains("bu seri", StringComparison.Ordinal) && !string.IsNullOrWhiteSpace(context?.SerialNo));
-        var hasStock = ContainsAny(normalized, StockWords);
-        var hasBalance = ContainsAny(normalized, BalanceWords);
-        var hasReceipt = ContainsAny(normalized, ReceiptWords);
-        var hasSupplier = ContainsAny(normalized, SupplierWords);
+        var hasStock = language.HasAny(StockWords);
+        var hasBalance = language.HasAny(BalanceWords);
+        var hasReceipt = language.HasAny(ReceiptWords);
+        var hasSupplier = language.HasAny(SupplierWords);
         var hasReceiptAnalysis = hasReceipt
-            && (hasSupplier || dateFrom.HasValue || ContainsAny(normalized, ReceiptAnalysisWords));
-        var hasActivity = ContainsAny(normalized, ActivityWords);
-        var hasMovement = ContainsAny(normalized, MovementWords);
-        var hasTask = ContainsAny(normalized, TaskWords)
+            && (hasSupplier || dateFrom.HasValue || language.HasAny(ReceiptAnalysisWords));
+        var hasActivity = language.HasAny(ActivityWords);
+        var hasMovement = language.HasAny(MovementWords);
+        var hasTask = language.HasAny(TaskWords)
             || ((normalized.Contains("atan", StringComparison.Ordinal)
                     || normalized.Contains("bana", StringComparison.Ordinal))
-                && ContainsAny(normalized, ["gorev", "emir", "is emri"]));
-        var hasSteelVehicle = ContainsAny(normalized, SteelVehicleWords)
-            || (ContainsAny(normalized, ["sac", "levha", "steel", "sheet"])
-                && ContainsAny(normalized, ["arac", "plaka", "giris", "kabul", "vehicle", "plate", "check in"]));
-        var hasTransfer = ContainsAny(normalized, TransferWords);
+                && language.HasAny("gorev", "emir", "is emri"));
+        var vehiclePlate = ExtractVehiclePlate(analysisMessage);
+        var hasSteelVehicle = language.HasAny(SteelVehicleWords)
+            || (language.HasAny("sac", "levha", "steel", "sheet")
+                && language.HasAny("arac", "plaka", "giris", "kabul", "vehicle", "plate", "check in"))
+            || (!string.IsNullOrWhiteSpace(vehiclePlate)
+                && language.HasAny("geldi", "girdi", "arac", "tir", "kamyon", "kabul", "arrived", "entered"));
+        var hasTransfer = language.HasAny(TransferWords)
+            || (language.HasAny("uretime", "uretim")
+                && language.HasAny("giden", "verilen", "malzeme", "besleme", "eksik", "kalan"));
         var hasTransferAnalysis = hasTransfer
-            && (ContainsAny(normalized, TransferAnalysisWords)
+            && (language.HasAny(TransferAnalysisWords)
                 || !string.IsNullOrWhiteSpace(ExtractTransferDocument(message)));
-        var transferScope = ContainsAny(normalized, ProductionTransferWords)
+        var transferScope = language.HasAny(ProductionTransferWords)
+            || (language.HasAny("uretime", "uretim") && language.HasAny("giden", "verilen", "malzeme", "besleme"))
             ? WarehouseAssistantTransferScope.Production
-            : ContainsAny(normalized, InterWarehouseTransferWords)
+            : language.HasAny(InterWarehouseTransferWords)
                 ? WarehouseAssistantTransferScope.InterWarehouse
                 : WarehouseAssistantTransferScope.All;
-        var vehiclePlate = hasSteelVehicle ? ExtractVehiclePlate(analysisMessage) : null;
         var transferDocument = hasTransfer ? ExtractTransferDocument(analysisMessage) : null;
         var extractedBarcode = ExtractBarcode(analysisMessage);
-        var hasBarcodeLookup = ContainsAny(normalized, BarcodeLookupWords)
-            || (ContainsAny(normalized, BarcodeWords)
-                && ContainsAny(normalized,
+        var hasBarcodeLookup = language.HasAny(BarcodeLookupWords)
+            || (language.HasAny(BarcodeWords)
+                && language.HasAny(
                 [
                     "sorgula", "hangi stok", "neye ait", "kime ait", "cozumle", "nedir",
                     "lookup", "which item", "what is", "belongs to", "resolve", "suchen", "welcher artikel",
                     "rechercher", "quel produit", "buscar", "que producto", "cerca", "quale prodotto", "ابحث", "صنف"
                 ]))
-            || (ContainsAny(normalized, BarcodeWords)
+            || (language.HasAny(BarcodeWords)
                 && !string.IsNullOrWhiteSpace(extractedBarcode)
                 && (extractedBarcode.Any(char.IsDigit) || extractedBarcode.IndexOfAny(['-', '/', '.']) >= 0));
         var barcode = hasBarcodeLookup ? extractedBarcode ?? context?.Barcode : null;
-        var requestsAll = ContainsAny(normalized, AllUsersWords);
-        var hasShiftBrief = ContainsAny(normalized, ShiftBriefWords);
-        var hasOperationalExceptions = ContainsAny(normalized, OperationalExceptionWords);
-        var hasTraceability = ContainsAny(normalized, TraceabilityWords);
-        var hasProcessBlocker = ContainsAny(normalized, ProcessBlockerWords);
+        var requestsAll = language.HasAny(AllUsersWords);
+        var hasShiftBrief = language.HasAny(ShiftBriefWords);
+        var hasOperationalExceptions = language.HasAny(OperationalExceptionWords);
+        var hasTraceability = language.HasAny(TraceabilityWords);
+        var hasProcessBlocker = language.HasAny(ProcessBlockerWords);
         var documentQuery = ExtractProcessDocument(analysisMessage) ?? context?.DocumentNo;
 
         WarehouseAssistantIntent intent;
         decimal confidence;
-        if (ContainsAny(normalized, HelpWords))
+        if (language.HasAny(HelpWords))
         {
             intent = WarehouseAssistantIntent.Help;
             confidence = 1m;
@@ -333,16 +339,43 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
             confidence = 0.20m;
         }
 
+        var localDecision = LocalWarehouseLanguageEngine.Resolve(normalized, requestsAll);
+        if (localDecision.IsWriteRequest)
+        {
+            intent = WarehouseAssistantIntent.Unknown;
+            confidence = 1m;
+        }
+        else if (!localDecision.IsAmbiguous
+            && localDecision.Intent != WarehouseAssistantIntent.Unknown
+            && (intent == WarehouseAssistantIntent.Unknown
+                || localDecision.Intent == intent))
+        {
+            intent = localDecision.Intent;
+            confidence = Math.Max(confidence, localDecision.Confidence);
+        }
+
+        if (intent is WarehouseAssistantIntent.Traceability
+            or WarehouseAssistantIntent.SerialBalance
+            or WarehouseAssistantIntent.SerialReceiptHistory
+            or WarehouseAssistantIntent.StockMovementHistory)
+        {
+            serialNo ??= ExtractSerial(analysisMessage, normalized) ?? context?.SerialNo;
+        }
+
+        var stockQuery = intent is WarehouseAssistantIntent.StockLocationBalance or WarehouseAssistantIntent.StockMovementHistory
+            ? analysisMessage.Trim()
+            : hasStock ? analysisMessage.Trim() : context?.StockCode;
+
         return Task.FromResult(new WarehouseAssistantIntentResolution(
             intent,
             datePreset,
             serialNo,
-            hasStock ? analysisMessage.Trim() : context?.StockCode,
+            stockQuery,
             barcode,
             isFollowUp ? context?.TargetUserQuery : null,
             requestsAll || (isFollowUp && context?.RequestsAllUsers == true),
             confidence,
-            "deterministic",
+            LocalWarehouseLanguageEngine.ProviderMode,
             dateFrom,
             dateTo,
             hasSupplier ? analysisMessage.Trim() : context?.SupplierCode,
@@ -512,5 +545,5 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
             .Any(value.StartsWith);
 
     private static bool ContainsAny(string value, IEnumerable<string> candidates) =>
-        candidates.Any(candidate => value.Contains(candidate, StringComparison.Ordinal));
+        new LocalWarehouseQuestion(value).HasAny(candidates);
 }

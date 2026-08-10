@@ -50,6 +50,46 @@ public sealed class WarehouseAssistantIntentResolverTests
         Assert.Equal(expected, result.Intent);
     }
 
+    [Theory]
+    [InlineData("Bugün yaptığım işemleri göser", WarehouseAssistantIntent.MyActivities)]
+    [InlineData("Bana atanan emrleri gster", WarehouseAssistantIntent.AssignedTasks)]
+    [InlineData("Üretime giden malzemelerden eksik kalan var mı?", WarehouseAssistantIntent.WarehouseTransferAnalysis)]
+    [InlineData("Bu hafta üretime verilen malzemelerde eksik var mı?", WarehouseAssistantIntent.WarehouseTransferAnalysis)]
+    [InlineData("01/013 depoda nerelere dağılmış?", WarehouseAssistantIntent.StockLocationBalance)]
+    [InlineData("01/013 stokta ne kadar kaldı?", WarehouseAssistantIntent.StockLocationBalance)]
+    [InlineData("ABC tedarikçisinden geçen hafta neler gelmiş?", WarehouseAssistantIntent.GoodsReceiptAnalysis)]
+    [InlineData("Geçen hafta ABC firmasından içeri ne girmiş?", WarehouseAssistantIntent.GoodsReceiptAnalysis)]
+    [InlineData("34 ABC 123 bugün geldi mi?", WarehouseAssistantIntent.SteelVehicleAnalysis)]
+    [InlineData("GRI-2026-0001 niye hâlâ bekliyor?", WarehouseAssistantIntent.ProcessBlockers)]
+    [InlineData("DTG-1 ilk girişten bugüne hangi adımlardan geçmiş?", WarehouseAssistantIntent.Traceability)]
+    [InlineData("DTG-1 hangi işlemlerden geçmiş?", WarehouseAssistantIntent.Traceability)]
+    [InlineData("DTG-1 nereden nereye taşınmış?", WarehouseAssistantIntent.StockMovementHistory)]
+    [InlineData("GRL-000123 etiketi neyi gösteriyor?", WarehouseAssistantIntent.BarcodeLookup)]
+    [InlineData("Şu anda depoda aksayan işler neler?", WarehouseAssistantIntent.OperationalExceptions)]
+    [InlineData("Yapmam gereken toplama işleri kaldı mı?", WarehouseAssistantIntent.AssignedTasks)]
+    public async Task Resolves_local_natural_language_and_minor_typing_errors(
+        string message,
+        WarehouseAssistantIntent expected)
+    {
+        var result = await resolver.ResolveAsync(message, null);
+
+        Assert.Equal(expected, result.Intent);
+        Assert.Equal("local-semantic-v2.3", result.ProviderMode);
+    }
+
+    [Theory]
+    [InlineData("01/013 stok kodunu güncelle")]
+    [InlineData("DTG-1 serisini sil")]
+    [InlineData("GRI-2026-0001 belgesini onayla")]
+    [InlineData("Transferi ERP'ye gönder")]
+    public async Task Refuses_write_commands_in_the_local_read_only_assistant(string message)
+    {
+        var result = await resolver.ResolveAsync(message, null);
+
+        Assert.Equal(WarehouseAssistantIntent.Unknown, result.Intent);
+        Assert.Equal(1m, result.Confidence);
+    }
+
     [Fact]
     public async Task Reuses_last_validated_intent_for_a_date_follow_up()
     {
