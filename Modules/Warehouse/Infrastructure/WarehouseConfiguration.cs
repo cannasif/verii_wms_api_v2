@@ -12,6 +12,7 @@ public sealed class WarehouseConfiguration : BaseEntityConfiguration<Domain.Ware
         builder.ToTable("RII_WAREHOUSE");
         builder.Property(x => x.WarehouseCode).IsRequired();
         builder.Property(x => x.WarehouseName).HasMaxLength(250).IsRequired();
+        builder.Property(x => x.AutoPickWithoutConfirmMaxQuantity).HasPrecision(18, 4);
         builder.HasOne<WarehouseLocation>()
             .WithMany()
             .HasForeignKey(x => x.DefaultGoodsReceiptLocationId)

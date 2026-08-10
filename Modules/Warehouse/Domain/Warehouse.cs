@@ -9,5 +9,6 @@ public sealed class Warehouse : BaseEntity
     public long? DefaultGoodsReceiptLocationId { get; set; }
     public long? DefaultTransferReturnLocationId { get; set; }
     public long? DefaultProductionTransferLocationId { get; set; }
+    public decimal? AutoPickWithoutConfirmMaxQuantity { get; set; }
     public DateTime? LastSyncDate { get; set; }
 }

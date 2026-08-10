@@ -72,6 +72,28 @@ public sealed record UpdateProductionTransferPolicyRequest(
 
 public sealed record DefaultProductionTargetLocationDto(long? LocationId,string? LocationCode,string? LocationName);
 
+public sealed record WithdrawProductionTransferDraftLinesRequest(
+    IReadOnlyList<long> TransferLineIds,
+    string? Reason);
+
+public sealed record WithdrawnProductionTransferDraftLineDto(
+    long TransferLineId,
+    long StockId,
+    string StockCode,
+    string? StockName,
+    decimal Quantity,
+    string? RequirementReference);
+
+public sealed record WithdrawProductionTransferDraftLinesResult(
+    bool TransferDeleted,
+    long? TransferId,
+    string? DocumentNo,
+    string? WorkOrderNumber,
+    int WithdrawnLineCount,
+    decimal WithdrawnQuantity,
+    int RemainingLineCount,
+    IReadOnlyList<WithdrawnProductionTransferDraftLineDto> WithdrawnLines);
+
 public interface IProductionTransferService
 {
     Task<CreateWarehouseTransferDraftResult> CreateDraftAsync(CreateProductionTransferDraftRequest request,long actor,CancellationToken ct=default);
@@ -79,6 +101,11 @@ public interface IProductionTransferService
     Task<ProductionTransferDetail> GetDetailAsync(long id,CancellationToken ct=default);
     Task<ProductionTransferDetail> UpdateDraftAsync(long id,UpdateWarehouseTransferDraftRequest request,long actor,CancellationToken ct=default);
     Task DeleteDraftAsync(long id,long actor,CancellationToken ct=default);
+    Task<WithdrawProductionTransferDraftLinesResult> WithdrawDraftLinesAsync(
+        long id,
+        WithdrawProductionTransferDraftLinesRequest request,
+        long actor,
+        CancellationToken ct = default);
     Task<ProductionTransferPolicyDto> GetPolicyAsync(string branchCode,CancellationToken ct=default);
     Task<ProductionTransferPolicyDto> UpdatePolicyAsync(UpdateProductionTransferPolicyRequest request,long actor,CancellationToken ct=default);
     Task<DefaultProductionTargetLocationDto> GetDefaultTargetLocationAsync(long warehouseId,string branchCode,CancellationToken ct=default);

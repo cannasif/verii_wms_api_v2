@@ -44,6 +44,19 @@ public sealed class ProductionTransfersController(
     public async Task<IActionResult>Update(long id,UpdateWarehouseTransferDraftRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.UPDATE",ct);
         return Ok(ApiResponse<ProductionTransferDetail>.Ok(await service.UpdateDraftAsync(id,request,UserId(),ct),"Üretim transfer taslağı güncellendi."));}
+    [HttpPost("{id:long}/withdraw-draft-lines")]
+    public async Task<IActionResult> WithdrawDraftLines(
+        long id,
+        WithdrawProductionTransferDraftLinesRequest request,
+        CancellationToken ct)
+    {
+        await Require("WMS.PRODUCTION_TRANSFER.UPDATE", ct);
+        await Ensure(id, ct);
+        return Ok(ApiResponse<WithdrawProductionTransferDraftLinesResult>.Ok(
+            await service.WithdrawDraftLinesAsync(id, request, UserId(), ct),
+            "Seçilen stoklar iş emrine geri alındı."));
+    }
+
     [HttpDelete("{id:long}"),HttpPost("{id:long}/delete")]
     public async Task<IActionResult>Delete(long id,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.DELETE",ct);await service.DeleteDraftAsync(id,UserId(),ct);
@@ -98,6 +111,15 @@ public sealed class ProductionTransfersController(
     public async Task<IActionResult>ScanPick(long id,ProductionTransferScanPickRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
         return Ok(ApiResponse<ProductionTransferScanPickResult>.Ok(await execution.ScanPickAsync(id,request,UserId(),ct),"Barkod doğrulandı ve stok bekleme rafına alındı."));}
+    [HttpPost("{id:long}/unpick-to-location")]
+    public async Task<IActionResult> UnpickToLocation(long id, UnpickProductionTransferToLocationRequest request, CancellationToken ct)
+    {
+        await Require("WMS.PRODUCTION_TRANSFER.OPERATE", ct);
+        await Ensure(id, ct);
+        return Ok(ApiResponse<ProductionTransferPickingTableDto>.Ok(
+            await execution.UnpickToLocationAsync(id, request, UserId(), ct),
+            "Toplanan stok seçilen rafa bırakıldı."));
+    }
     [HttpPost("{id:long}/complete-picking")]
     public async Task<IActionResult>CompletePicking(long id,CompleteProductionPickingRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
@@ -144,18 +166,14 @@ public sealed class ProductionTransfersController(
     public async Task<IActionResult>RemoveAssignment(long id,long taskId,long userId,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);
         return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.RemoveAssignmentAsync(id,taskId,userId,UserId(),ct),"Görev ataması kaldırıldı."));}
-    [HttpPost("{id:long}/tasks/{taskId:long}/assignments/{userId:long}/request-return")]
-    public async Task<IActionResult>RequestAssignmentReturn(long id,long taskId,long userId,CancellationToken ct){
+    [HttpPost("{id:long}/request-cancellation-return")]
+    public async Task<IActionResult>RequestCancellationReturn(long id,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);
-        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.RequestAssignmentReturnAsync(id,taskId,userId,UserId(),ct),"İade görevi oluşturuldu."));}
+        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.RequestCancellationReturnAsync(id,UserId(),ct),"İptal iade görevi oluşturuldu."));}
     [HttpPost("{id:long}/tasks/{taskId:long}/task-lines/{taskLineId:long}/process-return")]
     public async Task<IActionResult>ProcessReturnTaskLine(long id,long taskId,long taskLineId,StartProductionTransferTaskRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
         return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.ProcessReturnTaskLineAsync(id,taskId,taskLineId,request.IdempotencyKey,UserId(),ct),"İade satırı onaylandı."));}
-    [HttpPost("{id:long}/tasks/{taskId:long}/complete-assignment-return")]
-    public async Task<IActionResult>CompleteAssignmentReturn(long id,long taskId,CompleteProductionReturnRequest request,CancellationToken ct){
-        await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
-        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.CompleteAssignmentReturnAsync(id,taskId,request,UserId(),ct),"İade tamamlandı, atama kaldırıldı."));}
     [HttpPost("{id:long}/tasks/{taskId:long}/handoff")]
     public async Task<IActionResult>Handoff(long id,long taskId,HandoffProductionTransferTaskRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);

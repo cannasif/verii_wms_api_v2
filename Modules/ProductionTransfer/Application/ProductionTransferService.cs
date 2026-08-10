@@ -2,6 +2,7 @@ using System.Data;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.Location.Domain;
+using verii_wms_api_v2.Modules.Production.Application;
 using verii_wms_api_v2.Modules.Production.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
@@ -22,6 +23,7 @@ namespace verii_wms_api_v2.Modules.ProductionTransfer.Application;
 public sealed class ProductionTransferService(
     IUnitOfWork uow,
     IWarehouseTransferService transfers,
+    IWarehouseTransferReservationService reservations,
     IAuditLogWriter audit,
     IStockTrackingPolicyResolver trackingPolicyResolver) : IProductionTransferService
 {
@@ -154,6 +156,177 @@ public sealed class ProductionTransferService(
             await transfers.DeleteDraftAsync(id,actor,token);
             return true;
         },ct);
+
+    public Task<WithdrawProductionTransferDraftLinesResult> WithdrawDraftLinesAsync(
+        long id,
+        WithdrawProductionTransferDraftLinesRequest request,
+        long actor,
+        CancellationToken ct = default)
+    {
+        var lineIds = (request.TransferLineIds ?? []).Distinct().ToArray();
+        if (lineIds.Length == 0)
+            throw AppException.BadRequest("Geri alınacak en az bir satır seçilmelidir.");
+
+        return uow.ExecuteInTransactionAsync(async token =>
+        {
+            await transfers.EnsureContextAsync(id, Contexts, token);
+
+            var header = await uow.Repository<WarehouseTransferHeader>().Query(true)
+                .Include(x => x.Lines.Where(line => !line.IsDeleted))
+                    .ThenInclude(line => line.Trackings.Where(tracking => !tracking.IsDeleted))
+                .Include(x => x.Tasks.Where(task => !task.IsDeleted))
+                    .ThenInclude(task => task.Lines.Where(line => !line.IsDeleted))
+                .SingleAsync(x => x.Id == id, token);
+
+            if (header.Status != WarehouseTransferStatus.Draft)
+                throw AppException.Conflict("Yalnızca taslak transferden stok geri alınabilir.");
+
+            var activeLines = header.Lines.Where(line => !line.IsDeleted).ToArray();
+            var selectedLines = activeLines.Where(line => lineIds.Contains(line.Id)).ToArray();
+            if (selectedLines.Length != lineIds.Length)
+                throw AppException.BadRequest("Seçilen satırlardan biri transferde bulunamadı.");
+
+            foreach (var line in selectedLines)
+            {
+                if (ProductionWorkOrderMaterialAssignment.ResolveEffectivePickedQuantity(line) > 0)
+                    throw AppException.Conflict($"{line.LineNo}. satırda toplanmış miktar olduğu için geri alınamaz.");
+            }
+
+            var link = await Links.Query(true)
+                .Include(x => x.Lines.Where(line => !line.IsDeleted))
+                .SingleOrDefaultAsync(x => x.WarehouseTransferHeaderId == id, token)
+                ?? throw AppException.NotFound("Üretim transfer bağlamı bulunamadı.");
+
+            if (selectedLines.Length == activeLines.Length)
+            {
+                var withdrawnAll = selectedLines.Select(line =>
+                {
+                    var productionLineLink = link.Lines.FirstOrDefault(x => x.WarehouseTransferLineId == line.Id);
+                    return new WithdrawnProductionTransferDraftLineDto(
+                        line.Id,
+                        line.StockId,
+                        line.StockCodeSnapshot,
+                        line.StockNameSnapshot,
+                        line.RequestedQuantity,
+                        productionLineLink?.RequirementReference);
+                }).ToArray();
+
+                await DeleteDraftAsync(id, actor, token);
+                await audit.WriteAsync(new(
+                    "production-transfer.draft.withdraw-lines",
+                    nameof(WarehouseTransferHeader),
+                    id.ToString(),
+                    "Succeeded",
+                    "production-transfer",
+                    NewValues: new
+                    {
+                        TransferDeleted = true,
+                        link.ProductionOrderNo,
+                        WithdrawnLineCount = withdrawnAll.Length,
+                        WithdrawnQuantity = withdrawnAll.Sum(x => x.Quantity),
+                    },
+                    ChangedFields: ["Lines", "TransferDeleted"]), token);
+
+                return new WithdrawProductionTransferDraftLinesResult(
+                    true,
+                    null,
+                    header.DocumentNo,
+                    link.ProductionOrderNo,
+                    withdrawnAll.Length,
+                    withdrawnAll.Sum(x => x.Quantity),
+                    0,
+                    withdrawnAll);
+            }
+
+            var now = DateTime.UtcNow;
+            var withdrawn = new List<WithdrawnProductionTransferDraftLineDto>(selectedLines.Length);
+            foreach (var line in selectedLines)
+            {
+                var productionLineLink = link.Lines.FirstOrDefault(x => x.WarehouseTransferLineId == line.Id);
+                withdrawn.Add(new WithdrawnProductionTransferDraftLineDto(
+                    line.Id,
+                    line.StockId,
+                    line.StockCodeSnapshot,
+                    line.StockNameSnapshot,
+                    line.RequestedQuantity,
+                    productionLineLink?.RequirementReference));
+
+                line.IsDeleted = true;
+                line.DeletedBy = actor;
+                line.DeletedDate = now;
+                foreach (var tracking in line.Trackings.Where(tracking => !tracking.IsDeleted))
+                {
+                    tracking.IsDeleted = true;
+                    tracking.DeletedBy = actor;
+                    tracking.DeletedDate = now;
+                }
+
+                foreach (var task in header.Tasks.Where(task => !task.IsDeleted))
+                {
+                    foreach (var taskLine in task.Lines.Where(taskLine => !taskLine.IsDeleted && taskLine.WtLineId == line.Id))
+                    {
+                        taskLine.IsDeleted = true;
+                        taskLine.DeletedBy = actor;
+                        taskLine.DeletedDate = now;
+                    }
+                }
+
+                if (productionLineLink is not null)
+                {
+                    productionLineLink.IsDeleted = true;
+                    productionLineLink.DeletedBy = actor;
+                    productionLineLink.DeletedDate = now;
+                }
+            }
+
+            if (WarehouseTransferReservationService.UsesTransferReservations(header))
+            {
+                var reason = Clean(request.Reason, 500) ?? "Taslak transfer satırı iş emrine geri alındı.";
+                await reservations.ReleaseAllAsync(
+                    header,
+                    $"WT:{id}:RESERVE:WITHDRAW:{Guid.NewGuid():N}",
+                    reason,
+                    actor,
+                    token);
+                await reservations.ReserveAsync(
+                    header,
+                    $"WT:{id}:RESERVE:WITHDRAW-REBOOK:{Guid.NewGuid():N}",
+                    actor,
+                    token);
+            }
+
+            header.UpdatedBy = actor;
+            header.UpdatedDate = now;
+            await uow.SaveChangesAsync(token);
+
+            var remainingCount = header.Lines.Count(line => !line.IsDeleted);
+            await audit.WriteAsync(new(
+                "production-transfer.draft.withdraw-lines",
+                nameof(WarehouseTransferHeader),
+                id.ToString(),
+                "Succeeded",
+                "production-transfer",
+                NewValues: new
+                {
+                    TransferDeleted = false,
+                    link.ProductionOrderNo,
+                    WithdrawnLineCount = withdrawn.Count,
+                    WithdrawnQuantity = withdrawn.Sum(x => x.Quantity),
+                    RemainingLineCount = remainingCount,
+                },
+                ChangedFields: ["Lines"]), token);
+
+            return new WithdrawProductionTransferDraftLinesResult(
+                false,
+                id,
+                header.DocumentNo,
+                link.ProductionOrderNo,
+                withdrawn.Count,
+                withdrawn.Sum(x => x.Quantity),
+                remainingCount,
+                withdrawn);
+        }, ct, IsolationLevel.Serializable);
+    }
 
     public async Task<ProductionTransferPolicyDto> GetPolicyAsync(string branchCode,CancellationToken ct=default) =>
         Map(await GetPolicyEntityAsync(branchCode,ct));
@@ -337,7 +510,7 @@ public sealed class ProductionTransferService(
             TargetPutawayLocationId=request.Transfer.TargetPutawayLocationId??locationId,
             Lines=request.Transfer.Lines.Select(x=>x.DefaultTargetLocationId.HasValue
                 ?x
-                :x with{DefaultTargetLocationId=locationId}).ToArray()
+                :x with{DefaultTargetLocationId=sourceStagingLocationId}).ToArray()
         };
         return request with{Transfer=transfer};
     }

@@ -6,7 +6,8 @@ public sealed record WarehouseTransferOperationLineRequest(
     long? SourceLocationId,
     long? TargetLocationId,
     string? LotNo,
-    string? SerialNo);
+    string? SerialNo,
+    decimal? MaxPickQuantity = null);
 
 public sealed record WarehouseTransferOperationRequest(
     Guid IdempotencyKey,

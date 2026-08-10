@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 
@@ -11,9 +12,11 @@ using verii_wms_api_v2.Modules.Identity.Infrastructure;
 namespace verii_wms_api_v2.Migrations
 {
     [DbContext(typeof(WmsDbContext))]
-    partial class WmsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260809195036_AddWarehouseAutoPickWithoutConfirmThreshold")]
+    partial class AddWarehouseAutoPickWithoutConfirmThreshold
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -8750,7 +8753,7 @@ namespace verii_wms_api_v2.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("nvarchar(200)");
 
-                    b.Property<long?>("SourceLocationId")
+                    b.Property<long>("SourceLocationId")
                         .HasColumnType("bigint");
 
                     b.Property<string>("StockCodeSnapshot")
@@ -9556,202 +9559,6 @@ namespace verii_wms_api_v2.Migrations
                         .HasFilter("[IsDeleted] = 0");
 
                     b.ToTable("RII_KKD_POLICY", (string)null);
-                });
-
-            modelBuilder.Entity("verii_wms_api_v2.Modules.Kkd.Domain.KkdPreparationTask", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
-
-                    b.Property<DateTimeOffset>("AssignedAtUtc")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<long?>("AssignedUserId")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("BranchCode")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(10)
-                        .HasColumnType("nvarchar(10)")
-                        .HasDefaultValue("0");
-
-                    b.Property<DateTimeOffset?>("ClosedAtUtc")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("ClosureReason")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
-                    b.Property<DateTimeOffset?>("CompletedAtUtc")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<Guid>("CorrelationId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<long?>("CreatedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("CreatedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long?>("DeletedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("DeletedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long?>("DistributionId")
-                        .HasColumnType("bigint");
-
-                    b.Property<bool>("IsDeleted")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bit")
-                        .HasDefaultValue(false);
-
-                    b.Property<long?>("OriginUserId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long?>("PreviousTaskId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long>("RequestId")
-                        .HasColumnType("bigint");
-
-                    b.Property<byte[]>("RowVersion")
-                        .IsConcurrencyToken()
-                        .IsRequired()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("rowversion");
-
-                    b.Property<DateTimeOffset?>("StartedAtUtc")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.Property<string>("TaskNo")
-                        .IsRequired()
-                        .HasMaxLength(60)
-                        .HasColumnType("nvarchar(60)");
-
-                    b.Property<long?>("UpdatedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("UpdatedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long>("WarehouseId")
-                        .HasColumnType("bigint");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("AssignedUserId");
-
-                    b.HasIndex("CorrelationId")
-                        .IsUnique();
-
-                    b.HasIndex("DistributionId")
-                        .HasFilter("[DistributionId] IS NOT NULL");
-
-                    b.HasIndex("IsDeleted");
-
-                    b.HasIndex("PreviousTaskId");
-
-                    b.HasIndex("WarehouseId");
-
-                    b.HasIndex("BranchCode", "TaskNo")
-                        .IsUnique()
-                        .HasFilter("[IsDeleted] = 0");
-
-                    b.HasIndex("RequestId", "Status");
-
-                    b.HasIndex("BranchCode", "AssignedUserId", "Status");
-
-                    b.ToTable("RII_KKD_PREPARATION_TASK", (string)null);
-                });
-
-            modelBuilder.Entity("verii_wms_api_v2.Modules.Kkd.Domain.KkdPreparationTaskLine", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
-
-                    b.Property<string>("BranchCode")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(10)
-                        .HasColumnType("nvarchar(10)")
-                        .HasDefaultValue("0");
-
-                    b.Property<long?>("CreatedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("CreatedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long?>("DeletedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("DeletedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<decimal>("DeliveredQuantity")
-                        .HasPrecision(20, 6)
-                        .HasColumnType("decimal(20,6)");
-
-                    b.Property<bool>("IsDeleted")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bit")
-                        .HasDefaultValue(false);
-
-                    b.Property<decimal>("PreparedQuantity")
-                        .HasPrecision(20, 6)
-                        .HasColumnType("decimal(20,6)");
-
-                    b.Property<decimal>("Quantity")
-                        .HasPrecision(20, 6)
-                        .HasColumnType("decimal(20,6)");
-
-                    b.Property<long>("RequestLineId")
-                        .HasColumnType("bigint");
-
-                    b.Property<byte[]>("RowVersion")
-                        .IsConcurrencyToken()
-                        .IsRequired()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("rowversion");
-
-                    b.Property<long>("TaskId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long?>("UpdatedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("UpdatedDate")
-                        .HasColumnType("datetime2");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("IsDeleted");
-
-                    b.HasIndex("RequestLineId");
-
-                    b.HasIndex("TaskId", "RequestLineId")
-                        .IsUnique()
-                        .HasFilter("[IsDeleted] = 0");
-
-                    b.ToTable("RII_KKD_PREPARATION_TASK_LINE", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_RII_KKD_PREPARATION_TASK_LINE_QTY", "[Quantity] > 0 AND [PreparedQuantity] >= 0 AND [DeliveredQuantity] >= 0");
-                        });
                 });
 
             modelBuilder.Entity("verii_wms_api_v2.Modules.Kkd.Domain.KkdRequest", b =>
@@ -13600,167 +13407,6 @@ namespace verii_wms_api_v2.Migrations
                     b.ToTable("RII_PR_SOURCE_ORDER", null, t =>
                         {
                             t.HasCheckConstraint("CK_RII_PR_SOURCE_ORDER_QTY_REV", "[PlannedQuantity] > 0 AND [RevisionNumber] > 0");
-                        });
-                });
-
-            modelBuilder.Entity("verii_wms_api_v2.Modules.Production.Domain.ProductionWorkOrderAssignmentCancellation", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
-
-                    b.Property<string>("BranchCode")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(10)
-                        .HasColumnType("nvarchar(10)")
-                        .HasDefaultValue("0");
-
-                    b.Property<DateTimeOffset>("CancelledAtUtc")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<long>("CancelledBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<Guid>("CorrelationId")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<long?>("CreatedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("CreatedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long?>("DeletedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("DeletedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<bool>("IsDeleted")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bit")
-                        .HasDefaultValue(false);
-
-                    b.Property<string>("Reason")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
-                    b.Property<DateTimeOffset?>("RestoredAtUtc")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<long?>("RestoredBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("SourceSystemCode")
-                        .IsRequired()
-                        .HasMaxLength(50)
-                        .HasColumnType("nvarchar(50)");
-
-                    b.Property<string>("SourceType")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(20)
-                        .HasColumnType("nvarchar(20)");
-
-                    b.Property<long?>("UpdatedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("UpdatedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("WorkOrderNumber")
-                        .IsRequired()
-                        .HasMaxLength(100)
-                        .HasColumnType("nvarchar(100)");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("IsDeleted");
-
-                    b.HasIndex("BranchCode", "CancelledAtUtc");
-
-                    b.HasIndex("BranchCode", "WorkOrderNumber", "Status")
-                        .IsUnique()
-                        .HasFilter("[IsDeleted] = 0 AND [Status] = 'Active'");
-
-                    b.ToTable("RII_PR_WO_ASSIGN_CANCEL", (string)null);
-                });
-
-            modelBuilder.Entity("verii_wms_api_v2.Modules.Production.Domain.ProductionWorkOrderAssignmentCancellationLine", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
-
-                    b.Property<string>("BranchCode")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(10)
-                        .HasColumnType("nvarchar(10)")
-                        .HasDefaultValue("0");
-
-                    b.Property<long>("CancellationId")
-                        .HasColumnType("bigint");
-
-                    b.Property<decimal>("CancelledQuantity")
-                        .HasPrecision(20, 6)
-                        .HasColumnType("decimal(20,6)");
-
-                    b.Property<long?>("CreatedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("CreatedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long?>("DeletedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("DeletedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<bool>("IsDeleted")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bit")
-                        .HasDefaultValue(false);
-
-                    b.Property<int>("OperationNumber")
-                        .HasColumnType("int");
-
-                    b.Property<long?>("SourceTransferHeaderId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long?>("StockId")
-                        .HasColumnType("bigint");
-
-                    b.Property<long?>("UpdatedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("UpdatedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long?>("YapCodeId")
-                        .HasColumnType("bigint");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("IsDeleted");
-
-                    b.HasIndex("CancellationId", "StockId", "YapCodeId", "OperationNumber")
-                        .IsUnique()
-                        .HasFilter("[IsDeleted] = 0");
-
-                    b.ToTable("RII_PR_WO_ASSIGN_CANCEL_LINE", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_RII_PR_WO_ASSIGN_CANCEL_LINE_QTY", "[CancelledQuantity] > 0 AND [OperationNumber] >= 0");
                         });
                 });
 
@@ -23894,61 +23540,6 @@ namespace verii_wms_api_v2.Migrations
                     b.Navigation("Matrix");
                 });
 
-            modelBuilder.Entity("verii_wms_api_v2.Modules.Kkd.Domain.KkdPreparationTask", b =>
-                {
-                    b.HasOne("verii_wms_api_v2.Modules.Identity.Domain.User", null)
-                        .WithMany()
-                        .HasForeignKey("AssignedUserId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("verii_wms_api_v2.Modules.Kkd.Domain.KkdDistribution", "Distribution")
-                        .WithMany()
-                        .HasForeignKey("DistributionId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("verii_wms_api_v2.Modules.Kkd.Domain.KkdPreparationTask", "PreviousTask")
-                        .WithMany()
-                        .HasForeignKey("PreviousTaskId")
-                        .OnDelete(DeleteBehavior.Restrict);
-
-                    b.HasOne("verii_wms_api_v2.Modules.Kkd.Domain.KkdRequest", "Request")
-                        .WithMany()
-                        .HasForeignKey("RequestId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse", null)
-                        .WithMany()
-                        .HasForeignKey("WarehouseId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Distribution");
-
-                    b.Navigation("PreviousTask");
-
-                    b.Navigation("Request");
-                });
-
-            modelBuilder.Entity("verii_wms_api_v2.Modules.Kkd.Domain.KkdPreparationTaskLine", b =>
-                {
-                    b.HasOne("verii_wms_api_v2.Modules.Kkd.Domain.KkdRequestLine", "RequestLine")
-                        .WithMany()
-                        .HasForeignKey("RequestLineId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.HasOne("verii_wms_api_v2.Modules.Kkd.Domain.KkdPreparationTask", "Task")
-                        .WithMany("Lines")
-                        .HasForeignKey("TaskId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("RequestLine");
-
-                    b.Navigation("Task");
-                });
-
             modelBuilder.Entity("verii_wms_api_v2.Modules.Kkd.Domain.KkdRequest", b =>
                 {
                     b.HasOne("verii_wms_api_v2.Modules.Identity.Domain.User", null)
@@ -24283,17 +23874,6 @@ namespace verii_wms_api_v2.Migrations
                         .IsRequired();
 
                     b.Navigation("WorkOrder");
-                });
-
-            modelBuilder.Entity("verii_wms_api_v2.Modules.Production.Domain.ProductionWorkOrderAssignmentCancellationLine", b =>
-                {
-                    b.HasOne("verii_wms_api_v2.Modules.Production.Domain.ProductionWorkOrderAssignmentCancellation", "Cancellation")
-                        .WithMany("Lines")
-                        .HasForeignKey("CancellationId")
-                        .OnDelete(DeleteBehavior.Cascade)
-                        .IsRequired();
-
-                    b.Navigation("Cancellation");
                 });
 
             modelBuilder.Entity("verii_wms_api_v2.Modules.ProductionTransfer.Domain.ProductionTransferBarcodeScan", b =>
@@ -25568,11 +25148,6 @@ namespace verii_wms_api_v2.Migrations
                     b.Navigation("Phases");
                 });
 
-            modelBuilder.Entity("verii_wms_api_v2.Modules.Kkd.Domain.KkdPreparationTask", b =>
-                {
-                    b.Navigation("Lines");
-                });
-
             modelBuilder.Entity("verii_wms_api_v2.Modules.Kkd.Domain.KkdRequest", b =>
                 {
                     b.Navigation("Lines");
@@ -25643,11 +25218,6 @@ namespace verii_wms_api_v2.Migrations
             modelBuilder.Entity("verii_wms_api_v2.Modules.Production.Domain.ProductionSourceWorkOrder", b =>
                 {
                     b.Navigation("RecipeLines");
-                });
-
-            modelBuilder.Entity("verii_wms_api_v2.Modules.Production.Domain.ProductionWorkOrderAssignmentCancellation", b =>
-                {
-                    b.Navigation("Lines");
                 });
 
             modelBuilder.Entity("verii_wms_api_v2.Modules.ProductionTransfer.Domain.ProductionTransferHeaderLink", b =>

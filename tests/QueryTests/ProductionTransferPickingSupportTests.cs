@@ -298,6 +298,51 @@ public sealed class ProductionTransferPickingSupportTests
     }
 
     [Fact]
+    public void BuildPersistedRows_splits_partially_picked_non_serial_into_open_and_completed_rows()
+    {
+        const long locationId = 9001;
+        var line = new WarehouseTransferLine
+        {
+            Id = 101,
+            LineNo = 1,
+            StockId = 10,
+            StockCodeSnapshot = "ASD",
+            StockNameSnapshot = "Ürün ASD",
+            TrackingType = StockTrackingType.None,
+            PickedQuantity = 4,
+            DefaultSourceLocationId = locationId,
+        };
+        var header = new WarehouseTransferHeader { Lines = [line] };
+        var task = new WarehouseTransferTask
+        {
+            Lines =
+            [
+                new WarehouseTransferTaskLine
+                {
+                    Id = 501,
+                    WtLineId = 101,
+                    PlannedQuantity = 5,
+                    ProcessedQuantity = 4,
+                    SourceLocationId = locationId,
+                    Line = line,
+                },
+            ],
+        };
+        var locationCodes = new Dictionary<long, string> { [locationId] = "A1" };
+
+        var rows = ProductionTransferPickingSupport.BuildPersistedRows(header, task, locationCodes);
+
+        Assert.Equal(2, rows.Count);
+        var picked = Assert.Single(rows.Where(x => x.ProcessedQuantity > 0));
+        Assert.Equal(4, picked.ProcessedQuantity);
+        Assert.Equal(0, picked.RemainingQuantity);
+        var open = Assert.Single(rows.Where(x => x.RemainingQuantity > 0));
+        Assert.Equal(0, open.ProcessedQuantity);
+        Assert.Equal(1, open.RemainingQuantity);
+        Assert.True(open.CanPick);
+    }
+
+    [Fact]
     public void SortDisplayRows_keeps_route_split_rows_after_anchor_line()
     {
         var link = new ProductionTransferHeaderLink

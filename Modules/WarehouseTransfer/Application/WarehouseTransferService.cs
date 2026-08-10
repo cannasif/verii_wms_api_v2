@@ -383,8 +383,19 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
     }
     private static void ValidateLocations(CreateWarehouseTransferDraftRequest r,IReadOnlyDictionary<long,WarehouseLocation> locations){
         bool Belongs(long? id,long warehouse)=>!id.HasValue||locations[id.Value].WarehouseId==warehouse;
-        if(!Belongs(r.SourceStagingLocationId,r.SourceWarehouseId)||!Belongs(r.TargetReceivingLocationId,r.TargetWarehouseId)||!Belongs(r.TargetPutawayLocationId,r.TargetWarehouseId)
-            ||r.Lines.Any(x=>!Belongs(x.DefaultSourceLocationId,r.SourceWarehouseId)||!Belongs(x.DefaultTargetLocationId,r.TargetWarehouseId)))
+        var productionContext=r.BusinessContext is WarehouseTransferBusinessContext.ProductionMaterialSupply
+            or WarehouseTransferBusinessContext.ProductionWipMove
+            or WarehouseTransferBusinessContext.ProductionOutputMove;
+        if(!Belongs(r.SourceStagingLocationId,r.SourceWarehouseId)||!Belongs(r.TargetReceivingLocationId,r.TargetWarehouseId)||!Belongs(r.TargetPutawayLocationId,r.TargetWarehouseId))
+            throw AppException.BadRequest("Kaynak veya hedef raf seçilen depoyla eşleşmiyor.");
+        if(r.Lines.Any(x=>!Belongs(x.DefaultSourceLocationId,r.SourceWarehouseId)))
+            throw AppException.BadRequest("Kaynak veya hedef raf seçilen depoyla eşleşmiyor.");
+        if(productionContext){
+            if(r.Lines.Any(x=>!Belongs(x.DefaultTargetLocationId,r.SourceWarehouseId)))
+                throw AppException.BadRequest("Üretim transferinde satır hedef rafı kaynak depoya ait olmalıdır.");
+            return;
+        }
+        if(r.Lines.Any(x=>!Belongs(x.DefaultTargetLocationId,r.TargetWarehouseId)))
             throw AppException.BadRequest("Kaynak veya hedef raf seçilen depoyla eşleşmiyor.");
     }
     private static void ValidateTrackings(CreateWarehouseTransferDraftRequest r,IReadOnlyDictionary<long,EffectiveStockTrackingPolicy> policies,bool autoAssignSources){

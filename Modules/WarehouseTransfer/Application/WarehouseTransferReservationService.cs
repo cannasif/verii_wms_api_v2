@@ -10,6 +10,13 @@ namespace verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 public interface IWarehouseTransferReservationService
 {
     Task ReserveAsync(WarehouseTransferHeader header, string idempotencyKey, long actor, CancellationToken ct);
+    Task EnsurePickCoverageAsync(
+        WarehouseTransferHeader header,
+        long lineId,
+        WarehouseTransferOperationLineRequest pick,
+        string idempotencyKey,
+        long actor,
+        CancellationToken ct);
     Task ConsumeAsync(WarehouseTransferHeader header, IReadOnlyDictionary<long, WarehouseTransferOperationLineRequest> lines, string idempotencyKey, long actor, CancellationToken ct);
     Task ReleaseAllAsync(WarehouseTransferHeader header, string idempotencyKey, string reason, long actor, CancellationToken ct);
 }
@@ -87,6 +94,66 @@ public sealed class WarehouseTransferReservationService(IStockBalanceService bal
             draft.Line.Status = WarehouseTransferLineStatus.Reserved;
             draft.Line.UpdatedBy = actor;
             draft.Line.UpdatedDate = DateTime.UtcNow;
+        }
+    }
+
+    public async Task EnsurePickCoverageAsync(
+        WarehouseTransferHeader header,
+        long lineId,
+        WarehouseTransferOperationLineRequest pick,
+        string idempotencyKey,
+        long actor,
+        CancellationToken ct)
+    {
+        if (!UsesTransferReservations(header)) return;
+        var line = header.Lines.SingleOrDefault(x => x.Id == lineId)
+            ?? throw AppException.BadRequest("Rezervasyon için transfer satırı bulunamadı.");
+        WarehouseTransferTracking? tracking = null;
+        var reserved = line.ReservedQuantity;
+        if (line.Trackings.Count > 0)
+        {
+            tracking = line.Trackings.FirstOrDefault(x =>
+                Equal(x.LotNo, pick.LotNo) && Equal(x.SerialNo, pick.SerialNo)
+                && (x.SourceLocationId ?? line.DefaultSourceLocationId)
+                    == (pick.SourceLocationId ?? x.SourceLocationId ?? line.DefaultSourceLocationId));
+            if (tracking is null)
+                throw AppException.Conflict($"{line.LineNo}. satırın lot/seri rezervasyonu toplama isteğiyle eşleşmiyor.");
+            reserved = tracking.ReservedQuantity;
+        }
+
+        var shortfall = pick.Quantity - reserved;
+        if (shortfall <= 0.000001m) return;
+
+        var locationId = pick.SourceLocationId ?? tracking?.SourceLocationId ?? line.DefaultSourceLocationId
+            ?? throw AppException.Conflict($"{line.LineNo}. satır için rezervasyon rafı bulunamadı.");
+        var allowPartial = AllowsPartialProductionReservation(header);
+        var availability = allowPartial
+            ? await LoadLocationAvailabilityAsync(header.SourceWarehouseId, [line], ct)
+            : null;
+        shortfall = CapReservationQuantity(allowPartial, availability, line, locationId, pick.LotNo, pick.SerialNo, shortfall);
+        if (shortfall <= 0.000001m)
+            throw AppException.Conflict($"{line.LineNo}. satır için fazla toplama rezervasyonu oluşturulamadı; rafta yeterli stok yok.");
+
+        var request = Row(line, locationId, pick.LotNo, pick.SerialNo, shortfall);
+        await balances.PostReservationAsync(new(
+            idempotencyKey,
+            "WarehouseTransfer",
+            header.Id,
+            header.DocumentNo,
+            StockReservationOperationTypes.Reserve,
+            "Fazla toplama için ek transfer rezervasyonu",
+            [request]), ct);
+
+        line.ReservedQuantity += shortfall;
+        line.Status = WarehouseTransferLineStatus.Reserved;
+        line.UpdatedBy = actor;
+        line.UpdatedDate = DateTime.UtcNow;
+        if (tracking is not null)
+        {
+            tracking.ReservedQuantity += shortfall;
+            tracking.Status = WarehouseTransferTrackingStatus.Reserved;
+            tracking.UpdatedBy = actor;
+            tracking.UpdatedDate = DateTime.UtcNow;
         }
     }
 

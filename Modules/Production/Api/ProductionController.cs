@@ -41,14 +41,63 @@ public sealed class ProductionController(
             await service.GetSourceWorkOrdersAsync(search,BranchCode(),take,ct)));
     }
 
+    [HttpGet("work-orders/returned")]
+    public async Task<IActionResult>ReturnedSourceWorkOrders(
+        [FromQuery]string? search,[FromQuery]int take=200,CancellationToken ct=default)
+    {
+        await Require("WMS.PRODUCTION.VIEW",ct);
+        return Ok(ApiResponse<IReadOnlyList<ProductionReturnedWorkOrderRow>>.Ok(
+            await service.GetReturnedSourceWorkOrdersAsync(search,BranchCode(),take,ct)));
+    }
+
+    [HttpGet("work-orders/cancelled-assignments")]
+    public async Task<IActionResult> CancelledWorkOrderAssignments(
+        [FromQuery]string? search,[FromQuery]int take=200,CancellationToken ct=default)
+    {
+        await Require("WMS.PRODUCTION.VIEW",ct);
+        return Ok(ApiResponse<IReadOnlyList<ProductionSourceWorkOrderRow>>.Ok(
+            await service.GetCancelledWorkOrderAssignmentsAsync(search,BranchCode(),take,ct)));
+    }
+
+    [HttpPost("work-orders/cancel-assignment")]
+    public async Task<IActionResult> CancelWorkOrderAssignment(
+        CancelProductionWorkOrderAssignmentRequest request,CancellationToken ct)
+    {
+        await Require("WMS.PRODUCTION_TRANSFER.CANCEL",ct);
+        return Ok(ApiResponse<ProductionWorkOrderAssignmentCancellationResult>.Ok(
+            await service.CancelWorkOrderAssignmentAsync(request,BranchCode(),UserId(),ct),
+            "İş emri ataması iptal edildi."));
+    }
+
+    [HttpPost("work-orders/restore-assignment")]
+    public async Task<IActionResult> RestoreWorkOrderAssignment(
+        RestoreProductionWorkOrderAssignmentRequest request,CancellationToken ct)
+    {
+        await Require("WMS.PRODUCTION_TRANSFER.CREATE",ct);
+        return Ok(ApiResponse<ProductionWorkOrderAssignmentCancellationResult>.Ok(
+            await service.RestoreWorkOrderAssignmentAsync(request,BranchCode(),UserId(),ct),
+            "İş emri ataması geri getirildi."));
+    }
+
     [HttpGet("work-orders/{workOrderNumber}/prepare")]
     public async Task<IActionResult>PrepareSourceWorkOrder(
-        string workOrderNumber,[FromQuery]ProductionOrderSourceType? sourceType,
-        [FromQuery]string? sourceSystemCode,CancellationToken ct)
+        string workOrderNumber,
+        [FromQuery]ProductionOrderSourceType? sourceType,
+        [FromQuery]string? sourceSystemCode,
+        [FromQuery]long? transferId,
+        [FromQuery]long? kalanTaskId,
+        CancellationToken ct)
     {
         await Require("WMS.PRODUCTION.VIEW",ct);
         return Ok(ApiResponse<PreparedNetsisProductionWorkOrder>.Ok(
-            await service.PrepareSourceWorkOrderAsync(workOrderNumber,sourceType,sourceSystemCode,BranchCode(),ct)));
+            await service.PrepareSourceWorkOrderAsync(
+                workOrderNumber,
+                sourceType,
+                sourceSystemCode,
+                BranchCode(),
+                transferId,
+                kalanTaskId,
+                ct)));
     }
 
     [HttpPost("plans/paged")]

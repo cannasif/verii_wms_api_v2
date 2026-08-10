@@ -243,3 +243,39 @@ public sealed class ProductionOrderDependency : BaseEntity
     public bool RequireOutputAvailable { get; set; }
     public bool RequireTransferCompleted { get; set; }
 }
+
+public enum ProductionWorkOrderAssignmentCancellationStatus
+{
+    Active = 1,
+    Restored = 2
+}
+
+/// <summary>
+/// Depo yöneticisinin iş emri atama kuyruğundan iptal ettiği malzeme miktarları.
+/// Aynı iş emri için tek aktif kayıt birleştirilir.
+/// </summary>
+public sealed class ProductionWorkOrderAssignmentCancellation : BaseEntity
+{
+    public string WorkOrderNumber { get; set; } = string.Empty;
+    public ProductionOrderSourceType SourceType { get; set; }
+    public string SourceSystemCode { get; set; } = "NETSIS";
+    public ProductionWorkOrderAssignmentCancellationStatus Status { get; set; } = ProductionWorkOrderAssignmentCancellationStatus.Active;
+    public string? Reason { get; set; }
+    public Guid CorrelationId { get; set; }
+    public DateTimeOffset CancelledAtUtc { get; set; }
+    public long CancelledBy { get; set; }
+    public DateTimeOffset? RestoredAtUtc { get; set; }
+    public long? RestoredBy { get; set; }
+    public ICollection<ProductionWorkOrderAssignmentCancellationLine> Lines { get; set; } = [];
+}
+
+public sealed class ProductionWorkOrderAssignmentCancellationLine : BaseEntity
+{
+    public long CancellationId { get; set; }
+    public ProductionWorkOrderAssignmentCancellation Cancellation { get; set; } = null!;
+    public long? StockId { get; set; }
+    public long? YapCodeId { get; set; }
+    public int OperationNumber { get; set; }
+    public decimal CancelledQuantity { get; set; }
+    public long? SourceTransferHeaderId { get; set; }
+}

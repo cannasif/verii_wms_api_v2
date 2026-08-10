@@ -451,9 +451,12 @@ public sealed class WarehouseTransferOperationService(
         {
             var quantity = requests[line.Id].Quantity;
             if (quantity <= 0) throw AppException.BadRequest("Operasyon miktarı sıfırdan büyük olmalıdır.");
+            var pickCeiling = phase == TransferPhase.Pick
+                ? requests[line.Id].MaxPickQuantity ?? line.RequestedQuantity
+                : line.RequestedQuantity;
             var available = phase switch
             {
-                TransferPhase.Pick => line.RequestedQuantity - line.PickedQuantity,
+                TransferPhase.Pick => pickCeiling - line.PickedQuantity,
                 TransferPhase.Dispatch => line.PickedQuantity - line.ShippedQuantity,
                 TransferPhase.Receive => line.ShippedQuantity - line.ReceivedQuantity,
                 TransferPhase.Putaway => line.ReceivedQuantity - line.PutawayQuantity,
@@ -762,8 +765,16 @@ public sealed class WarehouseTransferOperationService(
             _ => 0
         };
         if (request.Quantity > available)
+        {
+            if (phase == TransferPhase.Pick
+                && request.MaxPickQuantity.HasValue
+                && line.PickedQuantity + request.Quantity <= request.MaxPickQuantity.Value + 0.000001m
+                && tracking.PickedQuantity + request.Quantity
+                    <= Math.Max(tracking.PlannedQuantity, tracking.PickedQuantity + request.Quantity) + 0.000001m)
+                return;
             throw AppException.Conflict(
                 $"{line.LineNo}. satırın seçilen seri/lot boyutunda kullanılabilir miktarı {available}, istenen {request.Quantity}.");
+        }
     }
 
     private static void ApplyTracking(
@@ -797,7 +808,7 @@ public sealed class WarehouseTransferOperationService(
             line.Trackings.Add(tracking);
         }
 
-        tracking.PlannedQuantity = Math.Max(tracking.PlannedQuantity, request.Quantity);
+        tracking.PlannedQuantity = Math.Max(tracking.PlannedQuantity, tracking.PickedQuantity + request.Quantity);
         switch (phase)
         {
             case TransferPhase.Pick:

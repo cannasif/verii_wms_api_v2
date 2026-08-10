@@ -4,10 +4,12 @@ using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.DocumentSeries.Application;
 using verii_wms_api_v2.Modules.DocumentSeries.Domain;
+using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.NetsisRead.Application;
 using verii_wms_api_v2.Modules.Production.Domain;
+using verii_wms_api_v2.Modules.ProductionTransfer.Application;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.Stock.Application;
 using verii_wms_api_v2.Modules.StockTracking.Application;
@@ -22,12 +24,14 @@ using YapCodeEntity=verii_wms_api_v2.Modules.YapCode.Domain.YapCode;
 
 namespace verii_wms_api_v2.Modules.Production.Application;
 
-public sealed class ProductionService(
+public sealed partial class ProductionService(
     IUnitOfWork uow,
     IDocumentNumberAllocator numberAllocator,
     IStockTrackingPolicyResolver trackingPolicyResolver,
     IAuditLogWriter audit,
-    INetsisReadService netsisRead) : IProductionService
+    INetsisReadService netsisRead,
+    IProductionTransferService productionTransfers,
+    IOperationCancellationCoordinator cancellationCoordinator) : IProductionService
 {
     private IGenericRepository<ProductionHeader> Headers => uow.Repository<ProductionHeader>();
 
@@ -70,82 +74,746 @@ public sealed class ProductionService(
                     ProductionOrderSourceType.WmsIntegrationTables,x.SourceSystemCode,x.RevisionNumber,x.WorkOrderNumber,
                     branchNumber,x.ProductCode,x.ProductName??x.ProductCode,x.ConfigurationCode,x.PlannedQuantity,
                     x.UnitCode,x.RecipeLines.Count,x.WorkOrderDate,x.DeliveryDate,x.ProjectCode,
-                    x.TargetWarehouseCode,x.SourceWarehouseCode,false)));
+                    x.TargetWarehouseCode,x.SourceWarehouseCode,false,
+                    RecipeLineCount: x.RecipeLines.Count)));
         }
 
         var ordered=result.OrderByDescending(x=>x.WorkOrderDate).ThenBy(x=>x.WorkOrderNumber)
             .ThenBy(x=>x.SourceSystemCode).Take(boundedTake).ToArray();
-        var assignedWorkOrders=await LoadAssignedSourceWorkOrderNumbersAsync(
+        var cancellationRemainders=await LoadCancellationReturnRemainderSourceRowsAsync(
             branch,
-            ordered.Select(x=>x.WorkOrderNumber).ToArray(),
+            branchNumber,
+            setting,
+            search,
+            ordered,
             ct);
-        return ProductionSourceWorkOrderAssignmentFilter.ExcludeAssigned(ordered, assignedWorkOrders);
+        var snapshotRows=ordered
+            .Concat(cancellationRemainders)
+            .GroupBy(x=>$"{x.SourceType}:{x.SourceSystemCode}:{x.WorkOrderNumber.Trim()}",StringComparer.OrdinalIgnoreCase)
+            .Select(x=>x.First())
+            .ToArray();
+        var assignmentSnapshot=await BuildWorkOrderAssignmentSnapshotAsync(branch, snapshotRows, ct);
+        var fullyAssignedWorkOrders=assignmentSnapshot.GetFullyAssignedWorkOrderNumbers(ordered);
+        var unassigned=ProductionSourceWorkOrderAssignmentFilter.ExcludeAssigned(ordered, fullyAssignedWorkOrders);
+        var merged=MergeUnassignedWithCancellationRemaindersAsync(
+            unassigned,
+            cancellationRemainders,
+            boundedTake,
+            assignmentSnapshot);
+        return merged
+            .Select(row =>
+            {
+                var workOrderNumber = row.WorkOrderNumber.Trim();
+                var recipeLineCount = Math.Max(
+                    row.RecipeLineCount,
+                    assignmentSnapshot.GetRecipeLineCount(workOrderNumber));
+                return row with
+                {
+                    AssignedRecipeLineCount = assignmentSnapshot.GetAssignedRecipeLineCount(workOrderNumber),
+                    RecipeLineCount = recipeLineCount
+                };
+            })
+            .ToArray();
     }
 
-    private async Task<HashSet<string>> LoadAssignedSourceWorkOrderNumbersAsync(
+    public Task<IReadOnlyList<ProductionReturnedWorkOrderRow>> GetReturnedSourceWorkOrdersAsync(
+        string? search,
+        string branchCode,
+        int take = 200,
+        CancellationToken ct = default) =>
+        Task.FromResult<IReadOnlyList<ProductionReturnedWorkOrderRow>>([]);
+
+    private async Task<IReadOnlyList<ProductionSourceWorkOrderRow>> LoadCancellationReturnRemainderSourceRowsAsync(
         string branch,
-        IReadOnlyCollection<string> candidateWorkOrderNumbers,
+        int branchNumber,
+        (ProductionOrderSourceType Source, string SourceSystemCode) setting,
+        string? search,
+        IReadOnlyList<ProductionSourceWorkOrderRow> sourceTemplates,
         CancellationToken ct)
     {
-        var candidates=candidateWorkOrderNumbers
-            .Where(x=>!string.IsNullOrWhiteSpace(x))
-            .Select(x=>x.Trim())
+        var contexts = ProductionSourceWorkOrderAssignmentFilter.ProductionContexts;
+
+        var links = await uow.Repository<ProductionTransferHeaderLink>().Query()
+            .AsNoTracking()
+            .Where(x => x.BranchCode == branch
+                && contexts.Contains(x.WarehouseTransferHeader.BusinessContext)
+                && x.WorkflowStatus != ProductionTransferWorkflowStatus.Cancelled
+                && x.WorkflowStatus != ProductionTransferWorkflowStatus.Completed
+                && x.WorkflowStatus != ProductionTransferWorkflowStatus.CompletedWithShortage)
+            .Include(x => x.Lines.Where(line => !line.IsDeleted))
+            .Include(x => x.WarehouseTransferHeader)
+                .ThenInclude(h => h.Tasks.Where(task => !task.IsDeleted))
+                    .ThenInclude(task => task.Lines.Where(line => !line.IsDeleted))
+                        .ThenInclude(line => line.Line)
+            .Include(x => x.WarehouseTransferHeader)
+                .ThenInclude(h => h.Tasks.Where(task => !task.IsDeleted))
+                    .ThenInclude(task => task.Assignments)
+            .OrderByDescending(x => x.WarehouseTransferHeader.UpdatedDate ?? x.WarehouseTransferHeader.CreatedDate)
+            .Take(1000)
+            .ToListAsync(ct);
+
+        if (links.Count == 0) return [];
+
+        var candidateWorkOrders = links
+            .Select(link => link.ProductionOrderNo?.Trim() ?? link.WarehouseTransferHeader.ExternalReferenceNo?.Trim())
+            .Where(workOrderNumber => !string.IsNullOrWhiteSpace(workOrderNumber))
+            .Select(workOrderNumber => workOrderNumber!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        if(candidates.Length==0)
-            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var candidateWorkOrderSet = new HashSet<string>(candidateWorkOrders, StringComparer.OrdinalIgnoreCase);
+        var assignmentLinks = candidateWorkOrders.Length == 0
+            ? []
+            : await LoadProductionTransferLinksForWorkOrdersAsync(branch, candidateWorkOrders, ct);
 
-        var contexts=ProductionSourceWorkOrderAssignmentFilter.ProductionContexts;
-        var assigned=new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var warehouseIds = links
+            .SelectMany(x => new[] { x.WarehouseTransferHeader.SourceWarehouseId, x.WarehouseTransferHeader.TargetWarehouseId })
+            .Distinct()
+            .ToArray();
+        var warehouses = warehouseIds.Length == 0
+            ? new Dictionary<long, int>()
+            : await uow.Repository<WarehouseEntity>().Query(ignoreQueryFilters: true)
+                .Where(x => warehouseIds.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, x => x.WarehouseCode, ct);
 
-        var linkedOrderNos=await uow.Repository<ProductionTransferHeaderLink>().Query()
+        var templatesByWorkOrder = sourceTemplates
+            .GroupBy(x => x.WorkOrderNumber, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+
+        var rows = new List<ProductionSourceWorkOrderRow>();
+        var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var link in links)
+        {
+            var header = link.WarehouseTransferHeader;
+            if (!ProductionWorkOrderTransferGrouping.MatchesSearch(search, header, link)) continue;
+
+            var tasks = header.Tasks.Where(x => !x.IsDeleted).ToArray();
+            foreach (var task in tasks)
+            {
+                if (ProductionWorkOrderTransferGrouping.IsPostShortageHandoverUnassignedPickTask(task, link))
+                    continue;
+                if (!ProductionWorkOrderTransferGrouping.IsPostCancellationReturnUnassignedPickTask(task, tasks))
+                    continue;
+
+                var workOrderNumber = link.ProductionOrderNo?.Trim()
+                    ?? header.ExternalReferenceNo?.Trim();
+                if (string.IsNullOrWhiteSpace(workOrderNumber)) continue;
+
+                var dedupeKey = $"{workOrderNumber}:{header.Id}:{task.Id}";
+                if (!seenKeys.Add(dedupeKey)) continue;
+
+                if (IsCancellationReturnRemainderFullyAssigned(link, task, assignmentLinks, candidateWorkOrderSet))
+                    continue;
+
+                var sourceWarehouseCode = warehouses.GetValueOrDefault(header.SourceWarehouseId);
+                var targetWarehouseCode = warehouses.GetValueOrDefault(header.TargetWarehouseId);
+                if (templatesByWorkOrder.TryGetValue(workOrderNumber, out var template))
+                {
+                    rows.Add(template with
+                    {
+                        ListingKind = ProductionSourceWorkOrderListingKind.CancellationReturnRemainder,
+                        TransferId = header.Id,
+                        KalanTaskId = task.Id,
+                        ProjectCode = template.ProjectCode ?? header.ProjectCode,
+                        WorkOrderDate = template.WorkOrderDate ?? header.DocumentDate.ToDateTime(TimeOnly.MinValue),
+                        IssueWarehouseCode = sourceWarehouseCode > 0 ? sourceWarehouseCode : template.IssueWarehouseCode,
+                        WarehouseCode = targetWarehouseCode > 0 ? targetWarehouseCode : template.WarehouseCode,
+                    });
+                    continue;
+                }
+
+                var netsisTemplate = setting.Source is ProductionOrderSourceType.NetsisErpFunctions or ProductionOrderSourceType.ErpAndWms
+                    ? (await netsisRead.GetProductionWorkOrdersAsync(workOrderNumber, branchNumber, true, 1, ct)).FirstOrDefault()
+                    : null;
+                if (netsisTemplate is not null)
+                {
+                    rows.Add(new ProductionSourceWorkOrderRow(
+                        ProductionOrderSourceType.NetsisErpFunctions,
+                        "NETSIS",
+                        1,
+                        netsisTemplate.WorkOrderNumber,
+                        netsisTemplate.BranchCode ?? branchNumber,
+                        netsisTemplate.StockCode,
+                        netsisTemplate.StockName,
+                        netsisTemplate.ConfigurationCode,
+                        netsisTemplate.WorkOrderQuantity,
+                        netsisTemplate.UnitCode,
+                        netsisTemplate.RecipeTotal,
+                        netsisTemplate.WorkOrderDate ?? header.DocumentDate.ToDateTime(TimeOnly.MinValue),
+                        netsisTemplate.DeliveryDate,
+                        netsisTemplate.ProjectCode ?? header.ProjectCode,
+                        targetWarehouseCode > 0 ? targetWarehouseCode : netsisTemplate.WarehouseCode,
+                        sourceWarehouseCode > 0 ? sourceWarehouseCode : netsisTemplate.IssueWarehouseCode,
+                        netsisTemplate.IsClosed,
+                        ProductionSourceWorkOrderListingKind.CancellationReturnRemainder,
+                        header.Id,
+                        task.Id));
+                    continue;
+                }
+
+                rows.Add(new ProductionSourceWorkOrderRow(
+                    setting.Source is ProductionOrderSourceType.WmsIntegrationTables
+                        ? ProductionOrderSourceType.WmsIntegrationTables
+                        : ProductionOrderSourceType.NetsisErpFunctions,
+                    setting.Source is ProductionOrderSourceType.WmsIntegrationTables
+                        ? setting.SourceSystemCode
+                        : "NETSIS",
+                    1,
+                    workOrderNumber,
+                    branchNumber,
+                    string.Empty,
+                    string.Empty,
+                    null,
+                    0,
+                    null,
+                    0,
+                    header.DocumentDate.ToDateTime(TimeOnly.MinValue),
+                    null,
+                    header.ProjectCode,
+                    targetWarehouseCode,
+                    sourceWarehouseCode,
+                    false,
+                    ProductionSourceWorkOrderListingKind.CancellationReturnRemainder,
+                    header.Id,
+                    task.Id));
+            }
+        }
+
+        return rows
+            .OrderByDescending(x => x.WorkOrderDate)
+            .ThenBy(x => x.WorkOrderNumber, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static string? ResolveLinkedWorkOrderNumber(
+        ProductionTransferHeaderLink link,
+        IReadOnlySet<string> candidateWorkOrderNumbers)
+    {
+        var productionOrderNo = link.ProductionOrderNo?.Trim();
+        if (!string.IsNullOrWhiteSpace(productionOrderNo) && candidateWorkOrderNumbers.Contains(productionOrderNo))
+            return productionOrderNo;
+
+        var externalReferenceNo = link.WarehouseTransferHeader.ExternalReferenceNo?.Trim();
+        if (!string.IsNullOrWhiteSpace(externalReferenceNo) && candidateWorkOrderNumbers.Contains(externalReferenceNo))
+            return externalReferenceNo;
+
+        return null;
+    }
+
+    private async Task<Dictionary<ProductionRecipeMaterialKey, decimal>> LoadAssignedMaterialQuantitiesAsync(
+        string branch,
+        string workOrderNumber,
+        CancellationToken ct)
+    {
+        var normalized = workOrderNumber.Trim();
+        var contexts = ProductionSourceWorkOrderAssignmentFilter.ProductionContexts;
+        var links = await uow.Repository<ProductionTransferHeaderLink>().Query()
             .AsNoTracking()
-            .Where(x=>x.BranchCode==branch
+            .Where(x => x.BranchCode == branch
                 && contexts.Contains(x.WarehouseTransferHeader.BusinessContext)
-                && x.WarehouseTransferHeader.Status!=WarehouseTransferStatus.Cancelled
-                && x.WorkflowStatus!=ProductionTransferWorkflowStatus.Cancelled
-                && x.ProductionOrderNo!=null
-                && candidates.Contains(x.ProductionOrderNo))
-            .Select(x=>x.ProductionOrderNo!)
-            .Distinct()
+                && x.WarehouseTransferHeader.Status != WarehouseTransferStatus.Cancelled
+                && x.WorkflowStatus != ProductionTransferWorkflowStatus.Cancelled
+                && (x.ProductionOrderNo == normalized
+                    || x.WarehouseTransferHeader.ExternalReferenceNo == normalized))
+            .Include(x => x.Lines.Where(line => !line.IsDeleted))
+                .ThenInclude(line => line.WarehouseTransferLine)
+                    .ThenInclude(line => line!.Trackings.Where(tracking => !tracking.IsDeleted))
+            .Include(x => x.WarehouseTransferHeader)
+                .ThenInclude(header => header.Tasks.Where(task => !task.IsDeleted))
+                    .ThenInclude(task => task.Assignments)
             .ToListAsync(ct);
-        foreach(var workOrderNumber in linkedOrderNos)
-            assigned.Add(workOrderNumber.Trim());
 
-        var externalRefs=await uow.Repository<WarehouseTransferHeader>().Query()
+        var totals = new Dictionary<ProductionRecipeMaterialKey, decimal>();
+        foreach (var link in links)
+        {
+            if (ProductionWorkOrderTransferGrouping.IsOpenPartialTransferRemainderLink(link))
+                continue;
+
+            foreach (var linkLine in link.Lines)
+            {
+                var transferLine = linkLine.WarehouseTransferLine;
+                if (transferLine is null || transferLine.IsDeleted) continue;
+
+                var quantity = ProductionWorkOrderMaterialAssignment.ResolveCommittedAssignedQuantity(
+                    link.WorkflowStatus,
+                    linkLine.RequiredQuantity,
+                    linkLine.HandedOverQuantity,
+                    transferLine);
+                if (quantity <= 0) continue;
+
+                var operationNumber = ProductionWorkOrderMaterialAssignment.TryParseOperationNumber(
+                    linkLine.RequirementReference,
+                    out var parsedOperation)
+                    ? parsedOperation
+                    : 0;
+                var key = ProductionWorkOrderMaterialAssignment.CreateKey(
+                    transferLine.StockId,
+                    transferLine.YapCodeId,
+                    operationNumber);
+                totals[key] = totals.GetValueOrDefault(key) + quantity;
+            }
+        }
+
+        return totals;
+    }
+
+    private async Task<Dictionary<ProductionRecipeMaterialKey, decimal>> LoadPartialTransferRemainderMaterialQuantitiesAsync(
+        string branch,
+        string workOrderNumber,
+        CancellationToken ct)
+    {
+        var normalized = workOrderNumber.Trim();
+        var contexts = ProductionSourceWorkOrderAssignmentFilter.ProductionContexts;
+        var links = await uow.Repository<ProductionTransferHeaderLink>().Query()
             .AsNoTracking()
-            .Where(x=>x.BranchCode==branch
-                && contexts.Contains(x.BusinessContext)
-                && x.Status!=WarehouseTransferStatus.Cancelled
-                && x.ExternalReferenceNo!=null
-                && candidates.Contains(x.ExternalReferenceNo))
-            .Select(x=>x.ExternalReferenceNo!)
-            .Distinct()
+            .Where(x => x.BranchCode == branch
+                && contexts.Contains(x.WarehouseTransferHeader.BusinessContext)
+                && x.WarehouseTransferHeader.Status != WarehouseTransferStatus.Cancelled
+                && x.WorkflowStatus != ProductionTransferWorkflowStatus.Cancelled
+                && (x.ProductionOrderNo == normalized
+                    || x.WarehouseTransferHeader.ExternalReferenceNo == normalized))
+            .Include(x => x.Lines.Where(line => !line.IsDeleted))
+                .ThenInclude(line => line.WarehouseTransferLine)
+                    .ThenInclude(line => line!.Trackings.Where(tracking => !tracking.IsDeleted))
+            .Include(x => x.WarehouseTransferHeader)
             .ToListAsync(ct);
-        foreach(var workOrderNumber in externalRefs)
-            assigned.Add(workOrderNumber.Trim());
 
-        return assigned;
+        var openManualAssignments = await LoadOpenManualAssignmentQuantitiesAsync(branch, normalized, ct);
+        var activeRemainderLinks = ProductionWorkOrderTransferGrouping.FilterActiveOpenPartialTransferRemainderLinks(links);
+        var totals = new Dictionary<ProductionRecipeMaterialKey, decimal>();
+        foreach (var link in activeRemainderLinks)
+        {
+            foreach (var linkLine in link.Lines.Where(line => !line.IsDeleted))
+            {
+                var transferLine = linkLine.WarehouseTransferLine;
+                if (transferLine is null || transferLine.IsDeleted) continue;
+
+                var remaining = ProductionWorkOrderMaterialAssignment.ResolveOpenPartialTransferRemainderQuantity(linkLine);
+                if (remaining <= 0) continue;
+
+                var operationNumber = ProductionWorkOrderMaterialAssignment.TryParseOperationNumber(
+                    linkLine.RequirementReference,
+                    out var parsedOperation)
+                    ? parsedOperation
+                    : 0;
+                var key = ProductionWorkOrderMaterialAssignment.CreateKey(
+                    transferLine.StockId,
+                    transferLine.YapCodeId,
+                    operationNumber);
+                totals[key] = totals.GetValueOrDefault(key) + remaining;
+            }
+        }
+
+        ProductionWorkOrderMaterialAssignment.NetPartialTransferRemaindersAgainstOpenAssignments(
+            totals,
+            openManualAssignments);
+
+        return totals;
+    }
+
+    private async Task<Dictionary<ProductionRecipeMaterialKey, decimal>> LoadOpenManualAssignmentQuantitiesAsync(
+        string branch,
+        string workOrderNumber,
+        CancellationToken ct)
+    {
+        var normalized = workOrderNumber.Trim();
+        var contexts = ProductionSourceWorkOrderAssignmentFilter.ProductionContexts;
+        var links = await uow.Repository<ProductionTransferHeaderLink>().Query()
+            .AsNoTracking()
+            .Where(x => x.BranchCode == branch
+                && contexts.Contains(x.WarehouseTransferHeader.BusinessContext)
+                && x.WarehouseTransferHeader.Status != WarehouseTransferStatus.Cancelled
+                && x.WorkflowStatus != ProductionTransferWorkflowStatus.Cancelled
+                && x.WorkflowStatus != ProductionTransferWorkflowStatus.Completed
+                && x.WorkflowStatus != ProductionTransferWorkflowStatus.CompletedWithShortage
+                && (x.ProductionOrderNo == normalized
+                    || x.WarehouseTransferHeader.ExternalReferenceNo == normalized))
+            .Include(x => x.Lines.Where(line => !line.IsDeleted))
+                .ThenInclude(line => line.WarehouseTransferLine)
+            .Include(x => x.WarehouseTransferHeader)
+            .ToListAsync(ct);
+
+        var totals = new Dictionary<ProductionRecipeMaterialKey, decimal>();
+        foreach (var link in links)
+        {
+            if (ProductionWorkOrderTransferGrouping.IsOpenPartialTransferRemainderLink(link))
+                continue;
+
+            foreach (var linkLine in link.Lines.Where(line => !line.IsDeleted))
+            {
+                var transferLine = linkLine.WarehouseTransferLine;
+                if (transferLine is null || transferLine.IsDeleted) continue;
+
+                var quantity = linkLine.RequiredQuantity > 0
+                    ? linkLine.RequiredQuantity
+                    : transferLine.RequestedQuantity;
+                if (quantity <= 0) continue;
+
+                var operationNumber = ProductionWorkOrderMaterialAssignment.TryParseOperationNumber(
+                    linkLine.RequirementReference,
+                    out var parsedOperation)
+                    ? parsedOperation
+                    : 0;
+                var key = ProductionWorkOrderMaterialAssignment.CreateKey(
+                    transferLine.StockId,
+                    transferLine.YapCodeId,
+                    operationNumber);
+                totals[key] = totals.GetValueOrDefault(key) + quantity;
+            }
+        }
+
+        return totals;
+    }
+
+    private static (IReadOnlyList<PreparedNetsisProductionMaterial> Remaining, IReadOnlyList<PreparedNetsisProductionMaterial> Assigned)
+        ApplyPartialTransferRemainderReclassification(
+            IReadOnlyList<PreparedNetsisProductionMaterial> recipeMaterials,
+            (IReadOnlyList<PreparedNetsisProductionMaterial> Remaining, IReadOnlyList<PreparedNetsisProductionMaterial> Assigned) splitMaterials,
+            IReadOnlyDictionary<ProductionRecipeMaterialKey, decimal> partialTransferRemainders) =>
+        ProductionWorkOrderMaterialAssignment.ReclassifyPartialTransferRemainders(
+            recipeMaterials,
+            splitMaterials.Remaining,
+            splitMaterials.Assigned,
+            partialTransferRemainders);
+
+    private async Task<IReadOnlyList<PreparedNetsisProductionMaterial>> LoadFullRecipeMaterialsAsync(
+        ProductionSourceWorkOrderRow row,
+        string branch,
+        CancellationToken ct)
+    {
+        if (row.SourceType == ProductionOrderSourceType.WmsIntegrationTables)
+            return await LoadWmsRecipeMaterialsAsync(row.WorkOrderNumber, branch, row.SourceSystemCode, ct);
+
+        return await LoadNetsisRecipeMaterialsAsync(row.WorkOrderNumber, branch, ct);
+    }
+
+    private async Task<IReadOnlyList<PreparedNetsisProductionMaterial>> LoadNetsisRecipeMaterialsAsync(
+        string workOrderNumber,
+        string branch,
+        CancellationToken ct)
+    {
+        if (!int.TryParse(branch, out var branchNumber))
+            throw AppException.BadRequest("Oturum şube kodu sayısal değildir.");
+
+        var externalNo = workOrderNumber.Trim();
+        var recipe = await netsisRead.GetProductionWorkOrderRecipeAsync(externalNo, branchNumber, ct);
+        if (recipe.Count == 0) return [];
+
+        var stockCodes = recipe.Select(x => x.ComponentStockCode).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var stocks = await uow.Repository<StockEntity>().Query()
+            .Where(x => x.BranchCode == branch && stockCodes.Contains(x.ErpStockCode))
+            .ToListAsync(ct);
+        var stockMap = stocks.GroupBy(x => x.ErpStockCode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
+
+        var configurationCodes = recipe.Select(x => x.ComponentConfigurationCode)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var yapCodes = configurationCodes.Length == 0
+            ? []
+            : await uow.Repository<YapCodeEntity>().Query()
+                .Where(x => x.BranchCode == branch && configurationCodes.Contains(x.ConfigurationCode))
+                .ToListAsync(ct);
+        long? ResolveYap(string? code, long? stockId) => string.IsNullOrWhiteSpace(code)
+            ? null
+            : yapCodes
+                .Where(x => string.Equals(x.ConfigurationCode, code.Trim(), StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(x => x.StockId == stockId)
+                .ThenBy(x => x.Id)
+                .Select(x => (long?)x.Id)
+                .FirstOrDefault();
+
+        return recipe.Select(row =>
+        {
+            stockMap.TryGetValue(row.ComponentStockCode, out var stock);
+            return new PreparedNetsisProductionMaterial(
+                stock?.Id,
+                row.ComponentStockCode,
+                row.ComponentStockName,
+                stock?.BaseUnitCode ?? row.ComponentUnitCode ?? "ADET",
+                ResolveYap(row.ComponentConfigurationCode, stock?.Id),
+                row.ComponentConfigurationCode,
+                row.OperationNumber,
+                row.RecipeQuantity,
+                row.VariableWasteQuantity + row.FixedWasteQuantity,
+                row.TotalRequiredQuantity,
+                stock is null ? $"Bileşen stok WMS ERP aynasında bulunamadı: {row.ComponentStockCode}" : null);
+        }).ToArray();
+    }
+
+    private async Task<IReadOnlyList<PreparedNetsisProductionMaterial>> LoadWmsRecipeMaterialsAsync(
+        string workOrderNumber,
+        string branch,
+        string sourceSystemCode,
+        CancellationToken ct)
+    {
+        var externalNo = workOrderNumber.Trim();
+        var source = await uow.Repository<ProductionSourceWorkOrder>().Query()
+            .Include(x => x.RecipeLines)
+            .Where(x => x.BranchCode == branch
+                && x.SourceSystemCode == sourceSystemCode
+                && x.WorkOrderNumber == externalNo
+                && (x.Status == ProductionSourceOrderStatus.Ready || x.Status == ProductionSourceOrderStatus.Released))
+            .OrderByDescending(x => x.RevisionNumber)
+            .ThenByDescending(x => x.SourceUpdatedAtUtc)
+            .FirstOrDefaultAsync(ct);
+        if (source is null || source.RecipeLines.Count == 0) return [];
+
+        var stockCodes = source.RecipeLines.Select(x => x.ComponentStockCode).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var stocks = await uow.Repository<StockEntity>().Query()
+            .Where(x => x.BranchCode == branch && stockCodes.Contains(x.ErpStockCode))
+            .ToListAsync(ct);
+        var stockMap = stocks.GroupBy(x => x.ErpStockCode, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
+
+        var configurationCodes = source.RecipeLines.Select(x => x.ComponentConfigurationCode)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        var yapCodes = configurationCodes.Length == 0
+            ? []
+            : await uow.Repository<YapCodeEntity>().Query()
+                .Where(x => x.BranchCode == branch && configurationCodes.Contains(x.ConfigurationCode))
+                .ToListAsync(ct);
+        long? ResolveYap(string? code, long? stockId) => string.IsNullOrWhiteSpace(code)
+            ? null
+            : yapCodes
+                .Where(x => string.Equals(x.ConfigurationCode, code.Trim(), StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(x => x.StockId == stockId)
+                .ThenBy(x => x.Id)
+                .Select(x => (long?)x.Id)
+                .FirstOrDefault();
+
+        return source.RecipeLines.OrderBy(x => x.LineNumber).Select(row =>
+        {
+            stockMap.TryGetValue(row.ComponentStockCode, out var stock);
+            return new PreparedNetsisProductionMaterial(
+                stock?.Id,
+                row.ComponentStockCode,
+                row.ComponentStockName,
+                stock?.BaseUnitCode ?? row.UnitCode,
+                ResolveYap(row.ComponentConfigurationCode, stock?.Id),
+                row.ComponentConfigurationCode,
+                row.OperationNumber,
+                row.RecipeQuantity,
+                row.VariableWasteQuantity + row.FixedWasteQuantity,
+                row.TotalRequiredQuantity,
+                stock is null ? $"Bileşen stok WMS ERP aynasında bulunamadı: {row.ComponentStockCode}" : null);
+        }).ToArray();
     }
 
     public async Task<PreparedNetsisProductionWorkOrder> PrepareSourceWorkOrderAsync(
-        string workOrderNumber,ProductionOrderSourceType? sourceType,string? sourceSystemCode,
-        string branchCode,CancellationToken ct=default)
+        string workOrderNumber,
+        ProductionOrderSourceType? sourceType,
+        string? sourceSystemCode,
+        string branchCode,
+        long? transferId = null,
+        long? kalanTaskId = null,
+        CancellationToken ct = default)
     {
-        var setting=await GetSourceSettingAsync(branchCode.Trim(),ct);
-        var selectedSource=setting.Source==ProductionOrderSourceType.ErpAndWms
-            ?sourceType??throw AppException.BadRequest("Birleşik kaynak modunda iş emri kaynağı zorunludur.")
-            :setting.Source;
-        if(selectedSource==ProductionOrderSourceType.ErpAndWms)
+        var branch = branchCode.Trim();
+        var setting = await GetSourceSettingAsync(branch, ct);
+        var selectedSource = setting.Source == ProductionOrderSourceType.ErpAndWms
+            ? sourceType ?? throw AppException.BadRequest("Birleşik kaynak modunda iş emri kaynağı zorunludur.")
+            : setting.Source;
+        if (selectedSource == ProductionOrderSourceType.ErpAndWms)
             throw AppException.BadRequest("İş emri hazırlama kaynağı ERP veya WMS olmalıdır.");
-        if(setting.Source!=ProductionOrderSourceType.ErpAndWms&&sourceType.HasValue&&sourceType!=selectedSource)
+        if (setting.Source != ProductionOrderSourceType.ErpAndWms && sourceType.HasValue && sourceType != selectedSource)
             throw AppException.Conflict("İstenen iş emri kaynağı şube politikasıyla uyuşmuyor.");
-        if(selectedSource==ProductionOrderSourceType.WmsIntegrationTables&&!string.IsNullOrWhiteSpace(sourceSystemCode)&&
-           !string.Equals(sourceSystemCode.Trim(),setting.SourceSystemCode,StringComparison.OrdinalIgnoreCase))
+        if (selectedSource == ProductionOrderSourceType.WmsIntegrationTables
+            && !string.IsNullOrWhiteSpace(sourceSystemCode)
+            && !string.Equals(sourceSystemCode.Trim(), setting.SourceSystemCode, StringComparison.OrdinalIgnoreCase))
             throw AppException.Conflict("İstenen WMS kaynak sistem kodu şube politikasıyla uyuşmuyor.");
-        return selectedSource==ProductionOrderSourceType.NetsisErpFunctions
-            ?await PrepareNetsisWorkOrderAsync(workOrderNumber,branchCode,ct)
-            :await PrepareWmsSourceWorkOrderAsync(workOrderNumber,branchCode,setting.SourceSystemCode,ct);
+
+        if (transferId is long scopedTransferId && kalanTaskId is long scopedKalanTaskId)
+        {
+            return await PrepareCancellationReturnRemainderWorkOrderAsync(
+                workOrderNumber,
+                selectedSource,
+                selectedSource == ProductionOrderSourceType.WmsIntegrationTables
+                    ? sourceSystemCode?.Trim() ?? setting.SourceSystemCode
+                    : sourceSystemCode?.Trim(),
+                branch,
+                scopedTransferId,
+                scopedKalanTaskId,
+                ct);
+        }
+
+        return selectedSource == ProductionOrderSourceType.NetsisErpFunctions
+            ? await PrepareNetsisWorkOrderAsync(workOrderNumber, branch, ct)
+            : await PrepareWmsSourceWorkOrderAsync(workOrderNumber, branch, setting.SourceSystemCode, ct);
+    }
+
+    private async Task<PreparedNetsisProductionWorkOrder> PrepareCancellationReturnRemainderWorkOrderAsync(
+        string workOrderNumber,
+        ProductionOrderSourceType sourceType,
+        string? sourceSystemCode,
+        string branch,
+        long transferId,
+        long kalanTaskId,
+        CancellationToken ct)
+    {
+        var normalizedWorkOrder = workOrderNumber.Trim();
+        var contexts = ProductionSourceWorkOrderAssignmentFilter.ProductionContexts;
+        var link = await uow.Repository<ProductionTransferHeaderLink>().Query()
+            .AsNoTracking()
+            .Where(x => x.BranchCode == branch
+                && x.WarehouseTransferHeaderId == transferId
+                && contexts.Contains(x.WarehouseTransferHeader.BusinessContext))
+            .Include(x => x.WarehouseTransferHeader)
+                .ThenInclude(h => h.Tasks.Where(task => !task.IsDeleted))
+                    .ThenInclude(task => task.Lines.Where(line => !line.IsDeleted))
+                        .ThenInclude(line => line.Line)
+            .Include(x => x.Lines.Where(line => !line.IsDeleted))
+            .SingleOrDefaultAsync(ct)
+            ?? throw AppException.NotFound("İptal kalanı transferi bulunamadı.");
+
+        var header = link.WarehouseTransferHeader;
+        var linkedWorkOrder = link.ProductionOrderNo?.Trim() ?? header.ExternalReferenceNo?.Trim();
+        if (!string.Equals(linkedWorkOrder, normalizedWorkOrder, StringComparison.OrdinalIgnoreCase))
+            throw AppException.Conflict("İptal kalanı kaydı iş emri numarasıyla uyuşmuyor.");
+
+        var tasks = header.Tasks.Where(x => !x.IsDeleted).ToArray();
+        var kalanTask = tasks.SingleOrDefault(x => x.Id == kalanTaskId)
+            ?? throw AppException.NotFound("İptal kalanı görevi bulunamadı.");
+        if (!ProductionWorkOrderTransferGrouping.IsPostCancellationReturnUnassignedPickTask(kalanTask, tasks))
+            throw AppException.Conflict("Seçilen görev aktif bir iptal kalanı toplama görevi değildir.");
+
+        var basePrepared = sourceType == ProductionOrderSourceType.NetsisErpFunctions
+            ? await PrepareNetsisWorkOrderAsync(normalizedWorkOrder, branch, ct)
+            : await PrepareWmsSourceWorkOrderAsync(
+                normalizedWorkOrder,
+                branch,
+                sourceSystemCode ?? throw AppException.BadRequest("Kaynak sistem kodu zorunludur."),
+                ct);
+
+        var recipeByKey = (await LoadFullRecipeMaterialsAsync(
+                new ProductionSourceWorkOrderRow(
+                    sourceType,
+                    sourceSystemCode ?? basePrepared.SourceSystemCode,
+                    1,
+                    normalizedWorkOrder,
+                    basePrepared.BranchCode,
+                    basePrepared.ProductCode,
+                    basePrepared.ProductName,
+                    basePrepared.ConfigurationCode,
+                    basePrepared.PlannedQuantity,
+                    basePrepared.UnitCode,
+                    basePrepared.Materials.Count + basePrepared.AssignedMaterials.Count,
+                    basePrepared.WorkOrderDate,
+                    basePrepared.DeliveryDate,
+                    basePrepared.ProjectCode,
+                    basePrepared.TargetWarehouseCode,
+                    basePrepared.SourceWarehouseCode,
+                    basePrepared.IsClosed),
+                branch,
+                ct))
+            .ToDictionary(
+                material => ProductionWorkOrderMaterialAssignment.CreateKey(
+                    material.StockId,
+                    material.YapCodeId,
+                    material.OperationNumber));
+
+        var lineLinksByTransferLineId = link.Lines
+            .Where(x => !x.IsDeleted)
+            .ToDictionary(x => x.WarehouseTransferLineId);
+
+        var stockIds = kalanTask.Lines
+            .Where(x => !x.IsDeleted)
+            .Select(x => x.Line.StockId)
+            .Distinct()
+            .ToArray();
+        var stocks = stockIds.Length == 0
+            ? new Dictionary<long, StockEntity>()
+            : await uow.Repository<StockEntity>().Query()
+                .Where(x => x.BranchCode == branch && stockIds.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, ct);
+
+        var yapIds = kalanTask.Lines
+            .Where(x => !x.IsDeleted && x.Line.YapCodeId.HasValue)
+            .Select(x => x.Line.YapCodeId!.Value)
+            .Distinct()
+            .ToArray();
+        var yapCodes = yapIds.Length == 0
+            ? new Dictionary<long, YapCodeEntity>()
+            : await uow.Repository<YapCodeEntity>().Query()
+                .Where(x => x.BranchCode == branch && yapIds.Contains(x.Id))
+                .ToDictionaryAsync(x => x.Id, ct);
+
+        var kalanMaterials = new List<PreparedNetsisProductionMaterial>();
+        foreach (var taskLine in kalanTask.Lines
+                     .Where(x => !x.IsDeleted)
+                     .OrderBy(x => x.Id))
+        {
+            var openQuantity = Math.Max(0, taskLine.PlannedQuantity - taskLine.ProcessedQuantity);
+            if (openQuantity <= 0.0001m) continue;
+
+            var transferLine = taskLine.Line;
+            lineLinksByTransferLineId.TryGetValue(transferLine.Id, out var lineLink);
+            var operationNumber = lineLink is not null
+                && ProductionWorkOrderMaterialAssignment.TryParseOperationNumber(
+                    lineLink.RequirementReference,
+                    out var parsedOperation)
+                ? parsedOperation
+                : 0;
+            var key = ProductionWorkOrderMaterialAssignment.CreateKey(
+                transferLine.StockId,
+                transferLine.YapCodeId,
+                operationNumber);
+
+            stocks.TryGetValue(transferLine.StockId, out var stock);
+            string? configurationCode = null;
+            if (transferLine.YapCodeId is long yapId && yapCodes.TryGetValue(yapId, out var yap))
+                configurationCode = yap.ConfigurationCode;
+            if (recipeByKey.TryGetValue(key, out var recipeTemplate))
+            {
+                kalanMaterials.Add(ScalePreparedMaterialQuantity(recipeTemplate, openQuantity));
+                continue;
+            }
+
+            kalanMaterials.Add(new PreparedNetsisProductionMaterial(
+                transferLine.StockId,
+                stock?.ErpStockCode ?? $"STK-{transferLine.StockId}",
+                stock?.StockName,
+                stock?.BaseUnitCode ?? transferLine.UnitCode ?? "ADET",
+                transferLine.YapCodeId,
+                configurationCode,
+                operationNumber,
+                openQuantity,
+                0,
+                openQuantity,
+                stock is null ? $"Bileşen stok WMS ERP aynasında bulunamadı: {transferLine.StockId}" : null));
+        }
+
+        if (kalanMaterials.Count == 0)
+            throw AppException.Conflict("İptal kalanı için atanabilir malzeme satırı bulunamadı.");
+
+        return basePrepared with
+        {
+            Materials = kalanMaterials,
+            AssignedMaterials = [],
+            ListingKind = ProductionSourceWorkOrderListingKind.CancellationReturnRemainder,
+            TransferId = transferId,
+            KalanTaskId = kalanTaskId,
+        };
+    }
+
+    private static PreparedNetsisProductionMaterial ScalePreparedMaterialQuantity(
+        PreparedNetsisProductionMaterial template,
+        decimal requiredQuantity)
+    {
+        if (template.RequiredQuantity <= 0.0001m)
+            return template with { RequiredQuantity = requiredQuantity };
+
+        var ratio = requiredQuantity / template.RequiredQuantity;
+        return template with
+        {
+            RequiredQuantity = requiredQuantity,
+            RecipeQuantity = template.RecipeQuantity * ratio,
+            WasteQuantity = template.WasteQuantity * ratio,
+        };
     }
 
     public async Task<PreparedNetsisProductionWorkOrder> PrepareNetsisWorkOrderAsync(
@@ -217,6 +885,12 @@ public sealed class ProductionService(
             .Where(x=>x.BranchCode==branch&&x.ExternalOrderNo==externalNo&&x.ExternalSourceSystemCode=="NETSIS")
             .OrderByDescending(x=>x.Id)
             .Select(x=>new{x.Id,x.ProductionHeaderId,x.Header.DocumentNo}).FirstOrDefaultAsync(ct);
+        var assignedMaterials=await LoadAssignedMaterialQuantitiesAsync(branch, externalNo, ct);
+        var partialTransferRemainders=await LoadPartialTransferRemainderMaterialQuantitiesAsync(branch, externalNo, ct);
+        var cancelledMaterials=await LoadCancelledMaterialQuantitiesAsync(branch, externalNo, ct);
+        var splitMaterials=ProductionWorkOrderMaterialAssignment.SplitByAssignedCoverage(materials, assignedMaterials);
+        var reclassified=ApplyPartialTransferRemainderReclassification(materials, splitMaterials, partialTransferRemainders);
+        var remaining=ProductionWorkOrderMaterialAssignment.SubtractCancelledQuantities(reclassified.Remaining, cancelledMaterials);
         return new PreparedNetsisProductionWorkOrder(
             ProductionOrderSourceType.NetsisErpFunctions,"NETSIS",
             workOrder.WorkOrderNumber,workOrder.BranchCode??branchNumber,workOrder.StockCode,workOrder.StockName,
@@ -226,7 +900,7 @@ public sealed class ProductionService(
             targetWarehouse?.Id,workOrder.WarehouseCode,targetWarehouse?.WarehouseName,
             workOrder.WorkOrderDate,workOrder.DeliveryDate,workOrder.ProjectCode,workOrder.IsClosed,
             existing?.ProductionHeaderId,existing?.Id,existing?.DocumentNo,
-            errors.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),materials);
+            errors.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),remaining,reclassified.Assigned);
     }
 
     private async Task<PreparedNetsisProductionWorkOrder> PrepareWmsSourceWorkOrderAsync(
@@ -286,6 +960,12 @@ public sealed class ProductionService(
             .Where(x=>x.BranchCode==branch&&x.ExternalOrderNo==externalNo&&x.ExternalSourceSystemCode==source.SourceSystemCode)
             .OrderByDescending(x=>x.Id)
             .Select(x=>new{x.Id,x.ProductionHeaderId,x.Header.DocumentNo}).FirstOrDefaultAsync(ct);
+        var assignedMaterials=await LoadAssignedMaterialQuantitiesAsync(branch, externalNo, ct);
+        var partialTransferRemainders=await LoadPartialTransferRemainderMaterialQuantitiesAsync(branch, externalNo, ct);
+        var cancelledMaterials=await LoadCancelledMaterialQuantitiesAsync(branch, externalNo, ct);
+        var splitMaterials=ProductionWorkOrderMaterialAssignment.SplitByAssignedCoverage(materials, assignedMaterials);
+        var reclassified=ApplyPartialTransferRemainderReclassification(materials, splitMaterials, partialTransferRemainders);
+        var remaining=ProductionWorkOrderMaterialAssignment.SubtractCancelledQuantities(reclassified.Remaining, cancelledMaterials);
         return new PreparedNetsisProductionWorkOrder(
             ProductionOrderSourceType.WmsIntegrationTables,source.SourceSystemCode,
             source.WorkOrderNumber,branchNumber,source.ProductCode,
@@ -294,7 +974,7 @@ public sealed class ProductionService(
             sourceWarehouse?.Id,source.SourceWarehouseCode,sourceWarehouse?.WarehouseName,
             targetWarehouse?.Id,source.TargetWarehouseCode,targetWarehouse?.WarehouseName,
             source.WorkOrderDate,source.DeliveryDate,source.ProjectCode,false,existing?.ProductionHeaderId,
-            existing?.Id,existing?.DocumentNo,errors.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),materials);
+            existing?.Id,existing?.DocumentNo,errors.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),remaining,reclassified.Assigned);
     }
 
     private async Task<(ProductionOrderSourceType Source,string SourceSystemCode)> GetSourceSettingAsync(

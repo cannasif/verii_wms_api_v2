@@ -173,6 +173,23 @@ internal static class ProductionTransferPickingSupport
             }
 
             var sourceLocationId = taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
+            if (processed > 0 && remaining > 0)
+            {
+                rows.Add(new(
+                    taskLine.Id, line.Id, line.LineNo, sourceLocationId,
+                    sourceLocationId.HasValue ? locationCodes.GetValueOrDefault(sourceLocationId.Value) : null,
+                    line.StockId, line.StockCodeSnapshot, line.StockNameSnapshot, null,
+                    processed, 0m, processed,
+                    false));
+                rows.Add(new(
+                    taskLine.Id, line.Id, line.LineNo, sourceLocationId,
+                    sourceLocationId.HasValue ? locationCodes.GetValueOrDefault(sourceLocationId.Value) : null,
+                    line.StockId, line.StockCodeSnapshot, line.StockNameSnapshot, null,
+                    remaining, remaining, 0m,
+                    sourceLocationId.HasValue && remaining > 0));
+                continue;
+            }
+
             rows.Add(new(
                 taskLine.Id, line.Id, line.LineNo, sourceLocationId,
                 sourceLocationId.HasValue ? locationCodes.GetValueOrDefault(sourceLocationId.Value) : null,
@@ -290,10 +307,12 @@ internal static class ProductionTransferPickingSupport
         ProductionTransferHeaderLink link,
         WarehouseTransferTask task,
         bool isLocked,
+        ProductionTransferPolicy policy,
         IReadOnlyList<ProductionTransferPickingRowDto> rows)
     {
         var requested = header.Lines.Sum(x => x.RequestedQuantity);
         var picked = header.Lines.Sum(x => x.PickedQuantity);
+        var overIssueLines = ProductionTransferOverIssueSupport.BuildOverIssueLines(header.Lines);
         return new(
             header.Id,
             header.DocumentNo,
@@ -306,6 +325,10 @@ internal static class ProductionTransferPickingSupport
             requested,
             picked,
             Math.Max(0, requested - picked),
+            policy.AllowOverIssue,
+            policy.OverIssueTolerancePercent,
+            overIssueLines.Sum(x => x.OverIssueQuantity),
+            overIssueLines,
             rows);
     }
 

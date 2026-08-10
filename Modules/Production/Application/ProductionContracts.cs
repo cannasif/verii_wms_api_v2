@@ -113,7 +113,18 @@ public sealed record PreparedNetsisProductionWorkOrder(
     long? ExistingProductionOrderId,
     string? ExistingProductionDocumentNo,
     IReadOnlyList<string> MappingErrors,
-    IReadOnlyList<PreparedNetsisProductionMaterial> Materials);
+    IReadOnlyList<PreparedNetsisProductionMaterial> Materials,
+    IReadOnlyList<PreparedNetsisProductionMaterial> AssignedMaterials,
+    ProductionSourceWorkOrderListingKind ListingKind = ProductionSourceWorkOrderListingKind.Standard,
+    long? TransferId = null,
+    long? KalanTaskId = null);
+
+public enum ProductionSourceWorkOrderListingKind
+{
+    Standard = 0,
+    CancellationReturnRemainder = 1,
+    ManagerCancelledAssignment = 2
+}
 
 public sealed record ProductionSourceWorkOrderRow(
     ProductionOrderSourceType SourceType,
@@ -132,7 +143,65 @@ public sealed record ProductionSourceWorkOrderRow(
     string? ProjectCode,
     int WarehouseCode,
     int IssueWarehouseCode,
-    bool IsClosed);
+    bool IsClosed,
+    ProductionSourceWorkOrderListingKind ListingKind = ProductionSourceWorkOrderListingKind.Standard,
+    long? TransferId = null,
+    long? KalanTaskId = null,
+    long? CancellationId = null,
+    int AssignedRecipeLineCount = 0,
+    int RecipeLineCount = 0);
+
+public sealed record CancelProductionWorkOrderAssignmentRequest(
+    Guid IdempotencyKey,
+    string WorkOrderNumber,
+    ProductionOrderSourceType? SourceType,
+    string? SourceSystemCode,
+    string Reason,
+    long? TransferId,
+    IReadOnlyList<CancelProductionWorkOrderAssignmentLineRequest>? Lines);
+
+public sealed record CancelProductionWorkOrderAssignmentLineRequest(
+    long? StockId,
+    long? YapCodeId,
+    int OperationNumber,
+    decimal Quantity);
+
+public sealed record RestoreProductionWorkOrderAssignmentRequest(
+    Guid IdempotencyKey,
+    string WorkOrderNumber,
+    string? Reason,
+    IReadOnlyList<CancelProductionWorkOrderAssignmentLineRequest>? Lines);
+
+public sealed record ProductionWorkOrderAssignmentCancellationResult(
+    long CancellationId,
+    string WorkOrderNumber,
+    ProductionWorkOrderAssignmentCancellationStatus Status,
+    decimal CancelledQuantityTotal,
+    bool Replayed);
+
+public enum ProductionReturnedWorkOrderKind
+{
+    AssignmentReturnRemainder = 1,
+    CancellationReturnRemainder = 2,
+    PartialTransferRemainder = 3
+}
+
+public sealed record ProductionReturnedWorkOrderRow(
+    string WorkOrderNumber,
+    long TransferId,
+    string DocumentNo,
+    long KalanTaskId,
+    string KalanTaskNo,
+    string KalanTaskDisplayLabel,
+    decimal RemainingQuantity,
+    decimal PlannedQuantity,
+    DateOnly? DocumentDate,
+    string? ProjectCode,
+    int SourceWarehouseCode,
+    int TargetWarehouseCode,
+    long SourceWarehouseId,
+    long TaskWarehouseId,
+    ProductionReturnedWorkOrderKind ReturnKind);
 
 public sealed record ProductionPlanGridRow(
     long Id,
@@ -254,13 +323,22 @@ public sealed record ProductionTransitionRequest(string RowVersion,string? Reaso
 public interface IProductionService
 {
     Task<IReadOnlyList<ProductionSourceWorkOrderRow>> GetSourceWorkOrdersAsync(string? search,string branchCode,int take=200,CancellationToken ct=default);
+    Task<IReadOnlyList<ProductionReturnedWorkOrderRow>> GetReturnedSourceWorkOrdersAsync(string? search,string branchCode,int take=200,CancellationToken ct=default);
     Task<PreparedNetsisProductionWorkOrder> PrepareSourceWorkOrderAsync(
-        string workOrderNumber,ProductionOrderSourceType? sourceType,string? sourceSystemCode,
-        string branchCode,CancellationToken ct=default);
+        string workOrderNumber,
+        ProductionOrderSourceType? sourceType,
+        string? sourceSystemCode,
+        string branchCode,
+        long? transferId = null,
+        long? kalanTaskId = null,
+        CancellationToken ct = default);
     Task<PreparedNetsisProductionWorkOrder> PrepareNetsisWorkOrderAsync(string workOrderNumber,string branchCode,CancellationToken ct=default);
     Task<CreateProductionPlanResult> CreateAsync(CreateProductionPlanRequest request,long actor,CancellationToken ct=default);
     Task<PagedResponse<ProductionPlanGridRow>> GetPagedAsync(PagedRequest request,CancellationToken ct=default);
     Task<ProductionPlanDetail> GetDetailAsync(long id,CancellationToken ct=default);
     Task<ProductionPlanDetail> ReleaseAsync(long id,ProductionTransitionRequest request,long actor,CancellationToken ct=default);
     Task DeleteDraftAsync(long id,long actor,CancellationToken ct=default);
+    Task<IReadOnlyList<ProductionSourceWorkOrderRow>> GetCancelledWorkOrderAssignmentsAsync(string? search,string branchCode,int take=200,CancellationToken ct=default);
+    Task<ProductionWorkOrderAssignmentCancellationResult> CancelWorkOrderAssignmentAsync(CancelProductionWorkOrderAssignmentRequest request,string branchCode,long actor,CancellationToken ct=default);
+    Task<ProductionWorkOrderAssignmentCancellationResult> RestoreWorkOrderAssignmentAsync(RestoreProductionWorkOrderAssignmentRequest request,string branchCode,long actor,CancellationToken ct=default);
 }

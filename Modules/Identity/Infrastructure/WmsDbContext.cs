@@ -188,6 +188,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<ProductionHeader> ProductionHeaders => Set<ProductionHeader>();
     public DbSet<ProductionSourceWorkOrder> ProductionSourceWorkOrders => Set<ProductionSourceWorkOrder>();
     public DbSet<ProductionSourceRecipeLine> ProductionSourceRecipeLines => Set<ProductionSourceRecipeLine>();
+    public DbSet<ProductionWorkOrderAssignmentCancellation> ProductionWorkOrderAssignmentCancellations => Set<ProductionWorkOrderAssignmentCancellation>();
+    public DbSet<ProductionWorkOrderAssignmentCancellationLine> ProductionWorkOrderAssignmentCancellationLines => Set<ProductionWorkOrderAssignmentCancellationLine>();
     public DbSet<ProcurementRequest> ProcurementRequests => Set<ProcurementRequest>();
     public DbSet<ProcurementRequestLine> ProcurementRequestLines => Set<ProcurementRequestLine>();
     public DbSet<ProcurementRfq> ProcurementRfqs => Set<ProcurementRfq>();
@@ -392,6 +394,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new WarehouseTransferPolicyConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionSourceWorkOrderConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionSourceRecipeLineConfiguration());
+        modelBuilder.ApplyConfiguration(new ProductionWorkOrderAssignmentCancellationConfiguration());
+        modelBuilder.ApplyConfiguration(new ProductionWorkOrderAssignmentCancellationLineConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionHeaderConfiguration());
         modelBuilder.ApplyConfiguration(new ProcurementRequestConfiguration());
         modelBuilder.ApplyConfiguration(new ProcurementRequestLineConfiguration());

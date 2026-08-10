@@ -71,6 +71,43 @@ internal static class ProductionTransferLineSplitHelper
             AddSibling(header, link, task, taskLine, line, sourceLineLink, new(null, shortage, null, null), ref nextLineNo, actor, utcNow);
     }
 
+    internal static void ApplyPartialUnpickSplit(
+        WarehouseTransferHeader header,
+        ProductionTransferHeaderLink link,
+        WarehouseTransferTask task,
+        WarehouseTransferTaskLine taskLine,
+        WarehouseTransferLine line,
+        ProductionTransferLineLink lineLink,
+        decimal unpickedQuantity,
+        long targetLocationId,
+        ref int nextLineNo,
+        long actor,
+        DateTime utcNow)
+    {
+        var stillPicked = taskLine.ProcessedQuantity;
+        if (unpickedQuantity <= 0 || stillPicked <= 0) return;
+
+        line.RequestedQuantity = stillPicked;
+        taskLine.PlannedQuantity = stillPicked;
+        lineLink.RequiredQuantity = stillPicked;
+        line.UpdatedBy = actor;
+        line.UpdatedDate = utcNow;
+        taskLine.UpdatedBy = actor;
+        taskLine.UpdatedDate = utcNow;
+
+        AddSibling(
+            header,
+            link,
+            task,
+            taskLine,
+            line,
+            lineLink,
+            new RouteAllocationChunk(targetLocationId, unpickedQuantity, null, null),
+            ref nextLineNo,
+            actor,
+            utcNow);
+    }
+
     internal static void ConsolidateSameLocationOpenTaskLines(
         WarehouseTransferHeader header,
         ProductionTransferHeaderLink link,

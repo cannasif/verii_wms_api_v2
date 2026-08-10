@@ -162,3 +162,35 @@ public sealed class ProductionOrderDependencyConfiguration : BaseEntityConfigura
         b.HasIndex(x=>new{x.PredecessorOrderId,x.SuccessorOrderId}).IsUnique().HasFilter("[IsDeleted] = 0");
     }
 }
+
+public sealed class ProductionWorkOrderAssignmentCancellationConfiguration : BaseEntityConfiguration<ProductionWorkOrderAssignmentCancellation>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<ProductionWorkOrderAssignmentCancellation> b)
+    {
+        b.ToTable("RII_PR_WO_ASSIGN_CANCEL");
+        b.Property(x => x.WorkOrderNumber).HasMaxLength(100).IsRequired();
+        b.Property(x => x.SourceType).HasConversion<string>().HasMaxLength(30);
+        b.Property(x => x.SourceSystemCode).HasMaxLength(50).IsRequired();
+        b.Property(x => x.Status).HasConversion<string>().HasMaxLength(20);
+        b.Property(x => x.Reason).HasMaxLength(1000);
+        b.HasIndex(x => new { x.BranchCode, x.WorkOrderNumber, x.Status })
+            .IsUnique()
+            .HasFilter("[IsDeleted] = 0 AND [Status] = 'Active'");
+        b.HasIndex(x => new { x.BranchCode, x.CancelledAtUtc });
+    }
+}
+
+public sealed class ProductionWorkOrderAssignmentCancellationLineConfiguration : BaseEntityConfiguration<ProductionWorkOrderAssignmentCancellationLine>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<ProductionWorkOrderAssignmentCancellationLine> b)
+    {
+        b.ToTable("RII_PR_WO_ASSIGN_CANCEL_LINE", t => t.HasCheckConstraint(
+            "CK_RII_PR_WO_ASSIGN_CANCEL_LINE_QTY",
+            "[CancelledQuantity] > 0 AND [OperationNumber] >= 0"));
+        b.Property(x => x.CancelledQuantity).HasPrecision(20, 6);
+        b.HasOne(x => x.Cancellation).WithMany(x => x.Lines).HasForeignKey(x => x.CancellationId).OnDelete(DeleteBehavior.Cascade);
+        b.HasIndex(x => new { x.CancellationId, x.StockId, x.YapCodeId, x.OperationNumber })
+            .IsUnique()
+            .HasFilter("[IsDeleted] = 0");
+    }
+}

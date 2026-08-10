@@ -24,9 +24,20 @@ public sealed record ResolveProductionTransferBarcodeResult(
     string? SerialNo,
     string? LotNo,
     decimal RemainingQuantity,
+    decimal MaxPickQuantity,
     decimal DefaultQuantity,
     bool IsSerial,
     bool CanPick);
+
+public sealed record ProductionTransferOverIssueLineDto(
+    long LineId,
+    int LineNo,
+    string StockCode,
+    string? StockName,
+    string UnitCode,
+    decimal RequestedQuantity,
+    decimal PickedQuantity,
+    decimal OverIssueQuantity);
 
 public sealed record ProductionTransferPickingRowDto(
     long TaskLineId,
@@ -55,6 +66,10 @@ public sealed record ProductionTransferPickingTableDto(
     decimal RequestedQuantity,
     decimal PickedQuantity,
     decimal ShortageQuantity,
+    bool AllowOverIssue,
+    decimal OverIssueTolerancePercent,
+    decimal OverIssueQuantity,
+    IReadOnlyList<ProductionTransferOverIssueLineDto> OverIssueLines,
     IReadOnlyList<ProductionTransferPickingRowDto> Rows);
 
 public sealed record ProductionTransferRouteRefreshCandidateDto(
@@ -81,9 +96,17 @@ public sealed record ApplyProductionTransferRouteRefreshSplitRequest(
 public sealed record CompleteProductionPickingRequest(
     Guid IdempotencyKey,
     bool ConfirmPartialPicking,
+    bool ConfirmOverIssuePicking,
     string? Reason);
 
 public sealed record ResumeProductionPickingRequest(Guid IdempotencyKey);
+
+public sealed record UnpickProductionTransferToLocationRequest(
+    Guid IdempotencyKey,
+    long TaskLineId,
+    long TargetLocationId,
+    decimal? Quantity = null,
+    string? SerialNo = null);
 
 public sealed record ConfirmProductionHandoverRequest(
     Guid IdempotencyKey,
@@ -102,6 +125,7 @@ public sealed record ProductionTransferExecutionLineDto(
     decimal HandedOverQuantity,
     decimal RemainingToPickQuantity,
     decimal ShortageQuantity,
+    decimal OverIssueQuantity,
     string TrackingType,
     long? SuggestedSourceLocationId,
     string? SuggestedSourceLocationCode,
@@ -139,8 +163,10 @@ public sealed record ProductionTransferExecutionDto(
     decimal PickedQuantity,
     decimal HandedOverQuantity,
     decimal ShortageQuantity,
+    decimal OverIssueQuantity,
     bool CanCompletePicking,
     bool CanConfirmHandover,
+    IReadOnlyList<ProductionTransferOverIssueLineDto> OverIssueLines,
     IReadOnlyList<long> ExcludedSourceLocationIds,
     IReadOnlyList<ProductionTransferExecutionLineDto> Lines);
 
@@ -173,6 +199,11 @@ public interface IProductionTransferExecutionService
         long transferId,
         long taskLineId,
         ApplyProductionTransferRouteRefreshSplitRequest request,
+        long actor,
+        CancellationToken ct = default);
+    Task<ProductionTransferPickingTableDto> UnpickToLocationAsync(
+        long transferId,
+        UnpickProductionTransferToLocationRequest request,
         long actor,
         CancellationToken ct = default);
     Task<ProductionTransferExecutionDto> CompletePickingAsync(long transferId, CompleteProductionPickingRequest request, long actor, CancellationToken ct = default);
