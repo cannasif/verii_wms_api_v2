@@ -146,6 +146,13 @@ public sealed class WarehouseAssistantServiceTests
         Assert.Equal(7, result.StockLocations[0].AvailableQuantity);
         Assert.Equal("semantic-compound-v2.2", result.ProviderMode);
         Assert.Single(result.Evidence!);
+        Assert.Equal(2, result.Interpretations!.Count);
+        Assert.Equal(WarehouseAssistantIntent.MyActivities, result.Interpretations[0].Intent);
+        Assert.Equal(0.98m, result.Interpretations[0].Confidence);
+
+        var history = await service.GetMessagesAsync(result.ConversationId, 10, "0");
+        var restored = Assert.Single(history, item => item.Role == "assistant").Result;
+        Assert.Equal(2, restored!.Interpretations!.Count);
     }
 
     [Fact]

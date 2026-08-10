@@ -15,21 +15,22 @@ public sealed class OpenAiWarehouseAssistantIntentResolverTests
     {
         var handler = new CaptureHandler();
         using var httpClient = new HttpClient(handler);
+        var settings = new WarehouseAssistantOptions();
         var resolver = new OpenAiWarehouseAssistantIntentResolver(
             httpClient,
-            Options.Create(new WarehouseAssistantOptions()),
-            new WarehouseAssistantIntentResolver(),
+            Options.Create(settings),
+            CreateLocalResolver(settings),
             NullLogger<OpenAiWarehouseAssistantIntentResolver>.Instance);
 
         var routing = resolver.GetRoutingInfo();
         var result = await resolver.ResolveAsync("01/013 depoda nerelere dağılmış?", null);
 
-        Assert.Equal("2.3.0", routing.Version);
+        Assert.Equal("2.4.0", routing.Version);
         Assert.Equal("LocalSemantic", routing.RoutingMode);
         Assert.False(routing.SemanticRoutingAvailable);
         Assert.Null(routing.SemanticModel);
         Assert.Equal(WarehouseAssistantIntent.StockLocationBalance, result.Intent);
-        Assert.Equal("local-semantic-v2.3", result.ProviderMode);
+        Assert.Equal("local-rule-fallback-v2.4", result.ProviderMode);
         Assert.Null(handler.RequestBody);
     }
 
@@ -38,15 +39,16 @@ public sealed class OpenAiWarehouseAssistantIntentResolverTests
     {
         var handler = new CaptureHandler();
         using var httpClient = new HttpClient(handler);
+        var settings = new WarehouseAssistantOptions
+        {
+            EnableOpenAiIntentResolution = true,
+            ApiKey = "test-key",
+            Model = "test-model"
+        };
         var resolver = new OpenAiWarehouseAssistantIntentResolver(
             httpClient,
-            Options.Create(new WarehouseAssistantOptions
-            {
-                EnableOpenAiIntentResolution = true,
-                ApiKey = "test-key",
-                Model = "test-model"
-            }),
-            new WarehouseAssistantIntentResolver(),
+            Options.Create(settings),
+            CreateLocalResolver(settings),
             NullLogger<OpenAiWarehouseAssistantIntentResolver>.Instance);
 
         var result = await resolver.ResolveAsync("ambiguous warehouse question", null);
@@ -172,10 +174,11 @@ public sealed class OpenAiWarehouseAssistantIntentResolverTests
     public async Task Deterministic_router_supports_explicit_compound_questions_without_provider_access()
     {
         using var httpClient = new HttpClient(new CaptureHandler());
+        var settings = new WarehouseAssistantOptions();
         var resolver = new OpenAiWarehouseAssistantIntentResolver(
             httpClient,
-            Options.Create(new WarehouseAssistantOptions()),
-            new WarehouseAssistantIntentResolver(),
+            Options.Create(settings),
+            CreateLocalResolver(settings),
             NullLogger<OpenAiWarehouseAssistantIntentResolver>.Instance);
 
         var result = await resolver.ResolveAsync(
@@ -183,22 +186,32 @@ public sealed class OpenAiWarehouseAssistantIntentResolverTests
             null);
 
         Assert.Equal(WarehouseAssistantIntent.MyActivities, result.Intent);
-        Assert.Equal("local-semantic-compound-v2.3", result.ProviderMode);
+        Assert.Equal("local-hybrid-compound-v2.4", result.ProviderMode);
         Assert.Equal(WarehouseAssistantIntent.AssignedTasks, Assert.Single(result.AdditionalQueries!).Intent);
     }
 
-    private static OpenAiWarehouseAssistantIntentResolver CreateResolver(HttpClient httpClient) => new(
-        httpClient,
-        Options.Create(new WarehouseAssistantOptions
+    private static OpenAiWarehouseAssistantIntentResolver CreateResolver(HttpClient httpClient)
+    {
+        var settings = new WarehouseAssistantOptions
         {
             EnableOpenAiIntentResolution = true,
             ApiKey = "test-key",
             Model = "test-model",
             RoutingStrategy = WarehouseAssistantRoutingStrategy.Hybrid,
             MinimumSemanticConfidence = 0.72m
-        }),
+        };
+        return new OpenAiWarehouseAssistantIntentResolver(
+            httpClient,
+            Options.Create(settings),
+            CreateLocalResolver(settings),
+            NullLogger<OpenAiWarehouseAssistantIntentResolver>.Instance);
+    }
+
+    private static LocalHybridWarehouseAssistantIntentResolver CreateLocalResolver(WarehouseAssistantOptions settings) => new(
         new WarehouseAssistantIntentResolver(),
-        NullLogger<OpenAiWarehouseAssistantIntentResolver>.Instance);
+        new UnavailableSemanticMatcher(),
+        Options.Create(settings),
+        NullLogger<LocalHybridWarehouseAssistantIntentResolver>.Instance);
 
     private static string SemanticResponse(
         WarehouseAssistantIntent intent,
@@ -253,5 +266,13 @@ public sealed class OpenAiWarehouseAssistantIntentResolverTests
                 Content = new StringContent(responseBody, Encoding.UTF8, "application/json")
             };
         }
+    }
+
+    private sealed class UnavailableSemanticMatcher : ILocalWarehouseSemanticMatcher
+    {
+        public bool IsConfigured => false;
+        public string? ModelName => null;
+        public Task<LocalWarehouseSemanticMatch> MatchAsync(string question, CancellationToken cancellationToken = default) =>
+            Task.FromResult(LocalWarehouseSemanticMatch.Unavailable());
     }
 }
