@@ -18,6 +18,8 @@ public sealed partial class ProductionService
         private readonly IReadOnlyDictionary<string, Dictionary<ProductionRecipeMaterialKey, decimal>> _cancelledByWorkOrder;
         private readonly IReadOnlyDictionary<string, IReadOnlyList<PreparedNetsisProductionMaterial>> _recipesByWorkOrder;
         private readonly IReadOnlyDictionary<string, int> _assignedLineCounts;
+        private readonly IReadOnlyList<ProductionTransferHeaderLink> _links;
+        private readonly IReadOnlySet<string> _candidateWorkOrderNumbers;
 
         public WorkOrderAssignmentSnapshot(
             HashSet<string> withTransfers,
@@ -25,7 +27,9 @@ public sealed partial class ProductionService
             IReadOnlyDictionary<string, Dictionary<ProductionRecipeMaterialKey, decimal>> partialByWorkOrder,
             IReadOnlyDictionary<string, Dictionary<ProductionRecipeMaterialKey, decimal>> cancelledByWorkOrder,
             IReadOnlyDictionary<string, IReadOnlyList<PreparedNetsisProductionMaterial>> recipesByWorkOrder,
-            IReadOnlyDictionary<string, int> assignedLineCounts)
+            IReadOnlyDictionary<string, int> assignedLineCounts,
+            IReadOnlyList<ProductionTransferHeaderLink> links,
+            IReadOnlySet<string> candidateWorkOrderNumbers)
         {
             _withTransfers = withTransfers;
             _assignedByWorkOrder = assignedByWorkOrder;
@@ -33,6 +37,8 @@ public sealed partial class ProductionService
             _cancelledByWorkOrder = cancelledByWorkOrder;
             _recipesByWorkOrder = recipesByWorkOrder;
             _assignedLineCounts = assignedLineCounts;
+            _links = links;
+            _candidateWorkOrderNumbers = candidateWorkOrderNumbers;
         }
 
         public HashSet<string> GetFullyAssignedWorkOrderNumbers(IEnumerable<ProductionSourceWorkOrderRow> candidates)
@@ -73,6 +79,73 @@ public sealed partial class ProductionService
 
         public int GetRecipeLineCount(string workOrderNumber) =>
             _recipesByWorkOrder.GetValueOrDefault(workOrderNumber.Trim())?.Count ?? 0;
+
+        public (int Assigned, int Total) GetCancellationRemainderLineProgress(long transferId, long kalanTaskId, string workOrderNumber)
+        {
+            var normalizedWorkOrder = workOrderNumber.Trim();
+            var sourceLink = _links.FirstOrDefault(link => link.WarehouseTransferHeaderId == transferId);
+            if (sourceLink is null)
+                return (0, 0);
+
+            var kalanTask = sourceLink.WarehouseTransferHeader.Tasks
+                .FirstOrDefault(task => !task.IsDeleted && task.Id == kalanTaskId);
+            if (kalanTask is null)
+                return (0, 0);
+
+            var kalanMaterials = ProductionWorkOrderMaterialAssignment.BuildKalanOpenMaterials(sourceLink, kalanTask);
+            var total = kalanMaterials.Count;
+            if (total == 0)
+                return (0, 0);
+
+            var kalanKeys = new HashSet<ProductionRecipeMaterialKey>(
+                kalanMaterials.Select(material => ProductionWorkOrderMaterialAssignment.CreateKey(
+                    material.StockId,
+                    material.YapCodeId,
+                    material.OperationNumber)));
+
+            var assignedKeys = new HashSet<ProductionRecipeMaterialKey>();
+            foreach (var link in _links)
+            {
+                if (link.WarehouseTransferHeaderId == transferId)
+                    continue;
+                if (ProductionWorkOrderTransferGrouping.IsOpenPartialTransferRemainderLink(link))
+                    continue;
+                if (!string.Equals(
+                        ResolveLinkedWorkOrderNumber(link, _candidateWorkOrderNumbers),
+                        normalizedWorkOrder,
+                        StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                foreach (var linkLine in link.Lines.Where(line => !line.IsDeleted))
+                {
+                    var transferLine = linkLine.WarehouseTransferLine;
+                    if (transferLine is null || transferLine.IsDeleted)
+                        continue;
+
+                    var quantity = ProductionWorkOrderMaterialAssignment.ResolveCommittedAssignedQuantity(
+                        link.WorkflowStatus,
+                        linkLine.RequiredQuantity,
+                        linkLine.HandedOverQuantity,
+                        transferLine);
+                    if (quantity <= 0)
+                        continue;
+
+                    var operationNumber = ProductionWorkOrderMaterialAssignment.TryParseOperationNumber(
+                        linkLine.RequirementReference,
+                        out var parsedOperation)
+                        ? parsedOperation
+                        : 0;
+                    var key = ProductionWorkOrderMaterialAssignment.CreateKey(
+                        transferLine.StockId,
+                        transferLine.YapCodeId,
+                        operationNumber);
+                    if (kalanKeys.Contains(key))
+                        assignedKeys.Add(key);
+                }
+            }
+
+            return (assignedKeys.Count, total);
+        }
 
         private Dictionary<ProductionRecipeMaterialKey, decimal> BuildCancellableRemainingQuantities(
             ProductionSourceWorkOrderRow templateRow)
@@ -130,7 +203,9 @@ public sealed partial class ProductionService
                 new Dictionary<string, Dictionary<ProductionRecipeMaterialKey, decimal>>(StringComparer.OrdinalIgnoreCase),
                 new Dictionary<string, Dictionary<ProductionRecipeMaterialKey, decimal>>(StringComparer.OrdinalIgnoreCase),
                 new Dictionary<string, IReadOnlyList<PreparedNetsisProductionMaterial>>(StringComparer.OrdinalIgnoreCase),
-                new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase));
+                new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase),
+                [],
+                new HashSet<string>(StringComparer.OrdinalIgnoreCase));
         }
 
         var normalizedSet = new HashSet<string>(normalizedWorkOrders, StringComparer.OrdinalIgnoreCase);
@@ -152,12 +227,7 @@ public sealed partial class ProductionService
                 withTransfers.Add(workOrderNumber);
         }
 
-        var recipeWorkOrders = withTransfers
-            .Union(cancelledByWorkOrder.Where(x => x.Value.Count > 0).Select(x => x.Key))
-            .Union(assignedLineCounts.Where(x => x.Value > 0).Select(x => x.Key))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var recipeRows = rows
-            .Where(row => recipeWorkOrders.Contains(row.WorkOrderNumber.Trim()))
             .GroupBy(row => row.WorkOrderNumber.Trim(), StringComparer.OrdinalIgnoreCase)
             .Select(group => group.First())
             .ToArray();
@@ -169,7 +239,9 @@ public sealed partial class ProductionService
             partialByWorkOrder,
             cancelledByWorkOrder,
             recipesByWorkOrder,
-            assignedLineCounts);
+            assignedLineCounts,
+            links,
+            normalizedSet);
     }
 
     private async Task<IReadOnlyList<ProductionTransferHeaderLink>> LoadProductionTransferLinksForWorkOrdersAsync(
@@ -198,6 +270,10 @@ public sealed partial class ProductionService
             .Include(x => x.Lines.Where(line => !line.IsDeleted))
                 .ThenInclude(line => line.WarehouseTransferLine)
                     .ThenInclude(line => line!.Trackings.Where(tracking => !tracking.IsDeleted))
+            .Include(x => x.WarehouseTransferHeader)
+                .ThenInclude(header => header.Tasks.Where(task => !task.IsDeleted))
+                    .ThenInclude(task => task.Lines.Where(line => !line.IsDeleted))
+                        .ThenInclude(line => line.Line)
             .Include(x => x.WarehouseTransferHeader)
                 .ThenInclude(header => header.Tasks.Where(task => !task.IsDeleted))
                     .ThenInclude(task => task.Assignments)
