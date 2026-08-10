@@ -20,7 +20,7 @@ public sealed record KkdDistributionLineCreateRequest(
     long? YapCodeId,
     decimal Quantity,
     string? UnitCode,
-    long SourceLocationId,
+    long? SourceLocationId,
     string? OrderNumber,
     long? OrderLineId,
     bool RequireHandlingUnit,
@@ -89,7 +89,7 @@ public sealed record KkdDistributionRow(
 
 public sealed record KkdDistributionLineDetail(
     long Id, int LineNo, long StockId, string StockCode, string StockName, string GroupCode,
-    decimal Quantity, decimal EntitledQuantity, decimal ExcessQuantity, long SourceLocationId,
+    decimal Quantity, decimal EntitledQuantity, decimal ExcessQuantity, long? SourceLocationId,
     string? LotNo, string? SerialNo, string? OpenOrderNo, string? OpenOrderLineId);
 
 public sealed record KkdDistributionDetail(

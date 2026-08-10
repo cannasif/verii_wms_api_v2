@@ -884,8 +884,8 @@ public sealed class KkdDistributionService(
         if (request.IdempotencyKey == Guid.Empty || request.EmployeeId <= 0 || request.WarehouseId <= 0 || request.DocumentSeriesId <= 0)
             throw AppException.BadRequest("Idempotency, personel, kaynak depo ve ambar çıkış belge serisi zorunludur.");
         if (request.Lines.Count == 0) throw AppException.BadRequest("En az bir KKD kalemi zorunludur.");
-        if (request.Lines.Any(x => x.StockId <= 0 || x.Quantity <= 0 || x.SourceLocationId <= 0))
-            throw AppException.BadRequest("Her KKD kaleminde stok, miktar ve kaynak raf zorunludur.");
+        if (request.Lines.Any(x => x.StockId <= 0 || x.Quantity <= 0 || x.SourceLocationId is { } loc && loc <= 0))
+            throw AppException.BadRequest("Her KKD kaleminde stok ve miktar zorunludur; kaynak raf belirtilmemişse fiziksel toplama sırasında (barkod okutarak) çözülür.");
         if (request.Lines.Any(x =>
             !string.IsNullOrWhiteSpace(x.OrderNumber)
             != (x.OrderLineId.HasValue && x.OrderLineId.Value > 0)))

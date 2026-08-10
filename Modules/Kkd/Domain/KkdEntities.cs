@@ -266,7 +266,7 @@ public sealed class KkdDistributionLine : BaseEntity
     public decimal Quantity { get; set; }
     public decimal EntitledQuantity { get; set; }
     public decimal ExcessQuantity { get; set; }
-    public long SourceLocationId { get; set; }
+    public long? SourceLocationId { get; set; }
     public string? LotNo { get; set; }
     public string? SerialNo { get; set; }
     public string? OpenOrderNo { get; set; }
