@@ -101,8 +101,8 @@ public sealed record WarehouseAssistantCapabilities(
     bool CanQueryOperationalExceptions = false,
     bool CanQueryTraceability = false,
     bool CanQueryProcessBlockers = false,
-    string AssistantVersion = "2.3.0",
-    string RoutingMode = "LocalSemantic",
+    string AssistantVersion = "2.4.0",
+    string RoutingMode = "LocalHybrid",
     bool SemanticRoutingAvailable = false,
     string? SemanticModel = null,
     bool CanRunCompoundQueries = true);
@@ -381,6 +381,19 @@ public sealed record WarehouseAssistantEvidenceRow(
     bool IsTruncated,
     string? Route = null);
 
+public sealed record WarehouseAssistantInterpretationRow(
+    WarehouseAssistantIntent Intent,
+    decimal Confidence,
+    bool UsedLocalSemanticModel,
+    DateOnly? DateFrom,
+    DateOnly? DateTo,
+    string? SerialNo,
+    string? Barcode,
+    string? VehiclePlate,
+    string? TransferDocumentNo,
+    string? DocumentNo,
+    WarehouseAssistantTransferScope TransferScope);
+
 public sealed record WarehouseAssistantChatResponse(
     long ConversationId,
     long MessageId,
@@ -404,7 +417,8 @@ public sealed record WarehouseAssistantChatResponse(
     IReadOnlyList<WarehouseAssistantSummaryMetricRow>? SummaryMetrics = null,
     IReadOnlyList<WarehouseAssistantExceptionRow>? Exceptions = null,
     IReadOnlyList<WarehouseAssistantTraceabilityEventRow>? TraceabilityEvents = null,
-    IReadOnlyList<WarehouseAssistantEvidenceRow>? Evidence = null);
+    IReadOnlyList<WarehouseAssistantEvidenceRow>? Evidence = null,
+    IReadOnlyList<WarehouseAssistantInterpretationRow>? Interpretations = null);
 
 public sealed record WarehouseAssistantContext(
     string? SerialNo,

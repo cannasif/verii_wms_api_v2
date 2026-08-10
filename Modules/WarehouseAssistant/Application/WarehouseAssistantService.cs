@@ -90,7 +90,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             examples.Add(string.Join("; ", examples.Take(2)));
 
         var routing = routingDiagnostics?.GetRoutingInfo()
-            ?? new WarehouseAssistantRoutingInfo("2.3.0", "LocalSemantic", false, null);
+            ?? new WarehouseAssistantRoutingInfo("2.4.0", "LocalSemantic", false, null);
         return Task.FromResult(new WarehouseAssistantCapabilities(
             access.CanQueryAllUsers,
             access.CanViewStockBalances,
@@ -191,6 +191,18 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         var providerMode = queryPlan.Count > 1 && !resolution.ProviderMode.Contains("compound", StringComparison.OrdinalIgnoreCase)
             ? $"{resolution.ProviderMode}-compound"
             : resolution.ProviderMode;
+        var interpretations = queryPlan.Select(item => new WarehouseAssistantInterpretationRow(
+            item.Intent,
+            item.Confidence,
+            item.ProviderMode.Contains("hybrid", StringComparison.OrdinalIgnoreCase),
+            item.DateFrom,
+            item.DateTo,
+            item.SerialNo,
+            item.Barcode,
+            item.VehiclePlateQuery,
+            item.TransferDocumentQuery,
+            item.DocumentQuery,
+            item.TransferScope)).ToArray();
 
         var userMessage = new WarehouseAssistantMessage
         {
@@ -229,6 +241,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             Exceptions = result.Exceptions ?? [],
             TraceabilityEvents = result.TraceabilityEvents ?? [],
             Evidence = result.Evidence ?? [],
+            Interpretations = interpretations,
             Suggestions = result.Suggestions
         };
         var assistantMessage = new WarehouseAssistantMessage
@@ -300,7 +313,8 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             result.SummaryMetrics ?? [],
             result.Exceptions ?? [],
             result.TraceabilityEvents ?? [],
-            result.Evidence ?? []);
+            result.Evidence ?? [],
+            interpretations);
     }
 
     private async Task<ExecutionResult> ExecuteIntentAsync(
@@ -746,7 +760,8 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                 stored.SummaryMetrics ?? [],
                 stored.Exceptions ?? [],
                 stored.TraceabilityEvents ?? [],
-                stored.Evidence ?? []);
+                stored.Evidence ?? [],
+                stored.Interpretations ?? []);
         }
         catch (JsonException)
         {
@@ -1013,6 +1028,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         public IReadOnlyList<WarehouseAssistantExceptionRow> Exceptions { get; init; } = [];
         public IReadOnlyList<WarehouseAssistantTraceabilityEventRow> TraceabilityEvents { get; init; } = [];
         public IReadOnlyList<WarehouseAssistantEvidenceRow> Evidence { get; init; } = [];
+        public IReadOnlyList<WarehouseAssistantInterpretationRow> Interpretations { get; init; } = [];
         public IReadOnlyList<string> Suggestions { get; init; } = [];
     }
 }

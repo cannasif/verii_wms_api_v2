@@ -38,9 +38,9 @@ internal static class LocalWarehouseLanguageEngine
         var hasQuantity = question.HasAny("bakiye", "miktar", "kac", "ne kadar", "adet", "balance", "quantity", "how many");
         var hasSerial = question.HasAny("seri", "serino", "seri no", "serial", "barkodlu seri");
         var hasStock = question.HasAny("stok", "urun", "malzeme", "mamul", "parca", "item", "product", "material");
-        var hasReceipt = question.HasAny("mal kabul", "irsaliye", "kabul", "iceri al", "iceri girmis", "gelen malzeme", "tesellum", "goods receipt", "received", "inbound");
+        var hasReceipt = question.HasAny("mal kabul", "irsaliye", "kabul", "iceri al", "iceri girmis", "gelen malzeme", "depoya ulasan", "depoya gelen", "gonderilen urun", "tesellum", "goods receipt", "received", "inbound");
         var hasSupplier = question.HasAny("cari", "tedarikci", "satici", "firma", "supplier", "vendor");
-        var hasTransfer = question.HasAny("transfer", "depolar arasi", "uretime giden", "uretime verilen", "uretim besleme", "production supply");
+        var hasTransfer = question.HasAny("transfer", "depolar arasi", "uretime giden", "uretime verilen", "uretime gonderilen", "uretim besleme", "production supply");
 
         if (question.HasAny("yardim", "ne sorabilirim", "neler yapabilirsin", "ornek soru", "help", "what can i ask"))
             Add(WarehouseAssistantIntent.Help, 12);
@@ -83,7 +83,7 @@ internal static class LocalWarehouseLanguageEngine
         if (hasPlate && (hasArrival || hasReceipt || hasVehicle)) Add(WarehouseAssistantIntent.SteelVehicleAnalysis, 9);
 
         if (hasTransfer) Add(WarehouseAssistantIntent.WarehouseTransferAnalysis, 5);
-        if (hasTransfer && question.HasAny("durum", "bekleyen", "eksik", "tamamlanan", "kac", "liste", "goster", "ne oldu", "hangi"))
+        if (hasTransfer && question.HasAny("durum", "bekleyen", "eksik", "yarim", "kalan", "tamamlanan", "kac", "liste", "goster", "ne oldu", "hangi"))
             Add(WarehouseAssistantIntent.WarehouseTransferAnalysis, 5);
         if (question.HasAny("uretime giden", "uretime verilen", "uretim besleme") && question.HasAny("eksik", "kalan", "bekleyen", "durum"))
             Add(WarehouseAssistantIntent.WarehouseTransferAnalysis, 9);

@@ -9,7 +9,7 @@ namespace verii_wms_api_v2.Modules.WarehouseAssistant.Application;
 public sealed class WarehouseAssistantOptions
 {
     public const string SectionName = "WarehouseAssistant";
-    public string Version { get; set; } = "2.3.0";
+    public string Version { get; set; } = "2.4.0";
     public bool EnableOpenAiIntentResolution { get; set; }
     public string BaseUrl { get; set; } = "https://api.openai.com/v1";
     public string Model { get; set; } = "gpt-5.6-luna";
@@ -18,11 +18,41 @@ public sealed class WarehouseAssistantOptions
     public WarehouseAssistantRoutingStrategy RoutingStrategy { get; set; } = WarehouseAssistantRoutingStrategy.Hybrid;
     public decimal MinimumSemanticConfidence { get; set; } = 0.72m;
     public bool BypassSemanticForExactLookups { get; set; } = true;
+    public LocalWarehouseEmbeddingOptions LocalEmbeddings { get; set; } = new();
 }
-public sealed class OpenAiWarehouseAssistantIntentResolver(
+
+public sealed class LocalWarehouseEmbeddingOptions
+{
+    public bool Enabled { get; set; } = true;
+    public string Endpoint { get; set; } = "http://127.0.0.1:11434";
+    public string Model { get; set; } = "embeddinggemma";
+    public int TimeoutMilliseconds { get; set; } = 5000;
+    public int FailureBackoffSeconds { get; set; } = 30;
+    public int MaximumBatchSize { get; set; } = 128;
+    public int MaximumInputCharacters { get; set; } = 600;
+    public string KeepAlive { get; set; } = "15m";
+    public bool WarmOnStartup { get; set; } = true;
+    public string InputPrefix { get; set; } = "task: classification | query: ";
+    public decimal SemanticWeight { get; set; } = 0.65m;
+    public decimal RuleWeight { get; set; } = 0.25m;
+    public decimal EntityWeight { get; set; } = 0.10m;
+    public decimal MinimumSemanticSimilarity { get; set; } = 0.42m;
+    public decimal StrongSemanticSimilarity { get; set; } = 0.78m;
+    public decimal MinimumHybridConfidence { get; set; } = 0.50m;
+    public decimal AmbiguityMargin { get; set; } = 0.06m;
+
+    public static bool IsSafeLoopbackEndpoint(string? value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri)
+        && uri.IsLoopback
+        && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+        && string.IsNullOrWhiteSpace(uri.UserInfo)
+        && string.IsNullOrWhiteSpace(uri.Query)
+        && string.IsNullOrWhiteSpace(uri.Fragment);
+}
+internal sealed class OpenAiWarehouseAssistantIntentResolver(
     HttpClient httpClient,
     IOptions<WarehouseAssistantOptions> options,
-    WarehouseAssistantIntentResolver fallback,
+    LocalHybridWarehouseAssistantIntentResolver fallback,
     ILogger<OpenAiWarehouseAssistantIntentResolver> logger) : IWarehouseAssistantIntentResolver, IWarehouseAssistantRoutingDiagnostics
 {
     private readonly WarehouseAssistantOptions settings = options.Value;
@@ -30,11 +60,11 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
     public WarehouseAssistantRoutingInfo GetRoutingInfo()
     {
         var available = IsSemanticRoutingAvailable();
-        return new WarehouseAssistantRoutingInfo(
+        return available ? new WarehouseAssistantRoutingInfo(
             settings.Version,
-            available ? settings.RoutingStrategy.ToString() : "LocalSemantic",
-            available,
-            available ? settings.Model : null);
+            settings.RoutingStrategy.ToString(),
+            true,
+            settings.Model) : fallback.GetRoutingInfo();
     }
 
     public async Task<WarehouseAssistantIntentResolution> ResolveAsync(
@@ -147,7 +177,7 @@ public sealed class OpenAiWarehouseAssistantIntentResolver(
 
         return resolved[0] with
         {
-            ProviderMode = "local-semantic-compound-v2.3",
+            ProviderMode = "local-hybrid-compound-v2.4",
             AdditionalQueries = resolved.Skip(1).Take(2).ToArray()
         };
     }

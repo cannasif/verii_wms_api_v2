@@ -30,7 +30,7 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
 
     private static readonly string[] ReceiptWords =
     [
-        "mal kabul", "irsaliye", "iceri", "giris", "alindi", "kabul edildi", "ne zaman", "kim tarafindan", "kim aldi",
+        "mal kabul", "irsaliye", "iceri", "giris", "alindi", "kabul edildi", "depoya ulasan", "depoya gelen", "ne zaman", "kim tarafindan", "kim aldi",
         "goods receipt", "received", "receipt", "inbound", "when", "who",
         "wareneingang", "eingang", "angenommen", "wann", "wer",
         "reception", "recu", "entree", "quand", "qui",
@@ -100,7 +100,7 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
 
     private static readonly string[] ProductionTransferWords =
     [
-        "uretime transfer", "uretim transfer", "uretime malzeme", "uretim malzeme", "uretim besleme",
+        "uretime transfer", "uretim transfer", "uretime malzeme", "uretim malzeme", "uretime gonderilen", "uretim besleme",
         "production transfer", "production material", "material supply", "produktionstransfer",
         "transfert production", "transferencia produccion", "trasferimento produzione"
     ];
@@ -113,7 +113,7 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
 
     private static readonly string[] TransferAnalysisWords =
     [
-        "kac", "listele", "goster", "durum", "tamamlanan", "tamamlanmayan", "bekleyen", "eksik", "toplam",
+        "kac", "listele", "goster", "durum", "tamamlanan", "tamamlanmayan", "bekleyen", "eksik", "yarim", "kalan", "toplam",
         "ne kadar", "hangi", "what", "how many", "show", "list", "status", "completed", "pending", "shortage"
     ];
 
