@@ -33,6 +33,39 @@ public sealed class WarehouseAssistantIntentResolverTests
         Assert.Equal(expected, result.Intent);
     }
 
+    [Theory]
+    [InlineData("Mesaiye başladım, önce neye bakayım?", WarehouseAssistantIntent.ShiftBrief)]
+    [InlineData("Bugün beni ne bekliyor?", WarehouseAssistantIntent.ShiftBrief)]
+    [InlineData("Depoda ters giden ve acil bakmam gereken neler var?", WarehouseAssistantIntent.OperationalExceptions)]
+    [InlineData("GRI-2026-0001 hangi adımda kaldı?", WarehouseAssistantIntent.ProcessBlockers)]
+    [InlineData("DTG-1 serisinin başına neler geldi?", WarehouseAssistantIntent.Traceability)]
+    [InlineData("Benden beklenen işler neler?", WarehouseAssistantIntent.AssignedTasks)]
+    [InlineData("Ahmet geçen hafta neyle uğraşmış?", WarehouseAssistantIntent.MyActivities)]
+    public async Task Resolves_natural_turkish_phrasings_without_external_ai(
+        string message,
+        WarehouseAssistantIntent expected)
+    {
+        var result = await resolver.ResolveAsync(message, null);
+
+        Assert.Equal(expected, result.Intent);
+    }
+
+    [Fact]
+    public async Task Reuses_last_validated_intent_for_a_date_follow_up()
+    {
+        var context = new WarehouseAssistantContext(
+            null,
+            null,
+            null,
+            LastIntent: WarehouseAssistantIntent.GoodsReceiptAnalysis);
+
+        var result = await resolver.ResolveAsync("Peki geçen hafta?", context);
+
+        Assert.Equal(WarehouseAssistantIntent.GoodsReceiptAnalysis, result.Intent);
+        Assert.Equal(WarehouseAssistantDatePreset.LastWeek, result.DatePreset);
+        Assert.Equal(0.82m, result.Confidence);
+    }
+
     [Fact]
     public async Task Extracts_inclusive_explicit_date_range_for_goods_receipt_analysis()
     {
@@ -70,6 +103,7 @@ public sealed class WarehouseAssistantIntentResolverTests
 
     [Theory]
     [InlineData("Show my activities yesterday", WarehouseAssistantDatePreset.Yesterday)]
+    [InlineData("Show my activities last week", WarehouseAssistantDatePreset.LastWeek)]
     [InlineData("Zeige meine Aktivitäten diese Woche", WarehouseAssistantDatePreset.ThisWeek)]
     [InlineData("Afficher les opérations des 7 derniers jours", WarehouseAssistantDatePreset.LastSevenDays)]
     [InlineData("Mostrar operaciones de los últimos 30 días", WarehouseAssistantDatePreset.LastThirtyDays)]

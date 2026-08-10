@@ -27,6 +27,88 @@ namespace verii_wms_api_v2.QueryTests;
 public sealed class WarehouseAssistantServiceTests
 {
     [Fact]
+    public async Task Semantic_ambiguity_returns_clarification_without_running_an_unrelated_query()
+    {
+        await using var db = CreateDbContext();
+        db.Users.Add(new User { Id = 10, Username = "worker", Email = "worker@v3rii.com", PasswordHash = "x", Role = "User" });
+        await db.SaveChangesAsync();
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        const string clarification = "Stok bakiyesini mi, seri geçmişini mi görmek istiyorsunuz?";
+        var service = new WarehouseAssistantService(
+            unitOfWork,
+            new FixedIntentResolver(new WarehouseAssistantIntentResolution(
+                WarehouseAssistantIntent.Unknown,
+                WarehouseAssistantDatePreset.Today,
+                null,
+                null,
+                null,
+                null,
+                false,
+                0.41m,
+                "semantic-clarification-v2",
+                ClarificationQuestion: clarification)),
+            new NoopAuditWriter(),
+            new FixedTimeProvider(new DateTimeOffset(2026, 8, 10, 10, 0, 0, TimeSpan.Zero)));
+
+        var result = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, "Buna bir bakar mısın?"),
+            10,
+            "0",
+            new WarehouseAssistantAccess(false, true, true, true));
+
+        Assert.Equal(WarehouseAssistantIntent.Unknown, result.Intent);
+        Assert.Equal(clarification, result.Answer);
+        Assert.Empty(result.SerialBalances);
+        Assert.Empty(result.Activities);
+    }
+
+    [Fact]
+    public async Task Capabilities_expose_the_active_assistant_release_and_routing_mode()
+    {
+        await using var db = CreateDbContext();
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        var service = new WarehouseAssistantService(
+            unitOfWork,
+            new WarehouseAssistantIntentResolver(),
+            new NoopAuditWriter(),
+            new FixedTimeProvider(new DateTimeOffset(2026, 8, 10, 10, 0, 0, TimeSpan.Zero)),
+            routingDiagnostics: new FixedRoutingDiagnostics());
+
+        var result = await service.GetCapabilitiesAsync(new WarehouseAssistantAccess(false, true, true, true));
+
+        Assert.Equal("2.1.0", result.AssistantVersion);
+        Assert.Equal("Hybrid", result.RoutingMode);
+        Assert.True(result.SemanticRoutingAvailable);
+        Assert.Equal("test-semantic-model", result.SemanticModel);
+    }
+
+    [Fact]
+    public async Task Last_week_uses_the_previous_complete_monday_to_monday_window()
+    {
+        await using var db = CreateDbContext();
+        db.Users.Add(new User { Id = 10, Username = "worker", Email = "worker@v3rii.com", PasswordHash = "x", Role = "User" });
+        db.AuditLogs.AddRange(
+            Activity(10, "previous-week", new DateTime(2026, 8, 5, 8, 0, 0, DateTimeKind.Utc)),
+            Activity(10, "current-week", new DateTime(2026, 8, 10, 8, 0, 0, DateTimeKind.Utc)));
+        await db.SaveChangesAsync();
+        await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor { HttpContext = new DefaultHttpContext() });
+        var service = new WarehouseAssistantService(
+            unitOfWork,
+            new WarehouseAssistantIntentResolver(),
+            new NoopAuditWriter(),
+            new FixedTimeProvider(new DateTimeOffset(2026, 8, 10, 12, 0, 0, TimeSpan.Zero)));
+
+        var result = await service.AskAsync(
+            new AskWarehouseAssistantRequest(null, "Geçen hafta yaptığım işlemleri göster"),
+            10,
+            "0",
+            new WarehouseAssistantAccess(false, false, false, false));
+
+        var activity = Assert.Single(result.Activities);
+        Assert.Equal("previous-week", activity.Action);
+    }
+
+    [Fact]
     public async Task Misspelled_stock_reference_returns_ranked_choice_and_selected_choice_runs_original_question()
     {
         await using var db = CreateDbContext();
@@ -671,6 +753,20 @@ public sealed class WarehouseAssistantServiceTests
     private sealed class NoopAuditWriter : IAuditLogWriter
     {
         public Task WriteAsync(AuditLogWriteEntry entry, CancellationToken cancellationToken = default) => Task.CompletedTask;
+    }
+
+    private sealed class FixedIntentResolver(WarehouseAssistantIntentResolution resolution) : IWarehouseAssistantIntentResolver
+    {
+        public Task<WarehouseAssistantIntentResolution> ResolveAsync(
+            string message,
+            WarehouseAssistantContext? context,
+            CancellationToken cancellationToken = default) => Task.FromResult(resolution);
+    }
+
+    private sealed class FixedRoutingDiagnostics : IWarehouseAssistantRoutingDiagnostics
+    {
+        public WarehouseAssistantRoutingInfo GetRoutingInfo() =>
+            new("2.1.0", "Hybrid", true, "test-semantic-model");
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
