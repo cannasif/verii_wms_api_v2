@@ -138,6 +138,18 @@ public static class ProductionWorkOrderMaterialAssignment
         }
     }
 
+    internal static Dictionary<ProductionRecipeMaterialKey, decimal> ResolveManagerCancellationQuantities(
+        IReadOnlyDictionary<ProductionRecipeMaterialKey, decimal> requested,
+        IReadOnlySet<ProductionRecipeMaterialKey> draftRevertedKeys)
+    {
+        if (draftRevertedKeys.Count == 0)
+            return requested.ToDictionary(x => x.Key, x => x.Value);
+
+        return requested
+            .Where(x => !draftRevertedKeys.Contains(x.Key))
+            .ToDictionary(x => x.Key, x => x.Value);
+    }
+
     internal static bool IsFullyAssigned(
         IReadOnlyList<PreparedNetsisProductionMaterial> materials,
         IReadOnlyDictionary<ProductionRecipeMaterialKey, decimal> assignedByKey,

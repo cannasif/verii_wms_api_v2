@@ -135,7 +135,7 @@ public sealed partial class ProductionService
                 throw AppException.Conflict("Bu iş emri için iptal edilebilir atanmamış malzeme kalmadı.");
 
             var requested = ResolveRequestedCancellationQuantities(request.Lines, cancellable);
-            await CancelOpenTransfersForMaterialsAsync(
+            var draftRevertedKeys = await CancelOpenTransfersForMaterialsAsync(
                 branch,
                 workOrderNumber,
                 request.TransferId,
@@ -144,32 +144,58 @@ public sealed partial class ProductionService
                 request.IdempotencyKey,
                 actor,
                 token);
+            var managerCancelled = ResolveManagerCancellationQuantities(requested, draftRevertedKeys);
+            if (managerCancelled.Count == 0 && draftRevertedKeys.Count == 0)
+                throw AppException.Conflict("Bu iş emri için iptal edilebilir malzeme bulunamadı.");
 
-            var cancellation = await UpsertActiveCancellationAsync(
-                branch,
-                workOrderNumber,
-                sourceType,
-                sourceSystemCode,
-                request.Reason.Trim(),
-                request.IdempotencyKey,
-                requested,
-                request.TransferId,
-                actor,
-                token);
+            ProductionWorkOrderAssignmentCancellation? cancellation = null;
+            if (managerCancelled.Count > 0)
+            {
+                cancellation = await UpsertActiveCancellationAsync(
+                    branch,
+                    workOrderNumber,
+                    sourceType,
+                    sourceSystemCode,
+                    request.Reason.Trim(),
+                    request.IdempotencyKey,
+                    managerCancelled,
+                    request.TransferId,
+                    actor,
+                    token);
+            }
 
             await uow.SaveChangesAsync(token);
+            if (cancellation is not null)
+            {
+                await audit.WriteAsync(new(
+                    "production.work-order-assignment.cancel",
+                    nameof(ProductionWorkOrderAssignmentCancellation),
+                    cancellation.Id.ToString(),
+                    "Succeeded",
+                    "production",
+                    NewValues: new { workOrderNumber, cancellation.Status, lines = ToAuditMaterialQuantities(managerCancelled) }),
+                    token);
+                return MapCancellationResult(
+                    cancellation,
+                    cancellation.Lines.Where(x => !x.IsDeleted).Sum(x => x.CancelledQuantity),
+                    false);
+            }
+
             await audit.WriteAsync(new(
-                "production.work-order-assignment.cancel",
-                nameof(ProductionWorkOrderAssignmentCancellation),
-                cancellation.Id.ToString(),
+                "production.work-order-assignment.draft-revert",
+                nameof(WarehouseTransferHeader),
+                request.TransferId?.ToString() ?? workOrderNumber,
                 "Succeeded",
                 "production",
-                NewValues: new { workOrderNumber, cancellation.Status, lines = ToAuditMaterialQuantities(requested) }),
+                NewValues: new { workOrderNumber, lines = ToAuditMaterialQuantities(
+                    requested.Where(x => draftRevertedKeys.Contains(x.Key)).ToDictionary(x => x.Key, x => x.Value)) }),
                 token);
 
-            return MapCancellationResult(
-                cancellation,
-                cancellation.Lines.Where(x => !x.IsDeleted).Sum(x => x.CancelledQuantity),
+            return new ProductionWorkOrderAssignmentCancellationResult(
+                0,
+                workOrderNumber,
+                ProductionWorkOrderAssignmentCancellationStatus.Active,
+                0,
                 false);
         }, ct, IsolationLevel.Serializable);
 
@@ -351,7 +377,12 @@ public sealed partial class ProductionService
         return result;
     }
 
-    private async Task CancelOpenTransfersForMaterialsAsync(
+    private static Dictionary<ProductionRecipeMaterialKey, decimal> ResolveManagerCancellationQuantities(
+        IReadOnlyDictionary<ProductionRecipeMaterialKey, decimal> requested,
+        IReadOnlySet<ProductionRecipeMaterialKey> draftRevertedKeys) =>
+        ProductionWorkOrderMaterialAssignment.ResolveManagerCancellationQuantities(requested, draftRevertedKeys);
+
+    private async Task<IReadOnlySet<ProductionRecipeMaterialKey>> CancelOpenTransfersForMaterialsAsync(
         string branch,
         string workOrderNumber,
         long? scopedTransferId,
@@ -361,6 +392,7 @@ public sealed partial class ProductionService
         long actor,
         CancellationToken ct)
     {
+        var draftRevertedKeys = new HashSet<ProductionRecipeMaterialKey>();
         var contexts = ProductionSourceWorkOrderAssignmentFilter.ProductionContexts;
         var links = await uow.Repository<ProductionTransferHeaderLink>().Query()
             .Where(x => x.BranchCode == branch
@@ -391,7 +423,7 @@ public sealed partial class ProductionService
                 throw AppException.Conflict(
                     $"{header.DocumentNo} transferinde toplanmış stok olduğu için iş emri iptali yapılamaz. Önce iptal iadesini tamamlayın.");
 
-            var affectedLineIds = link.Lines
+            var affectedLinkLines = link.Lines
                 .Where(linkLine => !linkLine.IsDeleted)
                 .Where(linkLine =>
                 {
@@ -408,14 +440,31 @@ public sealed partial class ProductionService
                         operationNumber);
                     return cancelledQuantities.ContainsKey(key);
                 })
-                .Select(x => x.WarehouseTransferLineId)
-                .Distinct()
                 .ToArray();
 
-            if (affectedLineIds.Length == 0) continue;
+            if (affectedLinkLines.Length == 0) continue;
 
             if (header.Status == WarehouseTransferStatus.Draft)
             {
+                foreach (var linkLine in affectedLinkLines)
+                {
+                    var transferLine = linkLine.WarehouseTransferLine;
+                    if (transferLine is null || transferLine.IsDeleted) continue;
+                    var operationNumber = ProductionWorkOrderMaterialAssignment.TryParseOperationNumber(
+                        linkLine.RequirementReference,
+                        out var parsedOperation)
+                        ? parsedOperation
+                        : 0;
+                    draftRevertedKeys.Add(ProductionWorkOrderMaterialAssignment.CreateKey(
+                        transferLine.StockId,
+                        transferLine.YapCodeId,
+                        operationNumber));
+                }
+
+                var affectedLineIds = affectedLinkLines
+                    .Select(x => x.WarehouseTransferLineId)
+                    .Distinct()
+                    .ToArray();
                 var activeLineCount = header.Lines.Count(x => !x.IsDeleted);
                 if (affectedLineIds.Length >= activeLineCount)
                 {
@@ -437,6 +486,8 @@ public sealed partial class ProductionService
                 actor,
                 ct);
         }
+
+        return draftRevertedKeys;
     }
 
     private async Task<ProductionWorkOrderAssignmentCancellation> UpsertActiveCancellationAsync(

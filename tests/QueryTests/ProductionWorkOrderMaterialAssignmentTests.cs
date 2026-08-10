@@ -334,4 +334,23 @@ public sealed class ProductionWorkOrderMaterialAssignmentTests
         };
         Assert.True(ProductionWorkOrderMaterialAssignment.IsFullyAssigned(kalanMaterials, fullyAssigned));
     }
+
+    [Fact]
+    public void ResolveManagerCancellationQuantities_excludes_draft_reverted_keys()
+    {
+        var key1 = ProductionWorkOrderMaterialAssignment.CreateKey(1, 10, 100);
+        var key2 = ProductionWorkOrderMaterialAssignment.CreateKey(2, 20, 100);
+        var requested = new Dictionary<ProductionRecipeMaterialKey, decimal>
+        {
+            [key1] = 5,
+            [key2] = 3,
+        };
+
+        var managerOnly = ProductionWorkOrderMaterialAssignment.ResolveManagerCancellationQuantities(
+            requested,
+            new HashSet<ProductionRecipeMaterialKey> { key1 });
+
+        Assert.Single(managerOnly);
+        Assert.Equal(3, managerOnly[key2]);
+    }
 }

@@ -1,11 +1,13 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Caching.Memory;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.BarcodeDesigner.Application;
 using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Production.Application;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
+using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Application;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
 using verii_wms_api_v2.Modules.StockTracking.Application;
@@ -20,6 +22,7 @@ namespace verii_wms_api_v2.Modules.ProductionTransfer.Application;
 
 public sealed class ProductionTransferExecutionService(
     IUnitOfWork uow,
+    IMemoryCache memoryCache,
     IWarehouseBarcodeResolver barcodeResolver,
     IWarehouseTransferOperationService operations,
     IWarehouseTransferService transfers,
@@ -236,11 +239,8 @@ public sealed class ProductionTransferExecutionService(
                 ?? throw AppException.NotFound("Toplama satırı bulunamadı.");
             var line = ProductionTransferPickingSupport.ResolveTaskLine(aggregate.Header, taskLine);
 
-            if (line.Trackings.Count > 0)
+            if (line.Trackings.Count > 0 && !string.IsNullOrWhiteSpace(currentSerialNo))
             {
-                if (string.IsNullOrWhiteSpace(currentSerialNo))
-                    throw AppException.BadRequest("Serili satır için seri numarası zorunludur.");
-
                 var tracking = line.Trackings.SingleOrDefault(x =>
                         SameTrackingValue(x.SerialNo, currentSerialNo))
                     ?? throw AppException.NotFound("Seçilen seri bulunamadı.");
@@ -288,10 +288,16 @@ public sealed class ProductionTransferExecutionService(
                         x.SerialNo)).ToArray());
             }
 
-            var remaining = taskLine.PlannedQuantity - taskLine.ProcessedQuantity;
+            var remaining = line.Trackings.Count > 0
+                ? ProductionTransferPickingSupport.GetSerialShortageRemaining(line, taskLine)
+                : taskLine.PlannedQuantity - taskLine.ProcessedQuantity;
+            if (line.Trackings.Count > 0 && remaining <= 0)
+                throw AppException.BadRequest("Serili satır için seri numarası zorunludur.");
             if (remaining <= 0) throw AppException.Conflict("Seçilen satırın güncellenecek kalan miktarı yok.");
 
-            var currentSourceLocationId = taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
+            var currentSourceLocationId = line.Trackings.Count > 0
+                ? null
+                : taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
             var excludedLocations = ProductionTransferRouteAllocation.GetRouteRefreshExcludedSourceLocationIds(
                 currentSourceLocationId);
             var nonSerialContext = await ProductionTransferPickingSupport.LoadBalanceContextAsync(
@@ -355,11 +361,8 @@ public sealed class ProductionTransferExecutionService(
             var line = ProductionTransferPickingSupport.ResolveTaskLine(aggregate.Header, taskLine);
             var reservationPrefix = $"WT:{transferId}:ROUTE-SPLIT:{taskLineId}:{request.IdempotencyKey:N}";
 
-            if (line.Trackings.Count > 0)
+            if (line.Trackings.Count > 0 && !string.IsNullOrWhiteSpace(request.CurrentSerialNo))
             {
-                if (string.IsNullOrWhiteSpace(request.CurrentSerialNo))
-                    throw AppException.BadRequest("Serili satır için seri numarası zorunludur.");
-
                 var tracking = line.Trackings.SingleOrDefault(x =>
                         SameTrackingValue(x.SerialNo, request.CurrentSerialNo))
                     ?? throw AppException.NotFound("Seçilen seri bulunamadı.");
@@ -441,7 +444,11 @@ public sealed class ProductionTransferExecutionService(
                 return await GetPickingTableAsync(transferId, actor, token);
             }
 
-            var remaining = taskLine.PlannedQuantity - taskLine.ProcessedQuantity;
+            var remaining = line.Trackings.Count > 0
+                ? ProductionTransferPickingSupport.GetSerialShortageRemaining(line, taskLine)
+                : taskLine.PlannedQuantity - taskLine.ProcessedQuantity;
+            if (line.Trackings.Count > 0 && remaining <= 0)
+                throw AppException.BadRequest("Serili satır için seri numarası zorunludur.");
             if (remaining <= 0) throw AppException.Conflict("Seçilen satırın güncellenecek kalan miktarı yok.");
 
             var splits = request.Splits.Where(x => x.Quantity > 0).ToArray();
@@ -452,7 +459,9 @@ public sealed class ProductionTransferExecutionService(
 
             var link = aggregate.Link;
             var sourceLineLink = link.Lines.Single(x => x.WarehouseTransferLineId == line.Id);
-            var currentSourceLocationId = taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
+            var currentSourceLocationId = line.Trackings.Count > 0
+                ? null
+                : taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
             var excludedLocations = ProductionTransferRouteAllocation.GetRouteRefreshExcludedSourceLocationIds(
                 currentSourceLocationId);
             var context = await ProductionTransferPickingSupport.LoadBalanceContextAsync(uow, aggregate.Header, [line], token);
@@ -496,11 +505,21 @@ public sealed class ProductionTransferExecutionService(
                 actor,
                 token);
 
-            ProductionTransferLineSplitHelper.ApplyNonSerialRouteChunks(
-                aggregate.Header, link, task, taskLine, line, sourceLineLink, chunks, ref nextLineNo, actor,
-                DateTime.UtcNow, allowShortageWithoutLocation: false);
+            var splitUtcNow = DateTime.UtcNow;
+            if (line.Trackings.Count > 0)
+            {
+                ProductionTransferLineSplitHelper.ApplySerialShortageRouteChunks(
+                    aggregate.Header, link, task, taskLine, line, sourceLineLink, chunks, ref nextLineNo, actor,
+                    splitUtcNow);
+            }
+            else
+            {
+                ProductionTransferLineSplitHelper.ApplyNonSerialRouteChunks(
+                    aggregate.Header, link, task, taskLine, line, sourceLineLink, chunks, ref nextLineNo, actor,
+                    splitUtcNow, allowShortageWithoutLocation: false);
+            }
             ProductionTransferLineSplitHelper.ConsolidateSameLocationOpenTaskLines(
-                aggregate.Header, link, task, actor, DateTime.UtcNow);
+                aggregate.Header, link, task, actor, splitUtcNow);
 
             await uow.SaveChangesAsync(token);
 
@@ -680,282 +699,16 @@ public sealed class ProductionTransferExecutionService(
         ProductionTransferScanPickRequest request,
         long actor,
         CancellationToken ct = default) =>
-        uow.ExecuteInTransactionAsync(
-            token => ScanPickCoreAsync(transferId, request, actor, token),
-            ct,
-            IsolationLevel.Serializable);
-
-    private async Task<ProductionTransferScanPickResult> ScanPickCoreAsync(
-        long transferId,
-        ProductionTransferScanPickRequest request,
-        long actor,
-        CancellationToken ct = default)
-    {
-        if (request.IdempotencyKey == Guid.Empty) throw AppException.BadRequest("İşlem anahtarı zorunludur.");
-        if (string.IsNullOrWhiteSpace(request.Barcode)) throw AppException.BadRequest("Barkod zorunludur.");
-        var normalizedBarcode = request.Barcode.Trim().ToUpperInvariant();
-
-        var replay = await uow.Repository<ProductionTransferBarcodeScan>().Query()
-            .FirstOrDefaultAsync(x => x.IdempotencyKey == request.IdempotencyKey, ct);
-        if (replay is not null)
-        {
-            var replayHeaderLink = await uow.Repository<ProductionTransferHeaderLink>().Query()
-                .SingleAsync(x => x.Id == replay.ProductionTransferHeaderLinkId, ct);
-            var replayLineLink = await uow.Repository<ProductionTransferLineLink>().Query()
-                .SingleAsync(x => x.Id == replay.ProductionTransferLineLinkId, ct);
-            var replayTaskLine = await uow.Repository<WarehouseTransferTaskLine>().Query()
-                .SingleAsync(x => x.Id == request.ExpectedTaskLineId, ct);
-            if (replayHeaderLink.WarehouseTransferHeaderId != transferId
-                || replayLineLink.WarehouseTransferLineId != replayTaskLine.WtLineId
-                || replay.NormalizedBarcode != normalizedBarcode)
-                throw AppException.Conflict("Aynı işlem anahtarı farklı bir barkod toplama isteğinde kullanılamaz.");
-            var replayLocation = await uow.Repository<WarehouseLocation>().Query()
-                .SingleAsync(x => x.Id == replay.SourceLocationId, ct);
-            var replayExecution = await GetAsync(transferId, ct);
-            var replayLine = replayExecution.Lines.Single(x => x.LineId == replayTaskLine.WtLineId);
-            return new(replayExecution, replayTaskLine.WtLineId, replayLine.StockCode, replay.Quantity,
-                replay.SerialNo, replay.LotNo, replay.BarcodeSource, replay.SourceLocationId,
-                replayLocation.Code, replayLocation.Name, null);
-        }
-
-        var aggregate = await LoadAsync(transferId, false, ct);
-        EnsurePickingAllowed(aggregate.Link);
-        ProductionTransferPickingSupport.ResolveAssignedPickTaskForLine(
-            aggregate.Header, request.ExpectedTaskLineId, actor);
-        var taskLine = aggregate.Header.Tasks
-            .SelectMany(x => x.Lines)
-            .SingleOrDefault(x => x.Id == request.ExpectedTaskLineId && !x.IsDeleted)
-            ?? throw AppException.BadRequest("Beklenen toplama satırı bu üretim transferine ait değil.");
-        var line = ProductionTransferPickingSupport.ResolveTaskLine(aggregate.Header, taskLine);
-        if (line.WtHeaderId != transferId)
-            throw AppException.BadRequest("Beklenen toplama satırı bu üretim transferine ait değil.");
-        var lineLink = aggregate.Link.Lines.Single(x => x.WarehouseTransferLineId == line.Id);
-        var transferPolicy = await ProductionTransferOverIssueSupport.LoadPolicyAsync(
-            uow, aggregate.Header.BranchCode, ct);
-        var linePickCapacity = ProductionTransferOverIssueSupport.GetRemainingPickCapacity(line, transferPolicy);
-        var maxPickQuantity = ProductionTransferOverIssueSupport.GetMaxPickQuantity(line, transferPolicy);
-        var remaining = taskLine.PlannedQuantity - taskLine.ProcessedQuantity;
-        if (remaining <= 0 && linePickCapacity <= 0)
-            throw ProductionTransferBarcodeInput.AlreadyPicked(line.StockCodeSnapshot);
-        if (remaining <= 0 && !transferPolicy.AllowOverIssue)
-            throw ProductionTransferBarcodeInput.AlreadyPicked(line.StockCodeSnapshot);
-        var waitingLocationId = aggregate.Header.SourceStagingLocationId
-            ?? throw AppException.Conflict("Kaynak depo için üretim transfer bekleme rafı tanımlanmamış.");
-
-        var input = ProductionTransferBarcodeInput.Parse(request.Barcode);
-        if (input.StockCode is not null
-            && !ProductionTransferBarcodeInput.SameStockCode(line.StockCodeSnapshot, input.StockCode))
-            throw AppException.Conflict(
-                $"Okutulan stok kodu beklenen stokla uyuşmuyor. Beklenen: {line.StockCodeSnapshot}.");
-        if (line.Trackings.Count > 0
-            && input.StockCode is null
-            && input.SerialNo is null
-            && !string.IsNullOrWhiteSpace(input.Raw))
-        {
-            var pickingTable = await GetPickingTableAsync(transferId, actor, ct);
-            var openRows = pickingTable.Rows
-                .Where(row => IsRowOpenForPicking(pickingTable, aggregate.Header, row))
-                .ToArray();
-            var matchedRow = ProductionTransferBarcodeInput.FindMatchingOpenRow(input, openRows);
-            input = ProductionTransferBarcodeInput.EnrichFromMatchedRow(input, matchedRow);
-            var unavailableRow = ProductionTransferBarcodeInput.FindUnavailableRow(input, openRows);
-            if (unavailableRow is not null)
-                throw ProductionTransferBarcodeInput.UnavailableBalance(unavailableRow);
-            if (matchedRow is null)
-                throw AppException.BadRequest(ProductionTransferBarcodeInput.SerialCompositeFormatMessage);
-        }
-
-        if (line.Trackings.Count == 0 && input.StockCode is null && !string.IsNullOrWhiteSpace(input.Raw))
-        {
-            var pickingTable = await GetPickingTableAsync(transferId, actor, ct);
-            var openRows = pickingTable.Rows
-                .Where(row => IsRowOpenForPicking(pickingTable, aggregate.Header, row))
-                .ToArray();
-            var unavailableRow = ProductionTransferBarcodeInput.FindUnavailableNonSerialRow(input, openRows);
-            if (unavailableRow is not null && ProductionTransferBarcodeInput.FindMatchingOpenRow(input, openRows) is null)
-                throw ProductionTransferBarcodeInput.UnavailableBalance(unavailableRow);
-        }
-
-        var expectedSourceLocationId = request.SourceLocationId ?? taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
-        var activePickingTable = await GetPickingTableAsync(transferId, actor, ct);
-        var pickRows = activePickingTable.Rows
-            .Where(x => x.TaskLineId == taskLine.Id && IsRowOpenForPicking(activePickingTable, aggregate.Header, x))
-            .ToArray();
-        var matchedPickRow = ProductionTransferBarcodeInput.FindMatchingOpenRow(input, pickRows)
-            ?? pickRows.FirstOrDefault();
-        input = ProductionTransferBarcodeInput.EnrichFromMatchedRow(input, matchedPickRow);
-        var resolved = await ResolveTransferPickBarcodeAsync(
-            aggregate.Header,
-            line,
-            matchedPickRow ?? new ProductionTransferPickingRowDto(
-                taskLine.Id,
-                line.Id,
-                line.LineNo,
-                expectedSourceLocationId,
-                null,
-                line.StockId,
-                line.StockCodeSnapshot,
-                line.StockNameSnapshot,
-                null,
-                taskLine.PlannedQuantity,
-                remaining,
-                taskLine.ProcessedQuantity,
-                expectedSourceLocationId.HasValue && remaining > 0),
-            input,
-            new ProductionTransferBarcodeInput.ResolveContext(
-                line.StockId,
-                expectedSourceLocationId,
-                line.YapCodeId,
-                line.UnitCode),
-            ct);
-        if (!resolved.CanExecute || resolved.MissingFields.Count > 0)
-            throw AppException.Conflict($"Barkod toplama için uygun değil: {string.Join(", ", resolved.MissingFields)}.");
-        ValidateDimensions(line, resolved);
-
-        var sourceLocationId = ResolveSourceLocation(request.SourceLocationId, line.DefaultSourceLocationId, resolved);
-        var sourceBalance = resolved.BalanceCandidates.FirstOrDefault(x => x.LocationId == sourceLocationId)
-            ?? throw AppException.Conflict("Seçilen kaynak rafta okutulan barkoda ait kullanılabilir stok bulunamadı.");
-        ValidateSourceBalance(line, resolved, sourceBalance);
-
-        var quantityBound = ProductionTransferBarcodePickPolicy.IsQuantityBoundSource(resolved.Source);
-        var alreadyAccepted = quantityBound
-            ? Math.Max(0, ProductionTransferUnpickMovement.NetBarcodeAcceptedQuantity(
-                await uow.Repository<ProductionTransferBarcodeScan>().Query()
-                    .Where(x => x.ProductionTransferHeaderLinkId == aggregate.Link.Id
-                        && x.NormalizedBarcode == normalizedBarcode)
-                    .ToListAsync(ct),
-                normalizedBarcode))
-            : 0;
-        decimal? plannedTrackingRemaining = null;
-        if (line.Trackings.Count > 0)
-        {
-            var plannedTracking = line.Trackings.FirstOrDefault(x =>
-                SameTrackingValue(x.LotNo, resolved.LotNo)
-                && SameTrackingValue(x.SerialNo, resolved.SerialNo));
-            if (plannedTracking is null)
-                throw AppException.Conflict(
-                    $"{line.LineNo}. satırın seri/lot bilgisi planlanan takip kaydıyla eşleşmiyor.");
-            plannedTrackingRemaining = plannedTracking.PlannedQuantity - plannedTracking.PickedQuantity;
-        }
-        var policy = await trackingPolicies.ResolveAsync(aggregate.Header.BranchCode, line.StockId, ct);
-        var requestedQuantity = request.Quantity ?? Math.Max(remaining, 0);
-        if (requestedQuantity <= 0) throw AppException.BadRequest("Toplanacak miktar geçersiz.");
-        if (transferPolicy.AllowOverIssue)
-        {
-            if (requestedQuantity > linePickCapacity + 0.000001m)
-                throw AppException.BadRequest("Toplanacak miktar fazla sarf toleransını aşıyor.");
-        }
-        else if (requestedQuantity > remaining + 0.000001m)
-        {
-            throw AppException.BadRequest("Toplanacak miktar kalan miktardan fazla olamaz.");
-        }
-        var quantity = ProductionTransferBarcodePickPolicy.CalculateQuantity(
-            policy, resolved.Quantity, alreadyAccepted, requestedQuantity, sourceBalance.AvailableQuantity,
-            quantityBound, plannedTrackingRemaining);
-        if (quantity <= 0) throw AppException.Conflict("Okutulan barkod için toplanabilir miktar bulunamadı.");
-        try
-        {
-            StockTrackingPolicyGuard.ValidateSerialMovementQuantity(
-                policy, quantity, sourceBalance.AvailableQuantity, resolved.SerialNo);
-        }
-        catch (StockTrackingPolicyViolationException exception)
-        {
-            throw AppException.Conflict(exception.Message);
-        }
-
-        await uow.ExecuteInTransactionAsync(async token =>
-        {
-            var header = await uow.Repository<WarehouseTransferHeader>().Query(true)
-                .Include(x => x.Tasks).ThenInclude(x => x.Assignments)
-                .SingleAsync(x => x.Id == transferId, token);
-            ProductionTransferPickingSupport.EnsureHeaderReleasedForPicking(
-                header, actor, DateTimeOffset.UtcNow);
-            await uow.SaveChangesAsync(token);
-            return true;
-        }, ct, IsolationLevel.Serializable);
-
-        await EnsureOverPickPlannedQuantitiesAsync(
-            transferId,
-            line.Id,
-            taskLine.Id,
-            quantity,
-            resolved.LotNo,
-            resolved.SerialNo,
-            actor,
-            ct);
-
-        await uow.ExecuteInTransactionAsync(async token =>
-        {
-            var header = await uow.Repository<WarehouseTransferHeader>().Query(true)
-                .Include(x => x.Lines).ThenInclude(x => x.Trackings)
-                .SingleAsync(x => x.Id == transferId, token);
-            var pickLine = new WarehouseTransferOperationLineRequest(
-                line.Id,
-                quantity,
-                sourceLocationId,
-                waitingLocationId,
-                resolved.LotNo,
-                resolved.SerialNo,
-                maxPickQuantity);
-            await reservations.EnsurePickCoverageAsync(
-                header,
-                line.Id,
-                pickLine,
-                $"WT:{transferId}:RESERVE:OVER-PICK:{request.IdempotencyKey:N}",
-                actor,
-                token);
-            await uow.SaveChangesAsync(token);
-            return true;
-        }, ct);
-
-        await operations.PickAsync(transferId, new(
-            request.IdempotencyKey,
-            [new(line.Id, quantity, sourceLocationId, waitingLocationId, resolved.LotNo, resolved.SerialNo, maxPickQuantity)],
-            DateTimeOffset.UtcNow,
-            $"Barkodlu üretim toplama: {resolved.RawBarcode}",
-            null, null, null), actor, ct);
-
-        await uow.ExecuteInTransactionAsync(async token =>
-        {
-            var link = await uow.Repository<ProductionTransferHeaderLink>().Query(true)
-                .SingleAsync(x => x.WarehouseTransferHeaderId == transferId, token);
-            if (link.WorkflowStatus == ProductionTransferWorkflowStatus.Planned)
-                link.WorkflowStatus = ProductionTransferWorkflowStatus.Picking;
-            link.UpdatedBy = actor;
-            link.UpdatedDate = DateTime.UtcNow;
-            await uow.Repository<ProductionTransferBarcodeScan>().AddAsync(new()
-            {
-                BranchCode = aggregate.Header.BranchCode,
-                CreatedBy = actor,
-                CreatedDate = DateTime.UtcNow,
-                ProductionTransferHeaderLinkId = aggregate.Link.Id,
-                ProductionTransferLineLinkId = lineLink.Id,
-                IdempotencyKey = request.IdempotencyKey,
-                BarcodeValue = resolved.RawBarcode,
-                NormalizedBarcode = normalizedBarcode,
-                BarcodeSource = resolved.Source,
-                StockId = resolved.StockId,
-                YapCodeId = resolved.YapCodeId,
-                UnitCode = sourceBalance.UnitCode,
-                LotNo = resolved.LotNo,
-                SerialNo = resolved.SerialNo,
-                Quantity = quantity,
-                SourceLocationId = sourceLocationId,
-                TargetLocationId = waitingLocationId,
-                ScannedAtUtc = DateTimeOffset.UtcNow
-            }, token);
-            await uow.SaveChangesAsync(token);
-            return true;
-        }, ct);
-
-        var execution = await GetAsync(transferId, ct);
-        decimal? remainingBarcodeQuantity = quantityBound
-            ? Math.Max(0, (resolved.Quantity ?? 0) - alreadyAccepted - quantity)
-            : null;
-        return new(execution, line.Id, line.StockCodeSnapshot, quantity, resolved.SerialNo, resolved.LotNo,
-            resolved.Source, sourceLocationId, sourceBalance.LocationCode, sourceBalance.LocationName,
-            remainingBarcodeQuantity);
-    }
+        new ProductionTransferScanPickExecutor(
+            uow,
+            memoryCache,
+            barcodeResolver,
+            operations,
+            reservations,
+            trackingPolicies,
+            LoadAsync,
+            EnsureOverPickPlannedQuantitiesAsync)
+            .ExecuteAsync(transferId, request, actor, ct);
 
     private static bool SameTrackingValue(string? left, string? right) =>
         string.Equals(

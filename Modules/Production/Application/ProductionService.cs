@@ -103,6 +103,21 @@ public sealed partial class ProductionService(
         return merged
             .Select(row =>
             {
+                if (row.ListingKind == ProductionSourceWorkOrderListingKind.CancellationReturnRemainder
+                    && row.TransferId is long transferId
+                    && row.KalanTaskId is long kalanTaskId)
+                {
+                    var (assigned, total) = assignmentSnapshot.GetCancellationRemainderLineProgress(
+                        transferId,
+                        kalanTaskId,
+                        row.WorkOrderNumber.Trim());
+                    return row with
+                    {
+                        AssignedRecipeLineCount = assigned,
+                        RecipeLineCount = total,
+                    };
+                }
+
                 var workOrderNumber = row.WorkOrderNumber.Trim();
                 var recipeLineCount = Math.Max(
                     row.RecipeLineCount,
