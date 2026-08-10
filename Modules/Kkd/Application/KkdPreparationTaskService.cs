@@ -18,6 +18,7 @@ namespace verii_wms_api_v2.Modules.Kkd.Application;
 public sealed class KkdPreparationTaskService(
     IUnitOfWork uow,
     IAuditLogWriter audit,
+    IKkdEntitlementService entitlements,
     IStringLocalizer<KkdRequestResource> localizer) : IKkdPreparationTaskService
 {
     private IGenericRepository<KkdPreparationTask> Tasks => uow.Repository<KkdPreparationTask>();
@@ -84,9 +85,8 @@ public sealed class KkdPreparationTaskService(
                 throw AppException.BadRequest(Message(KkdRequestMessageKeys.DuplicateLineAssignment));
             if (requested.Any(id => !unassigned.ContainsKey(id)))
                 throw AppException.Conflict(Message(KkdRequestMessageKeys.LineAlreadyAssigned));
-            // Üretimdeki kural: kayıt için tüm açık kalemler atanmış olmalı (kişiye veya havuza).
-            if (requested.Length != unassigned.Count)
-                throw AppException.BadRequest(Message(KkdRequestMessageKeys.AllLinesMustBeAssigned));
+            // Tüm açık kalemlerin atanması artık zorunlu değil: müdür kota aşımlı bir kalemi
+            // bu turda hariç tutabilir (o kalem atanmamış kalır, sonra tekrar denenebilir).
 
             var now = DateTimeOffset.UtcNow;
             var sequence = await Tasks.CountAsync(x => x.RequestId == entity.Id, token);
@@ -157,6 +157,20 @@ public sealed class KkdPreparationTaskService(
             if (unassigned.Count == 0)
                 throw AppException.Conflict(Message(KkdRequestMessageKeys.NothingToAssign));
 
+            // Kota aşan kalemler bu üzerine alma turuna dahil edilmez; müdür onayı bekleyerek
+            // talepte atanmamış kalır (Beklemede sekmesinde görünmeye devam eder).
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var claimable = new Dictionary<long, decimal>();
+            foreach (var (lineId, quantity) in unassigned)
+            {
+                var line = entity.Lines.Single(x => x.Id == lineId);
+                if (line.StockId is not { } stockId) { claimable[lineId] = quantity; continue; }
+                var check = await entitlements.CheckAsync(new(entity.EmployeeId, stockId, quantity, today), token);
+                if (check.IsAllowed) claimable[lineId] = quantity;
+            }
+            if (claimable.Count == 0)
+                throw AppException.Conflict(Message(KkdRequestMessageKeys.NothingToAssign));
+
             var now = DateTimeOffset.UtcNow;
             var sequence = await Tasks.CountAsync(x => x.RequestId == entity.Id, token) + 1;
             var task = new KkdPreparationTask
@@ -169,7 +183,7 @@ public sealed class KkdPreparationTaskService(
                 Status = KkdPreparationTaskStatus.Assigned,
                 AssignedAtUtc = now,
                 CreatedBy = actor,
-                Lines = unassigned.Select(pair => new KkdPreparationTaskLine
+                Lines = claimable.Select(pair => new KkdPreparationTaskLine
                 {
                     RequestLineId = pair.Key,
                     Quantity = pair.Value,
@@ -377,8 +391,9 @@ public sealed class KkdPreparationTaskService(
             .Concat(tasks.Where(x => x.OriginUserId.HasValue).Select(x => x.OriginUserId!.Value))
             .Distinct().ToArray();
         var usernames = await Users.Query().Where(x => userIds.Contains(x.Id))
-            .Select(x => new { x.Id, x.Username })
-            .ToDictionaryAsync(x => x.Id, x => x.Username, ct);
+            .Select(x => new { x.Id, DisplayName = x.Detail == null || (x.Detail.FirstName == "" && x.Detail.LastName == "")
+                ? x.Username : (x.Detail.FirstName + " " + x.Detail.LastName).Trim() })
+            .ToDictionaryAsync(x => x.Id, x => x.DisplayName, ct);
         var previousIds = tasks.Where(x => x.PreviousTaskId.HasValue).Select(x => x.PreviousTaskId!.Value).Distinct().ToArray();
         var previousNos = previousIds.Length == 0
             ? new Dictionary<long, string>()

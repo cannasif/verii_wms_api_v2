@@ -170,8 +170,9 @@ public sealed class KkdRequestService(
         var usernames = userIds.Length == 0
             ? new Dictionary<long, string>()
             : await Users.Query().Where(x => userIds.Contains(x.Id))
-                .Select(x => new { x.Id, x.Username })
-                .ToDictionaryAsync(x => x.Id, x => x.Username, ct);
+                .Select(x => new { x.Id, DisplayName = x.Detail == null || (x.Detail.FirstName == "" && x.Detail.LastName == "")
+                    ? x.Username : (x.Detail.FirstName + " " + x.Detail.LastName).Trim() })
+                .ToDictionaryAsync(x => x.Id, x => x.DisplayName, ct);
 
         var items = page.Items.Select(item =>
         {
@@ -468,6 +469,43 @@ public sealed class KkdRequestService(
             await audit.WriteAsync(new AuditLogWriteEntry(
                 "kkd.request.cancel", nameof(KkdRequest), entity.Id.ToString(), "Succeeded", "kkd-request",
                 Reason: request.Reason.Trim(), OldValues: old, NewValues: Snapshot(entity),
+                ChangedFields: ["Status", "CancelledAtUtc", "CancellationReason"]), token);
+            return await GetDetailAsync(entity.Id, actor, token);
+        }, ct, IsolationLevel.Serializable);
+    }
+
+    /// <summary>İptal edilmiş bir talebi tekrar beklemeye alır. Hazırlamada sekmesindeki müdür "beklemeye geri al" işleminden
+    /// (aktif bir görevin iadesi) ayrıdır — burada talep zaten Cancelled durumundan başlar.</summary>
+    public async Task<KkdRequestDetail> ReactivateAsync(long id, KkdRequestReactivateRequest request, long actor, CancellationToken ct = default)
+    {
+        return await uow.ExecuteInTransactionAsync(async token =>
+        {
+            var entity = await Requests.Query(true).Include(x => x.Lines)
+                .SingleOrDefaultAsync(x => x.Id == id, token)
+                ?? throw AppException.NotFound(Message(KkdRequestMessageKeys.NotFound));
+            if (entity.Status != KkdRequestStatus.Cancelled)
+                throw AppException.Conflict(Message(KkdRequestMessageKeys.NotCancelled));
+            if (entity.WarehouseId.HasValue)
+                await EnsureWarehouseAccessAsync(actor, entity.WarehouseId.Value, token);
+            CheckVersion(entity.RowVersion, request.ExpectedRowVersion);
+            var old = Snapshot(entity);
+            var now = DateTimeOffset.UtcNow;
+            entity.CancelledAtUtc = null;
+            entity.CancellationReason = null;
+            entity.UpdatedBy = actor;
+            entity.UpdatedDate = now.UtcDateTime;
+            foreach (var line in entity.Lines)
+            {
+                line.CancelledQuantity = 0;
+                line.Status = line.StockId is null ? KkdRequestLineStatus.AwaitingStockSelection : KkdRequestLineStatus.ReadyToPrepare;
+                line.UpdatedBy = actor;
+                line.UpdatedDate = now.UtcDateTime;
+            }
+            KkdRequestStateMachine.Refresh(entity, now);
+            await SaveAsync(token);
+            await audit.WriteAsync(new AuditLogWriteEntry(
+                "kkd.request.reactivate", nameof(KkdRequest), entity.Id.ToString(), "Succeeded", "kkd-request",
+                OldValues: old, NewValues: Snapshot(entity),
                 ChangedFields: ["Status", "CancelledAtUtc", "CancellationReason"]), token);
             return await GetDetailAsync(entity.Id, actor, token);
         }, ct, IsolationLevel.Serializable);

@@ -21,12 +21,14 @@ public static class KkdRequestMessageKeys
     public const string StockGroupMismatch = nameof(StockGroupMismatch);
     public const string StockCannotChange = nameof(StockCannotChange);
     public const string ClosedRequestCannotChange = nameof(ClosedRequestCannotChange);
+    public const string NotCancelled = nameof(NotCancelled);
     public const string RequestHasProgress = nameof(RequestHasProgress);
     public const string ConcurrencyConflict = nameof(ConcurrencyConflict);
     public const string Created = nameof(Created);
     public const string Resolved = nameof(Resolved);
     public const string Assigned = nameof(Assigned);
     public const string Cancelled = nameof(Cancelled);
+    public const string Reactivated = nameof(Reactivated);
     public const string TaskNotFound = nameof(TaskNotFound);
     public const string TaskNotActive = nameof(TaskNotActive);
     public const string TaskHasProgress = nameof(TaskHasProgress);
@@ -34,7 +36,6 @@ public static class KkdRequestMessageKeys
     public const string DuplicateAssignee = nameof(DuplicateAssignee);
     public const string DuplicateLineAssignment = nameof(DuplicateLineAssignment);
     public const string LineAlreadyAssigned = nameof(LineAlreadyAssigned);
-    public const string AllLinesMustBeAssigned = nameof(AllLinesMustBeAssigned);
     public const string NothingToAssign = nameof(NothingToAssign);
     public const string NothingToHandoff = nameof(NothingToHandoff);
     public const string HandoffSameUser = nameof(HandoffSameUser);

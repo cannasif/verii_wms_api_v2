@@ -39,6 +39,11 @@ public sealed record KkdRequestCancelRequest(
     string Reason,
     string? ExpectedRowVersion);
 
+/// <summary>İptal edilmiş bir talebi tekrar beklemeye alır (Hazırlamada'dan gelen "beklemeye geri al" ile karıştırılmamalı).</summary>
+public sealed record KkdRequestReactivateRequest(
+    Guid IdempotencyKey,
+    string? ExpectedRowVersion);
+
 /// <summary>Üretim iş emirleri sayfasındaki sekme modelinin KKD karşılığı.</summary>
 public enum KkdRequestBoardTab
 {
@@ -262,4 +267,5 @@ public interface IKkdRequestService
     Task<KkdRequestDetail> AssignAsync(long id, KkdRequestAssignRequest request, long actor, CancellationToken ct = default);
     Task<KkdRequestCancelPrecheckResult> GetCancelPrecheckAsync(long id, CancellationToken ct = default);
     Task<KkdRequestDetail> CancelAsync(long id, KkdRequestCancelRequest request, long actor, CancellationToken ct = default);
+    Task<KkdRequestDetail> ReactivateAsync(long id, KkdRequestReactivateRequest request, long actor, CancellationToken ct = default);
 }

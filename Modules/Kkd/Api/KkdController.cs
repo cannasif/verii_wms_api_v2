@@ -217,6 +217,13 @@ public sealed class KkdController(
         return Ok(ApiResponse<KkdRequestDetail>.Ok(await requests.CancelAsync(id, request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.Cancelled)));
     }
 
+    [HttpPost("requests/{id:long}/reactivate")]
+    public async Task<IActionResult> ReactivateRequest(long id, KkdRequestReactivateRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.CANCEL", ct);
+        return Ok(ApiResponse<KkdRequestDetail>.Ok(await requests.ReactivateAsync(id, request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.Reactivated)));
+    }
+
     [HttpGet("distributions")]
     public async Task<IActionResult> Distributions(CancellationToken ct)
     { await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct); return Ok(ApiResponse<IReadOnlyList<KkdDistributionRow>>.Ok(await distributions.GetRecentAsync(UserId(), ct))); }
