@@ -8,6 +8,8 @@ using verii_wms_api_v2.Modules.BarcodeDesigner.Infrastructure;
 using verii_wms_api_v2.Modules.Customer.Infrastructure;
 using verii_wms_api_v2.Modules.DocumentSeries.Domain;
 using verii_wms_api_v2.Modules.DocumentSeries.Infrastructure;
+using verii_wms_api_v2.Modules.ErpBalanceSync.Domain;
+using verii_wms_api_v2.Modules.ErpBalanceSync.Infrastructure;
 using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 using verii_wms_api_v2.Modules.ErpIntegration.Infrastructure;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
@@ -158,6 +160,9 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<StockMovementEntry> StockMovementEntries => Set<StockMovementEntry>();
     public DbSet<LocationStockBalance> LocationStockBalances => Set<LocationStockBalance>();
     public DbSet<WarehouseStockBalance> WarehouseStockBalances => Set<WarehouseStockBalance>();
+    public DbSet<ErpStockBalanceSyncRun> ErpStockBalanceSyncRuns => Set<ErpStockBalanceSyncRun>();
+    public DbSet<ErpWarehouseStockBalance> ErpWarehouseStockBalances => Set<ErpWarehouseStockBalance>();
+    public DbSet<ErpStockBalanceChangeLog> ErpStockBalanceChangeLogs => Set<ErpStockBalanceChangeLog>();
     public DbSet<StockBalanceProjectionState> StockBalanceProjectionStates => Set<StockBalanceProjectionState>();
     public DbSet<StockReservationOperation> StockReservationOperations => Set<StockReservationOperation>();
     public DbSet<StockReservationEntry> StockReservationEntries => Set<StockReservationEntry>();
@@ -365,6 +370,9 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new StockMovementEntryConfiguration());
         modelBuilder.ApplyConfiguration(new LocationStockBalanceConfiguration());
         modelBuilder.ApplyConfiguration(new WarehouseStockBalanceConfiguration());
+        modelBuilder.ApplyConfiguration(new ErpStockBalanceSyncRunConfiguration());
+        modelBuilder.ApplyConfiguration(new ErpWarehouseStockBalanceConfiguration());
+        modelBuilder.ApplyConfiguration(new ErpStockBalanceChangeLogConfiguration());
         modelBuilder.ApplyConfiguration(new StockBalanceProjectionStateConfiguration());
         modelBuilder.ApplyConfiguration(new StockReservationOperationConfiguration());
         modelBuilder.ApplyConfiguration(new StockReservationEntryConfiguration());

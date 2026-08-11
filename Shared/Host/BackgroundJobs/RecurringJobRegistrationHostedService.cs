@@ -1,4 +1,6 @@
 using Hangfire;
+using Microsoft.Extensions.Options;
+using verii_wms_api_v2.Modules.ErpBalanceSync.Application;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.ErpMirror.Application;
 using verii_wms_api_v2.Modules.Identity.Application;
@@ -11,6 +13,7 @@ namespace verii_wms_api_v2.Shared.Host.BackgroundJobs;
 public sealed class RecurringJobRegistrationHostedService(
     IRecurringJobManager recurringJobs,
     IConfiguration configuration,
+    IOptions<ErpStockBalanceSyncOptions> erpBalanceSyncOptions,
     ILogger<RecurringJobRegistrationHostedService> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -70,6 +73,17 @@ public sealed class RecurringJobRegistrationHostedService(
             "stock-balance-reconciliation",
             service => service.ReconcileAndRepairAsync(CancellationToken.None),
             Cron.Daily(2, 30));
+        if (erpBalanceSyncOptions.Value.Enabled)
+        {
+            recurringJobs.AddOrUpdate<IErpStockBalanceSyncJobRunner>(
+                "erp-stock-balance-sync",
+                service => service.RunAsync(ErpStockBalanceSyncJobRequest.Full(), CancellationToken.None),
+                erpBalanceSyncOptions.Value.Cron);
+        }
+        else
+        {
+            recurringJobs.RemoveIfExists("erp-stock-balance-sync");
+        }
         recurringJobs.AddOrUpdate<IPackingPrintQueueJobRunner>(
             "packing-print-queue",
             service => service.DispatchPendingAsync(CancellationToken.None),
