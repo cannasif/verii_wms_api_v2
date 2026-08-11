@@ -128,11 +128,67 @@ public sealed class GoodsReceiptOperationsService(
             lines.Where(line => line.GrHeaderId == x.Header.Id).Sum(line => (decimal?)line.ReceivedQuantity) ?? 0,
             x.Header.Priority, x.Header.PlannedArrivalAtUtc, x.Header.ReceivedAtUtc,
             x.Header.CreatedBy, x.Header.CreatedDate, x.Header.UpdatedBy, x.Header.UpdatedDate,
+            null, null,
             x.Header.RowVersion));
-        return await query
+        var page = await query
             .ApplyAdvancedFilters(request)
             .ApplySort(request, nameof(GoodsReceiptGridRow.CreatedDate))
             .ToPagedResponseAsync(request, cancellationToken);
+        return new PagedResponse<GoodsReceiptGridRow>
+        {
+            Items = await EnrichGridRowsAsync(page.Items, cancellationToken),
+            TotalCount = page.TotalCount,
+            PageNumber = page.PageNumber,
+            PageSize = page.PageSize,
+        };
+    }
+
+    private async Task<IReadOnlyList<GoodsReceiptGridRow>> EnrichGridRowsAsync(
+        IReadOnlyList<GoodsReceiptGridRow> rows,
+        CancellationToken cancellationToken)
+    {
+        if (rows.Count == 0) return rows;
+
+        var headerIds = rows.Select(x => x.Id).ToArray();
+        var orderRows = await unitOfWork.Repository<GoodsReceiptSourceDocument>().Query()
+            .Where(x => headerIds.Contains(x.GrHeaderId)
+                && x.SourceDocumentType == GoodsReceiptSourceDocumentType.PurchaseOrder)
+            .Select(x => new { x.GrHeaderId, x.ExternalDocumentNo })
+            .ToListAsync(cancellationToken);
+        var projectRows = await (
+            from line in unitOfWork.Repository<GoodsReceiptLine>().Query()
+            join source in unitOfWork.Repository<GoodsReceiptLineSource>().Query() on line.Id equals source.GrLineId
+            where headerIds.Contains(line.GrHeaderId)
+                && source.ProjectCodeSnapshot != null
+                && source.ProjectCodeSnapshot != ""
+            select new { line.GrHeaderId, source.ProjectCodeSnapshot })
+            .ToListAsync(cancellationToken);
+
+        var ordersByHeader = orderRows
+            .GroupBy(x => x.GrHeaderId)
+            .ToDictionary(x => x.Key, x => JoinDistinctValues(x.Select(row => row.ExternalDocumentNo)));
+        var projectsByHeader = projectRows
+            .GroupBy(x => x.GrHeaderId)
+            .ToDictionary(x => x.Key, x => JoinDistinctValues(x.Select(row => row.ProjectCodeSnapshot)));
+
+        return rows
+            .Select(row => row with
+            {
+                OrderNumbers = ordersByHeader.GetValueOrDefault(row.Id),
+                ProjectCodes = projectsByHeader.GetValueOrDefault(row.Id),
+            })
+            .ToArray();
+    }
+
+    private static string? JoinDistinctValues(IEnumerable<string?> values)
+    {
+        var normalized = values
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return normalized.Length == 0 ? null : string.Join(", ", normalized);
     }
 
     public async Task<GoodsReceiptDetail> GetDetailAsync(long id, CancellationToken cancellationToken = default)
@@ -153,9 +209,12 @@ public sealed class GoodsReceiptOperationsService(
                 x.RequireQualityControl, x.TargetWarehouseId, x.DefaultReceivingLocationId,
                 x.DefaultPutawayLocationId, routed, Math.Max(0, x.AcceptedQuantity - routed));
         }).ToList();
-        var sourceDocuments = await unitOfWork.Repository<GoodsReceiptSourceDocument>().Query().Where(x => x.GrHeaderId == id)
+        var sourceDocumentRows = await unitOfWork.Repository<GoodsReceiptSourceDocument>().Query().Where(x => x.GrHeaderId == id)
             .OrderBy(x => x.Id).Select(x => new { x.SourceDocumentType, x.ExternalDocumentNo }).ToListAsync(cancellationToken);
-        var documents = sourceDocuments.Select(x => $"{x.SourceDocumentType}:{x.ExternalDocumentNo}").ToList();
+        var documents = sourceDocumentRows.Select(x => $"{x.SourceDocumentType}:{x.ExternalDocumentNo}").ToList();
+        var orderNumbersSummary = JoinDistinctValues(sourceDocumentRows
+            .Where(x => x.SourceDocumentType == GoodsReceiptSourceDocumentType.PurchaseOrder)
+            .Select(x => x.ExternalDocumentNo));
         var taskNumbers = await unitOfWork.Repository<GoodsReceiptTask>().Query().Where(x => x.GrHeaderId == id)
             .OrderBy(x => x.Id).Select(x => x.TaskNo).ToListAsync(cancellationToken);
         var executionCount = await Executions.Query().CountAsync(x => x.GrHeaderId == id, cancellationToken);
@@ -212,6 +271,18 @@ public sealed class GoodsReceiptOperationsService(
                 "Available", line.DefaultPutawayLocationId));
             remainingByLine[line.Id] -= quantity;
         }
+        var lineIds = lineEntities.Select(x => x.Id).ToArray();
+        var projectCodes = lineIds.Length == 0
+            ? []
+            : await unitOfWork.Repository<GoodsReceiptLineSource>().Query()
+                .Where(x => lineIds.Contains(x.GrLineId)
+                    && x.ProjectCodeSnapshot != null
+                    && x.ProjectCodeSnapshot != "")
+                .Select(x => x.ProjectCodeSnapshot!)
+                .Distinct()
+                .OrderBy(x => x)
+                .ToListAsync(cancellationToken);
+        var projectCodesSummary = JoinDistinctValues(projectCodes);
         var grid = new GoodsReceiptGridRow(header.Id, header.BranchCode, header.DocumentNo, header.DocumentDate,
             header.ReceiptType, header.InitiationMode, header.ProcessType, header.Status, header.ApprovalStatus,
             header.QualityStatus, header.PutawayStatus, header.ErpIntegrationStatus,
@@ -219,8 +290,8 @@ public sealed class GoodsReceiptOperationsService(
             warehouse.WarehouseCode, warehouse.WarehouseName, header.WaybillNo, header.ElectronicWaybillNo, header.WaybillDate, detailLines.Count,
             detailLines.Sum(x => x.ExpectedQuantity), detailLines.Sum(x => x.ReceivedQuantity), header.Priority,
             header.PlannedArrivalAtUtc, header.ReceivedAtUtc, header.CreatedBy, header.CreatedDate,
-            header.UpdatedBy, header.UpdatedDate, header.RowVersion);
-        return new GoodsReceiptDetail(grid, detailLines, putawayCandidates, documents, taskNumbers, executionCount);
+            header.UpdatedBy, header.UpdatedDate, orderNumbersSummary, projectCodesSummary, header.RowVersion);
+        return new GoodsReceiptDetail(grid, detailLines, putawayCandidates, documents, taskNumbers, executionCount, projectCodes);
     }
 
     private Task<ManualGoodsReceiptResult> CreateAsync(
@@ -515,7 +586,8 @@ public sealed class GoodsReceiptOperationsService(
                         AllocatedQuantity = input.Quantity,
                         ReceivedQuantity = direct ? input.Quantity : 0,
                         UnitCode = unit,
-                        ExternalStatus = "Open"
+                        ExternalStatus = "Open",
+                        ProjectCodeSnapshot = Clean(source.ProjectCode, 50)
                     }, actor));
                 }
                 grLines.Add(line); header.Lines.Add(line);

@@ -254,7 +254,8 @@ public sealed class GoodsReceiptService(
                 line.Sources.Add(Stamp(new GoodsReceiptLineSource { BranchCode = branch, Line = line, SourceDocument = documents[source.OrderNumber],
                     ExternalLineId = source.OrderId.ToString(), ExternalStockCode = source.StockCode!, ExternalYapCode = source.YapCode,
                     OrderedQuantity = source.OrderedQuantity, PreviouslyReceivedQuantity = source.DeliveredQuantity,
-                    AllocatedQuantity = item.Request.Quantity, ReceivedQuantity = 0, UnitCode = unit, ExternalStatus = "Open" }, actorUserId, now));
+                    AllocatedQuantity = item.Request.Quantity, ReceivedQuantity = 0, UnitCode = unit, ExternalStatus = "Open",
+                    ProjectCodeSnapshot = Normalize(source.ProjectCode, 50) }, actorUserId, now));
                 var task = tasksByWarehouse[item.Request.TargetWarehouseId];
                 var taskLine = Stamp(new GoodsReceiptTaskLine { BranchCode = branch, Task = task, Line = line, SequenceNo = task.Lines.Count + 1,
                     ToLocationId = item.Request.ReceivingLocationId, PlannedQuantity = item.Request.Quantity, UnitCode = unit, Status = GoodsReceiptTaskStatus.Assigned }, actorUserId, now);

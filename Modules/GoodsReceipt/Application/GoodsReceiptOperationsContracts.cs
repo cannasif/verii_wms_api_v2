@@ -59,6 +59,7 @@ public sealed record GoodsReceiptGridRow(
     decimal ExpectedQuantity, decimal ReceivedQuantity, byte Priority,
     DateTimeOffset? PlannedArrivalAtUtc, DateTimeOffset? ReceivedAtUtc,
     long? CreatedBy, DateTime? CreatedDate, long? UpdatedBy, DateTime? UpdatedDate,
+    string? OrderNumbers, string? ProjectCodes,
     byte[] RowVersion);
 
 public sealed record GoodsReceiptDetailLine(
@@ -93,7 +94,8 @@ public sealed record GoodsReceiptDetail(
     IReadOnlyList<GoodsReceiptPutawayCandidate> PutawayCandidates,
     IReadOnlyList<string> SourceDocuments,
     IReadOnlyList<string> TaskNumbers,
-    int ExecutionCount);
+    int ExecutionCount,
+    IReadOnlyList<string> ProjectCodes);
 
 public interface IGoodsReceiptOperationsService
 {

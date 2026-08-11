@@ -489,7 +489,7 @@ public sealed class ProductionTransferRouteAllocationTests
     }
 
     [Fact]
-    public void ListSerialRouteRefreshCandidates_lists_unassigned_serials_on_other_locations()
+    public void ListSerialRouteRefreshCandidates_lists_unassigned_serials_including_same_shelf()
     {
         const long a1 = 1;
         const long a2 = 2;
@@ -502,17 +502,19 @@ public sealed class ProductionTransferRouteAllocationTests
         {
             SerialBalance(a1, 13, "SN-1", 1),
             SerialBalance(a1, 13, "SN-2", 1),
+            SerialBalance(a1, 13, "SN-3", 1),
             SerialBalance(a2, 13, "SN-99", 1),
         };
-        var eligible = ProductionTransferRouteAllocation.ExcludeLocations(balances, new HashSet<long> { a1 });
         var assigned = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "SN-2" };
 
         var candidates = ProductionTransferRouteAllocation.ListSerialRouteRefreshCandidates(
-            13, null, "ADET", "SN-1", assigned, eligible, locations);
+            13, null, "ADET", "SN-1", assigned, balances, locations);
 
-        Assert.Single(candidates);
-        Assert.Equal("SN-99", candidates[0].SerialNo);
-        Assert.Equal(a2, candidates[0].LocationId);
+        Assert.Equal(2, candidates.Count);
+        Assert.Equal("SN-3", candidates[0].SerialNo);
+        Assert.Equal(a1, candidates[0].LocationId);
+        Assert.Equal("SN-99", candidates[1].SerialNo);
+        Assert.Equal(a2, candidates[1].LocationId);
     }
 
     private static verii_wms_api_v2.Modules.StockBalance.Domain.LocationStockBalance SerialBalance(

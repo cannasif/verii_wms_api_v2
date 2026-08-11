@@ -261,9 +261,8 @@ public sealed class ProductionTransferExecutionService(
                 });
                 var locationCodes = await ProductionTransferPickingSupport.LoadLocationCodesAsync(uow, locationIds, token);
                 var pickingRows = ProductionTransferPickingSupport.BuildPersistedRows(aggregate.Header, task, locationCodes);
-                var serialCurrentSourceLocationId = tracking.SourceLocationId ?? taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
                 var serialExcludedLocations = ProductionTransferRouteAllocation.BuildRouteRefreshExcludedLocationIds(
-                    serialCurrentSourceLocationId, headerExcludedLocations);
+                    null, headerExcludedLocations);
                 var serialEligibleBalances = ProductionTransferRouteAllocation.ExcludeLocations(
                     serialContext.Balances, serialExcludedLocations);
                 var assignedSerials = ProductionTransferRouteAllocation.BuildAssignedSerialNumbersFromPickingRows(
@@ -430,11 +429,10 @@ public sealed class ProductionTransferExecutionService(
                 if (SameTrackingValue(split.SerialNo, request.CurrentSerialNo))
                     throw AppException.BadRequest("Mevcut seri ile aynı seri seçilemez.");
 
-                var serialCurrentSourceLocationId = tracking.SourceLocationId ?? taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
                 var serialContext = await ProductionTransferPickingSupport.LoadSerialRouteRefreshBalanceContextAsync(
                     uow, aggregate.Header, line, token);
                 var serialExcludedLocations = ProductionTransferRouteAllocation.BuildRouteRefreshExcludedLocationIds(
-                    serialCurrentSourceLocationId, headerExcludedLocations);
+                    null, headerExcludedLocations);
                 if (serialExcludedLocations.Contains(split.LocationId))
                 {
                     var blockedCode = serialContext.Locations.GetValueOrDefault(split.LocationId)?.Code

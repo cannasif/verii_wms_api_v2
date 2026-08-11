@@ -232,6 +232,7 @@ public sealed class GoodsReceiptLineSource : BaseEntity
     public decimal ReceivedQuantity { get; set; }
     public string UnitCode { get; set; } = string.Empty;
     public string? ExternalStatus { get; set; }
+    public string? ProjectCodeSnapshot { get; set; }
 }
 
 public sealed class GoodsReceiptStatusHistory : BaseEntity

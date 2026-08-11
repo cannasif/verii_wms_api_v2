@@ -219,6 +219,7 @@ public sealed class GoodsReceiptLineSourceConfiguration : BaseEntityConfiguratio
         Quantity(builder.Property(x => x.ReceivedQuantity));
         builder.Property(x => x.UnitCode).HasMaxLength(20).IsRequired();
         builder.Property(x => x.ExternalStatus).HasMaxLength(30);
+        builder.Property(x => x.ProjectCodeSnapshot).HasMaxLength(50);
 
         builder.HasOne(x => x.Line).WithMany(x => x.Sources)
             .HasForeignKey(x => x.GrLineId).OnDelete(DeleteBehavior.Restrict);
