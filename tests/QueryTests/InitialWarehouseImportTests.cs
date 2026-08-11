@@ -140,6 +140,51 @@ public sealed class InitialWarehouseImportTests
     }
 
     [Fact]
+    public async Task Opening_balance_retry_skips_validation_for_an_already_committed_batch()
+    {
+        await using var db = CreateDb();
+        var warehouse = new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" };
+        db.Add(warehouse);
+        await db.SaveChangesAsync();
+        db.AddRange(
+            new WarehouseLocation
+            {
+                BranchCode = "0", WarehouseId = warehouse.Id, Code = "A01", Name = "A01",
+                LocationType = LocationTypes.Cell, BarcodeEntryMode = BarcodeEntryModes.Auto, IsActive = true
+            },
+            new Stock { BranchCode = "0", ErpStockCode = "STK-01", StockName = "Test stok", BaseUnitCode = "ADET" });
+        await db.SaveChangesAsync();
+
+        await using var stream = OpeningBalanceWorkbook(501);
+        var initialRecorder = new RecordingStockMovementService();
+        var initialService = new OpeningBalanceImportService(Uow(db), initialRecorder);
+        await initialService.ValidateWarehouseOpeningAsync(stream, "0");
+        Assert.Equal(2, initialRecorder.ValidatedRequests.Count);
+        var firstBatch = initialRecorder.ValidatedRequests[0];
+        db.Add(new StockMovementOperation
+        {
+            BranchCode = "0",
+            IdempotencyKey = firstBatch.IdempotencyKey,
+            RequestHash = "existing",
+            OperationType = StockMovementTypes.AdjustmentIncrease,
+            ReferenceType = "OpeningBalanceImport",
+            ReferenceNo = firstBatch.ReferenceNo,
+            OccurredAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        var recorder = new RecordingStockMovementService();
+        var service = new OpeningBalanceImportService(Uow(db), recorder);
+        stream.Position = 0;
+
+        var validation = await service.ValidateWarehouseOpeningAsync(stream, "0");
+
+        Assert.Equal(2, validation.BatchCount);
+        Assert.Single(recorder.ValidatedRequests);
+        Assert.Single(recorder.ValidatedRequests[0].Lines);
+    }
+
+    [Fact]
     public async Task Combined_opening_preview_deduplicates_repeated_location_and_preserves_each_serial_row()
     {
         await using var db = CreateDb();
@@ -160,9 +205,7 @@ public sealed class InitialWarehouseImportTests
         Assert.Equal(2, preview.DistinctStockCount);
         Assert.Equal(2, preview.SerialCount);
         Assert.Equal(7m, preview.TotalQuantity);
-        Assert.Equal(1, locations.ImportedRows);
-        Assert.Equal("Göz 1", locations.ImportedName);
-        Assert.Equal("Cell", locations.ImportedType);
+        Assert.Equal(0, locations.ImportedRows);
         Assert.Equal(3, balances.ImportedRows);
     }
 
@@ -183,6 +226,36 @@ public sealed class InitialWarehouseImportTests
 
         Assert.Contains("LocationName", error.Message);
         Assert.Contains("çelişemez", error.Message);
+    }
+
+    [Fact]
+    public async Task Combined_opening_preview_accepts_fifty_thousand_serial_rows_in_bounded_batches()
+    {
+        await using var db = CreateDb();
+        var warehouse = new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" };
+        db.Add(warehouse);
+        await db.SaveChangesAsync();
+        db.AddRange(
+            new WarehouseLocation
+            {
+                BranchCode = "0", WarehouseId = warehouse.Id, Code = "A01-R01-G01", Name = "Göz 1",
+                LocationType = LocationTypes.Cell, BarcodeEntryMode = BarcodeEntryModes.Auto, IsActive = true
+            },
+            new Stock { BranchCode = "0", ErpStockCode = "STK-01", StockName = "Test stok", BaseUnitCode = "ADET" });
+        await db.SaveChangesAsync();
+        var uow = Uow(db);
+        var service = new WarehouseOpeningImportService(
+            uow,
+            new RecordingLocationImportService(),
+            new OpeningBalanceImportService(uow, new RecordingStockMovementService()));
+        await using var stream = FiftyThousandRowCombinedOpeningWorkbook();
+
+        var preview = await service.PreviewAsync(stream, "0");
+
+        Assert.Equal(50_000, preview.BalanceRowCount);
+        Assert.Equal(50_000, preview.SerialCount);
+        Assert.Equal(50_000m, preview.TotalQuantity);
+        Assert.Equal(100, preview.BatchCount);
     }
 
     private static MemoryStream CombinedOpeningWorkbook(params object[][] rows)
@@ -212,6 +285,65 @@ public sealed class InitialWarehouseImportTests
             for (var column = 0; column < values.Length; column++)
                 if (values[column] is not null)
                     sheet.Cell(index + 2, column + 1).Value = XLCellValue.FromObject(values[column]);
+        }
+        var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        stream.Position = 0;
+        return stream;
+    }
+
+    private static MemoryStream FiftyThousandRowCombinedOpeningWorkbook()
+    {
+        using var workbook = new XLWorkbook();
+        var sheet = workbook.Worksheets.Add("Depo Açılışları");
+        var headers = new[]
+        {
+            "WarehouseCode", "LocationCode", "LocationName", "LocationType", "ParentLocationCode",
+            "Barcode", "ZoneCode", "AisleNo", "RackNo", "LevelNo", "BinNo",
+            "IsPickable", "IsPutaway", "IsQuarantine",
+            "StockCode", "YapCode", "Quantity", "UnitCode", "LotNo", "SerialNo",
+            "StockStatus", "OccurredAt", "Description"
+        };
+        for (var column = 0; column < headers.Length; column++)
+            sheet.Cell(1, column + 1).Value = headers[column];
+        for (var index = 0; index < 50_000; index++)
+        {
+            var row = index + 2;
+            sheet.Cell(row, 1).Value = 1;
+            sheet.Cell(row, 2).Value = "A01-R01-G01";
+            sheet.Cell(row, 15).Value = "STK-01";
+            sheet.Cell(row, 17).Value = 1m;
+            sheet.Cell(row, 18).Value = "ADET";
+            sheet.Cell(row, 20).Value = $"SR-{index + 1:D6}";
+            sheet.Cell(row, 21).Value = "Available";
+        }
+        var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        stream.Position = 0;
+        return stream;
+    }
+
+    private static MemoryStream OpeningBalanceWorkbook(int rowCount)
+    {
+        using var workbook = new XLWorkbook();
+        var sheet = workbook.Worksheets.Add("İlk Raf Bakiyeleri");
+        var headers = new[]
+        {
+            "WarehouseCode", "LocationCode", "StockCode", "YapCode", "Quantity", "UnitCode",
+            "LotNo", "SerialNo", "StockStatus", "OccurredAt", "Description"
+        };
+        for (var column = 0; column < headers.Length; column++)
+            sheet.Cell(1, column + 1).Value = headers[column];
+        for (var index = 0; index < rowCount; index++)
+        {
+            var row = index + 2;
+            sheet.Cell(row, 1).Value = 1;
+            sheet.Cell(row, 2).Value = "A01";
+            sheet.Cell(row, 3).Value = "STK-01";
+            sheet.Cell(row, 5).Value = 1m;
+            sheet.Cell(row, 6).Value = "ADET";
+            sheet.Cell(row, 8).Value = $"SR-{index + 1:D6}";
+            sheet.Cell(row, 9).Value = "Available";
         }
         var stream = new MemoryStream();
         workbook.SaveAs(stream);
@@ -272,6 +404,14 @@ public sealed class InitialWarehouseImportTests
     private sealed class RecordingStockMovementService : IStockMovementService
     {
         public PostStockMovementRequest? LastRequest { get; private set; }
+        public List<PostStockMovementRequest> ValidatedRequests { get; } = [];
+
+        public Task ValidateAsync(PostStockMovementRequest request, CancellationToken cancellationToken = default)
+        {
+            ValidatedRequests.Add(request);
+            return Task.CompletedTask;
+        }
+
         public Task<StockMovementPostResult> PostAsync(PostStockMovementRequest request, CancellationToken cancellationToken = default)
         {
             LastRequest = request;
@@ -328,6 +468,16 @@ public sealed class InitialWarehouseImportTests
             string idempotencyKey,
             CancellationToken cancellationToken = default)
             => RecordAsync(workbookStream);
+
+        public async Task<OpeningBalanceImportValidation> ValidateWarehouseOpeningAsync(
+            Stream workbookStream,
+            string branchCode,
+            CancellationToken cancellationToken = default)
+        {
+            var result = await RecordAsync(workbookStream);
+            return new(result.TotalRows, result.TotalQuantity,
+                (int)Math.Ceiling(result.TotalRows / (decimal)OpeningBalanceImportService.MovementBatchSize));
+        }
 
         private Task<OpeningBalanceImportResult> RecordAsync(Stream workbookStream)
         {

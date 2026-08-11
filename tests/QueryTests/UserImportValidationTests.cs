@@ -222,6 +222,7 @@ public sealed class UserImportValidationTests
             throw new InvalidOperationException();
         public Task RollbackTransactionAsync(CancellationToken cancellationToken = default) =>
             throw new InvalidOperationException();
+        public void ClearTracking() { }
         public Task<TResult> ExecuteInTransactionAsync<TResult>(
             Func<CancellationToken, Task<TResult>> operation,
             CancellationToken cancellationToken = default,
