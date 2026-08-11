@@ -317,24 +317,59 @@ internal static class ProductionTransferLineSplitHelper
         }
     }
 
-    internal static void ApplySerialRouteReplacement(
-        WarehouseTransferTracking tracking,
-        WarehouseTransferTaskLine taskLine,
+    internal static void AssignSerialToShortage(
         WarehouseTransferLine line,
+        WarehouseTransferTaskLine taskLine,
         long locationId,
         string serialNo,
         string? lotNo,
         long actor,
         DateTime utcNow)
     {
-        tracking.SerialNo = serialNo.Trim();
-        tracking.LotNo = lotNo;
-        tracking.SourceLocationId = locationId;
-        tracking.UpdatedBy = actor;
-        tracking.UpdatedDate = utcNow;
+        var shortage = line.Trackings
+            .Where(x => !x.IsDeleted && x.PickedQuantity <= 0 && IsSerialShortageTracking(x))
+            .OrderBy(x => x.Id)
+            .First(x => x.PlannedQuantity - x.PickedQuantity > 0);
+        var open = shortage.PlannedQuantity - shortage.PickedQuantity;
 
+        if (open <= 1)
+        {
+            shortage.SerialNo = serialNo.Trim();
+            shortage.LotNo = lotNo;
+            shortage.SourceLocationId = locationId;
+            shortage.UpdatedBy = actor;
+            shortage.UpdatedDate = utcNow;
+        }
+        else
+        {
+            shortage.PlannedQuantity -= 1;
+            shortage.UpdatedBy = actor;
+            shortage.UpdatedDate = utcNow;
+            line.Trackings.Add(new WarehouseTransferTracking
+            {
+                BranchCode = line.BranchCode,
+                CreatedBy = actor,
+                CreatedDate = utcNow,
+                Line = line,
+                WtLineId = line.Id,
+                LotNo = lotNo,
+                SerialNo = serialNo.Trim(),
+                PlannedQuantity = 1,
+                SourceLocationId = locationId,
+                Status = WarehouseTransferTrackingStatus.Planned,
+            });
+        }
+
+        RefreshSerialLineLocations(taskLine, line);
+    }
+
+    private static void RefreshSerialLineLocations(WarehouseTransferTaskLine taskLine, WarehouseTransferLine line)
+    {
         var openLocations = line.Trackings
-            .Where(x => x.PickedQuantity <= 0 && x.PlannedQuantity - x.PickedQuantity > 0)
+            .Where(x => !x.IsDeleted
+                && !IsSerialShortageTracking(x)
+                && x.PickedQuantity <= 0
+                && x.PlannedQuantity - x.PickedQuantity > 0)
             .Select(x => x.SourceLocationId ?? taskLine.SourceLocationId ?? line.DefaultSourceLocationId)
             .Where(x => x.HasValue)
             .Select(x => x!.Value)
@@ -351,6 +386,25 @@ internal static class ProductionTransferLineSplitHelper
             taskLine.SourceLocationId = null;
             line.DefaultSourceLocationId = null;
         }
+    }
+
+    internal static void ApplySerialRouteReplacement(
+        WarehouseTransferTracking tracking,
+        WarehouseTransferTaskLine taskLine,
+        WarehouseTransferLine line,
+        long locationId,
+        string serialNo,
+        string? lotNo,
+        long actor,
+        DateTime utcNow)
+    {
+        tracking.SerialNo = serialNo.Trim();
+        tracking.LotNo = lotNo;
+        tracking.SourceLocationId = locationId;
+        tracking.UpdatedBy = actor;
+        tracking.UpdatedDate = utcNow;
+
+        RefreshSerialLineLocations(taskLine, line);
     }
 
     internal static void RefreshSerialSources(

@@ -230,7 +230,20 @@ public static class ProductionWorkOrderTransferGrouping
     public static bool IsPostCancellationReturnUnassignedPickTask(
         WarehouseTransferTask task,
         IReadOnlyList<WarehouseTransferTask> allTasks) =>
-        IsPostCancellationReturnUnassigned(task, allTasks);
+        IsCancellationReturnKalanPickTask(task, allTasks)
+        && task.Status is not WarehouseTransferTaskStatus.Completed
+            and not WarehouseTransferTaskStatus.Cancelled;
+
+    public static bool IsCancellationReturnKalanPickTask(
+        WarehouseTransferTask task,
+        IReadOnlyList<WarehouseTransferTask> allTasks) =>
+        task.TaskType == WarehouseTransferTaskType.Pick
+        && !task.Assignments.Any(assignment => !assignment.IsDeleted)
+        && task.PreviousTaskId is long cancellationReturnTaskId
+        && allTasks.Any(other => !other.IsDeleted
+            && other.TaskType == WarehouseTransferTaskType.CancellationReturn
+            && other.Status == WarehouseTransferTaskStatus.Completed
+            && other.Id == cancellationReturnTaskId);
 
     public static bool IsPostShortageHandoverUnassignedPickTask(
         WarehouseTransferTask task,
@@ -322,19 +335,6 @@ public static class ProductionWorkOrderTransferGrouping
 
         return openTasks.All(t => IsPostCancellationReturnUnassignedPickTask(t, tasks));
     }
-
-    private static bool IsPostCancellationReturnUnassigned(
-        WarehouseTransferTask task,
-        IReadOnlyList<WarehouseTransferTask> allTasks) =>
-        task.TaskType == WarehouseTransferTaskType.Pick
-        && task.Status is not WarehouseTransferTaskStatus.Completed
-            and not WarehouseTransferTaskStatus.Cancelled
-        && !task.Assignments.Any(assignment => !assignment.IsDeleted)
-        && task.PreviousTaskId is long cancellationReturnTaskId
-        && allTasks.Any(other => !other.IsDeleted
-            && other.TaskType == WarehouseTransferTaskType.CancellationReturn
-            && other.Status == WarehouseTransferTaskStatus.Completed
-            && other.Id == cancellationReturnTaskId);
 
     private static List<ProductionTransferHeaderLink> BuildResidualChain(
         ProductionTransferHeaderLink root,

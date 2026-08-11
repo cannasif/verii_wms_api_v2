@@ -82,7 +82,7 @@ public sealed class ProductionTransfersController(
     [HttpPost("{id:long}/cancel")]
     public async Task<IActionResult>Cancel(long id,WarehouseTransferTransitionRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.CANCEL",ct);await Ensure(id,ct);
-        return Ok(ApiResponse<OperationCancellationResult>.Ok(await cancellationCoordinator.CancelWarehouseTransferAsync(id,request,UserId(),ct)));}
+        return Ok(ApiResponse<OperationCancellationResult>.Ok(await service.CancelAsync(id,request,UserId(),ct)));}
     [HttpGet("{id:long}/tasks")]
     public async Task<IActionResult>Tasks(long id,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.VIEW",ct);await Ensure(id,ct);
@@ -171,9 +171,9 @@ public sealed class ProductionTransfersController(
         await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);
         return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.RequestCancellationReturnAsync(id,UserId(),ct),"İptal iade görevi oluşturuldu."));}
     [HttpPost("{id:long}/tasks/{taskId:long}/task-lines/{taskLineId:long}/process-return")]
-    public async Task<IActionResult>ProcessReturnTaskLine(long id,long taskId,long taskLineId,StartProductionTransferTaskRequest request,CancellationToken ct){
+    public async Task<IActionResult>ProcessReturnTaskLine(long id,long taskId,long taskLineId,ProcessProductionReturnLineRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
-        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.ProcessReturnTaskLineAsync(id,taskId,taskLineId,request.IdempotencyKey,UserId(),ct),"İade satırı onaylandı."));}
+        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.ProcessReturnTaskLineAsync(id,taskId,taskLineId,request,UserId(),ct),"İade satırı rafa bırakıldı."));}
     [HttpPost("{id:long}/tasks/{taskId:long}/handoff")]
     public async Task<IActionResult>Handoff(long id,long taskId,HandoffProductionTransferTaskRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);

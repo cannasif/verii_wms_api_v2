@@ -328,4 +328,67 @@ public sealed class ProductionTransferLineSplitHelperTests
         Assert.Equal(2, header.Lines.Count(x => x.Id != 10));
         Assert.All(header.Lines.Where(x => x.Id != 10), sibling => Assert.Empty(sibling.Trackings));
     }
+
+    [Fact]
+    public void AssignSerialToShortage_splits_multi_quantity_shortage_and_adds_serial_tracking()
+    {
+        const long a2 = 20;
+        var line = new WarehouseTransferLine
+        {
+            Id = 10,
+            BranchCode = "0",
+            StockId = 13,
+            UnitCode = "ADET",
+            TrackingType = StockTrackingType.Serial,
+            RequireSerial = true,
+            Trackings =
+            [
+                new() { Id = 1, PlannedQuantity = 1, SerialNo = "SER-1", SourceLocationId = 10 },
+                new() { Id = 2, PlannedQuantity = 4, SerialNo = null },
+            ],
+        };
+        var taskLine = new WarehouseTransferTaskLine
+        {
+            WtLineId = 10,
+            Line = line,
+            PlannedQuantity = 5,
+            SourceLocationId = 10,
+        };
+
+        ProductionTransferLineSplitHelper.AssignSerialToShortage(
+            line, taskLine, a2, "SER-NEW", null, actor: 1, utcNow: DateTime.UtcNow);
+
+        var shortage = line.Trackings.Single(x => string.IsNullOrWhiteSpace(x.SerialNo));
+        var assigned = line.Trackings.Single(x => x.SerialNo == "SER-NEW");
+        Assert.Equal(3, shortage.PlannedQuantity);
+        Assert.Equal(a2, assigned.SourceLocationId);
+        Assert.Equal(1, assigned.PlannedQuantity);
+    }
+
+    [Fact]
+    public void AssignSerialToShortage_converts_single_quantity_shortage_tracking_in_place()
+    {
+        var line = new WarehouseTransferLine
+        {
+            Id = 10,
+            BranchCode = "0",
+            StockId = 13,
+            UnitCode = "ADET",
+            TrackingType = StockTrackingType.Serial,
+            RequireSerial = true,
+            Trackings =
+            [
+                new() { Id = 2, PlannedQuantity = 1, SerialNo = null },
+            ],
+        };
+        var taskLine = new WarehouseTransferTaskLine { WtLineId = 10, Line = line, PlannedQuantity = 1 };
+
+        ProductionTransferLineSplitHelper.AssignSerialToShortage(
+            line, taskLine, 20, "SER-NEW", null, actor: 1, utcNow: DateTime.UtcNow);
+
+        var tracking = Assert.Single(line.Trackings);
+        Assert.Equal("SER-NEW", tracking.SerialNo);
+        Assert.Equal(20, tracking.SourceLocationId);
+        Assert.Equal(1, tracking.PlannedQuantity);
+    }
 }

@@ -123,7 +123,8 @@ public enum ProductionSourceWorkOrderListingKind
 {
     Standard = 0,
     CancellationReturnRemainder = 1,
-    ManagerCancelledAssignment = 2
+    ManagerCancelledAssignment = 2,
+    RestoredCancelledAssignment = 3
 }
 
 public sealed record ProductionSourceWorkOrderRow(
@@ -158,6 +159,7 @@ public sealed record CancelProductionWorkOrderAssignmentRequest(
     string? SourceSystemCode,
     string Reason,
     long? TransferId,
+    long? KalanTaskId,
     IReadOnlyList<CancelProductionWorkOrderAssignmentLineRequest>? Lines);
 
 public sealed record CancelProductionWorkOrderAssignmentLineRequest(

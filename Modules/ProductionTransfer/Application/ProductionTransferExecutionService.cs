@@ -238,6 +238,8 @@ public sealed class ProductionTransferExecutionService(
             var taskLine = task.Lines.SingleOrDefault(x => x.Id == taskLineId && !x.IsDeleted)
                 ?? throw AppException.NotFound("Toplama satırı bulunamadı.");
             var line = ProductionTransferPickingSupport.ResolveTaskLine(aggregate.Header, taskLine);
+            var headerExcludedLocations = await ProductionTransferSourceLocationExclusions.FromHeaderAsync(
+                uow, aggregate.Header, aggregate.Header.Lines, token);
 
             if (line.Trackings.Count > 0 && !string.IsNullOrWhiteSpace(currentSerialNo))
             {
@@ -260,8 +262,8 @@ public sealed class ProductionTransferExecutionService(
                 var locationCodes = await ProductionTransferPickingSupport.LoadLocationCodesAsync(uow, locationIds, token);
                 var pickingRows = ProductionTransferPickingSupport.BuildPersistedRows(aggregate.Header, task, locationCodes);
                 var serialCurrentSourceLocationId = tracking.SourceLocationId ?? taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
-                var serialExcludedLocations = ProductionTransferRouteAllocation.GetRouteRefreshExcludedSourceLocationIds(
-                    serialCurrentSourceLocationId);
+                var serialExcludedLocations = ProductionTransferRouteAllocation.BuildRouteRefreshExcludedLocationIds(
+                    serialCurrentSourceLocationId, headerExcludedLocations);
                 var serialEligibleBalances = ProductionTransferRouteAllocation.ExcludeLocations(
                     serialContext.Balances, serialExcludedLocations);
                 var assignedSerials = ProductionTransferRouteAllocation.BuildAssignedSerialNumbersFromPickingRows(
@@ -288,6 +290,51 @@ public sealed class ProductionTransferExecutionService(
                         x.SerialNo)).ToArray());
             }
 
+            if (line.Trackings.Count > 0 && string.IsNullOrWhiteSpace(currentSerialNo))
+            {
+                var shortageRemaining = ProductionTransferPickingSupport.GetSerialShortageRemaining(line, taskLine);
+                if (shortageRemaining > 0)
+                {
+                    var serialContext = await ProductionTransferPickingSupport.LoadSerialRouteRefreshBalanceContextAsync(
+                        uow, aggregate.Header, line, token);
+                    var locationIds = task.Lines.SelectMany(x =>
+                    {
+                        var taskLineRef = x;
+                        var taskLineEntity = ProductionTransferPickingSupport.ResolveTaskLine(aggregate.Header, taskLineRef);
+                        return new long?[] { x.SourceLocationId, taskLineEntity.DefaultSourceLocationId }
+                            .Concat(taskLineEntity.Trackings.Select(t => t.SourceLocationId));
+                    });
+                    var locationCodes = await ProductionTransferPickingSupport.LoadLocationCodesAsync(uow, locationIds, token);
+                    var pickingRows = ProductionTransferPickingSupport.BuildPersistedRows(aggregate.Header, task, locationCodes);
+                    var assignedSerials = ProductionTransferRouteAllocation.BuildAssignedSerialNumbersFromPickingRows(
+                        aggregate.Header, aggregate.Link, line, pickingRows);
+                    var serialShortageExcludedLocations = ProductionTransferRouteAllocation.BuildRouteRefreshExcludedLocationIds(
+                        null, headerExcludedLocations);
+                    var serialShortageEligibleBalances = ProductionTransferRouteAllocation.ExcludeLocations(
+                        serialContext.Balances, serialShortageExcludedLocations);
+                    var candidates = ProductionTransferRouteAllocation.ListSerialRouteRefreshCandidates(
+                        line.StockId,
+                        line.YapCodeId,
+                        line.UnitCode,
+                        string.Empty,
+                        assignedSerials,
+                        serialShortageEligibleBalances,
+                        serialContext.Locations);
+
+                    return new ProductionTransferRouteRefreshCandidatesDto(
+                        taskLineId,
+                        shortageRemaining,
+                        true,
+                        null,
+                        candidates.Select(x => new ProductionTransferRouteRefreshCandidateDto(
+                            x.LocationId,
+                            serialContext.Locations[x.LocationId].Code,
+                            x.AvailableQuantity,
+                            1,
+                            x.SerialNo)).ToArray());
+                }
+            }
+
             var remaining = line.Trackings.Count > 0
                 ? ProductionTransferPickingSupport.GetSerialShortageRemaining(line, taskLine)
                 : taskLine.PlannedQuantity - taskLine.ProcessedQuantity;
@@ -298,10 +345,10 @@ public sealed class ProductionTransferExecutionService(
             var currentSourceLocationId = line.Trackings.Count > 0
                 ? null
                 : taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
-            var excludedLocations = ProductionTransferRouteAllocation.GetRouteRefreshExcludedSourceLocationIds(
-                currentSourceLocationId);
+            var excludedLocations = ProductionTransferRouteAllocation.BuildRouteRefreshExcludedLocationIds(
+                currentSourceLocationId, headerExcludedLocations);
             var nonSerialContext = await ProductionTransferPickingSupport.LoadBalanceContextAsync(
-                uow, aggregate.Header, [line], token);
+                uow, aggregate.Header, aggregate.Header.Lines, token);
             var eligibleBalances = ProductionTransferRouteAllocation.ExcludeLocations(
                 nonSerialContext.Balances, excludedLocations);
             var nonSerialCandidates = ProductionTransferRouteAllocation.ListNonSerialCandidates(
@@ -360,6 +407,8 @@ public sealed class ProductionTransferExecutionService(
                 ?? throw AppException.NotFound("Toplama satırı bulunamadı.");
             var line = ProductionTransferPickingSupport.ResolveTaskLine(aggregate.Header, taskLine);
             var reservationPrefix = $"WT:{transferId}:ROUTE-SPLIT:{taskLineId}:{request.IdempotencyKey:N}";
+            var headerExcludedLocations = await ProductionTransferSourceLocationExclusions.FromHeaderAsync(
+                uow, aggregate.Header, aggregate.Header.Lines, token);
 
             if (line.Trackings.Count > 0 && !string.IsNullOrWhiteSpace(request.CurrentSerialNo))
             {
@@ -382,11 +431,16 @@ public sealed class ProductionTransferExecutionService(
                     throw AppException.BadRequest("Mevcut seri ile aynı seri seçilemez.");
 
                 var serialCurrentSourceLocationId = tracking.SourceLocationId ?? taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
-                if (serialCurrentSourceLocationId == split.LocationId)
-                    throw AppException.Conflict("Kaynak rafa rotalama yapılamaz.");
-
                 var serialContext = await ProductionTransferPickingSupport.LoadSerialRouteRefreshBalanceContextAsync(
                     uow, aggregate.Header, line, token);
+                var serialExcludedLocations = ProductionTransferRouteAllocation.BuildRouteRefreshExcludedLocationIds(
+                    serialCurrentSourceLocationId, headerExcludedLocations);
+                if (serialExcludedLocations.Contains(split.LocationId))
+                {
+                    var blockedCode = serialContext.Locations.GetValueOrDefault(split.LocationId)?.Code
+                        ?? split.LocationId.ToString();
+                    throw AppException.Conflict($"{blockedCode} rafından rotalama yapılamaz.");
+                }
                 if (!serialContext.Locations.ContainsKey(split.LocationId))
                     throw AppException.BadRequest("Seçilen kaynak raf geçersiz.");
 
@@ -444,6 +498,85 @@ public sealed class ProductionTransferExecutionService(
                 return await GetPickingTableAsync(transferId, actor, token);
             }
 
+            if (line.Trackings.Count > 0 && string.IsNullOrWhiteSpace(request.CurrentSerialNo))
+            {
+                var shortageRemaining = ProductionTransferPickingSupport.GetSerialShortageRemaining(line, taskLine);
+                if (shortageRemaining > 0)
+                {
+                    var split = request.Splits.SingleOrDefault(x => x.Quantity > 0)
+                        ?? throw AppException.BadRequest("Yeni seri seçilmelidir.");
+                    if (split.Quantity != 1)
+                        throw AppException.BadRequest("Serili rota güncellemede miktar 1 olmalıdır.");
+                    if (string.IsNullOrWhiteSpace(split.SerialNo))
+                        throw AppException.BadRequest("Yeni seri numarası zorunludur.");
+
+                    var serialContext = await ProductionTransferPickingSupport.LoadSerialRouteRefreshBalanceContextAsync(
+                        uow, aggregate.Header, line, token);
+                    var serialShortageExcludedLocations = ProductionTransferRouteAllocation.BuildRouteRefreshExcludedLocationIds(
+                        null, headerExcludedLocations);
+                    if (serialShortageExcludedLocations.Contains(split.LocationId))
+                    {
+                        var blockedCode = serialContext.Locations.GetValueOrDefault(split.LocationId)?.Code
+                            ?? split.LocationId.ToString();
+                        throw AppException.Conflict($"{blockedCode} rafından rotalama yapılamaz.");
+                    }
+                    if (!serialContext.Locations.ContainsKey(split.LocationId))
+                        throw AppException.BadRequest("Seçilen kaynak raf geçersiz.");
+
+                    var locationIds = task.Lines.SelectMany(x =>
+                    {
+                        var taskLineRef = x;
+                        var taskLineEntity = ProductionTransferPickingSupport.ResolveTaskLine(aggregate.Header, taskLineRef);
+                        return new long?[] { x.SourceLocationId, taskLineEntity.DefaultSourceLocationId }
+                            .Concat(taskLineEntity.Trackings.Select(t => t.SourceLocationId));
+                    });
+                    var locationCodes = await ProductionTransferPickingSupport.LoadLocationCodesAsync(uow, locationIds, token);
+                    var pickingRows = ProductionTransferPickingSupport.BuildPersistedRows(aggregate.Header, task, locationCodes);
+                    var assignedSerials = ProductionTransferRouteAllocation.BuildAssignedSerialNumbersFromPickingRows(
+                        aggregate.Header, aggregate.Link, line, pickingRows);
+                    if (assignedSerials.Contains(ProductionTransferRouteAllocation.NormalizeSerial(split.SerialNo)))
+                        throw AppException.Conflict("Seçilen seri zaten toplama listesinde.");
+
+                    var balance = serialContext.Balances
+                        .Where(x => x.LocationId == split.LocationId
+                            && x.StockId == line.StockId
+                            && x.YapCodeId == line.YapCodeId
+                            && string.Equals(x.UnitCode, line.UnitCode, StringComparison.OrdinalIgnoreCase)
+                            && SameTrackingValue(x.SerialNo, split.SerialNo))
+                        .OrderByDescending(x => x.AvailableQuantity)
+                        .FirstOrDefault();
+                    if (balance is null || balance.AvailableQuantity + 0.000001m < 1)
+                        throw AppException.Conflict($"{serialContext.Locations[split.LocationId].Code} rafında seçilen seri için yeterli stok yok.");
+
+                    await ReleaseTransferReservationsAsync(
+                        aggregate.Header,
+                        $"{reservationPrefix}:release",
+                        "Rota güncelleme öncesi rezervasyon salımı",
+                        actor,
+                        token);
+
+                    var assignUtcNow = DateTime.UtcNow;
+                    ProductionTransferLineSplitHelper.AssignSerialToShortage(
+                        line,
+                        taskLine,
+                        split.LocationId,
+                        split.SerialNo,
+                        balance.LotNo,
+                        actor,
+                        assignUtcNow);
+
+                    await uow.SaveChangesAsync(token);
+
+                    await ReserveTransferReservationsAsync(
+                        aggregate.Header,
+                        $"{reservationPrefix}:reserve",
+                        actor,
+                        token);
+                    await uow.SaveChangesAsync(token);
+                    return await GetPickingTableAsync(transferId, actor, token);
+                }
+            }
+
             var remaining = line.Trackings.Count > 0
                 ? ProductionTransferPickingSupport.GetSerialShortageRemaining(line, taskLine)
                 : taskLine.PlannedQuantity - taskLine.ProcessedQuantity;
@@ -462,9 +595,10 @@ public sealed class ProductionTransferExecutionService(
             var currentSourceLocationId = line.Trackings.Count > 0
                 ? null
                 : taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
-            var excludedLocations = ProductionTransferRouteAllocation.GetRouteRefreshExcludedSourceLocationIds(
-                currentSourceLocationId);
-            var context = await ProductionTransferPickingSupport.LoadBalanceContextAsync(uow, aggregate.Header, [line], token);
+            var excludedLocations = ProductionTransferRouteAllocation.BuildRouteRefreshExcludedLocationIds(
+                currentSourceLocationId, headerExcludedLocations);
+            var context = await ProductionTransferPickingSupport.LoadBalanceContextAsync(
+                uow, aggregate.Header, aggregate.Header.Lines, token);
             var subtractSiblingCommitments = aggregate.Header.ReservationPolicy == WarehouseTransferReservationPolicy.None
                 && aggregate.Header.Lines.All(x => x.ReservedQuantity <= 0);
             foreach (var split in splits)
@@ -938,6 +1072,7 @@ public sealed class ProductionTransferExecutionService(
         long actor,
         CancellationToken ct)
     {
+        var pickTask = ProductionTransferResidualDraftSupport.ResolvePrimaryPickTask(original);
         var residualLines = original.Lines
             .Select(line => new
             {
@@ -948,24 +1083,14 @@ public sealed class ProductionTransferExecutionService(
             .Select(x => x.Line)
             .OrderBy(x => x.LineNo)
             .ToArray();
-        var draftLines = residualLines.Select(line =>
-        {
-            var remainingQuantity = Math.Max(0, line.RequestedQuantity - ProductionWorkOrderMaterialAssignment.ResolveEffectivePickedQuantity(line));
-            return new WarehouseTransferLineDraftRequest(
-            line.StockId,
-            line.YapCodeId,
-            remainingQuantity,
-            line.UnitCode,
-            line.TrackingType,
-            line.RequireHandlingUnit,
-            line.DefaultSourceLocationId,
-            line.DefaultTargetLocationId,
-            $"{original.DocumentNo} eksik tesliminden kalan miktar",
-            BuildResidualTrackings(line),
-            null,
-            line.SourceStockStatus,
-            line.TargetStockStatus);
-        }).ToArray();
+        var draftLines = residualLines
+            .Select(line =>
+            {
+                var remainingQuantity = Math.Max(0, line.RequestedQuantity - ProductionWorkOrderMaterialAssignment.ResolveEffectivePickedQuantity(line));
+                return ProductionTransferResidualDraftSupport.BuildLineDraft(original, line, pickTask, remainingQuantity);
+            })
+            .ToArray();
+        var autoAssignSources = ProductionTransferResidualDraftSupport.NeedsAutoAssignSources(original, draftLines);
 
         var result = await transfers.CreateDraftAsync(new(
             Guid.NewGuid(), original.BranchCode, original.DocumentSeriesId, DateOnly.FromDateTime(DateTime.UtcNow),
@@ -974,7 +1099,7 @@ public sealed class ProductionTransferExecutionService(
             original.PlannedDispatchAtUtc, original.PlannedArrivalAtUtc, original.Priority,
             $"KALAN:{original.DocumentNo}",
             $"{original.DocumentNo} eksik tesliminden otomatik oluşturulan kalan iş emri. {Clean(handover.ShortageReason, 500)}",
-            draftLines, null, original.BusinessContext, original.ProjectCode), actor, ct);
+            draftLines, null, original.BusinessContext, original.ProjectCode, autoAssignSources), actor, ct);
 
         var residualHeader = await uow.Repository<WarehouseTransferHeader>().Query(true)
             .Include(x => x.Lines).SingleAsync(x => x.Id == result.Id, ct);
@@ -1026,19 +1151,6 @@ public sealed class ProductionTransferExecutionService(
         await uow.Repository<ProductionTransferHeaderLink>().AddAsync(childLink, ct);
         await uow.SaveChangesAsync(ct);
         return residualHeader.Id;
-    }
-
-    private static IReadOnlyList<WarehouseTransferTrackingDraftRequest>? BuildResidualTrackings(WarehouseTransferLine line)
-    {
-        if (line.Trackings.Count == 0) return null;
-        return line.Trackings
-            .Where(x => x.PlannedQuantity > x.PickedQuantity)
-            .Select(x => new WarehouseTransferTrackingDraftRequest(
-                x.PlannedQuantity - x.PickedQuantity,
-                x.HandlingUnitNo, x.LotNo, x.SerialNo, x.ManufacturingDate, x.ExpirationDate,
-                x.SourceLocationId ?? line.DefaultSourceLocationId,
-                x.TargetLocationId ?? line.DefaultTargetLocationId))
-            .ToArray();
     }
 
     private static List<StockMovementLineRequest> BuildHandoverMovementRows(WarehouseTransferHeader header)

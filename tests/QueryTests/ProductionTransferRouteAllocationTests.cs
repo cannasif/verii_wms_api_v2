@@ -141,6 +141,52 @@ public sealed class ProductionTransferRouteAllocationTests
     }
 
     [Fact]
+    public void BuildRouteRefreshExcludedLocationIds_merges_current_source_with_header_targets()
+    {
+        const long a1 = 1;
+        const long target = 99;
+
+        var excluded = ProductionTransferRouteAllocation.BuildRouteRefreshExcludedLocationIds(
+            a1, [target]);
+
+        Assert.Equal(2, excluded.Count);
+        Assert.Contains(a1, excluded);
+        Assert.Contains(target, excluded);
+    }
+
+    [Fact]
+    public void ListSerialRouteRefreshCandidates_excludes_target_shelf_locations()
+    {
+        const long source = 1;
+        const long target = 99;
+        var locations = new Dictionary<long, verii_wms_api_v2.Modules.Location.Domain.WarehouseLocation>
+        {
+            [source] = new() { Id = source, Code = "A1" },
+            [target] = new() { Id = target, Code = "HEDEF" },
+        };
+        var balances = new[]
+        {
+            SerialBalance(source, 13, "UTG-1", 1),
+            SerialBalance(source, 13, "UTG-3", 1),
+            SerialBalance(target, 13, "UTG-2", 1),
+        };
+        var eligible = ProductionTransferRouteAllocation.ExcludeLocations(balances, new HashSet<long> { target });
+
+        var candidates = ProductionTransferRouteAllocation.ListSerialRouteRefreshCandidates(
+            13,
+            null,
+            "ADET",
+            "UTG-1",
+            new HashSet<string>(),
+            eligible,
+            locations);
+
+        Assert.Single(candidates);
+        Assert.Equal("UTG-3", candidates[0].SerialNo);
+        Assert.Equal(source, candidates[0].LocationId);
+    }
+
+    [Fact]
     public void GetRouteRefreshAvailableAtLocation_subtracts_sibling_commitments_when_reservation_disabled()
     {
         const long a1 = 1;

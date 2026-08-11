@@ -1,6 +1,7 @@
 using System.Data;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
+using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Production.Application;
 using verii_wms_api_v2.Modules.Production.Domain;
@@ -25,7 +26,8 @@ public sealed class ProductionTransferService(
     IWarehouseTransferService transfers,
     IWarehouseTransferReservationService reservations,
     IAuditLogWriter audit,
-    IStockTrackingPolicyResolver trackingPolicyResolver) : IProductionTransferService
+    IStockTrackingPolicyResolver trackingPolicyResolver,
+    IOperationCancellationCoordinator cancellationCoordinator) : IProductionTransferService
 {
     private static readonly WarehouseTransferBusinessContext[] Contexts =
     [
@@ -156,6 +158,67 @@ public sealed class ProductionTransferService(
             await transfers.DeleteDraftAsync(id,actor,token);
             return true;
         },ct);
+
+    public async Task<OperationCancellationResult> CancelAsync(
+        long id,
+        WarehouseTransferTransitionRequest request,
+        long actor,
+        CancellationToken ct = default)
+    {
+        if (id <= 0 || request.IdempotencyKey == Guid.Empty)
+            throw AppException.BadRequest("Transfer ve idempotency anahtarı zorunludur.");
+        if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Trim().Length is < 5 or > 1000)
+            throw AppException.BadRequest("İptal nedeni 5-1000 karakter arasında olmalıdır.");
+
+        await transfers.EnsureContextAsync(id, Contexts, ct);
+
+        var header = await uow.Repository<WarehouseTransferHeader>().Query()
+            .Include(x => x.Lines.Where(line => !line.IsDeleted))
+            .SingleOrDefaultAsync(x => x.Id == id, ct)
+            ?? throw AppException.NotFound("Transfer kaydı bulunamadı.");
+
+        if (header.IsDeleted)
+        {
+            return new OperationCancellationResult(
+                "WarehouseTransfer",
+                header.Id,
+                header.DocumentNo,
+                OperationCancellationRoute.AlreadyCancelled,
+                "Deleted",
+                header.ErpIntegrationStatus.ToString(),
+                false,
+                true,
+                true);
+        }
+
+        if (await ShouldDeleteDraftInsteadOfCancelAsync(header, ct))
+        {
+            var documentNo = header.DocumentNo;
+            var erpStatus = header.ErpIntegrationStatus;
+            await DeleteDraftAsync(id, actor, ct);
+            await audit.WriteAsync(new(
+                "production-transfer.draft.cancel",
+                nameof(WarehouseTransferHeader),
+                id.ToString(),
+                "Succeeded",
+                "production-transfer",
+                NewValues: new { documentNo, Reason = request.Reason.Trim() },
+                ChangedFields: ["IsDeleted"]), ct);
+
+            return new OperationCancellationResult(
+                "WarehouseTransfer",
+                id,
+                documentNo,
+                OperationCancellationRoute.LocalCompensation,
+                "Deleted",
+                erpStatus.ToString(),
+                false,
+                true,
+                false);
+        }
+
+        return await cancellationCoordinator.CancelWarehouseTransferAsync(id, request, actor, ct);
+    }
 
     public Task<WithdrawProductionTransferDraftLinesResult> WithdrawDraftLinesAsync(
         long id,
@@ -693,4 +756,19 @@ public sealed class ProductionTransferService(
     }
     private static string Branch(string? value)=>string.IsNullOrWhiteSpace(value)?"0":value.Trim();
     private static string? Clean(string? value,int max){var result=value?.Trim();return string.IsNullOrEmpty(result)?null:result.Length<=max?result:result[..max];}
+
+    private async Task<bool> ShouldDeleteDraftInsteadOfCancelAsync(
+        WarehouseTransferHeader header,
+        CancellationToken ct)
+    {
+        if (header.Status != WarehouseTransferStatus.Draft)
+            return false;
+
+        if (header.Lines.Any(line => !line.IsDeleted
+                && ProductionWorkOrderMaterialAssignment.ResolveEffectivePickedQuantity(line) > 0))
+            return false;
+
+        return !await uow.Repository<StockMovementOperation>().Query()
+            .AnyAsync(x => x.ReferenceType == "WarehouseTransfer" && x.ReferenceId == header.Id, ct);
+    }
 }
