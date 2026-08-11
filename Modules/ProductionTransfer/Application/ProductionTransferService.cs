@@ -540,16 +540,16 @@ public sealed class ProductionTransferService(
         var branch=Branch(request.Transfer.BranchCode);
         var sourceSetting=await uow.Repository<WarehouseEntity>().Query()
             .Where(x=>x.Id==request.Transfer.SourceWarehouseId&&x.BranchCode==branch)
-            .Select(x=>new{x.Id,x.WarehouseCode,x.DefaultProductionTransferLocationId})
+            .Select(x=>new{x.Id,x.WarehouseCode,x.ProductionPickingStagingLocationId})
             .SingleOrDefaultAsync(ct)
             ??throw AppException.BadRequest("Üretime transfer kaynak deposu bulunamadı.");
-        if(!sourceSetting.DefaultProductionTransferLocationId.HasValue)
-            throw AppException.Conflict($"{sourceSetting.WarehouseCode} kaynak deposu için üretim transfer bekleme rafı tanımlanmamış.");
-        var sourceStagingLocationId=sourceSetting.DefaultProductionTransferLocationId.Value;
+        if(!sourceSetting.ProductionPickingStagingLocationId.HasValue)
+            throw AppException.Conflict($"{sourceSetting.WarehouseCode} kaynak deposu için toplama sanal rafı tanımlanmamış.");
+        var sourceStagingLocationId=sourceSetting.ProductionPickingStagingLocationId.Value;
         var validSourceStaging=await uow.Repository<WarehouseLocation>().Query().AnyAsync(x=>
             x.Id==sourceStagingLocationId&&x.WarehouseId==sourceSetting.Id&&x.IsActive&&x.IsPutaway,ct);
         if(!validSourceStaging)
-            throw AppException.Conflict("Kaynak deponun üretim transfer bekleme rafı aktif ve yerleştirmeye uygun değil.");
+            throw AppException.Conflict("Kaynak deponun toplama sanal rafı aktif ve yerleştirmeye uygun değil.");
 
         var setting=await uow.Repository<WarehouseEntity>().Query()
             .Where(x=>x.Id==request.Transfer.TargetWarehouseId&&x.BranchCode==branch)

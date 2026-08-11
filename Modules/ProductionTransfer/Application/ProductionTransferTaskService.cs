@@ -1013,7 +1013,7 @@ public sealed class ProductionTransferTaskService(
     {
         var row = await uow.Repository<WarehouseEntity>().Query().Where(x => x.Id == warehouseId)
             .Select(x => new WarehouseTransferReturnSettingDto(
-                x.Id, x.DefaultTransferReturnLocationId, x.DefaultProductionTransferLocationId, x.AutoPickWithoutConfirmMaxQuantity))
+                x.Id, x.DefaultTransferReturnLocationId, x.DefaultProductionTransferLocationId, x.ProductionPickingStagingLocationId, x.AutoPickWithoutConfirmMaxQuantity))
             .SingleOrDefaultAsync(ct);
         return row ?? throw AppException.NotFound("Depo bulunamadı.");
     }
@@ -1039,10 +1039,21 @@ public sealed class ProductionTransferTaskService(
                 if (!valid)
                     throw AppException.BadRequest("Varsayılan üretim transfer rafı depoya ait, aktif ve yerleştirmeye uygun olmalıdır.");
             }
+            if (request.ProductionPickingStagingLocationId.HasValue)
+            {
+                var valid = await uow.Repository<WarehouseLocation>().Query().AnyAsync(x =>
+                    x.Id == request.ProductionPickingStagingLocationId
+                    && x.WarehouseId == warehouse.Id
+                    && x.IsActive
+                    && x.IsPutaway, token);
+                if (!valid)
+                    throw AppException.BadRequest("Toplama sanal rafı depoya ait, aktif ve yerleştirmeye uygun olmalıdır.");
+            }
             if (request.AutoPickWithoutConfirmMaxQuantity is < 0)
                 throw AppException.BadRequest("Onaysız toplama eşiği sıfırdan küçük olamaz.");
             warehouse.DefaultTransferReturnLocationId = request.DefaultTransferReturnLocationId;
             warehouse.DefaultProductionTransferLocationId = request.DefaultProductionTransferLocationId;
+            warehouse.ProductionPickingStagingLocationId = request.ProductionPickingStagingLocationId;
             warehouse.AutoPickWithoutConfirmMaxQuantity = request.AutoPickWithoutConfirmMaxQuantity is > 0
                 ? request.AutoPickWithoutConfirmMaxQuantity
                 : null;
@@ -1053,13 +1064,15 @@ public sealed class ProductionTransferTaskService(
                 {
                     warehouse.DefaultTransferReturnLocationId,
                     warehouse.DefaultProductionTransferLocationId,
+                    warehouse.ProductionPickingStagingLocationId,
                     warehouse.AutoPickWithoutConfirmMaxQuantity,
                 },
-                ChangedFields: ["DefaultTransferReturnLocationId", "DefaultProductionTransferLocationId", "AutoPickWithoutConfirmMaxQuantity"]), token);
+                ChangedFields: ["DefaultTransferReturnLocationId", "DefaultProductionTransferLocationId", "ProductionPickingStagingLocationId", "AutoPickWithoutConfirmMaxQuantity"]), token);
             return new WarehouseTransferReturnSettingDto(
                 warehouse.Id,
                 warehouse.DefaultTransferReturnLocationId,
                 warehouse.DefaultProductionTransferLocationId,
+                warehouse.ProductionPickingStagingLocationId,
                 warehouse.AutoPickWithoutConfirmMaxQuantity);
         }, ct, IsolationLevel.Serializable);
 

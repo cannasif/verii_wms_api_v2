@@ -60,11 +60,13 @@ public sealed record WarehouseTransferReturnSettingDto(
     long WarehouseId,
     long? DefaultTransferReturnLocationId,
     long? DefaultProductionTransferLocationId,
+    long? ProductionPickingStagingLocationId,
     decimal? AutoPickWithoutConfirmMaxQuantity);
 public sealed record UpdateWarehouseTransferReturnSettingRequest(
     long WarehouseId,
     long? DefaultTransferReturnLocationId,
     long? DefaultProductionTransferLocationId,
+    long? ProductionPickingStagingLocationId,
     decimal? AutoPickWithoutConfirmMaxQuantity);
 
 public sealed record ProductionWorkOrderTransferTaskRowDto(
