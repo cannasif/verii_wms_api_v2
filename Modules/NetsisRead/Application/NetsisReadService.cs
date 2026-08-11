@@ -23,6 +23,35 @@ public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INet
         return rows;
     }
 
+    public async Task<IReadOnlyList<NetsisStockBalanceDto>> GetStockBalancesAsync(
+        short? warehouseCode,
+        string? stockCode,
+        CancellationToken ct)
+    {
+        stockCode = Normalize(stockCode);
+
+        return await queryExecutor.QueryAsync<NetsisStockBalanceDto>(
+            "RII_FN_STOCK_BALANCE",
+            """
+            SELECT DEPO_KODU, STOK_KODU, BAKIYE
+            FROM dbo.RII_FN_STOCK_BALANCE(@warehouseCode, @stockCode)
+            ORDER BY DEPO_KODU, STOK_KODU
+            """,
+            r => new NetsisStockBalanceDto(
+                Nullable<short>(r, "DEPO_KODU"),
+                String(r, "STOK_KODU"),
+                Get<decimal>(r, "BAKIYE")),
+            ct,
+            new SqlParameter("@warehouseCode", System.Data.SqlDbType.Int)
+            {
+                Value = (object?)warehouseCode ?? DBNull.Value
+            },
+            new SqlParameter("@stockCode", System.Data.SqlDbType.VarChar, 50)
+            {
+                Value = (object?)stockCode ?? DBNull.Value
+            });
+    }
+
     public async Task<IReadOnlyList<CustomerDto>> GetCustomersAsync(string? customerCode, int? branchCode, CancellationToken ct)
     {
         var rows = await queryExecutor.QueryAsync<CustomerDto>("RII_FN_CARI", "SELECT * FROM dbo.RII_FN_CARI(@cariKodu, @branchCode)", r => new CustomerDto(Get<short>(r,"SUBE_KODU"), Get<short>(r,"ISLETME_KODU"), String(r,"CARI_KOD"), NullableString(r,"CARI_ISIM")), ct, Parameter("@cariKodu", customerCode), Parameter("@branchCode", branchCode));

@@ -22,6 +22,19 @@ public sealed class NetsisReadController(INetsisReadService service, ILogger<Net
     [HttpGet("stocks"), HttpGet("getStocks")]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<StockDto>>>> Stocks([FromQuery] string? stockCode, [FromQuery] int? branchCode, CancellationToken ct) { await Require(ct); return await Execute(() => service.GetStocksAsync(stockCode, branchCode, ct)); }
 
+    /// <summary>
+    /// Reads Netsis warehouse/stock balances. Omitting both filters returns the complete function result.
+    /// </summary>
+    [HttpGet("stock-balances")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<NetsisStockBalanceDto>>>> StockBalances(
+        [FromQuery] short? warehouseCode,
+        [FromQuery] string? stockCode,
+        CancellationToken ct)
+    {
+        await Require(ct);
+        return await Execute(() => service.GetStockBalancesAsync(warehouseCode, stockCode, ct));
+    }
+
     [HttpGet("customers"), HttpGet("getCustomers")]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<CustomerDto>>>> Customers([FromQuery] string? customerCode, [FromQuery] int? branchCode, CancellationToken ct) { await Require(ct); return await Execute(() => service.GetCustomersAsync(customerCode, branchCode, ct)); }
 

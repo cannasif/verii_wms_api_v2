@@ -15,6 +15,16 @@ public sealed record StockDto(
     string Kod4,
     string Kod5,
     string? OlcuBr1);
+
+/// <summary>
+/// Read-only projection returned by dbo.RII_FN_STOCK_BALANCE.
+/// This is ERP data and is intentionally not tracked as an EF entity.
+/// </summary>
+public sealed record NetsisStockBalanceDto(
+    short? WarehouseCode,
+    string StockCode,
+    decimal Balance);
+
 public sealed record CustomerDto(short SubeKodu, short IsletmeKodu, string CariKod, string? CariIsim);
 public sealed record ConfigurationCodeDto(
     string ConfigurationCode,
