@@ -17,6 +17,8 @@ public sealed partial class LocationService(IUnitOfWork unitOfWork, IAuditLogWri
 {
     private IGenericRepository<WarehouseLocation> Locations => unitOfWork.Repository<WarehouseLocation>();
     private IGenericRepository<WarehouseEntity> Warehouses => unitOfWork.Repository<WarehouseEntity>();
+    private readonly Dictionary<long, WarehouseValidationRow> _warehouseValidationCache = [];
+    private readonly Dictionary<long, List<LocationValidationRow>> _locationValidationCache = [];
 
     public async Task<PagedResponse<LocationGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
@@ -165,6 +167,7 @@ public sealed partial class LocationService(IUnitOfWork unitOfWork, IAuditLogWri
         entity.BranchCode = resolved.BranchCode;
         await Locations.AddAsync(entity, cancellationToken);
         await SaveAsync(cancellationToken);
+        TrackCreatedLocation(entity);
         await audit.WriteAsync(new AuditLogWriteEntry("location.create", "WarehouseLocation", entity.Id.ToString(), "Succeeded", "location", NewValues: Snapshot(entity), ChangedFields: Fields), cancellationToken);
         return entity.Id;
     }
@@ -176,11 +179,14 @@ public sealed partial class LocationService(IUnitOfWork unitOfWork, IAuditLogWri
         if (entity.WarehouseId != request.WarehouseId && await Locations.AnyAsync(x => x.ParentLocationId == id, cancellationToken))
             throw AppException.Conflict(Message(LocationMessageKeys.WarehouseChangeBlocked));
 
+        var oldWarehouseId = entity.WarehouseId;
         var resolved = await ValidateAsync(request, id, cancellationToken);
         var oldValues = Snapshot(entity);
         Apply(entity, request, resolved);
         entity.BranchCode = resolved.BranchCode;
         await SaveAsync(cancellationToken);
+        _locationValidationCache.Remove(oldWarehouseId);
+        _locationValidationCache.Remove(entity.WarehouseId);
         await audit.WriteAsync(new AuditLogWriteEntry("location.update", "WarehouseLocation", id.ToString(), "Succeeded", "location", OldValues: oldValues, NewValues: Snapshot(entity), ChangedFields: Fields), cancellationToken);
     }
 
@@ -195,6 +201,7 @@ public sealed partial class LocationService(IUnitOfWork unitOfWork, IAuditLogWri
         entity.IsActive = false;
         await Locations.SoftDeleteAsync(id, cancellationToken);
         await SaveAsync(cancellationToken);
+        _locationValidationCache.Remove(entity.WarehouseId);
         await audit.WriteAsync(new AuditLogWriteEntry("location.delete", "WarehouseLocation", id.ToString(), "Succeeded", "location", OldValues: oldValues, ChangedFields: ["IsDeleted", "IsActive"]), cancellationToken);
     }
 
@@ -259,28 +266,32 @@ public sealed partial class LocationService(IUnitOfWork unitOfWork, IAuditLogWri
 
         var locationType = NormalizeAllowed(request.LocationType, LocationTypes.All, Message(LocationMessageKeys.InvalidLocationType));
         var barcodeMode = NormalizeAllowed(request.BarcodeEntryMode, BarcodeEntryModes.All, Message(LocationMessageKeys.InvalidBarcodeMode));
-        var warehouse = await Warehouses.Query().Where(x => x.Id == request.WarehouseId)
-            .Select(x => new { x.Id, x.BranchCode, x.WarehouseCode }).FirstOrDefaultAsync(cancellationToken)
+        var warehouse = await GetWarehouseValidationRowAsync(request.WarehouseId, cancellationToken)
             ?? throw AppException.BadRequest(Message(LocationMessageKeys.WarehouseNotFound));
+        var validationRows = await GetLocationValidationRowsAsync(request.WarehouseId, cancellationToken);
 
-        if (await Locations.AnyAsync(x => x.Id != currentId && x.WarehouseId == request.WarehouseId && x.Code == code, cancellationToken))
+        if (validationRows.Any(x => x.Id != currentId
+            && string.Equals(x.Code, code, StringComparison.OrdinalIgnoreCase)))
             throw AppException.Conflict(Message(LocationMessageKeys.DuplicateCode));
 
-        await ValidateHierarchyAsync(request.WarehouseId, request.ParentLocationId, locationType, currentId, cancellationToken);
+        ValidateHierarchy(validationRows, request.ParentLocationId, locationType, currentId);
         var barcode = barcodeMode == BarcodeEntryModes.Manual
             ? Normalize(request.Barcode) ?? throw AppException.BadRequest(Message(LocationMessageKeys.ManualBarcodeRequired))
             : $"LOC-{warehouse.BranchCode}-{warehouse.WarehouseCode}-{code}";
         if (barcode.Length > 100) throw AppException.BadRequest(Message(LocationMessageKeys.GeneratedBarcodeTooLong));
-        if (await Locations.AnyAsync(x => x.Id != currentId && x.Barcode == barcode, cancellationToken))
+        if (validationRows.Any(x => x.Id != currentId
+            && string.Equals(x.Barcode, barcode, StringComparison.OrdinalIgnoreCase)))
             throw AppException.Conflict(Message(LocationMessageKeys.DuplicateBarcode));
 
         return new ResolvedLocation(warehouse.BranchCode, code, name, locationType, barcodeMode, barcode);
     }
 
-    private async Task ValidateHierarchyAsync(long warehouseId, long? parentId, string locationType, long? currentId, CancellationToken cancellationToken)
+    private void ValidateHierarchy(
+        IReadOnlyCollection<LocationValidationRow> rows,
+        long? parentId,
+        string locationType,
+        long? currentId)
     {
-        var rows = await Locations.Query().Where(x => x.WarehouseId == warehouseId)
-            .Select(x => new { x.Id, x.ParentLocationId, x.LocationType }).ToListAsync(cancellationToken);
         var byId = rows.ToDictionary(x => x.Id);
         if (!parentId.HasValue)
         {
@@ -299,6 +310,37 @@ public sealed partial class LocationService(IUnitOfWork unitOfWork, IAuditLogWri
             if (cursor == currentId || !visited.Add(cursor.Value)) throw AppException.Conflict(Message(LocationMessageKeys.HierarchyCycle));
             cursor = byId.TryGetValue(cursor.Value, out var node) ? node.ParentLocationId : null;
         }
+    }
+
+    private async Task<WarehouseValidationRow?> GetWarehouseValidationRowAsync(
+        long warehouseId,
+        CancellationToken cancellationToken)
+    {
+        if (_warehouseValidationCache.TryGetValue(warehouseId, out var cached)) return cached;
+        var row = await Warehouses.Query().Where(x => x.Id == warehouseId)
+            .Select(x => new WarehouseValidationRow(x.Id, x.BranchCode, x.WarehouseCode))
+            .FirstOrDefaultAsync(cancellationToken);
+        if (row is not null) _warehouseValidationCache[warehouseId] = row;
+        return row;
+    }
+
+    private async Task<List<LocationValidationRow>> GetLocationValidationRowsAsync(
+        long warehouseId,
+        CancellationToken cancellationToken)
+    {
+        if (_locationValidationCache.TryGetValue(warehouseId, out var cached)) return cached;
+        var rows = await Locations.Query().Where(x => x.WarehouseId == warehouseId)
+            .Select(x => new LocationValidationRow(x.Id, x.ParentLocationId, x.Code, x.LocationType, x.Barcode))
+            .ToListAsync(cancellationToken);
+        _locationValidationCache[warehouseId] = rows;
+        return rows;
+    }
+
+    private void TrackCreatedLocation(WarehouseLocation entity)
+    {
+        if (!_locationValidationCache.TryGetValue(entity.WarehouseId, out var rows)) return;
+        rows.Add(new LocationValidationRow(
+            entity.Id, entity.ParentLocationId, entity.Code, entity.LocationType, entity.Barcode));
     }
 
     private static bool IsParentAllowed(string child, string parent) => child switch
@@ -342,6 +384,8 @@ public sealed partial class LocationService(IUnitOfWork unitOfWork, IAuditLogWri
     private static object Snapshot(WarehouseLocation x) => new { x.WarehouseId, x.ParentLocationId, x.Code, x.Name, x.LocationType, x.BarcodeEntryMode, x.Barcode, x.ZoneCode, x.AisleNo, x.RackNo, x.LevelNo, x.BinNo, x.CapacityQuantity, x.CapacityWeight, x.CapacityVolume, x.CapacityUnit, x.AllowMixedStock, x.AllowMixedLot, x.AllowMixedStatus, x.AllowCycleCount, x.IsPickable, x.IsPutaway, x.IsQuarantine, x.IsActive, x.Description };
     private static readonly string[] Fields = ["WarehouseId", "ParentLocationId", "Code", "Name", "LocationType", "BarcodeEntryMode", "Barcode", "ZoneCode", "AisleNo", "RackNo", "LevelNo", "BinNo", "CapacityQuantity", "CapacityWeight", "CapacityVolume", "CapacityUnit", "AllowMixedStock", "AllowMixedLot", "AllowMixedStatus", "AllowCycleCount", "IsPickable", "IsPutaway", "IsQuarantine", "IsActive", "Description"];
     private sealed record ResolvedLocation(string BranchCode, string Code, string Name, string LocationType, string BarcodeEntryMode, string Barcode);
+    private sealed record WarehouseValidationRow(long Id, string BranchCode, int WarehouseCode);
+    private sealed record LocationValidationRow(long Id, long? ParentLocationId, string Code, string LocationType, string? Barcode);
 
     [GeneratedRegex("^[A-Z0-9][A-Z0-9._-]{0,49}$", RegexOptions.CultureInvariant)]
     private static partial Regex CodePattern();

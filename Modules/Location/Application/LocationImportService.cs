@@ -10,8 +10,9 @@ namespace verii_wms_api_v2.Modules.Location.Application;
 
 public sealed class LocationImportService(IUnitOfWork unitOfWork, ILocationService locations) : ILocationImportService
 {
-    public const int MaxRows = 1000;
-    public const int MaxFileSize = 5 * 1024 * 1024;
+    public const int MaxRows = 50_000;
+    public const int MaxFileSize = 64 * 1024 * 1024;
+    private const int ImportBatchSize = 200;
     private const int LastTemplateRow = MaxRows + 1;
     private static readonly string[] Headers =
     [
@@ -137,35 +138,39 @@ public sealed class LocationImportService(IUnitOfWork unitOfWork, ILocationServi
 
         var pending = parsed.ToList();
         var results = new List<LocationImportRowResult>(parsed.Count);
-        await unitOfWork.ExecuteInTransactionAsync(async ct =>
+        while (pending.Count > 0)
         {
-            while (pending.Count > 0)
+            var creatable = pending.Where(x => string.IsNullOrWhiteSpace(x.ParentCode) || known.ContainsKey(Key(x.WarehouseId, x.ParentCode))).ToList();
+            if (creatable.Count == 0)
+                throw AppException.BadRequest($"Satır {pending[0].RowNumber}: Üst raf '{pending[0].ParentCode}' bulunamadı veya hiyerarşide döngü var.");
+            foreach (var batch in creatable.Chunk(ImportBatchSize))
             {
-                var creatable = pending.Where(x => string.IsNullOrWhiteSpace(x.ParentCode) || known.ContainsKey(Key(x.WarehouseId, x.ParentCode))).ToList();
-                if (creatable.Count == 0)
-                    throw AppException.BadRequest($"Satır {pending[0].RowNumber}: Üst raf '{pending[0].ParentCode}' bulunamadı veya hiyerarşide döngü var.");
-                foreach (var row in creatable)
+                await unitOfWork.ExecuteInTransactionAsync(async ct =>
                 {
-                    long? parentId = string.IsNullOrWhiteSpace(row.ParentCode) ? null : known[Key(row.WarehouseId, row.ParentCode)];
-                    try
+                    foreach (var row in batch)
                     {
-                        var id = await locations.CreateAsync(new(row.WarehouseId, parentId, row.Code, row.Name, row.LocationType,
-                            row.BarcodeMode, row.Barcode, row.ZoneCode, row.AisleNo, row.RackNo, row.LevelNo, row.BinNo,
-                            row.CapacityQuantity, row.CapacityWeight, row.CapacityVolume, row.CapacityUnit,
-                            row.AllowMixedStock, row.AllowMixedLot, row.AllowMixedStatus, row.AllowCycleCount,
-                            row.IsPickable, row.IsPutaway, row.IsQuarantine, row.IsActive, row.Description), ct);
-                        known[Key(row.WarehouseId, row.Code)] = id;
-                        results.Add(new(row.RowNumber, "Created", row.WarehouseCode, row.Code, "Raf oluşturuldu."));
-                        pending.Remove(row);
+                        long? parentId = string.IsNullOrWhiteSpace(row.ParentCode) ? null : known[Key(row.WarehouseId, row.ParentCode)];
+                        try
+                        {
+                            var id = await locations.CreateAsync(new(row.WarehouseId, parentId, row.Code, row.Name, row.LocationType,
+                                row.BarcodeMode, row.Barcode, row.ZoneCode, row.AisleNo, row.RackNo, row.LevelNo, row.BinNo,
+                                row.CapacityQuantity, row.CapacityWeight, row.CapacityVolume, row.CapacityUnit,
+                                row.AllowMixedStock, row.AllowMixedLot, row.AllowMixedStatus, row.AllowCycleCount,
+                                row.IsPickable, row.IsPutaway, row.IsQuarantine, row.IsActive, row.Description), ct);
+                            known[Key(row.WarehouseId, row.Code)] = id;
+                            results.Add(new(row.RowNumber, "Created", row.WarehouseCode, row.Code, "Raf oluşturuldu."));
+                            pending.Remove(row);
+                        }
+                        catch (AppException exception)
+                        {
+                            throw AppException.BadRequest($"Satır {row.RowNumber}: {exception.Message}");
+                        }
                     }
-                    catch (AppException exception)
-                    {
-                        throw AppException.BadRequest($"Satır {row.RowNumber}: {exception.Message}");
-                    }
-                }
+                    return true;
+                }, cancellationToken, IsolationLevel.Serializable);
+                unitOfWork.ClearTracking();
             }
-            return true;
-        }, cancellationToken, IsolationLevel.Serializable);
+        }
         return new(parsed.Count, results.Count, 0, results.OrderBy(x => x.RowNumber).ToList());
     }
 
@@ -215,7 +220,7 @@ public sealed class LocationImportService(IUnitOfWork unitOfWork, ILocationServi
     {
         var target = new MemoryStream(); var buffer = new byte[81920]; var total = 0;
         while (true) { var read = await source.ReadAsync(buffer, ct); if (read == 0) break; total += read;
-            if (total > MaxFileSize) { await target.DisposeAsync(); throw AppException.BadRequest("XLSX dosyası en fazla 5 MB olabilir."); }
+            if (total > MaxFileSize) { await target.DisposeAsync(); throw AppException.BadRequest("XLSX dosyası en fazla 64 MB olabilir."); }
             await target.WriteAsync(buffer.AsMemory(0, read), ct); }
         if (total == 0) { await target.DisposeAsync(); throw AppException.BadRequest("Yüklenecek XLSX dosyası boş olamaz."); }
         target.Position = 0; return target;
