@@ -16,7 +16,7 @@ internal sealed record LocalWarehouseIntentDecision(
 /// </summary>
 internal static class LocalWarehouseLanguageEngine
 {
-    public const string ProviderMode = "local-semantic-v2.3";
+    public const string ProviderMode = "local-inprocess-v2.5";
 
     public static LocalWarehouseIntentDecision Resolve(string normalizedMessage, bool requestsAllUsers)
     {
@@ -34,16 +34,30 @@ internal static class LocalWarehouseLanguageEngine
         var hasCode = Regex.IsMatch(normalizedMessage, @"\b[a-z0-9]+(?:[-/._][a-z0-9]+)+\b", RegexOptions.CultureInvariant);
         var hasPlate = Regex.IsMatch(normalizedMessage, @"(?<!\d)\d{2}\s*[a-z]{1,3}\s*\d{2,5}(?!\d)", RegexOptions.CultureInvariant);
         var hasDate = question.HasAny("bugun", "dun", "hafta", "ay", "tarih", "gun", "today", "yesterday", "week", "month");
-        var hasWhere = question.HasAny("nerede", "hangi raf", "hangi depo", "konum", "lokasyon", "nerelere dagilmis", "where", "location", "bin");
-        var hasQuantity = question.HasAny("bakiye", "miktar", "kac", "ne kadar", "adet", "balance", "quantity", "how many");
+        var hasWhere = question.HasAny(
+            "nerede", "nereye konmus", "hangi raf", "hangi depo", "konum", "lokasyon",
+            "nerelere dagilmis", "nerede duruyor", "where", "location", "bin");
+        var hasQuantity = question.HasAny(
+            "bakiye", "miktar", "kac", "ne kadar", "adet", "elde", "elimizde", "mevcut",
+            "kalmis", "kaldi", "var mi", "balance", "quantity", "how many");
         var hasSerial = question.HasAny("seri", "serino", "seri no", "serial", "barkodlu seri");
         var hasStock = question.HasAny("stok", "urun", "malzeme", "mamul", "parca", "item", "product", "material");
-        var hasReceipt = question.HasAny("mal kabul", "irsaliye", "kabul", "iceri al", "iceri girmis", "gelen malzeme", "depoya ulasan", "depoya gelen", "gonderilen urun", "tesellum", "goods receipt", "received", "inbound");
+        var hasReceipt = question.HasAny(
+            "mal kabul", "irsaliye", "kabul", "iceri al", "iceri girmis", "gelen malzeme",
+            "depoya ulasan", "depoya gelen", "ne gelmis", "neler gelmis", "ne almisiz",
+            "neler almisiz", "tesellum", "goods receipt", "received", "inbound");
         var hasSupplier = question.HasAny("cari", "tedarikci", "satici", "firma", "supplier", "vendor");
         var hasTransfer = question.HasAny("transfer", "depolar arasi", "uretime giden", "uretime verilen", "uretime gonderilen", "uretim besleme", "production supply");
 
         if (question.HasAny("yardim", "ne sorabilirim", "neler yapabilirsin", "ornek soru", "help", "what can i ask"))
             Add(WarehouseAssistantIntent.Help, 12);
+
+        var hasSetting = question.HasAny("parametre", "ayar", "secenek", "politika", "kural");
+        var asksSettingEffect = question.HasAny(
+            "ne ise yarar", "ne olur", "ne degisiyor", "neyi degistirir", "nereleri etkiler", "acarsam", "kapatirsam",
+            "hangisini secmeliyim", "farki ne", "ornek senaryo", "what does", "what happens");
+        if (hasSetting && asksSettingEffect)
+            Add(WarehouseAssistantIntent.ParameterHelp, 11);
 
         if (question.HasAny("vardiya ozeti", "gunluk ozet", "mesaiye basladim", "bugun beni ne bekliyor", "nereden baslamaliyim", "once neye bakayim", "onceligim ne", "shift brief"))
             Add(WarehouseAssistantIntent.ShiftBrief, 11);
@@ -60,7 +74,11 @@ internal static class LocalWarehouseLanguageEngine
         if (hasWhy && hasBlocked) Add(WarehouseAssistantIntent.ProcessBlockers, 10);
         else if ((hasWhy || hasBlocked) && hasCode) Add(WarehouseAssistantIntent.ProcessBlockers, 7);
 
-        var hasJourney = question.HasAny("izlenebilirlik", "hikaye", "yolculuk", "bastan sona", "uctan uca", "ilk giristen", "basina ne geldi", "basina neler geldi", "hangi adimlardan gecti", "hangi adimlardan gecmis", "hangi islemlerden gecti", "hangi islemlerden gecmis", "nereden geldi nereye gitti", "traceability", "end to end");
+        var hasJourney = question.HasAny(
+            "izlenebilirlik", "hikaye", "yolculuk", "bastan sona", "basindan beri", "uctan uca",
+            "ilk giristen", "basina ne geldi", "basina neler geldi", "hangi adimlardan gecti",
+            "hangi adimlardan gecmis", "hangi islemlerden gecti", "hangi islemlerden gecmis",
+            "nereden geldi nereye gitti", "nerelere gitti", "traceability", "end to end");
         if (hasJourney) Add(WarehouseAssistantIntent.Traceability, 7);
         if (hasJourney && (hasSerial || hasCode || question.HasAny("barkod", "etiket", "lot")))
             Add(WarehouseAssistantIntent.Traceability, 4);
@@ -80,6 +98,8 @@ internal static class LocalWarehouseLanguageEngine
         var hasSteel = question.HasAny("sac", "levha", "rulo", "steel", "sheet", "panel");
         var hasArrival = question.HasAny("girdi", "geldi", "arac giris", "kabul edildi", "check in", "arrived", "entered");
         if (hasSteel && (hasVehicle || hasArrival)) Add(WarehouseAssistantIntent.SteelVehicleAnalysis, 9);
+        if (hasSteel && question.HasAny("giris", "kabul", "gecmis", "geldi mi"))
+            Add(WarehouseAssistantIntent.SteelVehicleAnalysis, 9);
         if (hasPlate && (hasArrival || hasReceipt || hasVehicle)) Add(WarehouseAssistantIntent.SteelVehicleAnalysis, 9);
 
         if (hasTransfer) Add(WarehouseAssistantIntent.WarehouseTransferAnalysis, 5);
@@ -95,7 +115,10 @@ internal static class LocalWarehouseLanguageEngine
         if (hasSerial && hasReceipt && hasWhoWhen) Add(WarehouseAssistantIntent.SerialReceiptHistory, 11);
         else if (hasSerial && hasReceipt) Add(WarehouseAssistantIntent.SerialReceiptHistory, 6);
 
-        var hasReceiptAnalysis = question.HasAny("kac mal kabul", "neler alindi", "neler geldi", "neler gelmis", "ne girmis", "hangi urunler geldi", "mal kabul raporu", "mal kabulleri", "what was received");
+        var hasReceiptAnalysis = question.HasAny(
+            "kac mal kabul", "neler alindi", "ne alindi", "neler geldi", "neler gelmis", "ne gelmis",
+            "ne girmis", "ne almisiz", "neler almisiz", "hangi urunler geldi", "gelenleri goster",
+            "mal kabul raporu", "mal kabulleri", "what was received");
         if (hasReceiptAnalysis) Add(WarehouseAssistantIntent.GoodsReceiptAnalysis, 9);
         if (hasReceipt && (hasSupplier || hasDate) && question.HasAny("kac", "neler", "hangi", "liste", "goster", "rapor"))
             Add(WarehouseAssistantIntent.GoodsReceiptAnalysis, 8);
@@ -105,6 +128,8 @@ internal static class LocalWarehouseLanguageEngine
         if (hasSerial && (hasWhere || hasQuantity)) Add(WarehouseAssistantIntent.SerialBalance, 10);
         if (hasStock && (hasWhere || hasQuantity)) Add(WarehouseAssistantIntent.StockLocationBalance, 9);
         if (!hasSerial && hasCode && question.HasAny("depoda", "rafta", "raflarda", "nerelere dagilmis", "stokta") && (hasWhere || hasQuantity))
+            Add(WarehouseAssistantIntent.StockLocationBalance, 8);
+        if (!hasSerial && hasCode && !hasReceipt && !hasTransfer && !hasPlate && (hasWhere || hasQuantity))
             Add(WarehouseAssistantIntent.StockLocationBalance, 8);
 
         var hasActivity = question.HasAny("yaptigim", "yapmis", "yapti", "neyle ugrastim", "ne is yapmis", "islemlerim", "aktiviteler", "calismalar", "activities", "actions", "did today");
@@ -142,8 +167,10 @@ internal sealed class LocalWarehouseQuestion
 {
     private static readonly string[] Suffixes =
     [
+        "larini", "lerini", "larina", "lerine", "larimizda", "lerimizde",
         "larinda", "lerinde", "larindan", "lerinden", "larinin", "lerinin", "larimiz", "lerimiz",
         "sinden", "sindan", "sinden", "sundan", "sinin", "sunun", "isine", "sine", "sina", "suna",
+        "ini", "ını", "unu", "ünü", "ine", "ına", "una", "üne", "ni", "nı", "nu", "nü",
         "dan", "den", "tan", "ten", "nda", "nde", "daki", "deki", "taki", "teki",
         "lari", "leri", "lar", "ler", "nin", "nun", "nın", "nün", "in", "un", "ın", "ün",
         "dir", "dur", "dır", "dür", "tir", "tur", "tır", "tür", "mis", "mus", "mış", "müş",
@@ -186,7 +213,9 @@ internal sealed class LocalWarehouseQuestion
         {
             "sil", "siler misin", "siliniz", "ekle", "ekler misin", "olustur", "olusturur musun",
             "guncelle", "degistir", "kaydet", "onayla", "iptal et", "iptal etsin", "erp ye gonder",
-            "netsise gonder", "aktar", "baslat", "bitir", "tamamla", "kapat", "rezerve et"
+            "netsise gonder", "aktar", "baslat", "bitir", "tamamla", "kapat", "rezerve et",
+            "duzelt", "kaldir", "ata", "gorevlendir", "mail at", "mail gonder",
+            "irsaliye kes", "irsaliye olustur", "sevk et", "rafa koy", "stoktan dus", "geri al"
         };
         return writePhrases.Any(ContainsImperativePhrase);
     }

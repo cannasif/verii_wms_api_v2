@@ -44,13 +44,6 @@ public enum WarehouseAssistantDatePreset
     LastWeek = 6
 }
 
-public enum WarehouseAssistantRoutingStrategy
-{
-    DeterministicOnly = 1,
-    Hybrid = 2,
-    SemanticFirst = 3
-}
-
 public sealed record WarehouseAssistantRoutingInfo(
     string Version,
     string RoutingMode,
@@ -101,7 +94,7 @@ public sealed record WarehouseAssistantCapabilities(
     bool CanQueryOperationalExceptions = false,
     bool CanQueryTraceability = false,
     bool CanQueryProcessBlockers = false,
-    string AssistantVersion = "2.4.0",
+    string AssistantVersion = "2.5.0",
     string RoutingMode = "LocalHybrid",
     bool SemanticRoutingAvailable = false,
     string? SemanticModel = null,

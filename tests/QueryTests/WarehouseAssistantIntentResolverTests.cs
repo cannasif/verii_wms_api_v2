@@ -74,7 +74,7 @@ public sealed class WarehouseAssistantIntentResolverTests
         var result = await resolver.ResolveAsync(message, null);
 
         Assert.Equal(expected, result.Intent);
-        Assert.Equal("local-semantic-v2.3", result.ProviderMode);
+        Assert.Equal("local-inprocess-v2.5", result.ProviderMode);
     }
 
     [Theory]

@@ -378,7 +378,9 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
             LocalWarehouseLanguageEngine.ProviderMode,
             dateFrom,
             dateTo,
-            hasSupplier ? analysisMessage.Trim() : context?.SupplierCode,
+            intent == WarehouseAssistantIntent.GoodsReceiptAnalysis
+                ? analysisMessage.Trim()
+                : context?.SupplierCode,
             VehiclePlateQuery: vehiclePlate ?? context?.VehiclePlate,
             TransferDocumentQuery: transferDocument ?? context?.TransferDocumentNo,
             TransferScope: hasTransfer ? transferScope : context?.TransferScope ?? WarehouseAssistantTransferScope.All,
@@ -393,6 +395,8 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
     private static bool IsConversationFollowUp(string normalized) => ContainsAny(normalized,
     [
         "peki", "ya onceki", "ya gecen", "bir de", "ayni sorgu", "aynisini", "bunlar", "onlar",
+        "bunun", "onun", "bunlardan", "onlardan", "hayir", "yok", "daha dogrusu", "demek istedigim",
+        "yanlis", "onu degil", "aslinda", "az onceki", "dedigim",
         "what about", "and previous", "same query", "wie sieht", "et pour", "y que", "e invece"
     ]);
 
@@ -411,7 +415,7 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
 
     private static (WarehouseAssistantDatePreset Preset, bool IsExplicit) ResolveDatePreset(string normalized)
     {
-        if (ContainsAny(normalized, ["dun", "yesterday", "gestern", "hier", "ayer", "ieri", "امس"]))
+        if (ContainsAny(normalized, ["dun", "dunku", "onceki gun", "yesterday", "gestern", "hier", "ayer", "ieri", "امس"]))
             return (WarehouseAssistantDatePreset.Yesterday, true);
         if (ContainsAny(normalized, ["gecen hafta", "last week", "letzte woche", "semaine derniere", "semana pasada", "settimana scorsa", "الأسبوع الماضي"]))
             return (WarehouseAssistantDatePreset.LastWeek, true);
@@ -421,7 +425,7 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
             return (WarehouseAssistantDatePreset.LastThirtyDays, true);
         if (ContainsAny(normalized, ["son 7 gun", "son yedi gun", "last 7 days", "letzte 7 tage", "7 derniers jours", "ultimos 7 dias", "ultimi 7 giorni", "اخر 7 ايام"]))
             return (WarehouseAssistantDatePreset.LastSevenDays, true);
-        if (ContainsAny(normalized, ["bugun", "today", "heute", "aujourd hui", "hoy", "oggi", "اليوم"]))
+        if (ContainsAny(normalized, ["bugun", "bugunku", "today", "heute", "aujourd hui", "hoy", "oggi", "اليوم"]))
             return (WarehouseAssistantDatePreset.Today, true);
         return (WarehouseAssistantDatePreset.Today, false);
     }

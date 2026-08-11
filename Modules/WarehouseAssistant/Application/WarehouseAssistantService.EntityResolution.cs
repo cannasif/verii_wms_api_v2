@@ -184,6 +184,8 @@ public sealed partial class WarehouseAssistantService
         result.AddRange(Regex.Matches(source, contextPattern, RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)
             .Select(match => match.Groups[1].Success ? match.Groups[1].Value : match.Groups[2].Value)
             .Where(x => !string.IsNullOrWhiteSpace(x)));
+        if (kind == EntityKind.Customer)
+            result.AddRange(ExtractTurkishSourceReferences(source));
         result.AddRange(Regex.Matches(source, "[\"'“”]([^\"'“”]{2,100})[\"'“”]")
             .Select(x => x.Groups[1].Value.Trim()));
         result.AddRange(Regex.Matches(source, @"\b[\p{L}\p{N}]+(?:[-/._][\p{L}\p{N}]+)+\b")
@@ -207,6 +209,7 @@ public sealed partial class WarehouseAssistantService
     {
         if (Regex.IsMatch(message, "[\"'“”][^\"'“”]{2,100}[\"'“”]")) return true;
         if (Regex.IsMatch(message, @"\b[\p{L}\p{N}]+(?:[-/._][\p{L}\p{N}]+)+\b")) return true;
+        if (kind == EntityKind.Customer && ExtractTurkishSourceReferences(message).Any()) return true;
         var pattern = kind == EntityKind.Stock
             ? @"(?:([\p{L}\p{N}][\p{L}\p{N}._/-]{1,80})\s+(?:stok\w*|ürün\w*|urun\w*|malzeme\w*|mamul\w*)|(?:stok|ürün|urun|malzeme|mamul)\w*\s*(?:kodu|kod|adı|adi|no)?\s*(?:[:=#]\s*)?([\p{L}\p{N}][\p{L}\p{N}._/-]{1,80}))"
             : @"(?:([\p{L}\p{N}][\p{L}\p{N}._/-]{1,80})\s+(?:cari\w*|müşteri\w*|musteri\w*|tedarikçi\w*|tedarikci\w*)|(?:cari|müşteri|musteri|tedarikçi|tedarikci)\w*\s*(?:kodu|kod|adı|adi|no)?\s*(?:[:=#]\s*)?([\p{L}\p{N}][\p{L}\p{N}._/-]{1,80}))";
@@ -218,6 +221,9 @@ public sealed partial class WarehouseAssistantService
 
     private static string? ExtractUntypedEntityReference(string message)
     {
+        var sourceReference = ExtractTurkishSourceReferences(message).FirstOrDefault();
+        if (!string.IsNullOrWhiteSpace(sourceReference)) return sourceReference;
+
         var match = Regex.Match(
             message,
             @"\b([\p{L}\p{N}][\p{L}\p{N}._/-]{1,80})\s+(?:için|icin|firmas\w*|company|vendor|supplier)\b",
@@ -229,6 +235,20 @@ public sealed partial class WarehouseAssistantService
             ? null
             : value;
     }
+
+    private static IEnumerable<string> ExtractTurkishSourceReferences(string message) =>
+        Regex.Matches(
+                message,
+                @"(?<![\p{L}\p{N}])([\p{L}\p{N}][\p{L}\p{N}._/-]{1,80})\s*['’]?\s*(?:den|dan|ten|tan)\b",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)
+            .Select(match => match.Groups[1].Value.Trim())
+            .Where(value =>
+            {
+                var normalized = WarehouseAssistantIntentResolver.Normalize(value);
+                return normalized.Length >= 2
+                    && !IsEntityStopWord(normalized, EntityKind.Customer)
+                    && normalized is not "dun" and not "bugun" and not "hafta" and not "ay" and not "depo";
+            });
 
     private static EntityScore ScoreEntity(
         IReadOnlyList<string> terms,
@@ -335,7 +355,8 @@ public sealed partial class WarehouseAssistantService
             "bul", "cari", "carisi", "carisine", "depo", "goster", "hangi", "hareket", "icin", "ile",
             "kac", "kodu", "kodlu", "mal", "miktar", "nerede", "olan", "olarak", "stok", "stoku",
             "stokun", "stokunun", "tarih", "urun", "urunu", "urunler", "var", "yapildi", "yapilan",
-            "customer", "item", "material", "product", "show", "stock", "supplier", "vendor", "where"
+            "customer", "item", "material", "product", "show", "stock", "supplier", "vendor", "where",
+            "gecen", "onceki", "dun", "bugun", "hafta", "ay"
         };
         if (common.Contains(value)) return true;
         if (kind == EntityKind.Stock && (value.StartsWith("stok", StringComparison.Ordinal) || value.StartsWith("urun", StringComparison.Ordinal)))
