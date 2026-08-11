@@ -2,8 +2,11 @@ using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
+using verii_wms_api_v2.Modules.ErpBalanceSync.Application;
+using verii_wms_api_v2.Modules.ErpBalanceSync.Domain;
 using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 using verii_wms_api_v2.Modules.ErpIntegration.Infrastructure;
 using verii_wms_api_v2.Modules.GoodsReceipt.Application;
@@ -28,6 +31,8 @@ public sealed class ErpPostingService(
     IGoodsReceiptOrderSource goodsReceiptOrderSource,
     INetsisReadService netsisReadService,
     IOptions<NetsisOptions> optionsAccessor,
+    IOptions<ErpStockBalanceSyncOptions> balanceSyncOptionsAccessor,
+    IBackgroundJobClient backgroundJobs,
     IHttpContextAccessor httpContextAccessor,
     ILogger<ErpPostingService> logger) : IErpPostingService
 {
@@ -443,7 +448,51 @@ public sealed class ErpPostingService(
         // ERP çağrısından sonra istemci bağlantısı kopsa bile yerel sonuç mutlaka kesinleştirilmelidir.
         await unitOfWork.SaveChangesAsync(CancellationToken.None);
 
+        if (succeeded)
+            EnqueueTargetedBalanceSync(sourceType, sourceEntityId, request);
+
         return ToResult(posting);
+    }
+
+    private void EnqueueTargetedBalanceSync(
+        ErpPostingSourceType sourceType,
+        long sourceEntityId,
+        NetsisItemSlipRequest request)
+    {
+        if (!balanceSyncOptionsAccessor.Value.Enabled)
+            return;
+
+        try
+        {
+            var targets = request.Kalems
+                .SelectMany(line => new[] { line.DepoKodu, line.GirisDepoKodu, line.CikisDepoKodu }
+                    .Where(code => code.HasValue)
+                    .Select(code => new ErpStockBalanceTarget(code!.Value, line.StokKodu.Trim().ToUpperInvariant())))
+                .Where(x => x.WarehouseCode >= 0 && !string.IsNullOrWhiteSpace(x.StockCode))
+                .Distinct()
+                .ToArray();
+            if (targets.Length == 0)
+                return;
+
+            var chunkSize = Math.Clamp(balanceSyncOptionsAccessor.Value.MaximumTargetCount, 1, 5000);
+            foreach (var chunk in targets.Chunk(chunkSize))
+            {
+                var jobRequest = new ErpStockBalanceSyncJobRequest(
+                    ErpStockBalanceSyncModes.Targeted,
+                    ErpStockBalanceSyncTriggerSources.ErpPosting,
+                    chunk,
+                    $"{sourceType}:{sourceEntityId}");
+                backgroundJobs.Enqueue<IErpStockBalanceSyncJobRunner>(runner =>
+                    runner.RunAsync(jobRequest, CancellationToken.None));
+            }
+        }
+        catch (Exception exception)
+        {
+            // ERP kaydı başarılıdır; hızlandırma işi kuyruğa alınamazsa beş dakikalık tam tur güvenlik ağıdır.
+            logger.LogWarning(exception,
+                "Targeted ERP balance check could not be enqueued. SourceType={SourceType} SourceId={SourceId}",
+                sourceType, sourceEntityId);
+        }
     }
 
     private async Task<NetsisItemSlipRequest> MapGoodsReceiptAsync(
