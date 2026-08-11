@@ -1,4 +1,5 @@
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
+using verii_wms_api_v2.Modules.ErpIntegration.Infrastructure;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using Xunit;
@@ -7,6 +8,29 @@ namespace verii_wms_api_v2.QueryTests;
 
 public sealed class GoodsReceiptErpPostingPolicyEvaluatorTests
 {
+    [Fact]
+    public void Goods_receipt_item_slip_is_open_by_default()
+    {
+        var options = new NetsisRestOptions();
+
+        var invoiceType = ErpPostingService.ResolveGoodsReceiptInvoiceType(options);
+
+        Assert.Equal(NetsisItemSlipInvoiceType.DomesticOpen, invoiceType);
+        Assert.Equal(2, (int)invoiceType);
+    }
+
+    [Fact]
+    public void Invalid_goods_receipt_invoice_type_is_rejected_before_erp_posting()
+    {
+        var options = new NetsisRestOptions
+        {
+            GoodsReceiptInvoiceType = (NetsisItemSlipInvoiceType)99
+        };
+
+        Assert.Throws<InvalidOperationException>(
+            () => ErpPostingService.ResolveGoodsReceiptInvoiceType(options));
+    }
+
     [Fact]
     public void After_receipt_is_eligible_without_approval_or_quality_decisions()
     {

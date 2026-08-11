@@ -317,6 +317,12 @@ public sealed record NetsisItemSlipDeleteRequest(
     }
 }
 
+public enum NetsisItemSlipInvoiceType
+{
+    DomesticClosed = 1,
+    DomesticOpen = 2
+}
+
 public sealed class NetsisItemSlipHeader
 {
     [JsonPropertyName("CariKod")]
@@ -347,7 +353,7 @@ public sealed class NetsisItemSlipHeader
     public int Tip { get; set; }
 
     [JsonPropertyName("TIPI")]
-    public int Tipi { get; set; } = 1;
+    public NetsisItemSlipInvoiceType Tipi { get; set; } = NetsisItemSlipInvoiceType.DomesticClosed;
 
     [JsonPropertyName("SUBE_KODU")]
     public int SubeKodu { get; set; }

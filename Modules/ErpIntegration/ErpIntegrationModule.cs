@@ -70,6 +70,9 @@ public static class ErpIntegrationModule
             legacy.GetValue<int?>("GoodsReceiptDocumentType")
             ?? legacy.GetValue<int?>("PurchaseDispatchDocumentType")
             ?? options.Rest.GoodsReceiptDocumentType;
+        options.Rest.GoodsReceiptInvoiceType =
+            legacy.GetValue<NetsisItemSlipInvoiceType?>("GoodsReceiptInvoiceType")
+            ?? options.Rest.GoodsReceiptInvoiceType;
         options.Rest.WarehouseTransferDocumentType =
             legacy.GetValue<int?>("WarehouseTransferDocumentType")
             ?? options.Rest.WarehouseTransferDocumentType;

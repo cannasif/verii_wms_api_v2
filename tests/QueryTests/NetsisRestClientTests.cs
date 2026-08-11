@@ -104,6 +104,25 @@ public sealed class NetsisRestClientTests
     }
 
     [Fact]
+    public async Task Create_serializes_open_goods_receipt_type_as_netsis_numeric_value_two()
+    {
+        string? payload = null;
+        var handler = new QueueHandler(request =>
+        {
+            payload = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return Json(HttpStatusCode.OK, """{"isSuccessful":true}""");
+        });
+        var request = SampleRequest();
+        request.FatUst.Tipi = NetsisItemSlipInvoiceType.DomesticOpen;
+
+        var result = await CreateClient(handler, new FakeTokenService())
+            .CreateItemSlipAsync(request, CancellationToken.None);
+
+        Assert.True(result.BusinessSucceeded);
+        Assert.Contains("\"TIPI\":2", payload);
+    }
+
+    [Fact]
     public async Task Delete_uses_composite_item_slip_endpoint_and_accepts_empty_no_content()
     {
         HttpMethod? method = null;

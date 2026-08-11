@@ -562,7 +562,18 @@ public sealed class ErpPostingService(
             header.Description,
             lines,
             headerProjectCode,
-            orderDeliveryDate == default ? null : orderDeliveryDate);
+            orderDeliveryDate == default ? null : orderDeliveryDate,
+            ResolveGoodsReceiptInvoiceType(options));
+    }
+
+    internal static NetsisItemSlipInvoiceType ResolveGoodsReceiptInvoiceType(NetsisRestOptions options)
+    {
+        ArgumentNullException.ThrowIfNull(options);
+        if (!Enum.IsDefined(options.GoodsReceiptInvoiceType))
+            throw new InvalidOperationException(
+                $"Unsupported Netsis goods receipt invoice type: {(int)options.GoodsReceiptInvoiceType}.");
+
+        return options.GoodsReceiptInvoiceType;
     }
 
     internal static decimal GoodsReceiptQuantityForErp(GoodsReceiptLine line) =>
@@ -894,7 +905,8 @@ public sealed class ErpPostingService(
         string? description,
         List<NetsisItemSlipLine> lines,
         string? projectCode = null,
-        DateTime? orderDeliveryDate = null)
+        DateTime? orderDeliveryDate = null,
+        NetsisItemSlipInvoiceType invoiceType = NetsisItemSlipInvoiceType.DomesticClosed)
     {
         if (lines.Count == 0) throw AppException.Conflict("ERP belgesi için pozitif miktarlı en az bir kalem gerekir.");
         var now = DateTime.Now;
@@ -920,6 +932,7 @@ public sealed class ErpPostingService(
                 FiiliTarih = actual,
                 ProjeKodu = NetsisItemSlipDefaults.NormalizeProjectCode(projectCode),
                 Tip = documentType,
+                Tipi = invoiceType,
                 SubeKodu = ParseBranchCode(warehouse.BranchCode),
                 Aciklama = description,
                 DepoKodu = warehouse.WarehouseCode,
