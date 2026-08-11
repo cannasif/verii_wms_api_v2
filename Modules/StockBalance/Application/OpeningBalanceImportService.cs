@@ -1,5 +1,8 @@
 using ClosedXML.Excel;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Application;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
@@ -16,8 +19,11 @@ public sealed class OpeningBalanceImportService(
     IStockMovementService stockMovements) : IOpeningBalanceImportService
 {
     public const int MaxRows = 200;
-    public const int WarehouseOpeningMaxRows = 2000;
+    public const int WarehouseOpeningMaxRows = 50_000;
     public const int MaxFileSize = 5 * 1024 * 1024;
+    public const int WarehouseOpeningMaxFileSize = 64 * 1024 * 1024;
+    public const int MovementBatchSize = 500;
+    private const int QueryBatchSize = 1_000;
     private const int LastTemplateRow = MaxRows + 1;
     private static readonly string[] Headers =
     [
@@ -153,7 +159,8 @@ public sealed class OpeningBalanceImportService(
         string branchCode,
         string idempotencyKey,
         CancellationToken cancellationToken = default)
-        => ImportCoreAsync(workbookStream, branchCode, idempotencyKey, MaxRows, cancellationToken);
+        => ImportCoreAsync(
+            workbookStream, branchCode, idempotencyKey, MaxRows, MaxFileSize, false, cancellationToken);
 
     public Task<OpeningBalanceImportResult> ImportWarehouseOpeningAsync(
         Stream workbookStream,
@@ -165,19 +172,39 @@ public sealed class OpeningBalanceImportService(
             branchCode,
             idempotencyKey,
             WarehouseOpeningMaxRows,
+            WarehouseOpeningMaxFileSize,
+            false,
             cancellationToken);
+
+    public async Task<OpeningBalanceImportValidation> ValidateWarehouseOpeningAsync(
+        Stream workbookStream,
+        string branchCode,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await ImportCoreAsync(
+            workbookStream,
+            branchCode,
+            $"preview-{Guid.NewGuid():N}",
+            WarehouseOpeningMaxRows,
+            WarehouseOpeningMaxFileSize,
+            true,
+            cancellationToken);
+        return new(result.TotalRows, result.TotalQuantity, result.BatchCount);
+    }
 
     private async Task<OpeningBalanceImportResult> ImportCoreAsync(
         Stream workbookStream,
         string branchCode,
         string idempotencyKey,
         int maxRows,
+        int maxFileSize,
+        bool validateOnly,
         CancellationToken cancellationToken)
     {
         var branch = NormalizeBranch(branchCode);
         var key = idempotencyKey?.Trim() ?? string.Empty;
         if (key.Length is < 8 or > 100) throw AppException.BadRequest("İdempotency anahtarı 8-100 karakter olmalıdır.");
-        await using var buffered = await BufferAsync(workbookStream, cancellationToken);
+        await using var buffered = await BufferAsync(workbookStream, maxFileSize, cancellationToken);
         using var workbook = OpenWorkbook(buffered);
         var worksheet = workbook.Worksheets.FirstOrDefault(x => x.Name == "İlk Raf Bakiyeleri")
             ?? throw AppException.BadRequest("'İlk Raf Bakiyeleri' çalışma sayfası bulunamadı.");
@@ -222,21 +249,26 @@ public sealed class OpeningBalanceImportService(
             .ToListAsync(cancellationToken);
         var warehouseByCode = warehouses.ToDictionary(x => x.WarehouseCode.ToString(), StringComparer.OrdinalIgnoreCase);
         var warehouseIds = warehouses.Select(x => x.Id).ToList();
-        var locations = await unitOfWork.Repository<WarehouseLocation>().Query()
-            .Where(x => warehouseIds.Contains(x.WarehouseId)
-                && x.IsActive
-                && requestedLocationCodes.Contains(x.Code))
-            .Select(x => new { x.Id, x.WarehouseId, x.Code }).ToListAsync(cancellationToken);
+        var locations = await LoadInBatchesAsync(
+            requestedLocationCodes,
+            codes => unitOfWork.Repository<WarehouseLocation>().Query()
+                .Where(x => warehouseIds.Contains(x.WarehouseId)
+                    && x.IsActive
+                    && codes.Contains(x.Code))
+                .Select(x => new { x.Id, x.WarehouseId, x.Code }),
+            cancellationToken);
         var locationByKey = locations.ToDictionary(x => $"{x.WarehouseId}|{x.Code}", StringComparer.OrdinalIgnoreCase);
-        var stocks = await unitOfWork.Repository<StockEntity>().Query()
-            .Where(x => x.BranchCode == branch
-                && requestedStockCodes.Contains(x.ErpStockCode))
-            .ToListAsync(cancellationToken);
+        var stocks = await LoadInBatchesAsync(
+            requestedStockCodes,
+            codes => unitOfWork.Repository<StockEntity>().Query()
+                .Where(x => x.BranchCode == branch && codes.Contains(x.ErpStockCode)),
+            cancellationToken);
         var stockByCode = stocks.ToDictionary(x => x.ErpStockCode, StringComparer.OrdinalIgnoreCase);
-        var yapCodes = await unitOfWork.Repository<YapCodeEntity>().Query()
-            .Where(x => x.BranchCode == branch
-                && requestedYapCodes.Contains(x.ConfigurationCode))
-            .ToListAsync(cancellationToken);
+        var yapCodes = await LoadInBatchesAsync(
+            requestedYapCodes,
+            codes => unitOfWork.Repository<YapCodeEntity>().Query()
+                .Where(x => x.BranchCode == branch && codes.Contains(x.ConfigurationCode)),
+            cancellationToken);
         var yapByCode = yapCodes.GroupBy(x => x.ConfigurationCode, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
 
@@ -295,32 +327,121 @@ public sealed class OpeningBalanceImportService(
             .GroupBy(x => $"{x.StockId}|{x.SerialNo}", StringComparer.OrdinalIgnoreCase).FirstOrDefault(x => x.Count() > 1);
         if (duplicateSerial is not null) throw AppException.BadRequest($"Aynı stok/seri dosyada tekrar ediyor: {duplicateSerial.First().SerialNo}");
 
-        var postRequest = new PostStockMovementRequest(key, StockMovementTypes.AdjustmentIncrease,
-            "OpeningBalanceImport", key, null, occurredAt, "İlk raf bakiyesi aktarımı",
-            string.Join(" | ", rows.Select(x => Null(Text(x, 11))).Where(x => x is not null).Distinct().Take(5)),
-            requestLines);
-        var existingOperation = await unitOfWork.Repository<StockMovementOperation>().Query()
-            .AnyAsync(x => x.IdempotencyKey == key, cancellationToken);
-        if (!existingOperation)
+        // Hash normalized business data, not XLSX bytes. ClosedXML package metadata can
+        // change while the visible workbook remains identical, which would break resume.
+        var fileHash = BuildLogicalFileHash(branch, occurredAt, requestLines, rows);
+        var referenceNo = $"OPENING:{fileHash}";
+        var description = string.Join(" | ", rows.Select(x => Null(Text(x, 11)))
+            .Where(x => x is not null).Distinct().Take(5));
+        var postRequests = requestLines.Chunk(MovementBatchSize)
+            .Select((lines, index) => new PostStockMovementRequest(
+                BuildBatchKey(branch, fileHash, index),
+                StockMovementTypes.AdjustmentIncrease,
+                "OpeningBalanceImport",
+                referenceNo,
+                null,
+                occurredAt,
+                "İlk raf bakiyesi aktarımı",
+                description,
+                lines))
+            .ToList();
+
+        // A retry of the exact same file must be able to resume after a process or
+        // network interruption. Already committed chunks are replayed by PostAsync;
+        // validating their serials as new inbound stock would incorrectly reject them.
+        var batchKeys = postRequests.Select(x => x.IdempotencyKey).ToList();
+        var completedBatchKeys = (await unitOfWork.Repository<StockMovementOperation>().Query()
+                .Where(x => batchKeys.Contains(x.IdempotencyKey))
+                .Select(x => x.IdempotencyKey)
+                .ToListAsync(cancellationToken))
+            .ToHashSet(StringComparer.Ordinal);
+
+        // Validate every not-yet-committed chunk before the first new commit. A bad
+        // row must not leave additional partial opening records behind.
+        foreach (var request in postRequests.Where(x => !completedBatchKeys.Contains(x.IdempotencyKey)))
+            await stockMovements.ValidateAsync(request, cancellationToken);
+
+        if (validateOnly)
+            return new(0, Guid.Empty, false, rows.Count, requestLines.Sum(x => x.Quantity), [],
+                postRequests.Count, rows.Count > 500);
+
+        var operations = unitOfWork.Repository<StockMovementOperation>().Query();
+        var targetWarehouseIds = requestLines.Select(x => x.TargetWarehouseId!.Value).Distinct().ToList();
+        var foreignWarehouseId = await unitOfWork.Repository<StockMovementEntry>().Query()
+            .Where(entry => targetWarehouseIds.Contains(entry.WarehouseId)
+                && !operations.Any(operation => operation.Id == entry.OperationId
+                    && operation.ReferenceType == "OpeningBalanceImport"
+                    && operation.ReferenceNo == referenceNo))
+            .Select(entry => (long?)entry.WarehouseId)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (foreignWarehouseId.HasValue)
         {
-            var targetWarehouseIds = requestLines.Select(x => x.TargetWarehouseId!.Value).Distinct().ToList();
-            var usedWarehouseId = await unitOfWork.Repository<StockMovementEntry>().Query()
-                .Where(x => targetWarehouseIds.Contains(x.WarehouseId))
-                .Select(x => (long?)x.WarehouseId).FirstOrDefaultAsync(cancellationToken);
-            if (usedWarehouseId.HasValue)
-            {
-                var code = warehouses.First(x => x.Id == usedWarehouseId.Value).WarehouseCode;
-                throw AppException.Conflict($"{code} deposunda stok hareketi mevcut. İlk bakiye yalnız hareket defteri boş depoya aktarılabilir.");
-            }
+            var code = warehouses.First(x => x.Id == foreignWarehouseId.Value).WarehouseCode;
+            throw AppException.Conflict(
+                $"{code} deposunda bu dosyadan bağımsız stok hareketi mevcut. İlk bakiye yalnız hareket defteri boş depoya aktarılabilir.");
         }
-        var posted = await stockMovements.PostAsync(postRequest, cancellationToken);
-        var finalRows = resultRows.Select(x => x with
+
+        var postedBatches = new List<StockMovementPostResult>(postRequests.Count);
+        foreach (var request in postRequests)
         {
-            Status = posted.IsReplay ? "Replayed" : "Posted",
-            Message = posted.IsReplay ? "Önceki ilk bakiye işlemi güvenli biçimde yeniden döndürüldü." : "İlk bakiye hareketine kaydedildi."
+            postedBatches.Add(await stockMovements.PostAsync(request, cancellationToken));
+            unitOfWork.ClearTracking();
+        }
+
+        var allReplayed = postedBatches.All(x => x.IsReplay);
+        const int resultRowLimit = 500;
+        var finalRows = resultRows.Take(resultRowLimit).Select(x => x with
+        {
+            Status = allReplayed ? "Replayed" : "Posted",
+            Message = allReplayed ? "Önceki ilk bakiye işlemi güvenli biçimde yeniden döndürüldü." : "İlk bakiye hareketine kaydedildi."
         }).ToList();
-        return new(posted.OperationId, posted.OperationCode, posted.IsReplay, rows.Count,
-            requestLines.Sum(x => x.Quantity), finalRows);
+        var first = postedBatches[0];
+        return new(first.OperationId, first.OperationCode, allReplayed, rows.Count,
+            requestLines.Sum(x => x.Quantity), finalRows, postedBatches.Count,
+            resultRows.Count > resultRowLimit);
+    }
+
+    private static string BuildBatchKey(string branch, string fileHash, int index) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"warehouse-opening|{branch}|{fileHash}|batch-size:{MovementBatchSize}|{index:D6}")));
+
+    private static string BuildLogicalFileHash(
+        string branch,
+        DateTime? occurredAt,
+        IReadOnlyList<StockMovementLineRequest> lines,
+        IReadOnlyList<IXLRow> rows)
+    {
+        var payload = new
+        {
+            Branch = branch,
+            OccurredAt = occurredAt,
+            Lines = lines.Select((line, index) => new
+            {
+                line.StockId,
+                line.YapCodeId,
+                line.Quantity,
+                line.TargetWarehouseId,
+                line.TargetLocationId,
+                UnitCode = line.UnitCode?.Trim().ToUpperInvariant(),
+                LotNo = line.LotNo?.Trim(),
+                SerialNo = line.SerialNo?.Trim().ToUpperInvariant(),
+                StockStatus = line.StockStatus?.Trim(),
+                Description = Null(Text(rows[index], 11))
+            }).ToArray()
+        };
+        return Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload))));
+    }
+
+    private static async Task<List<TEntity>> LoadInBatchesAsync<TKey, TEntity>(
+        IReadOnlyCollection<TKey> keys,
+        Func<TKey[], IQueryable<TEntity>> query,
+        CancellationToken cancellationToken)
+    {
+        var result = new List<TEntity>();
+        foreach (var batch in keys.Chunk(QueryBatchSize))
+            result.AddRange(await query(batch).ToListAsync(cancellationToken));
+        return result;
     }
 
     private static string Text(IXLRow row, int column) => row.Cell(column).GetString().Trim();
@@ -348,11 +469,11 @@ public sealed class OpeningBalanceImportService(
         catch (Exception e) when (e is not OperationCanceledException and not OutOfMemoryException)
         { throw AppException.BadRequest("Dosya geçerli bir XLSX çalışma kitabı değil."); }
     }
-    private static async Task<MemoryStream> BufferAsync(Stream source, CancellationToken ct)
+    private static async Task<MemoryStream> BufferAsync(Stream source, int maxFileSize, CancellationToken ct)
     {
         var target = new MemoryStream(); var buffer = new byte[81920]; var total = 0;
         while (true) { var read = await source.ReadAsync(buffer, ct); if (read == 0) break; total += read;
-            if (total > MaxFileSize) { await target.DisposeAsync(); throw AppException.BadRequest("XLSX dosyası en fazla 5 MB olabilir."); }
+            if (total > maxFileSize) { await target.DisposeAsync(); throw AppException.BadRequest($"XLSX dosyası en fazla {maxFileSize / 1024 / 1024} MB olabilir."); }
             await target.WriteAsync(buffer.AsMemory(0, read), ct); }
         if (total == 0) { await target.DisposeAsync(); throw AppException.BadRequest("Yüklenecek XLSX dosyası boş olamaz."); }
         target.Position = 0; return target;

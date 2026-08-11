@@ -34,6 +34,7 @@ public sealed class StockMovementService(
     private IGenericRepository<Modules.YapCode.Domain.YapCode> YapCodes => unitOfWork.Repository<Modules.YapCode.Domain.YapCode>();
     private IGenericRepository<LocationStockBalance> LocationBalances => unitOfWork.Repository<LocationStockBalance>();
     private IGenericRepository<StockSerialRegistry> SerialRegistry => unitOfWork.Repository<StockSerialRegistry>();
+    private readonly Dictionary<(string BranchCode, long StockId), EffectiveStockTrackingPolicy> _trackingPolicyCache = [];
 
     public async Task<PagedResponse<StockMovementGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
@@ -76,6 +77,19 @@ public sealed class StockMovementService(
         return new(operation.Id, operation.OperationCode, operation.IdempotencyKey, operation.OperationType, displayStatus,
             operation.ReferenceType, operation.ReferenceNo, operation.ReferenceId, operation.OccurredAt, operation.Reason,
             operation.Description, operation.ReversalOfOperationId, operation.CreatedBy, operation.CreatedDate, rows);
+    }
+
+    public async Task ValidateAsync(
+        PostStockMovementRequest request,
+        CancellationToken cancellationToken = default)
+    {
+        var normalized = Normalize(request);
+        ValidateEnvelope(normalized);
+        var effective = normalized with { OccurredAt = normalized.OccurredAt ?? DateTime.UtcNow };
+        var drafts = await BuildEntriesAsync(effective, cancellationToken);
+        await EnsureSufficientBalanceAsync(drafts, cancellationToken);
+        await EnsureSerialUniquenessAsync(drafts, cancellationToken);
+        await EnsureSerialRegistryAcceptsAsync(drafts, effective.OperationType, cancellationToken);
     }
 
     public async Task<StockMovementPostResult> PostAsync(PostStockMovementRequest request, CancellationToken cancellationToken = default)
@@ -177,7 +191,7 @@ public sealed class StockMovementService(
         if (locations.Count != locationIds.Count) throw AppException.BadRequest("Geçersiz veya pasif raf seçildi.");
         var trackingPolicies = new Dictionary<long, EffectiveStockTrackingPolicy>();
         foreach (var stock in stocks.Values)
-            trackingPolicies[stock.Id] = await trackingPolicyResolver.ResolveAsync(stock.BranchCode, stock.Id, ct);
+            trackingPolicies[stock.Id] = await ResolveTrackingPolicyAsync(stock.BranchCode, stock.Id, ct);
 
         var result = new List<StockMovementEntry>(request.Lines.Count * 2);
         foreach (var line in request.Lines)
@@ -258,7 +272,7 @@ public sealed class StockMovementService(
         var stockIds = serialDrafts.Select(x => x.StockId).Distinct().ToList();
         var policies = new Dictionary<long, EffectiveStockTrackingPolicy>();
         foreach (var group in serialDrafts.GroupBy(x => new { x.BranchCode, x.StockId }))
-            policies[group.Key.StockId] = await trackingPolicyResolver.ResolveAsync(
+            policies[group.Key.StockId] = await ResolveTrackingPolicyAsync(
                 group.Key.BranchCode, group.Key.StockId, ct);
         var serials = serialDrafts.Select(x => x.SerialNo!).Distinct().ToList();
         var currentRows = await Entries.Query().Where(x => stockIds.Contains(x.StockId) && x.SerialNo != null && serials.Contains(x.SerialNo))
@@ -276,6 +290,19 @@ public sealed class StockMovementService(
                     : $"Seri numarası tekil bir stok örneğidir; toplam bakiye 0 veya 1 olabilir. Seri: {group.First().SerialNo}.");
         }
 
+    }
+
+    private async Task<EffectiveStockTrackingPolicy> ResolveTrackingPolicyAsync(
+        string branchCode,
+        long stockId,
+        CancellationToken cancellationToken)
+    {
+        var key = (branchCode.Trim().ToUpperInvariant(), stockId);
+        if (_trackingPolicyCache.TryGetValue(key, out var cached)) return cached;
+
+        var resolved = await trackingPolicyResolver.ResolveAsync(branchCode, stockId, cancellationToken);
+        _trackingPolicyCache[key] = resolved;
+        return resolved;
     }
 
     private async Task SynchronizeSerialRegistryAsync(
@@ -297,13 +324,17 @@ public sealed class StockMovementService(
         var currentQuantities = currentRows
             .GroupBy(x => new { x.StockId, Serial = x.Serial.Trim().ToUpperInvariant() })
             .ToDictionary(x => (x.Key.StockId, x.Key.Serial), x => x.Sum(v => v.QuantityDelta));
+        var registryRows = await SerialRegistry.Query(true)
+            .Where(x => stockIds.Contains(x.StockId) && serials.Contains(x.NormalizedSerialNo))
+            .ToListAsync(ct);
+        var registryByKey = registryRows.ToDictionary(
+            x => (x.StockId, x.NormalizedSerialNo),
+            x => x);
         var ordinal = 0;
         foreach (var group in groups)
         {
             ordinal++;
-            var row = await SerialRegistry.FirstOrDefaultAsync(
-                x => x.StockId == group.Key.StockId && x.NormalizedSerialNo == group.Key.Serial,
-                true, ct);
+            registryByKey.TryGetValue((group.Key.StockId, group.Key.Serial), out var row);
             var netQuantity = group.Sum(x => x.QuantityDelta);
             var resultingQuantity = currentQuantities.GetValueOrDefault(
                 (group.Key.StockId, group.Key.Serial)) + netQuantity;
@@ -331,6 +362,7 @@ public sealed class StockMovementService(
                     CreatedDate = DateTime.UtcNow
                 };
                 await SerialRegistry.AddAsync(row, ct);
+                registryByKey[(group.Key.StockId, group.Key.Serial)] = row;
                 continue;
             }
 
@@ -367,6 +399,42 @@ public sealed class StockMovementService(
         await unitOfWork.SaveChangesAsync(ct);
     }
 
+    private async Task EnsureSerialRegistryAcceptsAsync(
+        IReadOnlyCollection<StockMovementEntry> drafts,
+        string operationType,
+        CancellationToken ct)
+    {
+        if (operationType is StockMovementTypes.CustomerReturn or StockMovementTypes.Reversal)
+            return;
+
+        var inboundSerials = drafts
+            .Where(x => x.QuantityDelta > 0 && !string.IsNullOrWhiteSpace(x.SerialNo))
+            .Select(x => new
+            {
+                x.StockId,
+                Serial = x.SerialNo!.Trim().ToUpperInvariant()
+            })
+            .Distinct()
+            .ToList();
+        if (inboundSerials.Count == 0) return;
+
+        var stockIds = inboundSerials.Select(x => x.StockId).Distinct().ToList();
+        var serials = inboundSerials.Select(x => x.Serial).Distinct().ToList();
+        var existing = await SerialRegistry.Query()
+            .Where(x => stockIds.Contains(x.StockId) && serials.Contains(x.NormalizedSerialNo))
+            .Select(x => new { x.StockId, x.SerialNo, x.NormalizedSerialNo, x.Status })
+            .ToListAsync(ct);
+        var requested = inboundSerials
+            .Select(x => (x.StockId, x.Serial))
+            .ToHashSet();
+        var conflict = existing.FirstOrDefault(x =>
+            requested.Contains((x.StockId, x.NormalizedSerialNo))
+            && x.Status is StockSerialStatus.Available or StockSerialStatus.Consumed or StockSerialStatus.Voided);
+        if (conflict is not null)
+            throw AppException.Conflict(
+                $"Seri bu stok için daha önce kullanılmış veya iptal edilmiştir. Seri: {conflict.SerialNo}.");
+    }
+
     private async Task<StockMovementPostResult> ReplayAsync(StockMovementOperation existing, string hash, CancellationToken ct)
     {
         if (!CryptographicOperations.FixedTimeEquals(Convert.FromHexString(existing.RequestHash), Convert.FromHexString(hash)))
@@ -387,7 +455,7 @@ public sealed class StockMovementService(
     {
         if (request.IdempotencyKey.Length is < 8 or > 100) throw AppException.BadRequest("İdempotency anahtarı 8-100 karakter olmalıdır.");
         if (!StockMovementTypes.All.Contains(request.OperationType)) throw AppException.BadRequest("Geçersiz stok hareket tipi.");
-        if (request.Lines.Count is < 1 or > 200) throw AppException.BadRequest("Operasyon 1-200 hareket satırı içermelidir.");
+        if (request.Lines.Count is < 1 or > 500) throw AppException.BadRequest("Operasyon 1-500 hareket satırı içermelidir.");
     }
 
     private static DateTime NormalizeDate(DateTime? value)

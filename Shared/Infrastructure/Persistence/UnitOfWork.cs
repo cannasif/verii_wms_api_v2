@@ -17,6 +17,12 @@ public sealed class UnitOfWork(WmsDbContext context, IHttpContextAccessor httpCo
 
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default) => context.SaveChangesAsync(cancellationToken);
 
+    public void ClearTracking()
+    {
+        if (_transaction is not null) return;
+        context.ChangeTracker.Clear();
+    }
+
     public async Task BeginTransactionAsync(IsolationLevel isolationLevel = IsolationLevel.ReadCommitted, CancellationToken cancellationToken = default)
     {
         if (_transaction is not null) throw new InvalidOperationException("Aktif bir transaction zaten bulunuyor.");

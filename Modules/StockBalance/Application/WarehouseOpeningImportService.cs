@@ -19,6 +19,7 @@ public sealed record WarehouseOpeningPreview(
     int DistinctStockCount,
     int SerialCount,
     decimal TotalQuantity,
+    int BatchCount,
     IReadOnlyList<string> Warnings);
 
 public sealed record WarehouseOpeningImportResult(
@@ -46,8 +47,8 @@ public sealed class WarehouseOpeningImportService(
     ILocationImportService locationImport,
     IOpeningBalanceImportService openingBalanceImport) : IWarehouseOpeningImportService
 {
-    public const int MaxRows = 2000;
-    public const int MaxFileSize = 8 * 1024 * 1024;
+    public const int MaxRows = 50_000;
+    public const int MaxFileSize = 64 * 1024 * 1024;
     private const int LastTemplateRow = MaxRows + 1;
     private static readonly string[] Headers =
     [
@@ -105,7 +106,7 @@ public sealed class WarehouseOpeningImportService(
             "Her satır depo + raf + stok + miktar/lot/seri bilgisidir. Aynı depo ve raf istenildiği kadar tekrar edebilir; " +
             "sistem WarehouseCode + LocationCode ile tekilleştirir. Raf mevcutsa kullanılır, yoksa LocationName ve LocationType " +
             "ile bir kez oluşturulur. StockCode boş bırakılan satırlar yalnız üst/ara raf tanımı oluşturur. Ön doğrulama başarılı " +
-            "olmadan kayıt yapılmaz; raf ve açılış bakiyesi tek transaction içinde birlikte kaydedilir.";
+            "olmadan kayıt yapılmaz. Büyük dosyalar 500 hareket satırlık idempotent partilerle kaydedilir; kesinti olursa aynı dosya güvenle devam ettirilir.";
         guide.Range("A3:F6").Style.Fill.SetBackgroundColor(XLColor.FromHtml("#FFF4D6"))
             .Font.SetFontColor(XLColor.FromHtml("#7A4B00")).Font.SetBold().Alignment.SetWrapText();
         var notes = new[]
@@ -141,22 +142,10 @@ public sealed class WarehouseOpeningImportService(
         CancellationToken cancellationToken = default)
     {
         var prepared = await PrepareAsync(workbookStream, branchCode, cancellationToken);
-        await unitOfWork.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
-        try
-        {
-            var result = await ExecutePreparedAsync(
-                prepared,
-                branchCode,
-                $"preview-{Guid.NewGuid():N}",
-                cancellationToken);
-            await unitOfWork.RollbackTransactionAsync(cancellationToken);
-            return ToPreview(prepared, result);
-        }
-        catch
-        {
-            await unitOfWork.RollbackTransactionAsync(cancellationToken);
-            throw;
-        }
+        await using var balanceStream = new MemoryStream(prepared.BalanceWorkbook);
+        var validation = await openingBalanceImport.ValidateWarehouseOpeningAsync(
+            balanceStream, branchCode, cancellationToken);
+        return ToPreview(prepared, validation.TotalQuantity, validation.BatchCount);
     }
 
     public async Task<WarehouseOpeningImportResult> ImportAsync(
@@ -171,10 +160,7 @@ public sealed class WarehouseOpeningImportService(
             throw AppException.Conflict(
                 "Yüklenecek dosya ön doğrulaması yapılan dosyayla aynı değil. Dosyayı yeniden ön doğrulayın.");
 
-        return await unitOfWork.ExecuteInTransactionAsync(
-            ct => ExecutePreparedAsync(prepared, branchCode, idempotencyKey, ct),
-            cancellationToken,
-            IsolationLevel.Serializable);
+        return await ExecutePreparedAsync(prepared, branchCode, idempotencyKey, cancellationToken);
     }
 
     private async Task<PreparedWorkbook> PrepareAsync(
@@ -308,7 +294,8 @@ public sealed class WarehouseOpeningImportService(
 
     private static WarehouseOpeningPreview ToPreview(
         PreparedWorkbook prepared,
-        WarehouseOpeningImportResult result)
+        decimal totalQuantity,
+        int batchCount)
     {
         var balanceRows = prepared.Rows.Where(x => !string.IsNullOrWhiteSpace(x.StockCode)).ToList();
         var warnings = new List<string>();
@@ -322,7 +309,8 @@ public sealed class WarehouseOpeningImportService(
             balanceRows.Count,
             balanceRows.Select(x => x.StockCode).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
             balanceRows.Count(x => !string.IsNullOrWhiteSpace(x.SerialNo)),
-            result.Balances.TotalQuantity,
+            totalQuantity,
+            batchCount,
             warnings);
     }
 

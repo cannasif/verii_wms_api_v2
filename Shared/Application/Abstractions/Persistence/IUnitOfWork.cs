@@ -9,5 +9,6 @@ public interface IUnitOfWork : IAsyncDisposable
     Task BeginTransactionAsync(IsolationLevel isolationLevel = IsolationLevel.ReadCommitted, CancellationToken cancellationToken = default);
     Task CommitTransactionAsync(CancellationToken cancellationToken = default);
     Task RollbackTransactionAsync(CancellationToken cancellationToken = default);
+    void ClearTracking();
     Task<TResult> ExecuteInTransactionAsync<TResult>(Func<CancellationToken, Task<TResult>> operation, CancellationToken cancellationToken = default, IsolationLevel isolationLevel = IsolationLevel.ReadCommitted);
 }

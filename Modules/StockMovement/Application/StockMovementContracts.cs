@@ -50,6 +50,7 @@ public interface IStockMovementService
 {
     Task<PagedResponse<StockMovementGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default);
     Task<StockMovementDetail> GetByIdAsync(long id, CancellationToken cancellationToken = default);
+    Task ValidateAsync(PostStockMovementRequest request, CancellationToken cancellationToken = default) => Task.CompletedTask;
     Task<StockMovementPostResult> PostAsync(PostStockMovementRequest request, CancellationToken cancellationToken = default);
     Task<StockMovementPostResult> ReverseAsync(long operationId, ReverseStockMovementRequest request, CancellationToken cancellationToken = default);
 }

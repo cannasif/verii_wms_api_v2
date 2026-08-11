@@ -55,7 +55,7 @@ public sealed class WarehouseOpeningImportController(
             stream, branchCode, previewHash, idempotencyKey, cancellationToken);
         return Ok(ApiResponse<WarehouseOpeningImportResult>.Ok(
             result,
-            "Raf tanımları ve ilk stok/seri bakiyeleri tek işlemde kaydedildi."));
+            "Raf tanımları ve ilk stok/seri bakiyeleri güvenli partiler halinde kaydedildi."));
     }
 
     private async Task RequirePermissions(CancellationToken cancellationToken)
@@ -73,7 +73,7 @@ public sealed class WarehouseOpeningImportController(
         if (file is null || file.Length == 0)
             throw AppException.BadRequest("Yüklenecek XLSX dosyası zorunludur.");
         if (file.Length > WarehouseOpeningImportService.MaxFileSize)
-            throw AppException.BadRequest("XLSX dosyası en fazla 8 MB olabilir.");
+            throw AppException.BadRequest("XLSX dosyası en fazla 64 MB olabilir.");
         if (!string.Equals(
                 Path.GetExtension(file.FileName), ".xlsx", StringComparison.OrdinalIgnoreCase))
             throw AppException.BadRequest("Yalnızca .xlsx dosyası yüklenebilir.");

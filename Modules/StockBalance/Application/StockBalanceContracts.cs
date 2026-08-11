@@ -37,7 +37,9 @@ public sealed record ReconciliationIssue(string IssueType, long WarehouseId, lon
 public sealed record OpeningBalanceImportRowResult(int RowNumber, string Status, string WarehouseCode, string LocationCode,
     string StockCode, string Message);
 public sealed record OpeningBalanceImportResult(long OperationId, Guid OperationCode, bool IsReplay, int TotalRows,
-    decimal TotalQuantity, IReadOnlyList<OpeningBalanceImportRowResult> Rows);
+    decimal TotalQuantity, IReadOnlyList<OpeningBalanceImportRowResult> Rows,
+    int BatchCount = 1, bool RowsTruncated = false);
+public sealed record OpeningBalanceImportValidation(int TotalRows, decimal TotalQuantity, int BatchCount);
 
 public sealed record StockReservationLineRequest(long ReferenceLineId, long WarehouseId, long LocationId, long StockId,
     long? YapCodeId, string UnitCode, string? LotNo, string? SerialNo, string StockStatus, decimal QuantityDelta);
@@ -82,5 +84,9 @@ public interface IOpeningBalanceImportService
         Stream workbookStream,
         string branchCode,
         string idempotencyKey,
+        CancellationToken cancellationToken = default);
+    Task<OpeningBalanceImportValidation> ValidateWarehouseOpeningAsync(
+        Stream workbookStream,
+        string branchCode,
         CancellationToken cancellationToken = default);
 }
