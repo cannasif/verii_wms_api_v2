@@ -1,3 +1,4 @@
+using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.Production.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
@@ -101,6 +102,11 @@ public interface IProductionTransferService
     Task<ProductionTransferDetail> GetDetailAsync(long id,CancellationToken ct=default);
     Task<ProductionTransferDetail> UpdateDraftAsync(long id,UpdateWarehouseTransferDraftRequest request,long actor,CancellationToken ct=default);
     Task DeleteDraftAsync(long id,long actor,CancellationToken ct=default);
+    Task<OperationCancellationResult> CancelAsync(
+        long id,
+        WarehouseTransferTransitionRequest request,
+        long actor,
+        CancellationToken ct = default);
     Task<WithdrawProductionTransferDraftLinesResult> WithdrawDraftLinesAsync(
         long id,
         WithdrawProductionTransferDraftLinesRequest request,

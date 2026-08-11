@@ -281,7 +281,7 @@ internal static class ProductionTransferPickingSupport
         WarehouseTransferLine line,
         CancellationToken ct)
     {
-        // Seri rotası: kaynak depodaki tüm uygun serili bakiyeler; hedef raf vb. genel dışlamalar bu adımda uygulanmaz.
+        // Seri rotası: kaynak depodaki tüm uygun serili bakiyeler; hedef raf dışlaması çağıran tarafta uygulanır.
         var locations = await uow.Repository<WarehouseLocation>().Query()
             .Where(x => x.WarehouseId == header.SourceWarehouseId && x.IsActive && x.IsPickable && !x.IsQuarantine)
             .ToDictionaryAsync(x => x.Id, ct);

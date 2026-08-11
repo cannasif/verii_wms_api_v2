@@ -40,6 +40,7 @@ public sealed record ProductionTransferTaskBoardDto(
 public sealed record AssignProductionTransferTaskRequest(long UserId, bool IsPrimary = false);
 public sealed record HandoffProductionTransferTaskRequest(long TargetUserId, string? Reason);
 public sealed record StartProductionTransferTaskRequest(Guid IdempotencyKey, bool AllowPartialStart = false);
+public sealed record ProcessProductionReturnLineRequest(Guid IdempotencyKey, long TargetLocationId);
 public sealed record CompleteProductionReturnLineRequest(long TaskLineId, long TargetLocationId);
 public sealed record CompleteProductionReturnRequest(
     Guid IdempotencyKey,
@@ -59,11 +60,13 @@ public sealed record WarehouseTransferReturnSettingDto(
     long WarehouseId,
     long? DefaultTransferReturnLocationId,
     long? DefaultProductionTransferLocationId,
+    long? ProductionPickingStagingLocationId,
     decimal? AutoPickWithoutConfirmMaxQuantity);
 public sealed record UpdateWarehouseTransferReturnSettingRequest(
     long WarehouseId,
     long? DefaultTransferReturnLocationId,
     long? DefaultProductionTransferLocationId,
+    long? ProductionPickingStagingLocationId,
     decimal? AutoPickWithoutConfirmMaxQuantity);
 
 public sealed record ProductionWorkOrderTransferTaskRowDto(
@@ -137,7 +140,7 @@ public interface IProductionTransferTaskService
     Task<ProductionTransferTaskBoardDto> AssignAsync(long transferId, long taskId, AssignProductionTransferTaskRequest request, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> RemoveAssignmentAsync(long transferId, long taskId, long userId, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> RequestCancellationReturnAsync(long transferId, long actor, CancellationToken ct = default);
-    Task<ProductionTransferTaskBoardDto> ProcessReturnTaskLineAsync(long transferId, long taskId, long taskLineId, Guid idempotencyKey, long actor, CancellationToken ct = default);
+    Task<ProductionTransferTaskBoardDto> ProcessReturnTaskLineAsync(long transferId, long taskId, long taskLineId, ProcessProductionReturnLineRequest request, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> HandoffAsync(long transferId, long taskId, HandoffProductionTransferTaskRequest request, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> RefreshRouteAsync(long transferId, long taskId, long actor, CancellationToken ct = default);
     Task<ProductionTaskStartCheckDto> CheckStartAsync(long transferId, long taskId, long actor, CancellationToken ct = default);

@@ -130,20 +130,73 @@ public sealed partial class ProductionService
                 0,
                 false);
 
-            var cancellable = await BuildCancellableRemainingQuantitiesAsync(branch, templateRow, token);
+            var scopedTransferId = request.TransferId;
+            var scopedKalanTaskId = request.KalanTaskId;
+            if (scopedTransferId is long transferId && scopedKalanTaskId is null)
+            {
+                scopedKalanTaskId = await TryResolveCancellationReturnKalanTaskIdAsync(branch, transferId, token);
+                if (scopedKalanTaskId is null)
+                    throw AppException.Conflict("Transfer iadesi kalan görevi bulunamadı.");
+            }
+
+            var isCancellationReturnScope = scopedTransferId.HasValue && scopedKalanTaskId.HasValue;
+
+            Dictionary<ProductionRecipeMaterialKey, decimal> cancellable;
+            if (isCancellationReturnScope)
+            {
+                cancellable = await BuildCancellableRemainingQuantitiesAsync(
+                    branch,
+                    templateRow,
+                    scopedTransferId!.Value,
+                    scopedKalanTaskId!.Value,
+                    token);
+            }
+            else
+            {
+                cancellable = await BuildCancellableRemainingQuantitiesAsync(
+                    branch,
+                    templateRow,
+                    null,
+                    null,
+                    token);
+            }
             if (cancellable.Count == 0)
                 throw AppException.Conflict("Bu iş emri için iptal edilebilir atanmamış malzeme kalmadı.");
 
             var requested = ResolveRequestedCancellationQuantities(request.Lines, cancellable);
-            var draftRevertedKeys = await CancelOpenTransfersForMaterialsAsync(
-                branch,
-                workOrderNumber,
-                request.TransferId,
-                requested,
-                request.Reason.Trim(),
-                request.IdempotencyKey,
-                actor,
-                token);
+            IReadOnlySet<ProductionRecipeMaterialKey> draftRevertedKeys;
+            if (isCancellationReturnScope)
+            {
+                draftRevertedKeys = await CancelOpenTransfersForMaterialsAsync(
+                    branch,
+                    workOrderNumber,
+                    scopedTransferId: null,
+                    excludeTransferHeaderId: scopedTransferId!.Value,
+                    cancelledQuantities: requested,
+                    reason: request.Reason.Trim(),
+                    idempotencyKey: request.IdempotencyKey,
+                    actor,
+                    token);
+                await CancelCancellationReturnKalanTaskAsync(
+                    branch,
+                    scopedTransferId!.Value,
+                    scopedKalanTaskId!.Value,
+                    actor,
+                    token);
+            }
+            else
+            {
+                draftRevertedKeys = await CancelOpenTransfersForMaterialsAsync(
+                    branch,
+                    workOrderNumber,
+                    request.TransferId,
+                    excludeTransferHeaderId: null,
+                    cancelledQuantities: requested,
+                    reason: request.Reason.Trim(),
+                    idempotencyKey: request.IdempotencyKey,
+                    actor,
+                    token);
+            }
             var managerCancelled = ResolveManagerCancellationQuantities(requested, draftRevertedKeys);
             if (managerCancelled.Count == 0 && draftRevertedKeys.Count == 0)
                 throw AppException.Conflict("Bu iş emri için iptal edilebilir malzeme bulunamadı.");
@@ -258,14 +311,26 @@ public sealed partial class ProductionService
                 line.CancelledQuantity -= quantity;
             }
 
+            var restoredTransferIds = activeLines
+                .Where(line => line.SourceTransferHeaderId.HasValue
+                    && restoreTotals.ContainsKey(ProductionWorkOrderMaterialAssignment.CreateKey(
+                        line.StockId,
+                        line.YapCodeId,
+                        line.OperationNumber)))
+                .Select(line => line.SourceTransferHeaderId!.Value)
+                .Distinct()
+                .ToArray();
+            foreach (var transferId in restoredTransferIds)
+                await TryRestoreCancellationReturnKalanTaskAsync(branch, transferId, actor, token);
+
             var remainingCancelled = cancellation.Lines
                 .Where(x => !x.IsDeleted && x.CancelledQuantity > 0)
                 .Sum(x => x.CancelledQuantity);
+            cancellation.RestoredAtUtc = DateTimeOffset.UtcNow;
+            cancellation.RestoredBy = actor;
             if (remainingCancelled <= 0.0001m)
             {
                 cancellation.Status = ProductionWorkOrderAssignmentCancellationStatus.Restored;
-                cancellation.RestoredAtUtc = DateTimeOffset.UtcNow;
-                cancellation.RestoredBy = actor;
                 cancellation.CorrelationId = request.IdempotencyKey;
             }
 
@@ -287,8 +352,21 @@ public sealed partial class ProductionService
     private async Task<Dictionary<ProductionRecipeMaterialKey, decimal>> BuildCancellableRemainingQuantitiesAsync(
         string branch,
         ProductionSourceWorkOrderRow templateRow,
+        long? cancellationReturnTransferId,
+        long? cancellationReturnKalanTaskId,
         CancellationToken ct)
     {
+        if (cancellationReturnTransferId is long transferId && cancellationReturnKalanTaskId is long kalanTaskId)
+        {
+            var split = await ResolveCancellationReturnRemainderMaterialSplitAsync(
+                branch,
+                templateRow,
+                transferId,
+                kalanTaskId,
+                ct);
+            return ToCancellableQuantityMap(split.Remaining);
+        }
+
         var recipeMaterials = await LoadFullRecipeMaterialsAsync(templateRow, branch, ct);
         if (recipeMaterials.Count == 0) return [];
 
@@ -302,8 +380,21 @@ public sealed partial class ProductionService
             splitMaterials,
             partialTransferRemainders);
 
+        var totals = ToCancellableQuantityMap(reclassified.Remaining);
+
+        foreach (var (key, cancelledQuantity) in cancelledMaterials)
+            totals[key] = Math.Max(0, totals.GetValueOrDefault(key) - cancelledQuantity);
+
+        return totals
+            .Where(x => x.Value > 0.0001m)
+            .ToDictionary(x => x.Key, x => x.Value);
+    }
+
+    private static Dictionary<ProductionRecipeMaterialKey, decimal> ToCancellableQuantityMap(
+        IEnumerable<PreparedNetsisProductionMaterial> materials)
+    {
         var totals = new Dictionary<ProductionRecipeMaterialKey, decimal>();
-        foreach (var material in reclassified.Remaining)
+        foreach (var material in materials)
         {
             var key = ProductionWorkOrderMaterialAssignment.CreateKey(
                 material.StockId,
@@ -312,12 +403,92 @@ public sealed partial class ProductionService
             totals[key] = totals.GetValueOrDefault(key) + material.RequiredQuantity;
         }
 
-        foreach (var (key, cancelledQuantity) in cancelledMaterials)
-            totals[key] = Math.Max(0, totals.GetValueOrDefault(key) - cancelledQuantity);
+        return totals;
+    }
 
-        return totals
-            .Where(x => x.Value > 0.0001m)
-            .ToDictionary(x => x.Key, x => x.Value);
+    private async Task<long?> TryResolveCancellationReturnKalanTaskIdAsync(
+        string branch,
+        long transferId,
+        CancellationToken ct)
+    {
+        var contexts = ProductionSourceWorkOrderAssignmentFilter.ProductionContexts;
+        var link = await uow.Repository<ProductionTransferHeaderLink>().Query()
+            .AsNoTracking()
+            .Where(x => x.BranchCode == branch
+                && x.WarehouseTransferHeaderId == transferId
+                && contexts.Contains(x.WarehouseTransferHeader.BusinessContext))
+            .Include(x => x.WarehouseTransferHeader)
+                .ThenInclude(h => h.Tasks.Where(task => !task.IsDeleted))
+            .SingleOrDefaultAsync(ct);
+        if (link is null) return null;
+
+        var tasks = link.WarehouseTransferHeader.Tasks.Where(x => !x.IsDeleted).ToArray();
+        var kalanTasks = tasks
+            .Where(task => ProductionWorkOrderTransferGrouping.IsPostCancellationReturnUnassignedPickTask(task, tasks))
+            .ToArray();
+        return kalanTasks.Length == 1 ? kalanTasks[0].Id : null;
+    }
+
+    private async Task CancelCancellationReturnKalanTaskAsync(
+        string branch,
+        long transferId,
+        long kalanTaskId,
+        long actor,
+        CancellationToken ct)
+    {
+        var contexts = ProductionSourceWorkOrderAssignmentFilter.ProductionContexts;
+        var link = await uow.Repository<ProductionTransferHeaderLink>().Query(true)
+            .Where(x => x.BranchCode == branch
+                && x.WarehouseTransferHeaderId == transferId
+                && contexts.Contains(x.WarehouseTransferHeader.BusinessContext))
+            .Include(x => x.WarehouseTransferHeader)
+                .ThenInclude(h => h.Tasks.Where(task => !task.IsDeleted))
+            .SingleOrDefaultAsync(ct)
+            ?? throw AppException.NotFound("İptal kalanı transferi bulunamadı.");
+
+        var tasks = link.WarehouseTransferHeader.Tasks.Where(x => !x.IsDeleted).ToArray();
+        var kalanTask = tasks.SingleOrDefault(x => x.Id == kalanTaskId)
+            ?? throw AppException.NotFound("İptal kalanı görevi bulunamadı.");
+        if (!ProductionWorkOrderTransferGrouping.IsPostCancellationReturnUnassignedPickTask(kalanTask, tasks))
+            throw AppException.Conflict("Seçilen görev aktif bir iptal kalanı toplama görevi değildir.");
+        if (kalanTask.Status is WarehouseTransferTaskStatus.Completed or WarehouseTransferTaskStatus.Cancelled)
+            return;
+
+        var now = DateTime.UtcNow;
+        kalanTask.Status = WarehouseTransferTaskStatus.Cancelled;
+        kalanTask.UpdatedBy = actor;
+        kalanTask.UpdatedDate = now;
+    }
+
+    private async Task TryRestoreCancellationReturnKalanTaskAsync(
+        string branch,
+        long transferId,
+        long actor,
+        CancellationToken ct)
+    {
+        var contexts = ProductionSourceWorkOrderAssignmentFilter.ProductionContexts;
+        var link = await uow.Repository<ProductionTransferHeaderLink>().Query(true)
+            .Where(x => x.BranchCode == branch
+                && x.WarehouseTransferHeaderId == transferId
+                && contexts.Contains(x.WarehouseTransferHeader.BusinessContext))
+            .Include(x => x.WarehouseTransferHeader)
+                .ThenInclude(h => h.Tasks.Where(task => !task.IsDeleted))
+            .SingleOrDefaultAsync(ct);
+        if (link is null) return;
+
+        var tasks = link.WarehouseTransferHeader.Tasks.Where(x => !x.IsDeleted).ToArray();
+        var kalanTask = tasks
+            .Where(task => task.Status == WarehouseTransferTaskStatus.Cancelled
+                && ProductionWorkOrderTransferGrouping.IsCancellationReturnKalanPickTask(task, tasks))
+            .OrderByDescending(task => task.UpdatedDate ?? task.CreatedDate)
+            .ThenByDescending(task => task.Id)
+            .FirstOrDefault();
+        if (kalanTask is null) return;
+
+        var now = DateTime.UtcNow;
+        kalanTask.Status = WarehouseTransferTaskStatus.Open;
+        kalanTask.UpdatedBy = actor;
+        kalanTask.UpdatedDate = now;
     }
 
     private async Task<Dictionary<ProductionRecipeMaterialKey, decimal>> LoadCancelledMaterialQuantitiesAsync(
@@ -386,6 +557,7 @@ public sealed partial class ProductionService
         string branch,
         string workOrderNumber,
         long? scopedTransferId,
+        long? excludeTransferHeaderId,
         IReadOnlyDictionary<ProductionRecipeMaterialKey, decimal> cancelledQuantities,
         string reason,
         Guid idempotencyKey,
@@ -401,7 +573,8 @@ public sealed partial class ProductionService
                 && x.WorkflowStatus != ProductionTransferWorkflowStatus.Cancelled
                 && (x.ProductionOrderNo == workOrderNumber
                     || x.WarehouseTransferHeader.ExternalReferenceNo == workOrderNumber)
-                && (!scopedTransferId.HasValue || x.WarehouseTransferHeaderId == scopedTransferId.Value))
+                && (!scopedTransferId.HasValue || x.WarehouseTransferHeaderId == scopedTransferId.Value)
+                && (!excludeTransferHeaderId.HasValue || x.WarehouseTransferHeaderId != excludeTransferHeaderId.Value))
             .Include(x => x.WarehouseTransferHeader)
                 .ThenInclude(h => h.Lines.Where(line => !line.IsDeleted))
                     .ThenInclude(line => line.Trackings.Where(tracking => !tracking.IsDeleted))
@@ -530,6 +703,8 @@ public sealed partial class ProductionService
         else
         {
             cancellation.Reason = reason;
+            cancellation.RestoredAtUtc = null;
+            cancellation.RestoredBy = null;
             cancellation.UpdatedBy = actor;
             cancellation.UpdatedDate = now;
         }
@@ -564,6 +739,34 @@ public sealed partial class ProductionService
         }
 
         return cancellation;
+    }
+
+    private async Task<HashSet<string>> LoadRestoredCancelledWorkOrderNumbersAsync(
+        string branch,
+        CancellationToken ct)
+    {
+        var workOrderNumbers = await uow.Repository<ProductionWorkOrderAssignmentCancellation>().Query()
+            .AsNoTracking()
+            .Where(x => x.BranchCode == branch
+                && !x.IsDeleted
+                && x.RestoredAtUtc.HasValue)
+            .Select(x => x.WorkOrderNumber)
+            .Distinct()
+            .ToListAsync(ct);
+
+        return new HashSet<string>(workOrderNumbers, StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static ProductionSourceWorkOrderRow ApplyRestoredCancelledListingKind(
+        ProductionSourceWorkOrderRow row,
+        IReadOnlySet<string> restoredWorkOrderNumbers)
+    {
+        if (row.ListingKind != ProductionSourceWorkOrderListingKind.Standard)
+            return row;
+        if (!restoredWorkOrderNumbers.Contains(row.WorkOrderNumber.Trim()))
+            return row;
+
+        return row with { ListingKind = ProductionSourceWorkOrderListingKind.RestoredCancelledAssignment };
     }
 
     private async Task<ProductionSourceWorkOrderRow?> ResolveSourceWorkOrderTemplateAsync(
@@ -635,7 +838,7 @@ public sealed partial class ProductionService
         if (cancelledMaterials.Count == 0)
             return false;
 
-        var cancellable = await BuildCancellableRemainingQuantitiesAsync(branch, row, ct);
+        var cancellable = await BuildCancellableRemainingQuantitiesAsync(branch, row, null, null, ct);
         return cancellable.Count == 0;
     }
 

@@ -29,11 +29,16 @@ internal static class ProductionTransferSourceLocationExclusions
 
         var warehouseIds=new[]{header.SourceWarehouseId,header.TargetWarehouseId}.Distinct().ToArray();
         var defaults=await uow.Repository<WarehouseEntity>().Query()
-            .Where(x=>warehouseIds.Contains(x.Id)&&x.DefaultProductionTransferLocationId.HasValue)
-            .Select(x=>x.DefaultProductionTransferLocationId!.Value)
+            .Where(x=>warehouseIds.Contains(x.Id))
+            .Select(x=>new{x.DefaultProductionTransferLocationId,x.ProductionPickingStagingLocationId})
             .ToListAsync(ct);
-        foreach(var locationId in defaults)
-            excluded.Add(locationId);
+        foreach(var row in defaults)
+        {
+            if(row.DefaultProductionTransferLocationId.HasValue)
+                excluded.Add(row.DefaultProductionTransferLocationId.Value);
+            if(row.ProductionPickingStagingLocationId.HasValue)
+                excluded.Add(row.ProductionPickingStagingLocationId.Value);
+        }
         return excluded;
     }
 
@@ -43,11 +48,16 @@ internal static class ProductionTransferSourceLocationExclusions
         var excluded=FromTransfer(transfer);
         var warehouseIds=new[]{transfer.SourceWarehouseId,transfer.TargetWarehouseId}.Distinct().ToArray();
         var defaults=await uow.Repository<WarehouseEntity>().Query()
-            .Where(x=>warehouseIds.Contains(x.Id)&&x.DefaultProductionTransferLocationId.HasValue)
-            .Select(x=>x.DefaultProductionTransferLocationId!.Value)
+            .Where(x=>warehouseIds.Contains(x.Id))
+            .Select(x=>new{x.DefaultProductionTransferLocationId,x.ProductionPickingStagingLocationId})
             .ToListAsync(ct);
-        foreach(var locationId in defaults)
-            excluded.Add(locationId);
+        foreach(var row in defaults)
+        {
+            if(row.DefaultProductionTransferLocationId.HasValue)
+                excluded.Add(row.DefaultProductionTransferLocationId.Value);
+            if(row.ProductionPickingStagingLocationId.HasValue)
+                excluded.Add(row.ProductionPickingStagingLocationId.Value);
+        }
         return excluded;
     }
 

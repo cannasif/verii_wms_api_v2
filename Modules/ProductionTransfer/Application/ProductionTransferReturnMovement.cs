@@ -65,35 +65,55 @@ internal static class ProductionTransferReturnMovement
         if (activeLines.Length == 0)
             throw AppException.BadRequest("İade edilecek satır bulunmuyor.");
 
+        var openLines = activeLines
+            .Where(x => x.ProcessedQuantity + 0.0001m < x.PlannedQuantity)
+            .ToArray();
+        if (openLines.Length == 0)
+            throw AppException.BadRequest("İade edilecek açık satır bulunmuyor.");
+
         var selectionByTaskLine = selections
             .GroupBy(x => x.TaskLineId)
             .ToDictionary(x => x.Key, x => x.Last().TargetLocationId);
 
-        if (selectionByTaskLine.Count != activeLines.Length)
-            throw AppException.BadRequest("Her iade satırı için hedef raf seçilmelidir.");
+        if (selectionByTaskLine.Count != openLines.Length)
+            throw AppException.BadRequest("Her açık iade satırı için hedef raf seçilmelidir.");
 
-        var locationIds = selectionByTaskLine.Values.Distinct().ToArray();
-        var locations = await uow.Repository<WarehouseLocation>().Query()
-            .Where(x => locationIds.Contains(x.Id)
-                && x.WarehouseId == task.Header.SourceWarehouseId
-                && x.IsActive
-                && x.IsPickable)
-            .ToDictionaryAsync(x => x.Id, ct);
-        var stagingLocationId = task.Header.SourceStagingLocationId;
-
-        foreach (var taskLine in activeLines)
+        foreach (var taskLine in openLines)
         {
             if (!selectionByTaskLine.TryGetValue(taskLine.Id, out var targetLocationId))
                 throw AppException.BadRequest($"{taskLine.Line.StockCodeSnapshot} için hedef raf seçilmedi.");
-            if (!locations.ContainsKey(targetLocationId))
-                throw AppException.BadRequest($"{taskLine.Line.StockCodeSnapshot} için seçilen raf bulunamadı, aktif değil veya toplanabilir değil.");
-            if (stagingLocationId.HasValue && targetLocationId == stagingLocationId.Value)
-                throw AppException.BadRequest($"{taskLine.Line.StockCodeSnapshot} için hedef raf bekleme rafı olamaz.");
-
-            taskLine.TargetLocationId = targetLocationId;
-            taskLine.UpdatedBy = actor;
-            taskLine.UpdatedDate = DateTime.UtcNow;
+            await ApplyLineTargetLocationAsync(uow, task, taskLine, targetLocationId, actor, ct);
         }
+    }
+
+    internal static async Task ApplyLineTargetLocationAsync(
+        IUnitOfWork uow,
+        WarehouseTransferTask task,
+        WarehouseTransferTaskLine taskLine,
+        long targetLocationId,
+        long actor,
+        CancellationToken ct)
+    {
+        if (targetLocationId <= 0)
+            throw AppException.BadRequest($"{taskLine.Line.StockCodeSnapshot} için hedef raf seçilmedi.");
+
+        var location = await uow.Repository<WarehouseLocation>().Query()
+            .AnyAsync(x => x.Id == targetLocationId
+                && x.WarehouseId == task.Header.SourceWarehouseId
+                && x.IsActive
+                && x.IsPickable, ct);
+        if (!location)
+            throw AppException.BadRequest($"{taskLine.Line.StockCodeSnapshot} için seçilen raf bulunamadı, aktif değil veya toplanabilir değil.");
+
+        var stagingLocationId = taskLine.SourceLocationId
+            ?? ResolveStagingLocationId(task.Header, taskLine.Line)
+            ?? task.Header.SourceStagingLocationId;
+        if (stagingLocationId.HasValue && targetLocationId == stagingLocationId.Value)
+            throw AppException.BadRequest($"{taskLine.Line.StockCodeSnapshot} için hedef raf bekleme rafı olamaz.");
+
+        taskLine.TargetLocationId = targetLocationId;
+        taskLine.UpdatedBy = actor;
+        taskLine.UpdatedDate = DateTime.UtcNow;
     }
 
     internal static void ApplyReturnedRouteLocations(WarehouseTransferTask task, long actor)

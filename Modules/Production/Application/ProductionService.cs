@@ -100,7 +100,9 @@ public sealed partial class ProductionService(
             cancellationRemainders,
             boundedTake,
             assignmentSnapshot);
+        var restoredWorkOrderNumbers = await LoadRestoredCancelledWorkOrderNumbersAsync(branch, ct);
         return merged
+            .Select(row => ApplyRestoredCancelledListingKind(row, restoredWorkOrderNumbers))
             .Select(row =>
             {
                 if (row.ListingKind == ProductionSourceWorkOrderListingKind.CancellationReturnRemainder
@@ -661,6 +663,10 @@ public sealed partial class ProductionService(
             : await PrepareWmsSourceWorkOrderAsync(workOrderNumber, branch, setting.SourceSystemCode, ct);
     }
 
+    private sealed record CancellationReturnRemainderMaterialSplit(
+        IReadOnlyList<PreparedNetsisProductionMaterial> Remaining,
+        IReadOnlyList<PreparedNetsisProductionMaterial> Assigned);
+
     private async Task<PreparedNetsisProductionWorkOrder> PrepareCancellationReturnRemainderWorkOrderAsync(
         string workOrderNumber,
         ProductionOrderSourceType sourceType,
@@ -671,6 +677,59 @@ public sealed partial class ProductionService(
         CancellationToken ct)
     {
         var normalizedWorkOrder = workOrderNumber.Trim();
+        var basePrepared = sourceType == ProductionOrderSourceType.NetsisErpFunctions
+            ? await PrepareNetsisWorkOrderAsync(normalizedWorkOrder, branch, ct)
+            : await PrepareWmsSourceWorkOrderAsync(
+                normalizedWorkOrder,
+                branch,
+                sourceSystemCode ?? throw AppException.BadRequest("Kaynak sistem kodu zorunludur."),
+                ct);
+
+        var split = await ResolveCancellationReturnRemainderMaterialSplitAsync(
+            branch,
+            new ProductionSourceWorkOrderRow(
+                sourceType,
+                sourceSystemCode ?? basePrepared.SourceSystemCode,
+                1,
+                normalizedWorkOrder,
+                basePrepared.BranchCode,
+                basePrepared.ProductCode,
+                basePrepared.ProductName,
+                basePrepared.ConfigurationCode,
+                basePrepared.PlannedQuantity,
+                basePrepared.UnitCode,
+                basePrepared.Materials.Count + basePrepared.AssignedMaterials.Count,
+                basePrepared.WorkOrderDate,
+                basePrepared.DeliveryDate,
+                basePrepared.ProjectCode,
+                basePrepared.TargetWarehouseCode,
+                basePrepared.SourceWarehouseCode,
+                basePrepared.IsClosed),
+            transferId,
+            kalanTaskId,
+            ct);
+
+        if (split.Remaining.Count == 0 && split.Assigned.Count == 0)
+            throw AppException.Conflict("İptal kalanı için atanabilir malzeme satırı bulunamadı.");
+
+        return basePrepared with
+        {
+            Materials = split.Remaining,
+            AssignedMaterials = split.Assigned,
+            ListingKind = ProductionSourceWorkOrderListingKind.CancellationReturnRemainder,
+            TransferId = transferId,
+            KalanTaskId = kalanTaskId,
+        };
+    }
+
+    private async Task<CancellationReturnRemainderMaterialSplit> ResolveCancellationReturnRemainderMaterialSplitAsync(
+        string branch,
+        ProductionSourceWorkOrderRow templateRow,
+        long transferId,
+        long kalanTaskId,
+        CancellationToken ct)
+    {
+        var normalizedWorkOrder = templateRow.WorkOrderNumber.Trim();
         var contexts = ProductionSourceWorkOrderAssignmentFilter.ProductionContexts;
         var link = await uow.Repository<ProductionTransferHeaderLink>().Query()
             .AsNoTracking()
@@ -696,35 +755,7 @@ public sealed partial class ProductionService(
         if (!ProductionWorkOrderTransferGrouping.IsPostCancellationReturnUnassignedPickTask(kalanTask, tasks))
             throw AppException.Conflict("Seçilen görev aktif bir iptal kalanı toplama görevi değildir.");
 
-        var basePrepared = sourceType == ProductionOrderSourceType.NetsisErpFunctions
-            ? await PrepareNetsisWorkOrderAsync(normalizedWorkOrder, branch, ct)
-            : await PrepareWmsSourceWorkOrderAsync(
-                normalizedWorkOrder,
-                branch,
-                sourceSystemCode ?? throw AppException.BadRequest("Kaynak sistem kodu zorunludur."),
-                ct);
-
-        var recipeByKey = (await LoadFullRecipeMaterialsAsync(
-                new ProductionSourceWorkOrderRow(
-                    sourceType,
-                    sourceSystemCode ?? basePrepared.SourceSystemCode,
-                    1,
-                    normalizedWorkOrder,
-                    basePrepared.BranchCode,
-                    basePrepared.ProductCode,
-                    basePrepared.ProductName,
-                    basePrepared.ConfigurationCode,
-                    basePrepared.PlannedQuantity,
-                    basePrepared.UnitCode,
-                    basePrepared.Materials.Count + basePrepared.AssignedMaterials.Count,
-                    basePrepared.WorkOrderDate,
-                    basePrepared.DeliveryDate,
-                    basePrepared.ProjectCode,
-                    basePrepared.TargetWarehouseCode,
-                    basePrepared.SourceWarehouseCode,
-                    basePrepared.IsClosed),
-                branch,
-                ct))
+        var recipeByKey = (await LoadFullRecipeMaterialsAsync(templateRow, branch, ct))
             .ToDictionary(
                 material => ProductionWorkOrderMaterialAssignment.CreateKey(
                     material.StockId,
@@ -803,16 +834,34 @@ public sealed partial class ProductionService(
         }
 
         if (kalanMaterials.Count == 0)
-            throw AppException.Conflict("İptal kalanı için atanabilir malzeme satırı bulunamadı.");
+            return new CancellationReturnRemainderMaterialSplit([], []);
 
-        return basePrepared with
-        {
-            Materials = kalanMaterials,
-            AssignedMaterials = [],
-            ListingKind = ProductionSourceWorkOrderListingKind.CancellationReturnRemainder,
-            TransferId = transferId,
-            KalanTaskId = kalanTaskId,
-        };
+        var candidateWorkOrderSet = new HashSet<string>([normalizedWorkOrder], StringComparer.OrdinalIgnoreCase);
+        var assignmentLinks = await LoadProductionTransferLinksForWorkOrdersAsync(branch, [normalizedWorkOrder], ct);
+        var assignedMaterials = AggregateAssignedMaterialQuantitiesExcludingHeader(
+            assignmentLinks,
+            normalizedWorkOrder,
+            candidateWorkOrderSet,
+            transferId);
+        var openManualAssignments = AggregateOpenManualAssignmentQuantitiesExcludingHeader(
+            assignmentLinks,
+            normalizedWorkOrder,
+            candidateWorkOrderSet,
+            transferId);
+        var partialTransferRemainders = AggregatePartialTransferRemainderQuantitiesExcludingHeader(
+            assignmentLinks,
+            normalizedWorkOrder,
+            candidateWorkOrderSet,
+            transferId,
+            openManualAssignments);
+        var cancelledMaterials = await LoadCancelledMaterialQuantitiesAsync(branch, normalizedWorkOrder, ct);
+        var splitMaterials = ProductionWorkOrderMaterialAssignment.SplitByAssignedCoverage(kalanMaterials, assignedMaterials);
+        var reclassified = ApplyPartialTransferRemainderReclassification(kalanMaterials, splitMaterials, partialTransferRemainders);
+        var remainingMaterials = ProductionWorkOrderMaterialAssignment.SubtractCancelledQuantities(
+            reclassified.Remaining,
+            cancelledMaterials);
+
+        return new CancellationReturnRemainderMaterialSplit(remainingMaterials, reclassified.Assigned);
     }
 
     private static PreparedNetsisProductionMaterial ScalePreparedMaterialQuantity(

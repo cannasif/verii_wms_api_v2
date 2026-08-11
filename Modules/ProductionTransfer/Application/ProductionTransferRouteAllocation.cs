@@ -220,6 +220,16 @@ internal static class ProductionTransferRouteAllocation
     internal static HashSet<long> GetRouteRefreshExcludedSourceLocationIds(long? currentSourceLocationId) =>
         currentSourceLocationId.HasValue ? [currentSourceLocationId.Value] : [];
 
+    internal static HashSet<long> BuildRouteRefreshExcludedLocationIds(
+        long? currentSourceLocationId,
+        IEnumerable<long> headerExcludedLocationIds)
+    {
+        var excluded = new HashSet<long>(headerExcludedLocationIds);
+        if (currentSourceLocationId.HasValue)
+            excluded.Add(currentSourceLocationId.Value);
+        return excluded;
+    }
+
     /// <summary>
     /// Rota güncellemede kullanıcının seçtiği miktarlar kaynak rafın tamamını karşılamıyorsa,
     /// kalan miktarı mevcut kaynak rafa ilk parça olarak ekler; böylece orijinal satır orada kalır.
