@@ -6,6 +6,8 @@ namespace verii_wms_api_v2.Modules.NetsisRead.Application;
 
 public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INetsisReadService
 {
+    private const int ProductionRecipeBatchSize = 500;
+
     public async Task<IReadOnlyList<BranchDto>> GetBranchesAsync(int? branchNo, CancellationToken ct) =>
         await queryExecutor.QueryAsync<BranchDto>("RII_FN_BRANCHES", "SELECT * FROM dbo.RII_FN_BRANCHES(@branchNo)", r => new BranchDto(Get<short>(r, "SUBE_KODU"), NullableString(r, "UNVAN")), ct, Parameter("@branchNo", branchNo));
 
@@ -253,19 +255,76 @@ public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INet
         return await queryExecutor.QueryAsync<ProductionWorkOrderRecipeComponentDto>(
             "RII_FN_ISEMRI_RECETE",
             "SELECT * FROM dbo.RII_FN_ISEMRI_RECETE(@workOrderNumber, @branchCode) ORDER BY OperasyonNo, BilesenStokKodu",
-            r => new ProductionWorkOrderRecipeComponentDto(
-                String(r, "IsEmriNo"), Nullable<int>(r, "SubeKodu"), String(r, "MamulKodu"), String(r, "MamulAdi"),
-                NullableString(r, "YapilandirmaKodu"), Get<decimal>(r, "IsEmriMiktari"), NullableString(r, "MamulBirimKodu"),
-                Get<decimal>(r, "ReceteToplami"), String(r, "BilesenStokKodu"), NullableString(r, "BilesenStokAdi"),
-                NullableString(r, "BilesenBirimKodu"), NullableString(r, "BilesenYapilandirmaKodu"), Get<int>(r, "OperasyonNo"),
-                Get<decimal>(r, "ReceteMiktari"), Get<decimal>(r, "BirMamulIcinMiktar"), Get<decimal>(r, "FireDegeri"),
-                Get<decimal>(r, "SabitFireMiktari"), Get<bool>(r, "MiktarSabit"), Get<decimal>(r, "BazIhtiyacMiktari"),
-                Get<decimal>(r, "DegiskenFireMiktari"),
-                Get<decimal>(r, "ToplamIhtiyacMiktari")),
+            MapProductionWorkOrderRecipe,
             ct,
             Parameter("@workOrderNumber", workOrderNumber),
             Parameter("@branchCode", branchCode));
     }
+
+    public async Task<IReadOnlyList<ProductionWorkOrderRecipeComponentDto>> GetProductionWorkOrderRecipesAsync(
+        IReadOnlyCollection<string> workOrderNumbers,
+        int branchCode,
+        CancellationToken ct)
+    {
+        ArgumentNullException.ThrowIfNull(workOrderNumbers);
+
+        var normalized = workOrderNumbers
+            .Select(Normalize)
+            .Where(workOrderNumber => workOrderNumber is not null)
+            .Select(workOrderNumber => workOrderNumber!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (normalized.Length == 0)
+            return [];
+
+        var result = new List<ProductionWorkOrderRecipeComponentDto>();
+        foreach (var batch in normalized.Chunk(ProductionRecipeBatchSize))
+        {
+            var workOrderParameters = batch
+                .Select((workOrderNumber, index) =>
+                    new SqlParameter($"@workOrderNumber{index}", System.Data.SqlDbType.NVarChar, 100)
+                    {
+                        Value = workOrderNumber
+                    })
+                .ToArray();
+            var values = string.Join(", ", workOrderParameters.Select(parameter => $"({parameter.ParameterName})"));
+            var sql = $"""
+                WITH RequestedWorkOrders (WorkOrderNumber) AS
+                (
+                    SELECT WorkOrderNumber
+                    FROM (VALUES {values}) AS Requested(WorkOrderNumber)
+                )
+                SELECT Recipe.*
+                FROM RequestedWorkOrders AS Requested
+                CROSS APPLY dbo.RII_FN_ISEMRI_RECETE(Requested.WorkOrderNumber, @branchCode) AS Recipe
+                ORDER BY Recipe.IsEmriNo, Recipe.OperasyonNo, Recipe.BilesenStokKodu
+                """;
+            var parameters = workOrderParameters
+                .Cast<SqlParameter>()
+                .Append(Parameter("@branchCode", branchCode))
+                .ToArray();
+
+            var rows = await queryExecutor.QueryAsync<ProductionWorkOrderRecipeComponentDto>(
+                "RII_FN_ISEMRI_RECETE_BATCH",
+                sql,
+                MapProductionWorkOrderRecipe,
+                ct,
+                parameters);
+            result.AddRange(rows);
+        }
+
+        return result;
+    }
+
+    private static ProductionWorkOrderRecipeComponentDto MapProductionWorkOrderRecipe(SqlDataReader r) =>
+        new(
+            String(r, "IsEmriNo"), Nullable<int>(r, "SubeKodu"), String(r, "MamulKodu"), String(r, "MamulAdi"),
+            NullableString(r, "YapilandirmaKodu"), Get<decimal>(r, "IsEmriMiktari"), NullableString(r, "MamulBirimKodu"),
+            Get<decimal>(r, "ReceteToplami"), String(r, "BilesenStokKodu"), NullableString(r, "BilesenStokAdi"),
+            NullableString(r, "BilesenBirimKodu"), NullableString(r, "BilesenYapilandirmaKodu"), Get<int>(r, "OperasyonNo"),
+            Get<decimal>(r, "ReceteMiktari"), Get<decimal>(r, "BirMamulIcinMiktar"), Get<decimal>(r, "FireDegeri"),
+            Get<decimal>(r, "SabitFireMiktari"), Get<bool>(r, "MiktarSabit"), Get<decimal>(r, "BazIhtiyacMiktari"),
+            Get<decimal>(r, "DegiskenFireMiktari"), Get<decimal>(r, "ToplamIhtiyacMiktari"));
 
     private static SqlParameter Parameter(string name, object? value) => new(name, value ?? DBNull.Value);
     private static string? Normalize(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();

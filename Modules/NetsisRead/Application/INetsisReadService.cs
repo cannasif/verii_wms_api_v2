@@ -36,4 +36,8 @@ public interface INetsisReadService
         string workOrderNumber,
         int branchCode,
         CancellationToken cancellationToken);
+    Task<IReadOnlyList<ProductionWorkOrderRecipeComponentDto>> GetProductionWorkOrderRecipesAsync(
+        IReadOnlyCollection<string> workOrderNumbers,
+        int branchCode,
+        CancellationToken cancellationToken);
 }

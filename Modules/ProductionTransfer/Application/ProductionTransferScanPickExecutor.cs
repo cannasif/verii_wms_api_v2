@@ -5,7 +5,6 @@ using verii_wms_api_v2.Modules.BarcodeDesigner.Application;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Production.Application;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
-using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.StockTracking.Application;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
@@ -456,8 +455,6 @@ internal sealed class ProductionTransferScanPickExecutor(
             return true;
         }, ct);
 
-        await PreloadPickBalancesAsync(aggregate.Header, line, sourceLocationId, waitingLocationId, ct);
-
         await operations.PickAsync(transferId, new(
             idempotencyKey,
             [new(line.Id, quantity, sourceLocationId, waitingLocationId, resolved.LotNo, resolved.SerialNo, maxPickQuantity)],
@@ -544,21 +541,6 @@ internal sealed class ProductionTransferScanPickExecutor(
             throw AppException.Conflict("Onay bekleyen toplama miktarı istekle uyuşmuyor.");
         if (request.SourceLocationId.HasValue && request.SourceLocationId.Value != pending.SourceLocationId)
             throw AppException.Conflict("Onay bekleyen toplama kaynak rafı istekle uyuşmuyor.");
-    }
-
-    private async Task PreloadPickBalancesAsync(
-        WarehouseTransferHeader header,
-        WarehouseTransferLine line,
-        long sourceLocationId,
-        long targetLocationId,
-        CancellationToken ct)
-    {
-        var locationIds = new[] { sourceLocationId, targetLocationId };
-        _ = await uow.Repository<LocationStockBalance>().Query(tracking: true)
-            .Where(x => x.WarehouseId == header.SourceWarehouseId
-                && x.StockId == line.StockId
-                && locationIds.Contains(x.LocationId))
-            .ToListAsync(ct);
     }
 
     private async Task<ProductionTransferScanPickResult> BuildReplayResultAsync(

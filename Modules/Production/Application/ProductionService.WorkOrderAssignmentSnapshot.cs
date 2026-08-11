@@ -3,6 +3,7 @@ using verii_wms_api_v2.Modules.Production.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Application;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
+using verii_wms_api_v2.Shared.Application.Exceptions;
 using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
 using YapCodeEntity = verii_wms_api_v2.Modules.YapCode.Domain.YapCode;
 
@@ -10,6 +11,16 @@ namespace verii_wms_api_v2.Modules.Production.Application;
 
 public sealed partial class ProductionService
 {
+    private sealed record RawProductionRecipeMaterial(
+        string StockCode,
+        string? StockName,
+        string? UnitCode,
+        string? ConfigurationCode,
+        int OperationNumber,
+        decimal RecipeQuantity,
+        decimal WasteQuantity,
+        decimal RequiredQuantity);
+
     private sealed class WorkOrderAssignmentSnapshot
     {
         private readonly HashSet<string> _withTransfers;
@@ -277,6 +288,7 @@ public sealed partial class ProductionService
             .Include(x => x.WarehouseTransferHeader)
                 .ThenInclude(header => header.Tasks.Where(task => !task.IsDeleted))
                     .ThenInclude(task => task.Assignments)
+            .AsSplitQuery()
             .ToListAsync(ct);
     }
 
@@ -315,37 +327,62 @@ public sealed partial class ProductionService
         IReadOnlyList<ProductionSourceWorkOrderRow> rows,
         CancellationToken ct)
     {
-        var result = new Dictionary<string, IReadOnlyList<PreparedNetsisProductionMaterial>>(StringComparer.OrdinalIgnoreCase);
-        if (rows.Count == 0)
-            return result;
+        var distinctRows = rows
+            .Where(row => !string.IsNullOrWhiteSpace(row.WorkOrderNumber))
+            .GroupBy(row => row.WorkOrderNumber.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .ToArray();
+        if (distinctRows.Length == 0)
+            return new Dictionary<string, IReadOnlyList<PreparedNetsisProductionMaterial>>(StringComparer.OrdinalIgnoreCase);
 
-        var wmsRows = rows
+        var rawByWorkOrder = distinctRows.ToDictionary(
+            row => row.WorkOrderNumber.Trim(),
+            _ => (IReadOnlyList<RawProductionRecipeMaterial>)[],
+            StringComparer.OrdinalIgnoreCase);
+
+        var wmsRows = distinctRows
             .Where(row => row.SourceType == ProductionOrderSourceType.WmsIntegrationTables)
             .ToArray();
         if (wmsRows.Length > 0)
         {
-            foreach (var (workOrderNumber, materials) in await LoadWmsRecipeMaterialsByWorkOrderAsync(branch, wmsRows, ct))
-                result[workOrderNumber] = materials;
+            foreach (var (workOrderNumber, materials) in await LoadWmsRawRecipeMaterialsByWorkOrderAsync(branch, wmsRows, ct))
+                rawByWorkOrder[workOrderNumber] = materials;
         }
 
-        var netsisRows = rows
+        var netsisRows = distinctRows
             .Where(row => row.SourceType != ProductionOrderSourceType.WmsIntegrationTables)
-            .GroupBy(row => row.WorkOrderNumber.Trim(), StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.First())
             .ToArray();
         if (netsisRows.Length > 0)
         {
-            foreach (var row in netsisRows)
+            if (!int.TryParse(branch, out var branchNumber))
+                throw AppException.BadRequest("Oturum şube kodu sayısal değildir.");
+
+            var workOrderNumbers = netsisRows.Select(row => row.WorkOrderNumber.Trim()).ToArray();
+            var recipeRows = await netsisRead.GetProductionWorkOrderRecipesAsync(workOrderNumbers, branchNumber, ct);
+            foreach (var group in recipeRows.GroupBy(
+                         row => row.WorkOrderNumber.Trim(),
+                         StringComparer.OrdinalIgnoreCase))
             {
-                var materials = await LoadNetsisRecipeMaterialsAsync(row.WorkOrderNumber, branch, ct);
-                result[row.WorkOrderNumber.Trim()] = materials;
+                rawByWorkOrder[group.Key] = group
+                    .OrderBy(row => row.OperationNumber)
+                    .ThenBy(row => row.ComponentStockCode, StringComparer.OrdinalIgnoreCase)
+                    .Select(row => new RawProductionRecipeMaterial(
+                        row.ComponentStockCode,
+                        row.ComponentStockName,
+                        row.ComponentUnitCode,
+                        row.ComponentConfigurationCode,
+                        row.OperationNumber,
+                        row.RecipeQuantity,
+                        row.VariableWasteQuantity + row.FixedWasteQuantity,
+                        row.TotalRequiredQuantity))
+                    .ToArray();
             }
         }
 
-        return result;
+        return await MapRawRecipeMaterialsByWorkOrderAsync(branch, rawByWorkOrder, ct);
     }
 
-    private async Task<IReadOnlyDictionary<string, IReadOnlyList<PreparedNetsisProductionMaterial>>> LoadWmsRecipeMaterialsByWorkOrderAsync(
+    private async Task<IReadOnlyDictionary<string, IReadOnlyList<RawProductionRecipeMaterial>>> LoadWmsRawRecipeMaterialsByWorkOrderAsync(
         string branch,
         IReadOnlyList<ProductionSourceWorkOrderRow> rows,
         CancellationToken ct)
@@ -368,30 +405,65 @@ public sealed partial class ProductionService
                 && (x.Status == ProductionSourceOrderStatus.Ready || x.Status == ProductionSourceOrderStatus.Released))
             .ToListAsync(ct);
 
-        var latestSources = sources
-            .GroupBy(x => x.WorkOrderNumber.Trim(), StringComparer.OrdinalIgnoreCase)
-            .Select(group => group
+        var latestSources = rows
+            .Select(row => sources
+                .Where(source => string.Equals(
+                        source.WorkOrderNumber.Trim(),
+                        row.WorkOrderNumber.Trim(),
+                        StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(
+                        source.SourceSystemCode,
+                        row.SourceSystemCode,
+                        StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(source => source.RevisionNumber)
                 .ThenByDescending(source => source.SourceUpdatedAtUtc)
-                .First())
+                .FirstOrDefault())
+            .Where(source => source is not null)
+            .Select(source => source!)
             .Where(source => source.RecipeLines.Count > 0)
             .ToArray();
         if (latestSources.Length == 0)
-            return new Dictionary<string, IReadOnlyList<PreparedNetsisProductionMaterial>>(StringComparer.OrdinalIgnoreCase);
+            return new Dictionary<string, IReadOnlyList<RawProductionRecipeMaterial>>(StringComparer.OrdinalIgnoreCase);
 
-        var stockCodes = latestSources
-            .SelectMany(source => source.RecipeLines.Select(line => line.ComponentStockCode))
+        return latestSources.ToDictionary(
+            source => source.WorkOrderNumber.Trim(),
+            source => (IReadOnlyList<RawProductionRecipeMaterial>)source.RecipeLines
+                .OrderBy(line => line.LineNumber)
+                .Select(line => new RawProductionRecipeMaterial(
+                        line.ComponentStockCode,
+                        line.ComponentStockName,
+                        line.UnitCode,
+                        line.ComponentConfigurationCode,
+                        line.OperationNumber,
+                        line.RecipeQuantity,
+                        line.VariableWasteQuantity + line.FixedWasteQuantity,
+                        line.TotalRequiredQuantity))
+                .ToArray(),
+            StringComparer.OrdinalIgnoreCase);
+    }
+
+    private async Task<IReadOnlyDictionary<string, IReadOnlyList<PreparedNetsisProductionMaterial>>> MapRawRecipeMaterialsByWorkOrderAsync(
+        string branch,
+        IReadOnlyDictionary<string, IReadOnlyList<RawProductionRecipeMaterial>> rawByWorkOrder,
+        CancellationToken ct)
+    {
+        var allRows = rawByWorkOrder.Values.SelectMany(rows => rows).ToArray();
+        var stockCodes = allRows
+            .Select(row => row.StockCode)
+            .Where(code => !string.IsNullOrWhiteSpace(code))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
-        var stocks = await uow.Repository<StockEntity>().Query()
-            .Where(x => x.BranchCode == branch && stockCodes.Contains(x.ErpStockCode))
-            .ToListAsync(ct);
+        var stocks = stockCodes.Length == 0
+            ? []
+            : await uow.Repository<StockEntity>().Query()
+                .Where(stock => stock.BranchCode == branch && stockCodes.Contains(stock.ErpStockCode))
+                .ToListAsync(ct);
         var stockMap = stocks
-            .GroupBy(x => x.ErpStockCode, StringComparer.OrdinalIgnoreCase)
+            .GroupBy(stock => stock.ErpStockCode, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
 
-        var configurationCodes = latestSources
-            .SelectMany(source => source.RecipeLines.Select(line => line.ComponentConfigurationCode))
+        var configurationCodes = allRows
+            .Select(row => row.ConfigurationCode)
             .Where(code => !string.IsNullOrWhiteSpace(code))
             .Select(code => code!.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -399,39 +471,46 @@ public sealed partial class ProductionService
         var yapCodes = configurationCodes.Length == 0
             ? []
             : await uow.Repository<YapCodeEntity>().Query()
-                .Where(x => x.BranchCode == branch && configurationCodes.Contains(x.ConfigurationCode))
+                .Where(yapCode => yapCode.BranchCode == branch && configurationCodes.Contains(yapCode.ConfigurationCode))
                 .ToListAsync(ct);
+        var yapCodesByCode = yapCodes
+            .GroupBy(yapCode => yapCode.ConfigurationCode.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => group.OrderBy(yapCode => yapCode.Id).ToArray(),
+                StringComparer.OrdinalIgnoreCase);
 
-        long? ResolveYap(string? code, long? stockId) => string.IsNullOrWhiteSpace(code)
-            ? null
-            : yapCodes
-                .Where(x => string.Equals(x.ConfigurationCode, code.Trim(), StringComparison.OrdinalIgnoreCase))
-                .OrderByDescending(x => x.StockId == stockId)
-                .ThenBy(x => x.Id)
-                .Select(x => (long?)x.Id)
+        long? ResolveYap(string? code, long? stockId)
+        {
+            if (string.IsNullOrWhiteSpace(code)
+                || !yapCodesByCode.TryGetValue(code.Trim(), out var candidates))
+                return null;
+
+            return candidates
+                .OrderByDescending(candidate => candidate.StockId == stockId)
+                .ThenBy(candidate => candidate.Id)
+                .Select(candidate => (long?)candidate.Id)
                 .FirstOrDefault();
+        }
 
-        return latestSources.ToDictionary(
-            source => source.WorkOrderNumber.Trim(),
-            source => (IReadOnlyList<PreparedNetsisProductionMaterial>)source.RecipeLines
-                .OrderBy(line => line.LineNumber)
-                .Select(line =>
-                {
-                    stockMap.TryGetValue(line.ComponentStockCode, out var stock);
-                    return new PreparedNetsisProductionMaterial(
-                        stock?.Id,
-                        line.ComponentStockCode,
-                        line.ComponentStockName,
-                        stock?.BaseUnitCode ?? line.UnitCode,
-                        ResolveYap(line.ComponentConfigurationCode, stock?.Id),
-                        line.ComponentConfigurationCode,
-                        line.OperationNumber,
-                        line.RecipeQuantity,
-                        line.VariableWasteQuantity + line.FixedWasteQuantity,
-                        line.TotalRequiredQuantity,
-                        stock is null ? $"Bileşen stok WMS ERP aynasında bulunamadı: {line.ComponentStockCode}" : null);
-                })
-                .ToArray(),
+        return rawByWorkOrder.ToDictionary(
+            item => item.Key,
+            item => (IReadOnlyList<PreparedNetsisProductionMaterial>)item.Value.Select(row =>
+            {
+                stockMap.TryGetValue(row.StockCode, out var stock);
+                return new PreparedNetsisProductionMaterial(
+                    stock?.Id,
+                    row.StockCode,
+                    row.StockName,
+                    stock?.BaseUnitCode ?? row.UnitCode ?? "ADET",
+                    ResolveYap(row.ConfigurationCode, stock?.Id),
+                    row.ConfigurationCode,
+                    row.OperationNumber,
+                    row.RecipeQuantity,
+                    row.WasteQuantity,
+                    row.RequiredQuantity,
+                    stock is null ? $"Bileşen stok WMS ERP aynasında bulunamadı: {row.StockCode}" : null);
+            }).ToArray(),
             StringComparer.OrdinalIgnoreCase);
     }
 

@@ -64,18 +64,37 @@ public sealed partial class ProductionService(
                 query=query.Where(x=>x.WorkOrderNumber.Contains(term)||x.ProductCode.Contains(term)||
                     (x.ProductName!=null&&x.ProductName.Contains(term))||(x.ProjectCode!=null&&x.ProjectCode.Contains(term)));
             }
-            var candidates=await query.Include(x=>x.RecipeLines)
+            var candidates=await query.AsNoTracking()
                 .OrderByDescending(x=>x.SourceUpdatedAtUtc).ThenByDescending(x=>x.RevisionNumber)
-                .Take(Math.Min(1500,boundedTake*5)).ToListAsync(ct);
+                .Take(Math.Min(1500,boundedTake*5))
+                .Select(x=>new
+                {
+                    x.SourceSystemCode,
+                    x.RevisionNumber,
+                    x.WorkOrderNumber,
+                    x.ProductCode,
+                    x.ProductName,
+                    x.ConfigurationCode,
+                    x.PlannedQuantity,
+                    x.UnitCode,
+                    RecipeLineCount=x.RecipeLines.Count,
+                    x.WorkOrderDate,
+                    x.DeliveryDate,
+                    x.ProjectCode,
+                    x.TargetWarehouseCode,
+                    x.SourceWarehouseCode,
+                    x.SourceUpdatedAtUtc
+                })
+                .ToListAsync(ct);
             result.AddRange(candidates.GroupBy(x=>x.WorkOrderNumber,StringComparer.OrdinalIgnoreCase)
                 .Select(x=>x.OrderByDescending(v=>v.RevisionNumber).ThenByDescending(v=>v.SourceUpdatedAtUtc).First())
                 .Take(boundedTake)
                 .Select(x=>new ProductionSourceWorkOrderRow(
                     ProductionOrderSourceType.WmsIntegrationTables,x.SourceSystemCode,x.RevisionNumber,x.WorkOrderNumber,
                     branchNumber,x.ProductCode,x.ProductName??x.ProductCode,x.ConfigurationCode,x.PlannedQuantity,
-                    x.UnitCode,x.RecipeLines.Count,x.WorkOrderDate,x.DeliveryDate,x.ProjectCode,
+                    x.UnitCode,x.RecipeLineCount,x.WorkOrderDate,x.DeliveryDate,x.ProjectCode,
                     x.TargetWarehouseCode,x.SourceWarehouseCode,false,
-                    RecipeLineCount: x.RecipeLines.Count)));
+                    RecipeLineCount: x.RecipeLineCount)));
         }
 
         var ordered=result.OrderByDescending(x=>x.WorkOrderDate).ThenBy(x=>x.WorkOrderNumber)
@@ -165,6 +184,7 @@ public sealed partial class ProductionService(
             .Include(x => x.WarehouseTransferHeader)
                 .ThenInclude(h => h.Tasks.Where(task => !task.IsDeleted))
                     .ThenInclude(task => task.Assignments)
+            .AsSplitQuery()
             .OrderByDescending(x => x.WarehouseTransferHeader.UpdatedDate ?? x.WarehouseTransferHeader.CreatedDate)
             .Take(1000)
             .ToListAsync(ct);

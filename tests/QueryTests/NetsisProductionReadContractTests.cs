@@ -1,8 +1,11 @@
 using System.Text.Json;
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Migrations.Operations;
 using verii_wms_api_v2.Migrations;
+using verii_wms_api_v2.Modules.NetsisRead.Application;
 using verii_wms_api_v2.Modules.NetsisRead.Application.Dtos;
+using verii_wms_api_v2.Modules.NetsisRead.Infrastructure;
 using Xunit;
 
 namespace verii_wms_api_v2.QueryTests;
@@ -75,5 +78,63 @@ public sealed class NetsisProductionReadContractTests
 
         Assert.Equal(ReferentialAction.NoAction, foreignKey.OnDelete);
         Assert.Equal("DefaultGoodsReceiptLocationId", foreignKey.Columns.Single());
+    }
+
+    [Fact]
+    public async Task Work_order_recipes_are_read_in_one_parameterized_round_trip_for_the_list_page()
+    {
+        var executor = new CapturingNetsisQueryExecutor();
+        var service = new NetsisReadService(executor);
+        var workOrders = Enumerable.Range(1, 200)
+            .Select(index => $"IE-{index:0000}")
+            .Append("  ie-0001  ")
+            .ToArray();
+
+        var result = await service.GetProductionWorkOrderRecipesAsync(workOrders, 1, CancellationToken.None);
+
+        Assert.Empty(result);
+        var query = Assert.Single(executor.Queries);
+        Assert.Equal("RII_FN_ISEMRI_RECETE_BATCH", query.Operation);
+        Assert.Contains("CROSS APPLY dbo.RII_FN_ISEMRI_RECETE", query.Sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("IE-0001", query.Sql, StringComparison.Ordinal);
+        Assert.Equal(201, query.Parameters.Count);
+        Assert.Equal(200, query.Parameters.Count(parameter => parameter.ParameterName.StartsWith("@workOrderNumber", StringComparison.Ordinal)));
+        Assert.Single(query.Parameters, parameter => parameter.ParameterName == "@branchCode");
+    }
+
+    [Fact]
+    public async Task Work_order_recipe_batching_stays_below_the_sql_server_parameter_limit()
+    {
+        var executor = new CapturingNetsisQueryExecutor();
+        var service = new NetsisReadService(executor);
+        var workOrders = Enumerable.Range(1, 501).Select(index => $"IE-{index:0000}").ToArray();
+
+        await service.GetProductionWorkOrderRecipesAsync(workOrders, 1, CancellationToken.None);
+
+        Assert.Equal(2, executor.Queries.Count);
+        Assert.Equal(501, executor.Queries.Sum(query =>
+            query.Parameters.Count(parameter => parameter.ParameterName.StartsWith("@workOrderNumber", StringComparison.Ordinal))));
+        Assert.All(executor.Queries, query => Assert.True(query.Parameters.Count <= 501));
+    }
+
+    private sealed record CapturedQuery(
+        string Operation,
+        string Sql,
+        IReadOnlyList<SqlParameter> Parameters);
+
+    private sealed class CapturingNetsisQueryExecutor : INetsisQueryExecutor
+    {
+        public List<CapturedQuery> Queries { get; } = [];
+
+        public Task<List<T>> QueryAsync<T>(
+            string operation,
+            string sql,
+            Func<SqlDataReader, T> map,
+            CancellationToken cancellationToken,
+            params SqlParameter[] parameters)
+        {
+            Queries.Add(new CapturedQuery(operation, sql, parameters));
+            return Task.FromResult(new List<T>());
+        }
     }
 }

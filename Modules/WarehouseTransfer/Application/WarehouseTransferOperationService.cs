@@ -270,8 +270,6 @@ public sealed class WarehouseTransferOperationService(
             EnsurePhaseState(header, phase);
             if (phase == TransferPhase.Pick) EnsurePickerAssignment(header, actor, requestLines.Keys);
             ValidateQuantities(header, lines, requestLines, phase);
-            if (phase == TransferPhase.Pick)
-                await PreloadPickMovementBalancesAsync(header, lines, requestLines, token);
             await ValidateSerialSourceBalancesAsync(header, lines, requestLines, phase, token);
             ApplyShipmentInfo(header, request, phase);
             if (phase == TransferPhase.Pick)
@@ -489,32 +487,6 @@ public sealed class WarehouseTransferOperationService(
         if (phase == TransferPhase.Receive && !header.AllowPartialReceipt
             && phaseTotal < header.Lines.Sum(x => x.ShippedQuantity))
             throw AppException.Conflict("Transfer politikası kısmi kabule izin vermiyor.");
-    }
-
-    private async Task PreloadPickMovementBalancesAsync(
-        WarehouseTransferHeader header,
-        IReadOnlyCollection<WarehouseTransferLine> lines,
-        IReadOnlyDictionary<long, WarehouseTransferOperationLineRequest> requests,
-        CancellationToken ct)
-    {
-        var stockIds = lines.Select(x => x.StockId).Distinct().ToArray();
-        var locationIds = lines
-            .Select(line =>
-            {
-                var item = requests[line.Id];
-                return item.SourceLocationId ?? line.DefaultSourceLocationId ?? header.SourceStagingLocationId;
-            })
-            .Where(x => x.HasValue)
-            .Select(x => x!.Value)
-            .Distinct()
-            .ToArray();
-        if (stockIds.Length == 0 || locationIds.Length == 0) return;
-
-        _ = await uow.Repository<LocationStockBalance>().Query(tracking: true)
-            .Where(x => x.WarehouseId == header.SourceWarehouseId
-                && stockIds.Contains(x.StockId)
-                && locationIds.Contains(x.LocationId))
-            .ToListAsync(ct);
     }
 
     private async Task ValidateSerialSourceBalancesAsync(
