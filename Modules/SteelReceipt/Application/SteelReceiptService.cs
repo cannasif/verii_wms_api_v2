@@ -10,6 +10,7 @@ using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.SteelReceipt.Domain;
 using verii_wms_api_v2.Modules.VehicleCheckIn.Domain;
+using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Application;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
 using verii_wms_api_v2.Shared;
@@ -406,24 +407,46 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             const int positionNo=1;
             if(await uow.Repository<SteelReceiptPlacement>().AnyAsync(x=>x.LocationId==request.LocationId&&x.RowNo==rowNo&&x.PositionNo==positionNo&&x.StackOrderNo==stackOrder,token))
                 throw AppException.Conflict("Seçilen SAC yerleşim koordinatı dolu.");
-            var status=await uow.Repository<GoodsReceiptExecutionLine>().Query().Where(x=>x.GrLineId==line.GoodsReceiptLineId)
-                .OrderByDescending(x=>x.Id).Select(x=>x.StockStatus).FirstOrDefaultAsync(token);
-            if(status is null)throw AppException.Conflict("Fiziksel mal kabul tamamlanmadan yerleştirme yapılamaz.");
-            if(!string.Equals(status,"Available",StringComparison.OrdinalIgnoreCase))throw AppException.Conflict("Kalite bekleyen levha yerleştirilemez.");
-            var movement=await stockMovement.PostAsync(new PostStockMovementRequest($"STEEL-PUTAWAY:{line.Id}:{request.IdempotencyKey:N}",
-                StockMovementTypes.Transfer,"SteelReceipt",line.DCode,line.Id,DateTime.UtcNow,"SteelPutaway",null,
-                [new StockMovementLineRequest(line.StockId,line.YapCodeId,line.ApprovedQuantity,line.TargetWarehouseId,line.ReceivingLocationId,
-                    line.TargetWarehouseId,dest.Id,line.UnitCode,line.HeatNumber,line.SupplierSerialNo,
-                    "Available","Available","Available")]),token);
+            var execution=await uow.Repository<GoodsReceiptExecutionLine>().Query().Where(x=>x.GrLineId==line.GoodsReceiptLineId)
+                .OrderByDescending(x=>x.Id)
+                .Select(x=>new SteelPutawayExecutionSnapshot(x.StockId,x.YapCodeId,x.UnitCode,x.LotNo,x.SerialNo,
+                    x.WarehouseId,x.LocationId,x.StockStatus,x.Execution.StockMovementOperationId))
+                .FirstOrDefaultAsync(token);
+            if(execution is null)throw AppException.Conflict("Fiziksel mal kabul tamamlanmadan yerleştirme yapılamaz.");
+            if(!string.Equals(execution.StockStatus,"Available",StringComparison.OrdinalIgnoreCase))throw AppException.Conflict("Kalite bekleyen levha yerleştirilemez.");
+            var sourceSerial=ResolvePutawaySerial(line,execution.SerialNo);
+            var sourceLot=string.IsNullOrWhiteSpace(execution.LotNo)?null:execution.LotNo.Trim();
+            var sourceStockId=execution.StockId>0?execution.StockId:line.StockId;
+            var serialKeys=new[]{sourceSerial,sourceSerial.ToUpperInvariant()}.Distinct(StringComparer.Ordinal).ToArray();
+            var lotKeys=new[]{sourceLot??string.Empty,(sourceLot??string.Empty).ToUpperInvariant()}.Distinct(StringComparer.Ordinal).ToArray();
+            var balanceRows=await uow.Repository<LocationStockBalance>().Query()
+                .Where(x=>x.StockId==sourceStockId&&x.StockStatus=="Available"&&x.AvailableQuantity>=line.ApprovedQuantity
+                    &&serialKeys.Contains(x.SerialNo)&&lotKeys.Contains(x.LotNo))
+                .Select(x=>new SteelPutawayBalanceCandidate(x.WarehouseId,x.LocationId,x.StockId,x.YapCodeId,x.UnitCode,
+                    x.LotNo,x.SerialNo,x.AvailableQuantity))
+                .ToListAsync(token);
+            var source=ResolvePutawayInventorySource(line,execution,balanceRows,dest.WarehouseId,dest.Id);
+            long movementOperationId;var replayed=false;
+            if(source.RequiresTransfer)
+            {
+                var movement=await stockMovement.PostAsync(new PostStockMovementRequest($"STEEL-PUTAWAY:{line.Id}:{request.IdempotencyKey:N}",
+                    StockMovementTypes.Transfer,"SteelReceipt",line.DCode,line.Id,DateTime.UtcNow,"SteelPutaway",null,
+                    [new StockMovementLineRequest(source.StockId,source.YapCodeId,line.ApprovedQuantity,source.WarehouseId,source.LocationId,
+                        dest.WarehouseId,dest.Id,source.UnitCode,source.LotNo,source.SerialNo,
+                        "Available","Available","Available")]),token);
+                movementOperationId=movement.OperationId;replayed=movement.IsReplay;
+            }
+            else movementOperationId=execution.ReceiptMovementOperationId
+                ??throw AppException.Conflict("Levha zaten hedef rafta ancak mal kabul stok hareketi bulunamadı.");
             var placement=Stamp(new SteelReceiptPlacement{BranchCode=line.BranchCode,PlanLine=line,WarehouseId=line.TargetWarehouseId,
                 LocationId=dest.Id,PlacementType=SteelPlacementType.Stacked,RowNo=rowNo,PositionNo=positionNo,StackOrderNo=stackOrder,
-                StockMovementOperationId=movement.OperationId,PlacedAtUtc=DateTimeOffset.UtcNow,PlacedBy=actor},actor);
+                StockMovementOperationId=movementOperationId,PlacedAtUtc=DateTimeOffset.UtcNow,PlacedBy=actor},actor);
             await uow.Repository<SteelReceiptPlacement>().AddAsync(placement,token);line.PutawayStatus=SteelPutawayStatus.Placed;
             line.UpdatedBy=actor;line.UpdatedDate=DateTime.UtcNow;await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("steel-receipt.place",nameof(SteelReceiptPlanLine),line.Id.ToString(),"Succeeded","steel-receipt",
-                NewValues:new{placement.LocationId,placement.PlacementType,placement.RowNo,placement.PositionNo,placement.StackOrderNo,movement.OperationId},
+                NewValues:new{placement.LocationId,placement.PlacementType,placement.RowNo,placement.PositionNo,placement.StackOrderNo,movementOperationId},
                 ChangedFields:["Placement","StockMovement"]),token);
-            return new(placement.Id,movement.OperationId,movement.IsReplay,placement.LocationId,placement.PlacementType,
+            return new(placement.Id,movementOperationId,replayed,placement.LocationId,placement.PlacementType,
                 rowNo,positionNo,stackOrder);
         },ct,IsolationLevel.Serializable);
     }
@@ -621,6 +644,43 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             :$"SAC {line.DCode} · Seri {serialNo} · Isı {line.HeatNumber.Trim()}";
         return new ManualGoodsReceiptLineRequest(line.StockId,line.YapCodeId,line.ApprovedQuantity,line.UnitCode,null,serialNo,
             null,null,null,null,Clean(description,1000),line.TargetWarehouseId,line.ReceivingLocationId);
+    }
+
+    internal static string NormalizeInventoryPart(string? value)=>(value??string.Empty).Trim().ToUpperInvariant();
+
+    internal static string ResolvePutawaySerial(SteelReceiptPlanLine line,string? executionSerial)=>
+        string.IsNullOrWhiteSpace(executionSerial)
+            ?(string.IsNullOrWhiteSpace(line.SupplierSerialNo)?line.DCode:line.SupplierSerialNo.Trim())
+            :executionSerial.Trim();
+
+    internal static SteelPutawayInventorySource ResolvePutawayInventorySource(
+        SteelReceiptPlanLine line,
+        SteelPutawayExecutionSnapshot execution,
+        IReadOnlyList<SteelPutawayBalanceCandidate> balances,
+        long destinationWarehouseId,
+        long destinationLocationId)
+    {
+        var stockId=execution.StockId>0?execution.StockId:line.StockId;
+        var yapCodeId=execution.YapCodeId??line.YapCodeId;
+        var unitCode=string.IsNullOrWhiteSpace(execution.UnitCode)?line.UnitCode:execution.UnitCode;
+        var lotNo=string.IsNullOrWhiteSpace(execution.LotNo)?null:execution.LotNo.Trim();
+        var serialNo=ResolvePutawaySerial(line,execution.SerialNo);
+        var required=line.ApprovedQuantity;
+        var lotKey=NormalizeInventoryPart(lotNo);
+        var serialKey=NormalizeInventoryPart(serialNo);
+        var unitKey=NormalizeInventoryPart(unitCode);
+        var matches=balances.Where(x=>x.StockId==stockId&&x.YapCodeId==yapCodeId
+            &&string.Equals(NormalizeInventoryPart(x.UnitCode),unitKey,StringComparison.Ordinal)
+            &&string.Equals(NormalizeInventoryPart(x.LotNo),lotKey,StringComparison.Ordinal)
+            &&string.Equals(NormalizeInventoryPart(x.SerialNo),serialKey,StringComparison.Ordinal)
+            &&x.AvailableQuantity>=required).ToList();
+        var available=matches.Count==0?0:matches.Max(x=>x.AvailableQuantity);
+        if(available<required)throw AppException.Conflict($"Yetersiz raf bakiyesi. Kullanılabilir: {available}, istenen: {required}.");
+        var preferred=new[]{destinationLocationId,execution.LocationId,line.ReceivingLocationId};
+        var chosen=preferred.Select(id=>matches.FirstOrDefault(x=>x.LocationId==id)).FirstOrDefault(x=>x is not null)
+            ??matches.OrderByDescending(x=>x.AvailableQuantity).ThenBy(x=>x.LocationId).First();
+        return new(stockId,yapCodeId,unitCode,lotNo,serialNo,chosen.WarehouseId,chosen.LocationId,
+            chosen.LocationId!=destinationLocationId||chosen.WarehouseId!=destinationWarehouseId);
     }
 
     internal static void ValidateConversionMode(

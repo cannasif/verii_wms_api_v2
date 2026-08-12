@@ -69,6 +69,7 @@ public sealed class SteelReceiptConversionPolicyTests
             UnitCode = "KG",
             SupplierSerialNo = "LEVHA-0007",
             DCode = "SAC-2026-000007",
+            HeatNumber = "H-99",
             TargetWarehouseId = 11,
             ReceivingLocationId = 12
         };
@@ -76,6 +77,7 @@ public sealed class SteelReceiptConversionPolicyTests
         var mapped = SteelReceiptService.BuildManualGoodsReceiptLineForConvert(line);
 
         Assert.Equal("LEVHA-0007", mapped.SerialNo);
+        Assert.Null(mapped.LotNo);
         Assert.Equal(2_480.75m, mapped.Quantity);
         Assert.Equal("KG", mapped.UnitCode);
     }

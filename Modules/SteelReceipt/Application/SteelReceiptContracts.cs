@@ -42,6 +42,12 @@ public sealed record ConvertSteelReceiptResult(long GoodsReceiptId,string Docume
 public sealed record PlaceSteelReceiptLineRequest(Guid IdempotencyKey,long LocationId,string RowVersion);
 public sealed record PlaceSteelReceiptLineResult(long PlacementId,long StockMovementOperationId,bool Replayed,
     long LocationId,SteelPlacementType PlacementType,int RowNo,int PositionNo,int StackOrderNo);
+public sealed record SteelPutawayExecutionSnapshot(long StockId,long? YapCodeId,string UnitCode,string? LotNo,string? SerialNo,
+    long WarehouseId,long LocationId,string StockStatus,long? ReceiptMovementOperationId);
+public sealed record SteelPutawayBalanceCandidate(long WarehouseId,long LocationId,long StockId,long? YapCodeId,string UnitCode,
+    string? LotNo,string? SerialNo,decimal AvailableQuantity);
+public sealed record SteelPutawayInventorySource(long StockId,long? YapCodeId,string UnitCode,string? LotNo,string? SerialNo,
+    long WarehouseId,long LocationId,bool RequiresTransfer);
 public sealed record SteelReceiptAttachmentUpload(Stream Content,string FileName,string ContentType,long Length);
 public sealed record SteelReceiptAttachmentRow(long Id,long PlanLineId,string FileName,string ContentType,string Url,string? Caption,long FileSize,
     long? CreatedBy,DateTime? CreatedDate);
