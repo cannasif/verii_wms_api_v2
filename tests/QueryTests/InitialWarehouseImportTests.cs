@@ -2,6 +2,7 @@ using ClosedXML.Excel;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using System.Security.Claims;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Modules.Location.Application;
 using verii_wms_api_v2.Modules.Location.Domain;
@@ -97,6 +98,24 @@ public sealed class InitialWarehouseImportTests
     }
 
     [Fact]
+    public async Task Location_import_creates_missing_location_by_warehouse_branch_not_login_branch()
+    {
+        await using var db = CreateDb();
+        db.Add(new Warehouse { BranchCode = "7", WarehouseCode = 6000, WarehouseName = "6000 Deposu" });
+        await db.SaveChangesAsync();
+        var recorder = new RecordingLocationService();
+        var service = new LocationImportService(Uow(db, "0"), recorder);
+        await using var stream = LocationWorkbook(6000, "A01", "Zone");
+
+        var result = await service.ImportAsync(stream, "0");
+
+        Assert.Equal(1, result.CreatedRows);
+        var request = Assert.Single(recorder.Requests);
+        Assert.Equal("A01", request.Code);
+        Assert.Equal(LocationTypes.Zone, request.LocationType);
+    }
+
+    [Fact]
     public async Task Opening_balance_import_posts_auditable_adjustment_increase_instead_of_writing_projection()
     {
         await using var db = CreateDb();
@@ -188,7 +207,10 @@ public sealed class InitialWarehouseImportTests
     public async Task Combined_opening_preview_deduplicates_repeated_location_and_preserves_each_serial_row()
     {
         await using var db = CreateDb();
-        db.Add(new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" });
+        db.AddRange(
+            new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" },
+            new Stock { BranchCode = "0", ErpStockCode = "STK-01", StockName = "Test stok 1", BaseUnitCode = "ADET" },
+            new Stock { BranchCode = "0", ErpStockCode = "STK-02", StockName = "Test stok 2", BaseUnitCode = "ADET" });
         await db.SaveChangesAsync();
         var locations = new RecordingLocationImportService();
         var balances = new RecordingOpeningBalanceImportService();
@@ -206,7 +228,7 @@ public sealed class InitialWarehouseImportTests
         Assert.Equal(2, preview.SerialCount);
         Assert.Equal(7m, preview.TotalQuantity);
         Assert.Equal(0, locations.ImportedRows);
-        Assert.Equal(3, balances.ImportedRows);
+        Assert.Equal(0, balances.ImportedRows);
     }
 
     [Fact]
@@ -232,7 +254,9 @@ public sealed class InitialWarehouseImportTests
     public async Task Combined_opening_import_infers_flat_location_metadata_and_normalizes_customer_code()
     {
         await using var db = CreateDb();
-        db.Add(new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" });
+        db.AddRange(
+            new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" },
+            new Stock { BranchCode = "0", ErpStockCode = "STK-01", StockName = "Test stok", BaseUnitCode = "ADET" });
         await db.SaveChangesAsync();
         var locations = new RecordingLocationImportService();
         var balances = new RecordingOpeningBalanceImportService();
@@ -258,10 +282,12 @@ public sealed class InitialWarehouseImportTests
     public async Task Combined_opening_preview_accepts_seven_column_customer_balance_workbook()
     {
         await using var db = CreateDb();
-        db.Add(new Warehouse { BranchCode = "0", WarehouseCode = 6000, WarehouseName = "Merkez" });
+        db.AddRange(
+            new Warehouse { BranchCode = "0", WarehouseCode = 6000, WarehouseName = "Merkez" },
+            new Stock { BranchCode = "0", ErpStockCode = "STK-01", StockName = "Test stok", BaseUnitCode = "ADET" });
         await db.SaveChangesAsync();
         var service = new WarehouseOpeningImportService(
-            Uow(db), new RecordingLocationImportService(), new RecordingOpeningBalanceImportService());
+            Uow(db, "0"), new RecordingLocationImportService(), new RecordingOpeningBalanceImportService());
         await using var stream = CustomerBalanceWorkbook();
 
         var preview = await service.PreviewAsync(stream, "0");
@@ -278,10 +304,13 @@ public sealed class InitialWarehouseImportTests
         var warehouse = new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" };
         db.Add(warehouse);
         await db.SaveChangesAsync();
-        db.Add(new WarehouseLocation
+        db.AddRange(new WarehouseLocation
         {
             BranchCode = "0", WarehouseId = warehouse.Id, Code = "ZONE-1", Name = "Bölge 1",
             LocationType = LocationTypes.Zone, BarcodeEntryMode = BarcodeEntryModes.Auto, IsActive = true
+        }, new Stock
+        {
+            BranchCode = "0", ErpStockCode = "STK-01", StockName = "Test stok", BaseUnitCode = "ADET"
         });
         await db.SaveChangesAsync();
         var locations = new RecordingLocationImportService();
@@ -295,6 +324,56 @@ public sealed class InitialWarehouseImportTests
         await service.ImportAsync(stream, "0", preview.FileHash, "opening-customer-0002");
 
         Assert.Contains(locations.ImportedDefinitions, x => x.Code == "RAF-01" && x.Type == LocationTypes.Rack);
+    }
+
+    [Fact]
+    public async Task Combined_opening_uses_warehouse_branch_instead_of_logged_in_branch()
+    {
+        await using var db = CreateDb();
+        db.AddRange(
+            new Warehouse { BranchCode = "7", WarehouseCode = 6000, WarehouseName = "6000 Deposu" },
+            new Stock { BranchCode = "7", ErpStockCode = "STK-01", StockName = "Test stok", BaseUnitCode = "ADET" });
+        await db.SaveChangesAsync();
+        var service = new WarehouseOpeningImportService(
+            Uow(db), new RecordingLocationImportService(), new RecordingOpeningBalanceImportService());
+        await using var stream = CustomerBalanceWorkbook();
+
+        var preview = await service.PreviewAsync(stream, "0");
+
+        Assert.Equal(1, preview.WarehouseCount);
+        Assert.Equal(1, preview.BalanceRowCount);
+        Assert.Equal(2, preview.NewLocationCount);
+    }
+
+    [Fact]
+    public async Task Opening_balance_import_posts_under_warehouse_branch_when_login_branch_is_different()
+    {
+        await using var db = CreateDb();
+        var warehouse = new Warehouse { BranchCode = "7", WarehouseCode = 6000, WarehouseName = "6000 Deposu" };
+        db.Add(warehouse);
+        await db.SaveChangesAsync();
+        var location = new WarehouseLocation
+        {
+            BranchCode = "7", WarehouseId = warehouse.Id, Code = "A01", Name = "A01",
+            LocationType = LocationTypes.Cell, BarcodeEntryMode = BarcodeEntryModes.Auto, IsActive = true
+        };
+        var stock = new Stock
+        {
+            BranchCode = "7", ErpStockCode = "STK-01", StockName = "Test stok", BaseUnitCode = "ADET"
+        };
+        db.AddRange(location, stock);
+        await db.SaveChangesAsync();
+        var recorder = new RecordingStockMovementService();
+        var service = new OpeningBalanceImportService(Uow(db, "0"), recorder);
+        await using var stream = OpeningBalanceWorkbook(1, 6000, "A01");
+
+        var result = await service.ImportWarehouseOpeningAsync(stream, "0", "warehouse-branch-test");
+
+        Assert.False(result.IsReplay);
+        var line = Assert.Single(recorder.LastRequest!.Lines);
+        Assert.Equal(warehouse.Id, line.TargetWarehouseId);
+        Assert.Equal(location.Id, line.TargetLocationId);
+        Assert.Equal(stock.Id, line.StockId);
     }
 
     [Fact]
@@ -392,6 +471,39 @@ public sealed class InitialWarehouseImportTests
         return stream;
     }
 
+    private static MemoryStream LocationWorkbook(
+        int warehouseCode,
+        string locationCode,
+        string locationType,
+        string? parentCode = null)
+    {
+        using var workbook = new XLWorkbook();
+        var sheet = workbook.Worksheets.Add("Raf Tanımları");
+        var headers = new[]
+        {
+            "WarehouseCode", "LocationCode", "LocationName", "LocationType", "ParentLocationCode",
+            "BarcodeEntryMode", "Barcode", "ZoneCode", "AisleNo", "RackNo", "LevelNo", "BinNo",
+            "CapacityQuantity", "CapacityWeight", "CapacityVolume", "CapacityUnit",
+            "AllowMixedStock", "AllowMixedLot", "AllowMixedStatus", "AllowCycleCount",
+            "IsPickable", "IsPutaway", "IsQuarantine", "IsActive", "Description"
+        };
+        for (var column = 0; column < headers.Length; column++)
+            sheet.Cell(1, column + 1).Value = headers[column];
+        object?[] values =
+        [
+            warehouseCode, locationCode, locationCode, locationType, parentCode, "Auto", null, null,
+            null, null, null, null, null, null, null, null, false, false, false, true,
+            true, true, false, true, "Test rafı"
+        ];
+        for (var column = 0; column < values.Length; column++)
+            if (values[column] is not null)
+                sheet.Cell(2, column + 1).Value = XLCellValue.FromObject(values[column]);
+        var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        stream.Position = 0;
+        return stream;
+    }
+
     private static MemoryStream CustomerBalanceWorkbook()
     {
         using var workbook = new XLWorkbook();
@@ -407,7 +519,10 @@ public sealed class InitialWarehouseImportTests
         return stream;
     }
 
-    private static MemoryStream OpeningBalanceWorkbook(int rowCount)
+    private static MemoryStream OpeningBalanceWorkbook(
+        int rowCount,
+        int warehouseCode = 1,
+        string locationCode = "A01")
     {
         using var workbook = new XLWorkbook();
         var sheet = workbook.Worksheets.Add("İlk Raf Bakiyeleri");
@@ -421,8 +536,8 @@ public sealed class InitialWarehouseImportTests
         for (var index = 0; index < rowCount; index++)
         {
             var row = index + 2;
-            sheet.Cell(row, 1).Value = 1;
-            sheet.Cell(row, 2).Value = "A01";
+            sheet.Cell(row, 1).Value = warehouseCode;
+            sheet.Cell(row, 2).Value = locationCode;
             sheet.Cell(row, 3).Value = "STK-01";
             sheet.Cell(row, 5).Value = 1m;
             sheet.Cell(row, 6).Value = "ADET";
@@ -446,7 +561,20 @@ public sealed class InitialWarehouseImportTests
             if (values[column] is not null) sheet.Cell(row, column + 1).Value = XLCellValue.FromObject(values[column]);
     }
 
-    private static UnitOfWork Uow(WmsDbContext db) => new(db, new HttpContextAccessor());
+    private static UnitOfWork Uow(WmsDbContext db, string? authenticatedBranch = null)
+    {
+        var accessor = new HttpContextAccessor();
+        if (!string.IsNullOrWhiteSpace(authenticatedBranch))
+        {
+            accessor.HttpContext = new DefaultHttpContext
+            {
+                User = new ClaimsPrincipal(new ClaimsIdentity(
+                    [new Claim(JwtTokenIssuer.BranchCodeClaim, authenticatedBranch)],
+                    "Test"))
+            };
+        }
+        return new UnitOfWork(db, accessor);
+    }
     private static WmsDbContext CreateDb()
     {
         var options = new DbContextOptionsBuilder<WmsDbContext>()

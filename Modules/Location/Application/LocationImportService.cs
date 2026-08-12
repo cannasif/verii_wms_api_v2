@@ -105,7 +105,6 @@ public sealed class LocationImportService(IUnitOfWork unitOfWork, ILocationServi
     public async Task<LocationImportResult> ImportAsync(Stream workbookStream, string branchCode,
         CancellationToken cancellationToken = default)
     {
-        var branch = NormalizeBranch(branchCode);
         await using var buffered = await BufferAsync(workbookStream, cancellationToken);
         using var workbook = OpenWorkbook(buffered);
         var worksheet = workbook.Worksheets.FirstOrDefault(x => x.Name == "Raf Tanımları")
@@ -117,21 +116,41 @@ public sealed class LocationImportService(IUnitOfWork unitOfWork, ILocationServi
         if (sourceRows.Count == 0) throw AppException.BadRequest("Aktarılacak raf satırı bulunamadı.");
         if (sourceRows.Count > MaxRows) throw AppException.BadRequest($"En fazla {MaxRows} raf satırı aktarılabilir.");
 
-        var warehouseRows = await unitOfWork.Repository<WarehouseEntity>().Query()
-            .Where(x => x.BranchCode == branch).Select(x => new { x.Id, x.WarehouseCode }).ToListAsync(cancellationToken);
-        var warehouseByCode = warehouseRows.ToDictionary(x => x.WarehouseCode.ToString(), x => x.Id, StringComparer.OrdinalIgnoreCase);
-        var existing = await unitOfWork.Repository<WarehouseLocation>().Query()
-            .Where(x => warehouseRows.Select(w => w.Id).Contains(x.WarehouseId))
-            .Select(x => new { x.Id, x.WarehouseId, x.Code }).ToListAsync(cancellationToken);
-        var known = existing.ToDictionary(x => Key(x.WarehouseId, x.Code), x => x.Id, StringComparer.OrdinalIgnoreCase);
         var parsed = sourceRows.Select(Parse).ToList();
+        var requestedWarehouseCodes = parsed
+            .Select(x => int.TryParse(x.WarehouseCode, out var code) ? (int?)code : null)
+            .Where(x => x.HasValue)
+            .Select(x => x!.Value)
+            .Distinct()
+            .ToList();
+        List<WarehouseImportLookup> warehouseRows;
+        List<LocationImportLookup> existing;
+        using (unitOfWork.BeginBranchScope(null))
+        {
+            warehouseRows = await unitOfWork.Repository<WarehouseEntity>().Query()
+                .Where(x => requestedWarehouseCodes.Contains(x.WarehouseCode))
+                .Select(x => new WarehouseImportLookup(x.Id, x.WarehouseCode, x.BranchCode))
+                .ToListAsync(cancellationToken);
+            EnsureWarehouseCodesAreUnique(warehouseRows);
+            var warehouseIds = warehouseRows.Select(x => x.Id).ToList();
+            existing = await unitOfWork.Repository<WarehouseLocation>().Query()
+                .Where(x => warehouseIds.Contains(x.WarehouseId))
+                .Select(x => new LocationImportLookup(x.Id, x.WarehouseId, x.Code))
+                .ToListAsync(cancellationToken);
+        }
+        var warehouseByCode = warehouseRows.ToDictionary(
+            x => x.WarehouseCode.ToString(),
+            StringComparer.OrdinalIgnoreCase);
+        var known = existing.ToDictionary(x => Key(x.WarehouseId, x.Code), x => x.Id, StringComparer.OrdinalIgnoreCase);
         var duplicate = parsed.GroupBy(x => $"{x.WarehouseCode}|{x.Code}", StringComparer.OrdinalIgnoreCase).FirstOrDefault(x => x.Count() > 1);
         if (duplicate is not null) throw AppException.BadRequest($"Satır {duplicate.First().RowNumber}: Aynı depo ve raf kodu dosyada tekrar ediyor.");
         foreach (var row in parsed)
         {
-            if (!warehouseByCode.TryGetValue(row.WarehouseCode, out var warehouseId))
-                throw AppException.BadRequest($"Satır {row.RowNumber}: '{row.WarehouseCode}' depo kodu bu şubede bulunamadı.");
-            row.WarehouseId = warehouseId;
+            if (!warehouseByCode.TryGetValue(row.WarehouseCode, out var warehouse))
+                throw AppException.BadRequest(
+                    $"Satır {row.RowNumber}: '{row.WarehouseCode}' depo kodu WMS depo tanımlarında bulunamadı.");
+            row.WarehouseId = warehouse.Id;
+            row.BranchCode = warehouse.BranchCode;
             if (known.ContainsKey(Key(row.WarehouseId, row.Code)))
                 throw AppException.Conflict($"Satır {row.RowNumber}: '{row.Code}' rafı bu depoda zaten mevcut; ilk aktarım mevcut kayıtları değiştirmez.");
         }
@@ -143,8 +162,10 @@ public sealed class LocationImportService(IUnitOfWork unitOfWork, ILocationServi
             var creatable = pending.Where(x => string.IsNullOrWhiteSpace(x.ParentCode) || known.ContainsKey(Key(x.WarehouseId, x.ParentCode))).ToList();
             if (creatable.Count == 0)
                 throw AppException.BadRequest($"Satır {pending[0].RowNumber}: Üst raf '{pending[0].ParentCode}' bulunamadı veya hiyerarşide döngü var.");
-            foreach (var batch in creatable.Chunk(ImportBatchSize))
+            foreach (var branchGroup in creatable.GroupBy(x => x.BranchCode, StringComparer.OrdinalIgnoreCase))
+            foreach (var batch in branchGroup.Chunk(ImportBatchSize))
             {
+                using var branchScope = unitOfWork.BeginBranchScope(branchGroup.Key);
                 await unitOfWork.ExecuteInTransactionAsync(async ct =>
                 {
                     foreach (var row in batch)
@@ -191,6 +212,17 @@ public sealed class LocationImportService(IUnitOfWork unitOfWork, ILocationServi
         for (var c = 0; c < values.Length; c++) if (values[c] is not null) sheet.Cell(row, c + 1).Value = XLCellValue.FromObject(values[c]);
     }
     private static string Key(long warehouseId, string code) => $"{warehouseId}|{code.Trim().ToUpperInvariant()}";
+
+    private static void EnsureWarehouseCodesAreUnique(IReadOnlyCollection<WarehouseImportLookup> warehouses)
+    {
+        var ambiguous = warehouses
+            .GroupBy(x => x.WarehouseCode)
+            .FirstOrDefault(x => x.Select(y => y.BranchCode)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1);
+        if (ambiguous is null) return;
+        throw AppException.BadRequest(
+            $"'{ambiguous.Key}' depo kodu birden fazla şubede tanımlı. Excel satırının hangi depoya ait olduğu belirlenemiyor.");
+    }
     private static string Text(IXLRow row, int column) => row.Cell(column).GetString().Trim();
     private static string? Null(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static int? Int(IXLRow row, int column) => string.IsNullOrWhiteSpace(Text(row, column)) ? null :
@@ -245,5 +277,11 @@ public sealed class LocationImportService(IUnitOfWork unitOfWork, ILocationServi
         int? AisleNo, int? RackNo, int? LevelNo, int? BinNo, decimal? CapacityQuantity, decimal? CapacityWeight,
         decimal? CapacityVolume, string? CapacityUnit, bool AllowMixedStock, bool AllowMixedLot, bool AllowMixedStatus,
         bool AllowCycleCount, bool IsPickable, bool IsPutaway, bool IsQuarantine, bool IsActive, string? Description)
-    { public long WarehouseId { get; set; } }
+    {
+        public long WarehouseId { get; set; }
+        public string BranchCode { get; set; } = string.Empty;
+    }
+
+    private sealed record WarehouseImportLookup(long Id, int WarehouseCode, string BranchCode);
+    private sealed record LocationImportLookup(long Id, long WarehouseId, string Code);
 }

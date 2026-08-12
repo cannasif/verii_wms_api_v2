@@ -201,7 +201,6 @@ public sealed class OpeningBalanceImportService(
         bool validateOnly,
         CancellationToken cancellationToken)
     {
-        var branch = NormalizeBranch(branchCode);
         var key = idempotencyKey?.Trim() ?? string.Empty;
         if (key.Length is < 8 or > 100) throw AppException.BadRequest("İdempotency anahtarı 8-100 karakter olmalıdır.");
         await using var buffered = await BufferAsync(workbookStream, maxFileSize, cancellationToken);
@@ -242,37 +241,54 @@ public sealed class OpeningBalanceImportService(
             .Select(x => x!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        var warehouses = await unitOfWork.Repository<WarehouseEntity>().Query()
-            .Where(x => x.BranchCode == branch
-                && requestedWarehouseNumbers.Contains(x.WarehouseCode))
-            .Select(x => new { x.Id, x.WarehouseCode })
-            .ToListAsync(cancellationToken);
+        List<WarehouseOpeningLookup> warehouses;
+        List<LocationOpeningLookup> locations;
+        List<StockEntity> stocks;
+        List<YapCodeEntity> yapCodes;
+        using (unitOfWork.BeginBranchScope(null))
+        {
+            warehouses = await unitOfWork.Repository<WarehouseEntity>().Query()
+                .Where(x => requestedWarehouseNumbers.Contains(x.WarehouseCode))
+                .Select(x => new WarehouseOpeningLookup(x.Id, x.WarehouseCode, x.BranchCode))
+                .ToListAsync(cancellationToken);
+            EnsureWarehouseCodesAreUnique(warehouses);
+
+            var warehouseIds = warehouses.Select(x => x.Id).ToList();
+            locations = await LoadInBatchesAsync(
+                requestedLocationCodes,
+                codes => unitOfWork.Repository<WarehouseLocation>().Query()
+                    .Where(x => warehouseIds.Contains(x.WarehouseId)
+                        && x.IsActive
+                        && codes.Contains(x.Code))
+                    .Select(x => new LocationOpeningLookup(x.Id, x.WarehouseId, x.Code)),
+                cancellationToken);
+
+            var warehouseBranches = warehouses.Select(x => x.BranchCode)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            stocks = await LoadInBatchesAsync(
+                requestedStockCodes,
+                codes => unitOfWork.Repository<StockEntity>().Query()
+                    .Where(x => warehouseBranches.Contains(x.BranchCode)
+                        && codes.Contains(x.ErpStockCode)),
+                cancellationToken);
+            yapCodes = await LoadInBatchesAsync(
+                requestedYapCodes,
+                codes => unitOfWork.Repository<YapCodeEntity>().Query()
+                    .Where(x => warehouseBranches.Contains(x.BranchCode)
+                        && codes.Contains(x.ConfigurationCode)),
+                cancellationToken);
+        }
         var warehouseByCode = warehouses.ToDictionary(x => x.WarehouseCode.ToString(), StringComparer.OrdinalIgnoreCase);
-        var warehouseIds = warehouses.Select(x => x.Id).ToList();
-        var locations = await LoadInBatchesAsync(
-            requestedLocationCodes,
-            codes => unitOfWork.Repository<WarehouseLocation>().Query()
-                .Where(x => warehouseIds.Contains(x.WarehouseId)
-                    && x.IsActive
-                    && codes.Contains(x.Code))
-                .Select(x => new { x.Id, x.WarehouseId, x.Code }),
-            cancellationToken);
         var locationByKey = locations.ToDictionary(x => $"{x.WarehouseId}|{x.Code}", StringComparer.OrdinalIgnoreCase);
-        var stocks = await LoadInBatchesAsync(
-            requestedStockCodes,
-            codes => unitOfWork.Repository<StockEntity>().Query()
-                .Where(x => x.BranchCode == branch && codes.Contains(x.ErpStockCode)),
-            cancellationToken);
-        var stockByCode = stocks.ToDictionary(x => x.ErpStockCode, StringComparer.OrdinalIgnoreCase);
-        var yapCodes = await LoadInBatchesAsync(
-            requestedYapCodes,
-            codes => unitOfWork.Repository<YapCodeEntity>().Query()
-                .Where(x => x.BranchCode == branch && codes.Contains(x.ConfigurationCode)),
-            cancellationToken);
-        var yapByCode = yapCodes.GroupBy(x => x.ConfigurationCode, StringComparer.OrdinalIgnoreCase)
+        var stockByCode = stocks.ToDictionary(
+            x => BranchKey(x.BranchCode, x.ErpStockCode),
+            StringComparer.OrdinalIgnoreCase);
+        var yapByCode = yapCodes.GroupBy(
+                x => BranchKey(x.BranchCode, x.ConfigurationCode),
+                StringComparer.OrdinalIgnoreCase)
             .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
 
-        var requestLines = new List<StockMovementLineRequest>(rows.Count);
+        var requestLines = new List<BranchMovementLine>(rows.Count);
         var resultRows = new List<OpeningBalanceImportRowResult>(rows.Count);
         DateTime? occurredAt = null;
         foreach (var row in rows)
@@ -283,11 +299,12 @@ public sealed class OpeningBalanceImportService(
             try
             {
                 if (!warehouseByCode.TryGetValue(warehouseCode, out var warehouse))
-                    throw AppException.BadRequest($"'{warehouseCode}' depo kodu bu şubede bulunamadı.");
+                    throw AppException.BadRequest($"'{warehouseCode}' depo kodu WMS depo tanımlarında bulunamadı.");
                 if (!locationByKey.TryGetValue($"{warehouse.Id}|{locationCode}", out var location))
                     throw AppException.BadRequest($"'{locationCode}' aktif rafı {warehouseCode} deposunda bulunamadı.");
-                if (!stockByCode.TryGetValue(stockCode, out var stock))
-                    throw AppException.BadRequest($"'{stockCode}' stok kodu bu şubede bulunamadı.");
+                if (!stockByCode.TryGetValue(BranchKey(warehouse.BranchCode, stockCode), out var stock))
+                    throw AppException.BadRequest(
+                        $"'{stockCode}' stok kodu deponun bağlı olduğu '{warehouse.BranchCode}' şubesinde bulunamadı.");
                 var quantity = RequiredDecimal(row, 5);
                 if (quantity <= 0) throw AppException.BadRequest("Quantity sıfırdan büyük olmalıdır.");
                 var rawStatus = Text(row, 9);
@@ -297,8 +314,9 @@ public sealed class OpeningBalanceImportService(
                 var yapCode = Null(Text(row, 4));
                 if (yapCode is not null)
                 {
-                    if (!yapByCode.TryGetValue(yapCode, out var yap))
-                        throw AppException.BadRequest($"'{yapCode}' YAP kodu bu şubede bulunamadı.");
+                    if (!yapByCode.TryGetValue(BranchKey(warehouse.BranchCode, yapCode), out var yap))
+                        throw AppException.BadRequest(
+                            $"'{yapCode}' yapılandırma kodu deponun bağlı olduğu '{warehouse.BranchCode}' şubesinde bulunamadı.");
                     if (yap.StockId.HasValue && yap.StockId != stock.Id)
                         throw AppException.BadRequest($"'{yapCode}' YAP kodu '{stockCode}' stoğuna ait değil.");
                     yapCodeId = yap.Id;
@@ -313,8 +331,11 @@ public sealed class OpeningBalanceImportService(
                         throw AppException.BadRequest("Tüm satırlarda OccurredAt aynı olmalıdır.");
                     occurredAt = normalized;
                 }
-                requestLines.Add(new(stock.Id, yapCodeId, quantity, null, null, warehouse.Id, location.Id,
-                    Null(Text(row, 6)), Null(Text(row, 7)), Null(Text(row, 8)), status));
+                requestLines.Add(new(
+                    warehouse.BranchCode,
+                    new StockMovementLineRequest(
+                        stock.Id, yapCodeId, quantity, null, null, warehouse.Id, location.Id,
+                        Null(Text(row, 6)), Null(Text(row, 7)), Null(Text(row, 8)), status)));
                 resultRows.Add(new(row.RowNumber(), "Ready", warehouseCode, locationCode, stockCode, "Doğrulandı."));
             }
             catch (AppException exception)
@@ -323,19 +344,24 @@ public sealed class OpeningBalanceImportService(
             }
         }
 
-        var duplicateSerial = requestLines.Where(x => !string.IsNullOrWhiteSpace(x.SerialNo))
-            .GroupBy(x => $"{x.StockId}|{x.SerialNo}", StringComparer.OrdinalIgnoreCase).FirstOrDefault(x => x.Count() > 1);
+        var duplicateSerial = requestLines.Where(x => !string.IsNullOrWhiteSpace(x.Line.SerialNo))
+            .GroupBy(x => $"{x.Line.StockId}|{x.Line.SerialNo}", StringComparer.OrdinalIgnoreCase).FirstOrDefault(x => x.Count() > 1);
         if (duplicateSerial is not null) throw AppException.BadRequest($"Aynı stok/seri dosyada tekrar ediyor: {duplicateSerial.First().SerialNo}");
 
         // Hash normalized business data, not XLSX bytes. ClosedXML package metadata can
         // change while the visible workbook remains identical, which would break resume.
-        var fileHash = BuildLogicalFileHash(branch, occurredAt, requestLines, rows);
+        var movementLines = requestLines.Select(x => x.Line).ToList();
+        var fileHash = BuildLogicalFileHash("warehouse-derived", occurredAt, movementLines, rows);
         var referenceNo = $"OPENING:{fileHash}";
         var description = string.Join(" | ", rows.Select(x => Null(Text(x, 11)))
             .Where(x => x is not null).Distinct().Take(5));
-        var postRequests = requestLines.Chunk(MovementBatchSize)
-            .Select((lines, index) => new PostStockMovementRequest(
-                BuildBatchKey(branch, fileHash, index),
+        var postRequests = requestLines
+            .GroupBy(x => x.BranchCode, StringComparer.OrdinalIgnoreCase)
+            .SelectMany(group => group.Select(x => x.Line).Chunk(MovementBatchSize)
+            .Select((lines, index) => new BranchPostRequest(
+                group.Key,
+                new PostStockMovementRequest(
+                BuildBatchKey(group.Key, fileHash, index),
                 StockMovementTypes.AdjustmentIncrease,
                 "OpeningBalanceImport",
                 referenceNo,
@@ -343,28 +369,36 @@ public sealed class OpeningBalanceImportService(
                 occurredAt,
                 "İlk raf bakiyesi aktarımı",
                 description,
-                lines))
+                lines))))
             .ToList();
 
         // A retry of the exact same file must be able to resume after a process or
         // network interruption. Already committed chunks are replayed by PostAsync;
         // validating their serials as new inbound stock would incorrectly reject them.
-        var batchKeys = postRequests.Select(x => x.IdempotencyKey).ToList();
-        var completedBatchKeys = (await unitOfWork.Repository<StockMovementOperation>().Query()
+        var completedBatchKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var group in postRequests.GroupBy(x => x.BranchCode, StringComparer.OrdinalIgnoreCase))
+        {
+            using var branchScope = unitOfWork.BeginBranchScope(group.Key);
+            var batchKeys = group.Select(x => x.Request.IdempotencyKey).ToList();
+            completedBatchKeys.UnionWith(await unitOfWork.Repository<StockMovementOperation>().Query()
                 .Where(x => batchKeys.Contains(x.IdempotencyKey))
                 .Select(x => x.IdempotencyKey)
-                .ToListAsync(cancellationToken))
-            .ToHashSet(StringComparer.Ordinal);
+                .ToListAsync(cancellationToken));
+        }
 
         // Validate every not-yet-committed chunk before the first new commit. A bad
         // row must not leave additional partial opening records behind.
-        foreach (var request in postRequests.Where(x => !completedBatchKeys.Contains(x.IdempotencyKey)))
-            await stockMovements.ValidateAsync(request, cancellationToken);
+        foreach (var request in postRequests.Where(x => !completedBatchKeys.Contains(x.Request.IdempotencyKey)))
+        {
+            using var branchScope = unitOfWork.BeginBranchScope(request.BranchCode);
+            await stockMovements.ValidateAsync(request.Request, cancellationToken);
+        }
 
         if (validateOnly)
-            return new(0, Guid.Empty, false, rows.Count, requestLines.Sum(x => x.Quantity), [],
+            return new(0, Guid.Empty, false, rows.Count, movementLines.Sum(x => x.Quantity), [],
                 postRequests.Count, rows.Count > 500);
 
+        using var unscopedValidationScope = unitOfWork.BeginBranchScope(null);
         var operations = unitOfWork.Repository<StockMovementOperation>().Query();
         var targetWarehouseIds = requestLines.Select(x => x.TargetWarehouseId!.Value).Distinct().ToList();
         var foreignWarehouseId = await unitOfWork.Repository<StockMovementEntry>().Query()
@@ -384,7 +418,8 @@ public sealed class OpeningBalanceImportService(
         var postedBatches = new List<StockMovementPostResult>(postRequests.Count);
         foreach (var request in postRequests)
         {
-            postedBatches.Add(await stockMovements.PostAsync(request, cancellationToken));
+            using var branchScope = unitOfWork.BeginBranchScope(request.BranchCode);
+            postedBatches.Add(await stockMovements.PostAsync(request.Request, cancellationToken));
             unitOfWork.ClearTracking();
         }
 
@@ -404,6 +439,20 @@ public sealed class OpeningBalanceImportService(
     private static string BuildBatchKey(string branch, string fileHash, int index) =>
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
             $"warehouse-opening|{branch}|{fileHash}|batch-size:{MovementBatchSize}|{index:D6}")));
+
+    private static string BranchKey(string branchCode, string businessCode) =>
+        $"{branchCode.Trim()}|{businessCode.Trim()}";
+
+    private static void EnsureWarehouseCodesAreUnique(IReadOnlyCollection<WarehouseOpeningLookup> warehouses)
+    {
+        var ambiguous = warehouses
+            .GroupBy(x => x.WarehouseCode)
+            .FirstOrDefault(x => x.Select(y => y.BranchCode)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1);
+        if (ambiguous is null) return;
+        throw AppException.BadRequest(
+            $"'{ambiguous.Key}' depo kodu birden fazla şubede tanımlı. Excel satırının hangi depoya ait olduğu belirlenemiyor.");
+    }
 
     private static string BuildLogicalFileHash(
         string branch,
@@ -503,5 +552,21 @@ public sealed class OpeningBalanceImportService(
             case DateTime date: cell.Value = date; break;
             default: cell.Value = value.ToString() ?? string.Empty; break;
         }
+    }
+
+    private sealed record WarehouseOpeningLookup(long Id, int WarehouseCode, string BranchCode);
+    private sealed record LocationOpeningLookup(long Id, long WarehouseId, string Code);
+
+    private sealed record BranchMovementLine(string BranchCode, StockMovementLineRequest Line)
+    {
+        public long StockId => Line.StockId;
+        public string? SerialNo => Line.SerialNo;
+        public decimal Quantity => Line.Quantity;
+        public long? TargetWarehouseId => Line.TargetWarehouseId;
+    }
+
+    private sealed record BranchPostRequest(string BranchCode, PostStockMovementRequest Request)
+    {
+        public string IdempotencyKey => Request.IdempotencyKey;
     }
 }

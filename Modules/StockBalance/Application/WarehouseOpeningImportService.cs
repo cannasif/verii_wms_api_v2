@@ -9,6 +9,8 @@ using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
+using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
+using YapCodeEntity = verii_wms_api_v2.Modules.YapCode.Domain.YapCode;
 
 namespace verii_wms_api_v2.Modules.StockBalance.Application;
 
@@ -150,6 +152,9 @@ public sealed class WarehouseOpeningImportService(
         CancellationToken cancellationToken = default)
     {
         var prepared = await PrepareAsync(workbookStream, branchCode, cancellationToken);
+        if (prepared.NewLocations.Count > 0)
+            return ToPreview(prepared, prepared.TotalQuantity, prepared.BatchCount);
+
         await using var balanceStream = new MemoryStream(prepared.BalanceWorkbook);
         var validation = await openingBalanceImport.ValidateWarehouseOpeningAsync(
             balanceStream, branchCode, cancellationToken);
@@ -199,24 +204,35 @@ public sealed class WarehouseOpeningImportService(
             if (string.IsNullOrWhiteSpace(row.LocationCode))
                 throw AppException.BadRequest($"Satır {row.RowNumber}: LocationCode zorunludur.");
         }
-        var branch = string.IsNullOrWhiteSpace(branchCode) ? "0" : branchCode.Trim();
-        var warehouses = await unitOfWork.Repository<WarehouseEntity>().Query()
-            .Where(x => x.BranchCode == branch)
-            .Select(x => new { x.Id, x.WarehouseCode })
-            .ToListAsync(cancellationToken);
+        var requestedWarehouseNumbers = rows
+            .Select(x => int.TryParse(x.WarehouseCode, out var code) ? (int?)code : null)
+            .Where(x => x.HasValue)
+            .Select(x => x!.Value)
+            .Distinct()
+            .ToList();
+        List<WarehouseLookupRow> warehouses;
+        List<LocationLookupRow> existing;
+        using (unitOfWork.BeginBranchScope(null))
+        {
+            warehouses = await unitOfWork.Repository<WarehouseEntity>().Query()
+                .Where(x => requestedWarehouseNumbers.Contains(x.WarehouseCode))
+                .Select(x => new WarehouseLookupRow(x.Id, x.WarehouseCode, x.BranchCode))
+                .ToListAsync(cancellationToken);
+            EnsureWarehouseCodesAreUnique(warehouses);
+            var warehouseIds = warehouses.Select(x => x.Id).ToList();
+            existing = await unitOfWork.Repository<WarehouseLocation>().Query()
+                .Where(x => warehouseIds.Contains(x.WarehouseId))
+                .Select(x => new LocationLookupRow(x.WarehouseId, x.Code))
+                .ToListAsync(cancellationToken);
+        }
         var warehouseByCode = warehouses.ToDictionary(
             x => x.WarehouseCode.ToString(),
             StringComparer.OrdinalIgnoreCase);
         foreach (var row in rows)
             if (!warehouseByCode.ContainsKey(row.WarehouseCode))
                 throw AppException.BadRequest(
-                    $"Satır {row.RowNumber}: '{row.WarehouseCode}' depo kodu giriş yapılan şubede bulunamadı.");
+                    $"Satır {row.RowNumber}: '{row.WarehouseCode}' depo kodu WMS depo tanımlarında bulunamadı.");
 
-        var warehouseIds = warehouses.Select(x => x.Id).ToList();
-        var existing = await unitOfWork.Repository<WarehouseLocation>().Query()
-            .Where(x => warehouseIds.Contains(x.WarehouseId))
-            .Select(x => new { x.WarehouseId, x.Code })
-            .ToListAsync(cancellationToken);
         var existingKeys = existing.Select(x => Key(x.WarehouseId, x.Code))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -292,6 +308,11 @@ public sealed class WarehouseOpeningImportService(
         }
 
         var balanceRows = rows.Where(x => !string.IsNullOrWhiteSpace(x.StockCode)).ToList();
+        await ValidateBalanceReferencesAsync(balanceRows, warehouseByCode, cancellationToken);
+        var totalQuantity = balanceRows.Sum(x => x.Quantity ?? 0);
+        var batchCount = balanceRows
+            .GroupBy(x => warehouseByCode[x.WarehouseCode].BranchCode, StringComparer.OrdinalIgnoreCase)
+            .Sum(x => (int)Math.Ceiling(x.Count() / (decimal)OpeningBalanceImportService.MovementBatchSize));
         if (balanceRows.Count == 0)
             throw AppException.BadRequest("En az bir stok bakiyesi satırı bulunmalıdır.");
 
@@ -305,7 +326,60 @@ public sealed class WarehouseOpeningImportService(
             format == WorkbookFormat.CustomerBalance,
             supportZoneWarehouseIds.Count,
             BuildLocationWorkbook(newLocations),
-            BuildBalanceWorkbook(balanceRows));
+            BuildBalanceWorkbook(balanceRows),
+            totalQuantity,
+            batchCount);
+    }
+
+    private async Task ValidateBalanceReferencesAsync(
+        IReadOnlyList<FlatRow> rows,
+        IReadOnlyDictionary<string, WarehouseLookupRow> warehouseByCode,
+        CancellationToken cancellationToken)
+    {
+        foreach (var row in rows)
+            if (!row.Quantity.HasValue || row.Quantity.Value <= 0)
+                throw AppException.BadRequest($"Satır {row.RowNumber}: Quantity sıfırdan büyük olmalıdır.");
+
+        var branches = warehouseByCode.Values.Select(x => x.BranchCode)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var stockCodes = rows.Select(x => x.StockCode!)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var requestedYapCodes = rows.Where(x => !string.IsNullOrWhiteSpace(x.YapCode))
+            .Select(x => x.YapCode!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        List<StockReferenceRow> stocks;
+        List<YapReferenceRow> configurations;
+        using (unitOfWork.BeginBranchScope(null))
+        {
+            stocks = await unitOfWork.Repository<StockEntity>().Query()
+                .Where(x => branches.Contains(x.BranchCode) && stockCodes.Contains(x.ErpStockCode))
+                .Select(x => new StockReferenceRow(x.Id, x.BranchCode, x.ErpStockCode))
+                .ToListAsync(cancellationToken);
+            configurations = await unitOfWork.Repository<YapCodeEntity>().Query()
+                .Where(x => branches.Contains(x.BranchCode) && requestedYapCodes.Contains(x.ConfigurationCode))
+                .Select(x => new YapReferenceRow(x.BranchCode, x.ConfigurationCode, x.StockId))
+                .ToListAsync(cancellationToken);
+        }
+
+        var stockByKey = stocks.ToDictionary(
+            x => BranchKey(x.BranchCode, x.StockCode),
+            StringComparer.OrdinalIgnoreCase);
+        var yapByKey = configurations
+            .GroupBy(x => BranchKey(x.BranchCode, x.Code), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows)
+        {
+            var branch = warehouseByCode[row.WarehouseCode].BranchCode;
+            if (!stockByKey.TryGetValue(BranchKey(branch, row.StockCode!), out var stock))
+                throw AppException.BadRequest(
+                    $"Satır {row.RowNumber}: '{row.StockCode}' stok kodu deponun bağlı olduğu '{branch}' şubesinde bulunamadı.");
+            if (string.IsNullOrWhiteSpace(row.YapCode)) continue;
+            if (!yapByKey.TryGetValue(BranchKey(branch, row.YapCode), out var yap))
+                throw AppException.BadRequest(
+                    $"Satır {row.RowNumber}: '{row.YapCode}' yapılandırma kodu deponun bağlı olduğu '{branch}' şubesinde bulunamadı.");
+            if (yap.StockId.HasValue && yap.StockId.Value != stock.Id)
+                throw AppException.BadRequest(
+                    $"Satır {row.RowNumber}: '{row.YapCode}' yapılandırma kodu '{row.StockCode}' stoğuna ait değil.");
+        }
     }
 
     private async Task<WarehouseOpeningImportResult> ExecutePreparedAsync(
@@ -553,6 +627,20 @@ public sealed class WarehouseOpeningImportService(
 
     private static string Key(long warehouseId, string locationCode) =>
         $"{warehouseId}|{locationCode.Trim().ToUpperInvariant()}";
+
+    private static string BranchKey(string branchCode, string businessCode) =>
+        $"{branchCode.Trim()}|{businessCode.Trim()}";
+
+    private static void EnsureWarehouseCodesAreUnique(IReadOnlyCollection<WarehouseLookupRow> warehouses)
+    {
+        var ambiguous = warehouses
+            .GroupBy(x => x.WarehouseCode)
+            .FirstOrDefault(x => x.Select(y => y.BranchCode)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1);
+        if (ambiguous is null) return;
+        throw AppException.BadRequest(
+            $"'{ambiguous.Key}' depo kodu birden fazla şubede tanımlı. Excel satırının hangi depoya ait olduğu belirlenemiyor.");
+    }
     private static string Text(IXLRow row, int column) => row.Cell(column).GetString().Trim();
     private static string? Null(string value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static int? Integer(IXLRow row, int column) =>
@@ -767,7 +855,14 @@ public sealed class WarehouseOpeningImportService(
         bool UsedCustomerBalanceFormat,
         int SupportZoneCount,
         byte[] LocationWorkbook,
-        byte[] BalanceWorkbook);
+        byte[] BalanceWorkbook,
+        decimal TotalQuantity,
+        int BatchCount);
+
+    private sealed record WarehouseLookupRow(long Id, int WarehouseCode, string BranchCode);
+    private sealed record LocationLookupRow(long WarehouseId, string Code);
+    private sealed record StockReferenceRow(long Id, string BranchCode, string StockCode);
+    private sealed record YapReferenceRow(string BranchCode, string Code, long? StockId);
 
     private enum WorkbookFormat
     {
