@@ -38,6 +38,8 @@ public sealed record ProductionTransferTaskBoardDto(
     IReadOnlyList<ProductionTransferWorkloadDto> Workloads,
     IReadOnlyList<ProductionTransferAssigneeOptionDto> EligibleAssignees);
 public sealed record AssignProductionTransferTaskRequest(long UserId, bool IsPrimary = false);
+public sealed record ReleaseProductionTransferTaskToPoolRequest(long WarehouseId);
+public sealed record ClaimProductionTransferTaskRequest(Guid IdempotencyKey);
 public sealed record HandoffProductionTransferTaskRequest(long TargetUserId, string? Reason);
 public sealed record StartProductionTransferTaskRequest(Guid IdempotencyKey, bool AllowPartialStart = false);
 public sealed record ProcessProductionReturnLineRequest(Guid IdempotencyKey, long TargetLocationId);
@@ -128,6 +130,7 @@ public sealed record ProductionWorkOrderTransferHeaderRowDto(
 public interface IProductionTransferTaskService
 {
     Task<ProductionTransferTaskBoardDto> GetBoardAsync(long transferId, CancellationToken ct = default);
+    Task<IReadOnlyList<ProductionTransferAssigneeOptionDto>> GetEligibleAssigneesAsync(CancellationToken ct = default);
     Task<IReadOnlyList<ProductionTransferTaskPoolRow>> GetPoolAsync(long actor, CancellationToken ct = default);
     Task<IReadOnlyList<ProductionWorkOrderTransferHeaderRowDto>> GetWorkOrderTransferGroupsAsync(
         ProductionWorkOrderTransferTab tab,
@@ -138,6 +141,8 @@ public interface IProductionTransferTaskService
         long transferId,
         CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> AssignAsync(long transferId, long taskId, AssignProductionTransferTaskRequest request, long actor, CancellationToken ct = default);
+    Task<ProductionTransferTaskBoardDto> ReleaseToPoolAsync(long transferId, long taskId, ReleaseProductionTransferTaskToPoolRequest request, long actor, CancellationToken ct = default);
+    Task<ProductionTransferTaskBoardDto> ClaimTaskAsync(long transferId, long taskId, ClaimProductionTransferTaskRequest request, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> RemoveAssignmentAsync(long transferId, long taskId, long userId, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> RequestCancellationReturnAsync(long transferId, long actor, CancellationToken ct = default);
     Task<ProductionTransferTaskBoardDto> ProcessReturnTaskLineAsync(long transferId, long taskId, long taskLineId, ProcessProductionReturnLineRequest request, long actor, CancellationToken ct = default);

@@ -145,6 +145,10 @@ public sealed class ProductionTransfersController(
     public async Task<IActionResult>TaskPool(CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);
         return Ok(ApiResponse<IReadOnlyList<ProductionTransferTaskPoolRow>>.Ok(await tasks.GetPoolAsync(UserId(),ct)));}
+    [HttpGet("eligible-assignees")]
+    public async Task<IActionResult>EligibleAssignees(CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);
+        return Ok(ApiResponse<IReadOnlyList<ProductionTransferAssigneeOptionDto>>.Ok(await tasks.GetEligibleAssigneesAsync(ct)));}
     [HttpGet("work-order-transfer-groups")]
     public async Task<IActionResult>WorkOrderTransferGroups(
         [FromQuery]ProductionWorkOrderTransferTab tab,
@@ -162,6 +166,14 @@ public sealed class ProductionTransfersController(
     public async Task<IActionResult>Assign(long id,long taskId,AssignProductionTransferTaskRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);
         return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.AssignAsync(id,taskId,request,UserId(),ct),"Görev atandı."));}
+    [HttpPost("{id:long}/tasks/{taskId:long}/release-to-pool")]
+    public async Task<IActionResult>ReleaseToPool(long id,long taskId,ReleaseProductionTransferTaskToPoolRequest request,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.ReleaseToPoolAsync(id,taskId,request,UserId(),ct),"Görev depo havuzuna bırakıldı."));}
+    [HttpPost("{id:long}/tasks/{taskId:long}/claim")]
+    public async Task<IActionResult>ClaimTask(long id,long taskId,ClaimProductionTransferTaskRequest request,CancellationToken ct){
+        await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
+        return Ok(ApiResponse<ProductionTransferTaskBoardDto>.Ok(await tasks.ClaimTaskAsync(id,taskId,request,UserId(),ct),"Görev üzerinize alındı."));}
     [HttpDelete("{id:long}/tasks/{taskId:long}/assignments/{userId:long}"),HttpPost("{id:long}/tasks/{taskId:long}/assignments/{userId:long}/remove")]
     public async Task<IActionResult>RemoveAssignment(long id,long taskId,long userId,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.ASSIGN",ct);await Ensure(id,ct);
