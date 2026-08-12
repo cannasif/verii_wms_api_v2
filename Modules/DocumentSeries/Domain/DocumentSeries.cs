@@ -12,7 +12,8 @@ public enum WmsDocumentType
     ProductionTransfer = 6,
     SubcontractingIssue = 7,
     SubcontractingReceipt = 8,
-    ProductionOrder = 9
+    ProductionOrder = 9,
+    InventoryCount = 10
 }
 
 public enum DocumentYearFormat

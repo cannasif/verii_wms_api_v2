@@ -17,6 +17,8 @@ using verii_wms_api_v2.Modules.GoodsReceipt.Infrastructure;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.IncomingInvoice.Domain;
 using verii_wms_api_v2.Modules.IncomingInvoice.Infrastructure;
+using verii_wms_api_v2.Modules.InventoryCount.Domain;
+using verii_wms_api_v2.Modules.InventoryCount.Infrastructure;
 using verii_wms_api_v2.Modules.Kkd.Domain;
 using verii_wms_api_v2.Modules.Kkd.Infrastructure;
 using verii_wms_api_v2.Modules.Location.Domain;
@@ -158,6 +160,15 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<GeneratedBarcode> GeneratedBarcodes => Set<GeneratedBarcode>();
     public DbSet<StockMovementOperation> StockMovementOperations => Set<StockMovementOperation>();
     public DbSet<StockMovementEntry> StockMovementEntries => Set<StockMovementEntry>();
+    public DbSet<InventoryCountHeader> InventoryCountHeaders => Set<InventoryCountHeader>();
+    public DbSet<InventoryCountScope> InventoryCountScopes => Set<InventoryCountScope>();
+    public DbSet<InventoryCountTask> InventoryCountTasks => Set<InventoryCountTask>();
+    public DbSet<InventoryCountLine> InventoryCountLines => Set<InventoryCountLine>();
+    public DbSet<InventoryCountEntry> InventoryCountEntries => Set<InventoryCountEntry>();
+    public DbSet<InventoryCountScanEvent> InventoryCountScanEvents => Set<InventoryCountScanEvent>();
+    public DbSet<InventoryCountReview> InventoryCountReviews => Set<InventoryCountReview>();
+    public DbSet<InventoryCountAdjustment> InventoryCountAdjustments => Set<InventoryCountAdjustment>();
+    public DbSet<InventoryCountPolicy> InventoryCountPolicies => Set<InventoryCountPolicy>();
     public DbSet<LocationStockBalance> LocationStockBalances => Set<LocationStockBalance>();
     public DbSet<WarehouseStockBalance> WarehouseStockBalances => Set<WarehouseStockBalance>();
     public DbSet<ErpStockBalanceSyncRun> ErpStockBalanceSyncRuns => Set<ErpStockBalanceSyncRun>();
@@ -368,6 +379,15 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new GeneratedBarcodeConfiguration());
         modelBuilder.ApplyConfiguration(new StockMovementOperationConfiguration());
         modelBuilder.ApplyConfiguration(new StockMovementEntryConfiguration());
+        modelBuilder.ApplyConfiguration(new InventoryCountHeaderConfiguration());
+        modelBuilder.ApplyConfiguration(new InventoryCountScopeConfiguration());
+        modelBuilder.ApplyConfiguration(new InventoryCountTaskConfiguration());
+        modelBuilder.ApplyConfiguration(new InventoryCountLineConfiguration());
+        modelBuilder.ApplyConfiguration(new InventoryCountEntryConfiguration());
+        modelBuilder.ApplyConfiguration(new InventoryCountScanEventConfiguration());
+        modelBuilder.ApplyConfiguration(new InventoryCountReviewConfiguration());
+        modelBuilder.ApplyConfiguration(new InventoryCountAdjustmentConfiguration());
+        modelBuilder.ApplyConfiguration(new InventoryCountPolicyConfiguration());
         modelBuilder.ApplyConfiguration(new LocationStockBalanceConfiguration());
         modelBuilder.ApplyConfiguration(new WarehouseStockBalanceConfiguration());
         modelBuilder.ApplyConfiguration(new ErpStockBalanceSyncRunConfiguration());
@@ -474,6 +494,19 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             new PermissionDefinition { Id=1006, BranchCode="0", Code="SYSTEM.HANGFIRE.VIEW", Name="Hangfire İzle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=1007, BranchCode="0", Code="SYSTEM.HANGFIRE.TRIGGER", Name="Hangfire Job Tetikle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=1008, BranchCode="0", Code="SYSTEM.AUDIT.VIEW", Name="Audit Kayıtlarını Görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
+        modelBuilder.Entity<PermissionDefinition>().HasData(
+            new PermissionDefinition { Id=2800, BranchCode="0", Code="WMS.INVENTORY_COUNT.VIEW", Name="Sayım emirlerini görüntüle", IsActive=true, AvailableOnWeb=true, AvailableOnMobile=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2801, BranchCode="0", Code="WMS.INVENTORY_COUNT.CREATE", Name="Sayım emri oluştur", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2802, BranchCode="0", Code="WMS.INVENTORY_COUNT.UPDATE", Name="Sayım taslağını güncelle veya sil", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2803, BranchCode="0", Code="WMS.INVENTORY_COUNT.RELEASE", Name="Sayım emrini serbest bırak", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2804, BranchCode="0", Code="WMS.INVENTORY_COUNT.ASSIGN", Name="Sayım görevlerini ata", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2805, BranchCode="0", Code="WMS.INVENTORY_COUNT.COUNT", Name="Fiziksel sayım yap", IsActive=true, AvailableOnWeb=true, AvailableOnMobile=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2806, BranchCode="0", Code="WMS.INVENTORY_COUNT.REVIEW", Name="Sayım farklarını ve defter miktarını incele", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2807, BranchCode="0", Code="WMS.INVENTORY_COUNT.APPROVE", Name="Sayım farkını onayla veya yeniden sayıma gönder", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2808, BranchCode="0", Code="WMS.INVENTORY_COUNT.POST", Name="Onaylanan sayım farkını stok hareketine işle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2809, BranchCode="0", Code="WMS.INVENTORY_COUNT.CANCEL", Name="Sayım emrini güvenli biçimde iptal et", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2810, BranchCode="0", Code="WMS.INVENTORY_COUNT.POLICY.VIEW", Name="Sayım politikalarını görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2811, BranchCode="0", Code="WMS.INVENTORY_COUNT.POLICY.MANAGE", Name="Sayım politikalarını yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionDefinition>().HasData(
             new PermissionDefinition { Id=1009, BranchCode="0", Code="WMS.LOCATIONS.VIEW", Name="Raf Tanımlarını Görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=1010, BranchCode="0", Code="WMS.LOCATIONS.CREATE", Name="Raf Tanımı Oluştur", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
@@ -682,6 +715,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2512,4).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2600,6).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(new PermissionGroupPermission { Id=2700, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=2700, CreatedDate=seedDate });
+        modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2800,12).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<UserPermissionGroup>().HasData(new UserPermissionGroup { Id=1001, BranchCode="0", UserId=1, PermissionGroupId=1001, CreatedDate=seedDate });
     }
 
