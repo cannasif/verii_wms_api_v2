@@ -6,6 +6,7 @@ using ClosedXML.Excel;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Location.Application;
 using verii_wms_api_v2.Modules.Location.Domain;
+using verii_wms_api_v2.Modules.StockMovement.Domain;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
@@ -309,6 +310,8 @@ public sealed class WarehouseOpeningImportService(
 
         var balanceRows = rows.Where(x => !string.IsNullOrWhiteSpace(x.StockCode)).ToList();
         await ValidateBalanceReferencesAsync(balanceRows, warehouseByCode, cancellationToken);
+        if (newLocations.Count > 0)
+            await EnsureWarehousesHaveNoMovementsAsync(warehouses, cancellationToken);
         var totalQuantity = balanceRows.Sum(x => x.Quantity ?? 0);
         var batchCount = balanceRows
             .GroupBy(x => warehouseByCode[x.WarehouseCode].BranchCode, StringComparer.OrdinalIgnoreCase)
@@ -337,8 +340,10 @@ public sealed class WarehouseOpeningImportService(
         CancellationToken cancellationToken)
     {
         foreach (var row in rows)
-            if (!row.Quantity.HasValue || row.Quantity.Value <= 0)
-                throw AppException.BadRequest($"Satır {row.RowNumber}: Quantity sıfırdan büyük olmalıdır.");
+            if (!row.Quantity.HasValue || row.Quantity.Value <= 0
+                || row.Quantity.Value > StockMovementLimits.MaxQuantity)
+                throw AppException.BadRequest(
+                    $"Satır {row.RowNumber}: Quantity sıfırdan büyük ve en fazla {StockMovementLimits.MaxQuantity:N0} olmalıdır.");
 
         var branches = warehouseByCode.Values.Select(x => x.BranchCode)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
@@ -380,6 +385,26 @@ public sealed class WarehouseOpeningImportService(
                 throw AppException.BadRequest(
                     $"Satır {row.RowNumber}: '{row.YapCode}' yapılandırma kodu '{row.StockCode}' stoğuna ait değil.");
         }
+    }
+
+    private async Task EnsureWarehousesHaveNoMovementsAsync(
+        IReadOnlyCollection<WarehouseLookupRow> warehouses,
+        CancellationToken cancellationToken)
+    {
+        var warehouseIds = warehouses.Select(x => x.Id).ToList();
+        long? usedWarehouseId;
+        using (unitOfWork.BeginBranchScope(null))
+        {
+            usedWarehouseId = await unitOfWork.Repository<StockMovementEntry>().Query()
+                .Where(x => warehouseIds.Contains(x.WarehouseId))
+                .Select(x => (long?)x.WarehouseId)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+
+        if (!usedWarehouseId.HasValue) return;
+        var warehouseCode = warehouses.First(x => x.Id == usedWarehouseId.Value).WarehouseCode;
+        throw AppException.Conflict(
+            $"{warehouseCode} deposunda stok hareketi mevcut. İlk bakiye yalnız hareket defteri boş depoya aktarılabilir.");
     }
 
     private async Task<WarehouseOpeningImportResult> ExecutePreparedAsync(
@@ -535,17 +560,34 @@ public sealed class WarehouseOpeningImportService(
     {
         var originalCode = row.LocationCode.Trim();
         var normalizedCode = NormalizeLocationCode(originalCode, row.RowNumber);
+        var locationName = string.IsNullOrWhiteSpace(row.LocationName)
+            ? string.Equals(originalCode, normalizedCode, StringComparison.Ordinal) ? null : originalCode
+            : row.LocationName.Trim();
+        if (!string.IsNullOrWhiteSpace(locationName)
+            && (locationName.Length < 2 || IsGeneratedShortLocationName(normalizedCode, locationName)))
+            locationName = $"{normalizedCode} Raf";
         return row with
         {
             LocationCode = normalizedCode,
-            LocationName = string.IsNullOrWhiteSpace(row.LocationName)
-                ? string.Equals(originalCode, normalizedCode, StringComparison.Ordinal) ? null : originalCode
-                : row.LocationName.Trim(),
+            LocationName = locationName,
             LocationType = NormalizeLocationType(row.LocationType),
             ParentLocationCode = string.IsNullOrWhiteSpace(row.ParentLocationCode)
                 ? null
                 : NormalizeLocationCode(row.ParentLocationCode, row.RowNumber)
         };
+    }
+
+    private static bool IsGeneratedShortLocationName(string locationCode, string locationName)
+    {
+        if (locationCode.Length >= 2) return false;
+        static string Compact(string value) => NormalizeAlias(value)
+            .Replace("-", string.Empty, StringComparison.Ordinal)
+            .Replace("_", string.Empty, StringComparison.Ordinal)
+            .Replace(".", string.Empty, StringComparison.Ordinal);
+        return string.Equals(
+            Compact(locationName),
+            $"{Compact(locationCode)}RAF",
+            StringComparison.OrdinalIgnoreCase);
     }
 
     private static FlatRow CreateOpeningZone(FlatRow source) => source with

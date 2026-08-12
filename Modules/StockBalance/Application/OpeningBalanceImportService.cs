@@ -306,7 +306,9 @@ public sealed class OpeningBalanceImportService(
                     throw AppException.BadRequest(
                         $"'{stockCode}' stok kodu deponun bağlı olduğu '{warehouse.BranchCode}' şubesinde bulunamadı.");
                 var quantity = RequiredDecimal(row, 5);
-                if (quantity <= 0) throw AppException.BadRequest("Quantity sıfırdan büyük olmalıdır.");
+                if (quantity <= 0 || quantity > StockMovementLimits.MaxQuantity)
+                    throw AppException.BadRequest(
+                        $"Quantity sıfırdan büyük ve en fazla {StockMovementLimits.MaxQuantity:N0} olmalıdır.");
                 var rawStatus = Text(row, 9);
                 var status = StockStatuses.FirstOrDefault(x => string.Equals(x, rawStatus, StringComparison.OrdinalIgnoreCase))
                     ?? throw AppException.BadRequest("StockStatus geçersiz.");
@@ -372,6 +374,26 @@ public sealed class OpeningBalanceImportService(
                 lines))))
             .ToList();
 
+        long? foreignWarehouseId;
+        using (unitOfWork.BeginBranchScope(null))
+        {
+            var operations = unitOfWork.Repository<StockMovementOperation>().Query();
+            var targetWarehouseIds = requestLines.Select(x => x.TargetWarehouseId!.Value).Distinct().ToList();
+            foreignWarehouseId = await unitOfWork.Repository<StockMovementEntry>().Query()
+                .Where(entry => targetWarehouseIds.Contains(entry.WarehouseId)
+                    && !operations.Any(operation => operation.Id == entry.OperationId
+                        && operation.ReferenceType == "OpeningBalanceImport"
+                        && operation.ReferenceNo == referenceNo))
+                .Select(entry => (long?)entry.WarehouseId)
+                .FirstOrDefaultAsync(cancellationToken);
+        }
+        if (foreignWarehouseId.HasValue)
+        {
+            var code = warehouses.First(x => x.Id == foreignWarehouseId.Value).WarehouseCode;
+            throw AppException.Conflict(
+                $"{code} deposunda bu dosyadan bağımsız stok hareketi mevcut. İlk bakiye yalnız hareket defteri boş depoya aktarılabilir.");
+        }
+
         // A retry of the exact same file must be able to resume after a process or
         // network interruption. Already committed chunks are replayed by PostAsync;
         // validating their serials as new inbound stock would incorrectly reject them.
@@ -397,23 +419,6 @@ public sealed class OpeningBalanceImportService(
         if (validateOnly)
             return new(0, Guid.Empty, false, rows.Count, movementLines.Sum(x => x.Quantity), [],
                 postRequests.Count, rows.Count > 500);
-
-        using var unscopedValidationScope = unitOfWork.BeginBranchScope(null);
-        var operations = unitOfWork.Repository<StockMovementOperation>().Query();
-        var targetWarehouseIds = requestLines.Select(x => x.TargetWarehouseId!.Value).Distinct().ToList();
-        var foreignWarehouseId = await unitOfWork.Repository<StockMovementEntry>().Query()
-            .Where(entry => targetWarehouseIds.Contains(entry.WarehouseId)
-                && !operations.Any(operation => operation.Id == entry.OperationId
-                    && operation.ReferenceType == "OpeningBalanceImport"
-                    && operation.ReferenceNo == referenceNo))
-            .Select(entry => (long?)entry.WarehouseId)
-            .FirstOrDefaultAsync(cancellationToken);
-        if (foreignWarehouseId.HasValue)
-        {
-            var code = warehouses.First(x => x.Id == foreignWarehouseId.Value).WarehouseCode;
-            throw AppException.Conflict(
-                $"{code} deposunda bu dosyadan bağımsız stok hareketi mevcut. İlk bakiye yalnız hareket defteri boş depoya aktarılabilir.");
-        }
 
         var postedBatches = new List<StockMovementPostResult>(postRequests.Count);
         foreach (var request in postRequests)

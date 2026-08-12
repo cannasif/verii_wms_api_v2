@@ -54,3 +54,8 @@ public static class StockMovementStatuses
     public const string Posted = "Posted";
     public const string Reversed = "Reversed";
 }
+
+public static class StockMovementLimits
+{
+    public const decimal MaxQuantity = 999_999_999_999m;
+}

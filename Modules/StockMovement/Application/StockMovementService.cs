@@ -196,7 +196,9 @@ public sealed class StockMovementService(
         var result = new List<StockMovementEntry>(request.Lines.Count * 2);
         foreach (var line in request.Lines)
         {
-            if (line.Quantity <= 0 || line.Quantity > 999_999_999_999m) throw AppException.BadRequest("Hareket miktarı sıfırdan büyük olmalıdır.");
+            if (line.Quantity <= 0 || line.Quantity > StockMovementLimits.MaxQuantity)
+                throw AppException.BadRequest(
+                    $"Hareket miktarı sıfırdan büyük ve en fazla {StockMovementLimits.MaxQuantity:N0} olmalıdır.");
             var stock = stocks[line.StockId];
             if (line.YapCodeId.HasValue && yapCodes[line.YapCodeId.Value].StockId.HasValue && yapCodes[line.YapCodeId.Value].StockId != stock.Id)
                 throw AppException.BadRequest("YAP kodu seçilen stokla uyuşmuyor.");

@@ -327,6 +327,93 @@ public sealed class InitialWarehouseImportTests
     }
 
     [Fact]
+    public async Task Combined_opening_normalizes_single_character_location_names_consistently()
+    {
+        await using var db = CreateDb();
+        db.AddRange(
+            new Warehouse { BranchCode = "0", WarehouseCode = 4000, WarehouseName = "4000 Deposu" },
+            new Stock { BranchCode = "0", ErpStockCode = "STK-01", StockName = "Test stok", BaseUnitCode = "ADET" },
+            new Stock { BranchCode = "0", ErpStockCode = "STK-02", StockName = "Test stok 2", BaseUnitCode = "ADET" });
+        await db.SaveChangesAsync();
+        var locations = new RecordingLocationImportService();
+        var service = new WarehouseOpeningImportService(
+            Uow(db), locations, new RecordingOpeningBalanceImportService());
+        await using var stream = CombinedOpeningWorkbook(
+            [4000, "K", "K_Raf", "Rack", "STK-01", 1m, ""],
+            [4000, "K", "K", "Rack", "STK-02", 1m, ""]);
+
+        var preview = await service.PreviewAsync(stream, "0");
+        stream.Position = 0;
+        await service.ImportAsync(stream, "0", preview.FileHash, "single-location-name");
+
+        var location = Assert.Single(locations.ImportedDefinitions, x => x.Code == "K");
+        Assert.Equal("K Raf", location.Name);
+    }
+
+    [Fact]
+    public async Task Combined_opening_preview_rejects_quantity_above_movement_limit()
+    {
+        await using var db = CreateDb();
+        db.AddRange(
+            new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" },
+            new Stock { BranchCode = "0", ErpStockCode = "STK-01", StockName = "Test stok", BaseUnitCode = "ADET" });
+        await db.SaveChangesAsync();
+        var service = new WarehouseOpeningImportService(
+            Uow(db), new RecordingLocationImportService(), new RecordingOpeningBalanceImportService());
+        await using var stream = CombinedOpeningWorkbook(
+            [1, "A01", "A01 Raf", "Rack", "STK-01", StockMovementLimits.MaxQuantity + 1m, ""]);
+
+        var error = await Assert.ThrowsAsync<verii_wms_api_v2.Shared.Application.Exceptions.AppException>(
+            () => service.PreviewAsync(stream, "0"));
+
+        Assert.Contains("en fazla", error.Message);
+        Assert.Contains("Satır 2", error.Message);
+    }
+
+    [Fact]
+    public async Task Combined_opening_preview_rejects_used_warehouse_before_creating_locations()
+    {
+        await using var db = CreateDb();
+        var warehouse = new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" };
+        var stock = new Stock { BranchCode = "0", ErpStockCode = "STK-01", StockName = "Test stok", BaseUnitCode = "ADET" };
+        db.AddRange(warehouse, stock);
+        await db.SaveChangesAsync();
+        var existingLocation = new WarehouseLocation
+        {
+            BranchCode = "0", WarehouseId = warehouse.Id, Code = "MEVCUT", Name = "Mevcut Raf",
+            LocationType = LocationTypes.Rack, BarcodeEntryMode = BarcodeEntryModes.Auto, IsActive = true
+        };
+        db.Add(existingLocation);
+        await db.SaveChangesAsync();
+        var operation = new StockMovementOperation
+        {
+            BranchCode = "0", IdempotencyKey = "existing-movement", RequestHash = "existing",
+            OperationType = StockMovementTypes.Receipt, Status = StockMovementStatuses.Posted,
+            ReferenceType = "GoodsReceipt", OccurredAt = DateTime.UtcNow
+        };
+        db.Add(operation);
+        await db.SaveChangesAsync();
+        db.Add(new StockMovementEntry
+        {
+            BranchCode = "0", OperationId = operation.Id, LineNo = 1, StockId = stock.Id,
+            WarehouseId = warehouse.Id, LocationId = existingLocation.Id, QuantityDelta = 1m,
+            UnitCode = "ADET", StockStatus = "Available", OccurredAt = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+        var locations = new RecordingLocationImportService();
+        var service = new WarehouseOpeningImportService(
+            Uow(db), locations, new RecordingOpeningBalanceImportService());
+        await using var stream = CombinedOpeningWorkbook(
+            [1, "YENI", "Yeni Raf", "Rack", "STK-01", 1m, ""]);
+
+        var error = await Assert.ThrowsAsync<verii_wms_api_v2.Shared.Application.Exceptions.AppException>(
+            () => service.PreviewAsync(stream, "0"));
+
+        Assert.Contains("stok hareketi mevcut", error.Message);
+        Assert.Equal(0, locations.ImportedRows);
+    }
+
+    [Fact]
     public async Task Combined_opening_uses_warehouse_branch_instead_of_logged_in_branch()
     {
         await using var db = CreateDb();
