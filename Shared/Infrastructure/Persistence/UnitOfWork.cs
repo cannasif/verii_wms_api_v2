@@ -10,10 +10,15 @@ namespace verii_wms_api_v2.Shared.Infrastructure.Persistence;
 public sealed class UnitOfWork(WmsDbContext context, IHttpContextAccessor httpContextAccessor) : IUnitOfWork
 {
     private readonly ConcurrentDictionary<Type, object> _repositories = new();
+    private readonly BranchExecutionScopeState _branchScope = new();
     private IDbContextTransaction? _transaction;
 
     public IGenericRepository<TEntity> Repository<TEntity>() where TEntity : class =>
-        (IGenericRepository<TEntity>)_repositories.GetOrAdd(typeof(TEntity), _ => new GenericRepository<TEntity>(context, httpContextAccessor));
+        (IGenericRepository<TEntity>)_repositories.GetOrAdd(
+            typeof(TEntity),
+            _ => new GenericRepository<TEntity>(context, httpContextAccessor, _branchScope));
+
+    public IDisposable BeginBranchScope(string? branchCode) => _branchScope.Begin(branchCode);
 
     public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default) => context.SaveChangesAsync(cancellationToken);
 

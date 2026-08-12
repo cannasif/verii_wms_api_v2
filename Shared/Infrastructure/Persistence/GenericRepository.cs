@@ -8,7 +8,10 @@ using verii_wms_api_v2.Shared.Domain;
 
 namespace verii_wms_api_v2.Shared.Infrastructure.Persistence;
 
-public sealed class GenericRepository<TEntity>(WmsDbContext context, IHttpContextAccessor httpContextAccessor) : IGenericRepository<TEntity>
+public sealed class GenericRepository<TEntity>(
+    WmsDbContext context,
+    IHttpContextAccessor httpContextAccessor,
+    BranchExecutionScopeState branchScope) : IGenericRepository<TEntity>
     where TEntity : class
 {
     private readonly DbSet<TEntity> _set = context.Set<TEntity>();
@@ -117,6 +120,9 @@ public sealed class GenericRepository<TEntity>(WmsDbContext context, IHttpContex
     {
         if (!IsBranchScopedEntity)
             return null;
+
+        if (branchScope.IsOverridden)
+            return branchScope.BranchCode;
 
         var branchCode = httpContextAccessor.HttpContext?.User
             .FindFirstValue(JwtTokenIssuer.BranchCodeClaim)

@@ -212,6 +212,7 @@ public sealed class UserImportValidationTests
 
     private sealed class ThrowingUnitOfWork : IUnitOfWork
     {
+        public IDisposable BeginBranchScope(string? branchCode) => NoopDisposable.Instance;
         public IGenericRepository<TEntity> Repository<TEntity>() where TEntity : class =>
             throw new InvalidOperationException("Bu doğrulama testinde veritabanına erişilmemelidir.");
         public Task<int> SaveChangesAsync(CancellationToken cancellationToken = default) =>
@@ -229,6 +230,12 @@ public sealed class UserImportValidationTests
             IsolationLevel isolationLevel = IsolationLevel.ReadCommitted) =>
             throw new InvalidOperationException();
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+    }
+
+    private sealed class NoopDisposable : IDisposable
+    {
+        public static readonly NoopDisposable Instance = new();
+        public void Dispose() { }
     }
 
     private sealed class NoopAuditWriter : IAuditLogWriter
