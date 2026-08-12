@@ -54,7 +54,28 @@ public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INet
 
     public async Task<IReadOnlyList<CustomerDto>> GetCustomersAsync(string? customerCode, int? branchCode, CancellationToken ct)
     {
-        var rows = await queryExecutor.QueryAsync<CustomerDto>("RII_FN_CARI", "SELECT * FROM dbo.RII_FN_CARI(@cariKodu, @branchCode)", r => new CustomerDto(Get<short>(r,"SUBE_KODU"), Get<short>(r,"ISLETME_KODU"), String(r,"CARI_KOD"), NullableString(r,"CARI_ISIM")), ct, Parameter("@cariKodu", customerCode), Parameter("@branchCode", branchCode));
+        var rows = await queryExecutor.QueryAsync<CustomerDto>(
+            "RII_FN_CARI",
+            "SELECT * FROM dbo.RII_FN_CARI(@cariKodu, @branchCode)",
+            r => new CustomerDto(
+                Get<short>(r, "SUBE_KODU"),
+                Get<short>(r, "ISLETME_KODU"),
+                String(r, "CARI_KOD"),
+                NullableString(r, "CARI_ISIM"),
+                NullableString(r, "CARI_TEL"),
+                NullableString(r, "CARI_IL"),
+                NullableString(r, "ULKE_KODU"),
+                NullableString(r, "CARI_TIP"),
+                NullableString(r, "CARI_ADRES"),
+                NullableString(r, "CARI_ILCE"),
+                NullableString(r, "VERGI_DAIRESI"),
+                NullableString(r, "EMAIL"),
+                NullableString(r, "WEB"),
+                NullableString(r, "CARI_TEL2"),
+                NullableString(r, "CARI_TEL3")),
+            ct,
+            Parameter("@cariKodu", customerCode),
+            Parameter("@branchCode", branchCode));
         return rows;
     }
 

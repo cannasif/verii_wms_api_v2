@@ -25,7 +25,22 @@ public sealed record NetsisStockBalanceDto(
     string StockCode,
     decimal Balance);
 
-public sealed record CustomerDto(short SubeKodu, short IsletmeKodu, string CariKod, string? CariIsim);
+public sealed record CustomerDto(
+    short SubeKodu,
+    short IsletmeKodu,
+    string CariKod,
+    string? CariIsim,
+    string? CariTel,
+    string? CariIl,
+    string? UlkeKodu,
+    string? CariTip,
+    string? CariAdres,
+    string? CariIlce,
+    string? VergiDairesi,
+    string? Email,
+    string? Web,
+    string? CariTel2,
+    string? CariTel3);
 public sealed record ConfigurationCodeDto(
     string ConfigurationCode,
     string Description,
