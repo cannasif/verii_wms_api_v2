@@ -157,7 +157,8 @@ public sealed record QualityInspectionLineDto(long Id, long? GoodsReceiptLineId,
     string StockCode, string? StockName, string? YapCode, string? LotNo, string? SerialNo,
     DateOnly? ExpiryDate, decimal Quantity, decimal SampleQuantity, decimal AcceptedQuantity,
     decimal RejectedQuantity, decimal QuarantineQuantity, long? QuarantineLocationId, QualityDecision Decision,
-    string? ReasonCode, string? ReasonNote, long? DecisionBy, DateTimeOffset? DecisionAtUtc);
+    string? ReasonCode, string? ReasonNote, long? DecisionBy, DateTimeOffset? DecisionAtUtc,
+    QualityDecisionDestinationDto? DefaultAcceptedDestination);
 
 public sealed record QualityInspectionDispositionDto(
     long Id,

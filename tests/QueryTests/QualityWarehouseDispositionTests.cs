@@ -36,6 +36,26 @@ public sealed class QualityWarehouseDispositionTests
         Assert.Equal(expected, QualityService.IsReceiptReadyForQualityDisposition(status));
     }
 
+    [Theory]
+    [InlineData(11L, 22L, 33L, 44L, 11L)]
+    [InlineData(null, 22L, 33L, 44L, 22L)]
+    [InlineData(null, null, 33L, 44L, 33L)]
+    [InlineData(null, null, null, 44L, 44L)]
+    [InlineData(null, null, null, null, null)]
+    public void Accepted_target_prefers_warehouse_route_then_goods_receipt_defaults(
+        long? routeLocationId,
+        long? putawayLocationId,
+        long? receivingLocationId,
+        long? headerReceivingLocationId,
+        long? expected)
+    {
+        Assert.Equal(expected, QualityService.ResolveAcceptedLocationId(
+            routeLocationId,
+            putawayLocationId,
+            receivingLocationId,
+            headerReceivingLocationId));
+    }
+
     [Fact]
     public void Warehouse_route_overrides_only_configured_targets_and_inherits_the_rest()
     {

@@ -225,7 +225,7 @@ public sealed class QualityService(
             .Select(x => new { x.WarehouseCode, x.WarehouseName }).FirstOrDefaultAsync(ct);
         var receipt = inspection.SourceDocumentType == "GoodsReceipt"
             ? await uow.Repository<GoodsReceiptHeader>().Query().Where(x => x.Id == inspection.SourceDocumentId)
-                .Select(x => new { x.WaybillNo, x.ElectronicWaybillNo, x.Status }).FirstOrDefaultAsync(ct)
+                .Select(x => new { x.WaybillNo, x.ElectronicWaybillNo, x.Status, x.ReceivingLocationId }).FirstOrDefaultAsync(ct)
             : null;
         var creator = inspection.CreatedBy.HasValue
             ? await (from user in uow.Repository<User>().Query()
@@ -243,15 +243,70 @@ public sealed class QualityService(
             TotalQuantity = inspection.Lines.Sum(x => x.Quantity), CreatedAtUtc = inspection.CreatedAtUtc,
             QueuedAtUtc = inspection.QueuedAtUtc, DecidedAtUtc = inspection.DecidedAtUtc, InspectorUserId = inspection.InspectorUserId,
             CreatedBy = inspection.CreatedBy, CreatedDate = inspection.CreatedDate, UpdatedBy = inspection.UpdatedBy, UpdatedDate = inspection.UpdatedDate };
-        var lines = inspection.Lines.OrderBy(x => x.Id).Select(x => new QualityInspectionLineDto(x.Id, x.GoodsReceiptLineId,
-            x.StockId, x.StockCodeSnapshot, x.StockNameSnapshot, x.YapCodeSnapshot, x.LotNo, x.SerialNo, x.ExpiryDate,
-            x.Quantity, x.SampleQuantity, x.AcceptedQuantity, x.RejectedQuantity, x.QuarantineQuantity,
-            x.QuarantineLocationId, x.Decision,
-            x.ReasonCode, x.ReasonNote, x.DecisionBy, x.DecisionAtUtc)).ToList();
         var parameter = await Parameters.FirstOrDefaultAsync(x => x.BranchCode == inspection.BranchCode && x.ParameterKey == "DEFAULT", false, ct)
             ?? Default(inspection.BranchCode);
         var warehouseRoutes = await GetActiveWarehouseRoutesAsync(parameter, ct);
         var routeDefaults = ResolveWarehouseRouteDefaults(parameter, warehouseRoutes, inspection.WarehouseId);
+        var goodsReceiptLineIds = inspection.Lines
+            .Where(line => line.GoodsReceiptLineId.HasValue)
+            .Select(line => line.GoodsReceiptLineId!.Value)
+            .Distinct()
+            .ToArray();
+        var receiptLineDefaults = goodsReceiptLineIds.Length == 0
+            ? new Dictionary<long, QualityReceiptLineAcceptedTarget>()
+            : await uow.Repository<GoodsReceiptLine>().Query()
+                .Where(line => goodsReceiptLineIds.Contains(line.Id))
+                .Select(line => new QualityReceiptLineAcceptedTarget(
+                    line.Id,
+                    line.TargetWarehouseId,
+                    line.DefaultPutawayLocationId,
+                    line.DefaultReceivingLocationId))
+                .ToDictionaryAsync(line => line.LineId, ct);
+        var acceptedLocationIdByInspectionLineId = inspection.Lines.ToDictionary(
+            line => line.Id,
+            line =>
+            {
+                if (!line.GoodsReceiptLineId.HasValue
+                    || !receiptLineDefaults.TryGetValue(line.GoodsReceiptLineId.Value, out var receiptLine))
+                    return routeDefaults.AcceptedLocationId;
+                var defaults = ResolveWarehouseRouteDefaults(parameter, warehouseRoutes, receiptLine.WarehouseId);
+                return ResolveAcceptedLocationId(
+                    defaults.AcceptedLocationId,
+                    receiptLine.DefaultPutawayLocationId,
+                    receiptLine.DefaultReceivingLocationId,
+                    receipt?.ReceivingLocationId);
+            });
+        var acceptedLocationIds = acceptedLocationIdByInspectionLineId.Values
+            .Where(locationId => locationId.HasValue)
+            .Select(locationId => locationId!.Value)
+            .Distinct()
+            .ToArray();
+        var acceptedDestinationByLocationId = acceptedLocationIds.Length == 0
+            ? new Dictionary<long, QualityDecisionDestinationDto>()
+            : await (from location in uow.Repository<WarehouseLocation>().Query()
+                     join targetWarehouse in uow.Repository<WarehouseEntity>().Query()
+                         on location.WarehouseId equals targetWarehouse.Id
+                     where acceptedLocationIds.Contains(location.Id)
+                         && location.IsActive
+                         && location.IsPutaway
+                         && !location.IsQuarantine
+                     select new QualityDecisionDestinationDto(
+                         location.Id,
+                         targetWarehouse.Id,
+                         targetWarehouse.WarehouseCode,
+                         targetWarehouse.WarehouseName,
+                         location.Code,
+                         location.Name))
+                .ToDictionaryAsync(destination => destination.LocationId, ct);
+        var defaultAcceptedDestinationByInspectionLineId = acceptedLocationIdByInspectionLineId
+            .Where(pair => pair.Value.HasValue && acceptedDestinationByLocationId.ContainsKey(pair.Value.Value))
+            .ToDictionary(pair => pair.Key, pair => acceptedDestinationByLocationId[pair.Value!.Value]);
+        var lines = inspection.Lines.OrderBy(x => x.Id).Select(x => new QualityInspectionLineDto(x.Id, x.GoodsReceiptLineId,
+            x.StockId, x.StockCodeSnapshot, x.StockNameSnapshot, x.YapCodeSnapshot, x.LotNo, x.SerialNo, x.ExpiryDate,
+            x.Quantity, x.SampleQuantity, x.AcceptedQuantity, x.RejectedQuantity, x.QuarantineQuantity,
+            x.QuarantineLocationId, x.Decision,
+            x.ReasonCode, x.ReasonNote, x.DecisionBy, x.DecisionAtUtc,
+            defaultAcceptedDestinationByInspectionLineId.GetValueOrDefault(x.Id))).ToList();
         var quarantineDestinations = await MergeRouteQuarantineDestinationsAsync(
             await GetQuarantineDestinationsAsync(parameter, ct), warehouseRoutes, ct);
         if (routeDefaults.QuarantineLocationId.HasValue)
@@ -261,6 +316,15 @@ public sealed class QualityService(
                     IsDefault = destination.LocationId == routeDefaults.QuarantineLocationId.Value
                 }).ToArray();
         var defaultAcceptedDestination = await GetDecisionDestinationAsync(routeDefaults.AcceptedLocationId, ct);
+        if (defaultAcceptedDestination is null)
+        {
+            var lineDefaults = defaultAcceptedDestinationByInspectionLineId.Values
+                .DistinctBy(destination => destination.LocationId)
+                .Take(2)
+                .ToArray();
+            if (lineDefaults.Length == 1)
+                defaultAcceptedDestination = lineDefaults[0];
+        }
         var defaultRejectedDestination = await GetDecisionDestinationAsync(routeDefaults.RejectLocationId, ct);
         var warehouseTransferDocumentSeries = (await documentSeries.GetLookupAsync(
                 WmsDocumentType.InterWarehouseTransfer, inspection.BranchCode, ct))
@@ -444,12 +508,23 @@ public sealed class QualityService(
                 .Where(locationId => locationId > 0)
                 .Distinct()
                 .ToArray();
+            var acceptedFallbackLocationIds = grLines.Values
+                .Select(line => ResolveAcceptedLocationId(
+                    ResolveWarehouseRouteDefaults(parameter, warehouseRoutes, line.TargetWarehouseId).AcceptedLocationId,
+                    line.DefaultPutawayLocationId,
+                    line.DefaultReceivingLocationId,
+                    gr.ReceivingLocationId))
+                .Where(locationId => locationId.HasValue)
+                .Select(locationId => locationId!.Value)
+                .Distinct()
+                .ToArray();
             var receiptLocationIds = grLines.Values
                 .Select(line => line.DefaultReceivingLocationId ?? gr.ReceivingLocationId)
                 .Distinct()
                 .ToArray();
             var movementLocationIds = balances.Select(balance => balance.LocationId)
                 .Concat(receiptLocationIds)
+                .Concat(acceptedFallbackLocationIds)
                 .Concat(decisionTargetLocationIds)
                 .Distinct()
                 .ToArray();
@@ -457,6 +532,7 @@ public sealed class QualityService(
                 .Where(location => movementLocationIds.Contains(location.Id))
                 .ToDictionaryAsync(location => location.Id, token);
             var requiredLocationIds = receiptLocationIds
+                .Concat(acceptedFallbackLocationIds)
                 .Concat(decisionTargetLocationIds)
                 .Distinct()
                 .ToArray();
@@ -469,9 +545,14 @@ public sealed class QualityService(
                     parameter,
                     warehouseRoutes,
                     grLines[part.Line.GoodsReceiptLineId!.Value].TargetWarehouseId);
+                var receiptLine = grLines[part.Line.GoodsReceiptLineId!.Value];
                 var effectiveTargetLocationId = part.TargetLocationId ?? part.Decision switch
                 {
-                    QualityDecision.Accepted => routeDefaults.AcceptedLocationId,
+                    QualityDecision.Accepted => ResolveAcceptedLocationId(
+                        routeDefaults.AcceptedLocationId,
+                        receiptLine.DefaultPutawayLocationId,
+                        receiptLine.DefaultReceivingLocationId,
+                        gr.ReceivingLocationId),
                     QualityDecision.Quarantined => routeDefaults.QuarantineLocationId,
                     QualityDecision.Rejected => routeDefaults.RejectLocationId,
                     _ => null
@@ -550,6 +631,11 @@ public sealed class QualityService(
                 {
                     var allocationRouteDefaults = ResolveWarehouseRouteDefaults(
                         parameter, warehouseRoutes, allocation.WarehouseId);
+                    var acceptedLocationId = ResolveAcceptedLocationId(
+                        allocationRouteDefaults.AcceptedLocationId,
+                        receiptLine.DefaultPutawayLocationId,
+                        receiptLine.DefaultReceivingLocationId,
+                        gr.ReceivingLocationId);
                     var quarantineDestination = part.Decision == QualityDecision.Quarantined
                         ? part.TargetLocationId.HasValue
                             ? ResolveQuarantineDestination(
@@ -567,7 +653,7 @@ public sealed class QualityService(
                     var destinationLocationId = part.Decision switch
                     {
                         QualityDecision.Accepted when part.TargetLocationId.HasValue => part.TargetLocationId.Value,
-                        QualityDecision.Accepted when allocationRouteDefaults.AcceptedLocationId.HasValue => allocationRouteDefaults.AcceptedLocationId.Value,
+                        QualityDecision.Accepted when acceptedLocationId.HasValue => acceptedLocationId.Value,
                         QualityDecision.Accepted when string.Equals(
                             allocation.StockStatus, "Available", StringComparison.OrdinalIgnoreCase) => allocation.LocationId,
                         QualityDecision.Accepted => receiptLocationId,
@@ -1479,6 +1565,15 @@ public sealed class QualityService(
     internal static bool RequiresDat(long sourceWarehouseId,long targetWarehouseId)=>sourceWarehouseId!=targetWarehouseId;
     internal static bool IsReceiptReadyForQualityDisposition(WarehouseOperationStatus status) =>
         status is WarehouseOperationStatus.Processed or WarehouseOperationStatus.Completed;
+    internal static long? ResolveAcceptedLocationId(
+        long? routeAcceptedLocationId,
+        long? defaultPutawayLocationId,
+        long? defaultReceivingLocationId,
+        long? headerReceivingLocationId) =>
+        routeAcceptedLocationId
+        ?? defaultPutawayLocationId
+        ?? defaultReceivingLocationId
+        ?? headerReceivingLocationId;
     private string Message(string key) => localizer[key].Value;
     internal static void SynchronizeGoodsReceiptStatus(GoodsReceiptHeader receipt, long actor) =>
         GoodsReceiptExecutionService.RefreshHeaderStatus(receipt, actor);
@@ -1651,6 +1746,11 @@ public sealed class QualityService(
         long WarehouseId,
         long LocationId,
         string StockStatus);
+    private sealed record QualityReceiptLineAcceptedTarget(
+        long LineId,
+        long WarehouseId,
+        long? DefaultPutawayLocationId,
+        long? DefaultReceivingLocationId);
     internal sealed record QualityInventorySourceCandidate(
         long BalanceId,
         long WarehouseId,
