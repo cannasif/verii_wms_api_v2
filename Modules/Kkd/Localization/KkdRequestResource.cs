@@ -49,4 +49,13 @@ public static class KkdRequestMessageKeys
     public const string WarehouseAccessDenied = nameof(WarehouseAccessDenied);
     public const string TaskClaimedFromPool = nameof(TaskClaimedFromPool);
     public const string PoolLabel = nameof(PoolLabel);
+    public const string TaskStarted = nameof(TaskStarted);
+    public const string StockNotResolved = nameof(StockNotResolved);
+    public const string InsufficientRouteBalance = nameof(InsufficientRouteBalance);
+    public const string RouteUpdated = nameof(RouteUpdated);
+    public const string QuotaDecisionRequired = nameof(QuotaDecisionRequired);
+    public const string QuotaDecisionPending = nameof(QuotaDecisionPending);
+    public const string QuotaDecisionAlreadyMade = nameof(QuotaDecisionAlreadyMade);
+    public const string QuotaDecisionNotNeeded = nameof(QuotaDecisionNotNeeded);
+    public const string QuotaDecided = nameof(QuotaDecided);
 }

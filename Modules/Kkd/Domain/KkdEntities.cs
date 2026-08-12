@@ -31,6 +31,16 @@ public enum KkdRequestLineStatus
     Cancelled = 7
 }
 
+/// <summary>Bir kalemin KKD hak matrisi (entitlement) kotasını aşıp aşmadığına dair müdür kararı —
+/// talebe özel: onaylanırsa arkada tek günlük/tek talepli bir <see cref="KkdEmployeeEntitlementOverride"/> oluşur.</summary>
+public enum KkdRequestLineQuotaDecision : byte
+{
+    None = 0,
+    Pending = 1,
+    Approved = 2,
+    Rejected = 3
+}
+
 public sealed class KkdPolicy : BaseEntity
 {
     public string PolicyKey { get; set; } = "DEFAULT";
@@ -214,6 +224,12 @@ public sealed class KkdRequestLine : BaseEntity
     public long? ResolvedByUserId { get; set; }
     public DateTimeOffset? ResolvedAtUtc { get; set; }
     public string? ResolutionReason { get; set; }
+    /// <summary>Kota aşımı kararı — üzerine alma/atama anında aşım tespit edilirse Pending, müdür karar verince Approved/Rejected olur.</summary>
+    public KkdRequestLineQuotaDecision QuotaDecision { get; set; } = KkdRequestLineQuotaDecision.None;
+    public long? QuotaDecisionByUserId { get; set; }
+    public DateTimeOffset? QuotaDecisionAtUtc { get; set; }
+    /// <summary>Approved kararında oluşturulan, bu talebe özel <see cref="KkdEmployeeEntitlementOverride"/> kaydının id'si.</summary>
+    public long? QuotaOverrideId { get; set; }
     public byte[] RowVersion { get; set; } = [];
     public ICollection<KkdRequestLineResolution> Resolutions { get; set; } = [];
 }
@@ -359,6 +375,53 @@ public sealed class KkdPreparationTaskLine : BaseEntity
     public decimal PreparedQuantity { get; set; }
     public decimal DeliveredQuantity { get; set; }
     public byte[] RowVersion { get; set; } = [];
+    public ICollection<KkdPreparationTaskLineLocation> Locations { get; set; } = [];
+}
+
+/// <summary>
+/// Bir görev satırı için raf bazlı rezervasyon/toplama izi ("Bu işi yapıyorum" ile ataması,
+/// "Rotayı güncelle" ile revizesi yapılır). Bir satır birden fazla rafa bölünebilir.
+/// </summary>
+public sealed class KkdPreparationTaskLineLocation : BaseEntity
+{
+    public long TaskLineId { get; set; }
+    public KkdPreparationTaskLine TaskLine { get; set; } = null!;
+    public long LocationId { get; set; }
+    public decimal ReservedQuantity { get; set; }
+    public decimal PickedQuantity { get; set; }
+    public string? SerialNo { get; set; }
+    public string? LotNo { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+}
+
+/// <summary>
+/// Hazırlama görevinde kabul edilen barkod okutmaları (append-only journal).
+/// Idempotency, lot/seri izi ve Teslimi Tamamla trackings kaynağı.
+/// </summary>
+public sealed class KkdPreparationBarcodeScan : BaseEntity
+{
+    public long TaskId { get; set; }
+    public KkdPreparationTask Task { get; set; } = null!;
+    public long TaskLineId { get; set; }
+    public KkdPreparationTaskLine TaskLine { get; set; } = null!;
+    public long RequestLineId { get; set; }
+    public Guid IdempotencyKey { get; set; }
+    public string BarcodeValue { get; set; } = string.Empty;
+    public string NormalizedBarcode { get; set; } = string.Empty;
+    public string BarcodeSource { get; set; } = string.Empty;
+    public long StockId { get; set; }
+    public string UnitCode { get; set; } = string.Empty;
+    public string? LotNo { get; set; }
+    public string? SerialNo { get; set; }
+    public decimal Quantity { get; set; }
+    public long? SourceLocationId { get; set; }
+    /// <summary>Teslimi Tamamla ile dağıtıma bağlandıysa dolu; iptalde tekrar açılır.</summary>
+    public long? DistributionId { get; set; }
+    public KkdDistribution? Distribution { get; set; }
+    public DateTimeOffset ScannedAtUtc { get; set; }
+    /// <summary>Bu taramanın postaladığı gerçek stok hareketi; geri alma (Unpick) bunu tersine çevirir.</summary>
+    public long? StockMovementOperationId { get; set; }
+    public bool IsReversed { get; set; }
 }
 
 public sealed class KkdValidationLog : BaseEntity

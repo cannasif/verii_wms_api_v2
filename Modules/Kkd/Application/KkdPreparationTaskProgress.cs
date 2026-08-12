@@ -20,10 +20,34 @@ internal static class KkdPreparationTaskProgress
         CancellationToken ct)
     {
         var taskLines = await ActiveTaskLinesAsync(uow, quantityByRequestLineId.Keys, ct);
+        var taskLineIds = taskLines.Select(x => x.Id).ToArray();
+        var openScans = taskLineIds.Length == 0
+            ? []
+            : await uow.Repository<KkdPreparationBarcodeScan>().Query(true)
+                .Where(x => taskLineIds.Contains(x.TaskLineId) && x.DistributionId == null)
+                .ToListAsync(ct);
+        var journalByTaskLine = openScans
+            .GroupBy(x => x.TaskLineId)
+            .ToDictionary(g => g.Key, g => g.Sum(x => x.Quantity));
+
         foreach (var taskLine in taskLines)
         {
             var quantity = quantityByRequestLineId[taskLine.RequestLineId];
-            taskLine.PreparedQuantity = Math.Min(taskLine.Quantity, taskLine.PreparedQuantity + quantity);
+            var journalSum = journalByTaskLine.GetValueOrDefault(taskLine.Id);
+            if (journalSum > 0)
+            {
+                // Scan-pick zaten PreparedQuantity yazdı; create ile tekrar ekleme (double-count) yapılmaz.
+                // Hibrit: create > açık journal ise aradaki farkı da hazırlanmış say.
+                taskLine.PreparedQuantity = Math.Min(
+                    taskLine.Quantity,
+                    Math.Max(taskLine.PreparedQuantity, Math.Max(
+                        taskLine.DeliveredQuantity + journalSum,
+                        taskLine.DeliveredQuantity + quantity)));
+            }
+            else
+            {
+                taskLine.PreparedQuantity = Math.Min(taskLine.Quantity, taskLine.PreparedQuantity + quantity);
+            }
             taskLine.UpdatedBy = actor;
             taskLine.UpdatedDate = now.UtcDateTime;
 
@@ -36,6 +60,15 @@ internal static class KkdPreparationTaskProgress
                 task.Distribution = distribution;
             task.UpdatedBy = actor;
             task.UpdatedDate = now.UtcDateTime;
+        }
+
+        // Bu dağıtıma dahil edilen açık okutmaları consume et — ikinci Teslimi Tamamla aynı journal'ı tekrar kullanmasın.
+        foreach (var scan in openScans)
+        {
+            scan.DistributionId = distribution.Id != 0 ? distribution.Id : null;
+            scan.Distribution ??= distribution;
+            scan.UpdatedBy = actor;
+            scan.UpdatedDate = now.UtcDateTime;
         }
     }
 
@@ -86,12 +119,41 @@ internal static class KkdPreparationTaskProgress
             .Include(x => x.Task).ThenInclude(x => x.Lines)
             .Where(x => lineIds.Contains(x.RequestLineId) && statuses.Contains(x.Task.Status))
             .ToListAsync(ct);
+
+        var consumedScans = await uow.Repository<KkdPreparationBarcodeScan>().Query(true)
+            .Where(x => x.DistributionId == distributionId)
+            .ToListAsync(ct);
+        foreach (var scan in consumedScans)
+        {
+            scan.DistributionId = null;
+            scan.Distribution = null;
+            scan.UpdatedBy = actor;
+            scan.UpdatedDate = now.UtcDateTime;
+        }
+
+        var taskLineIds = taskLines.Select(x => x.Id).ToArray();
+        var openJournalByTaskLine = taskLineIds.Length == 0
+            ? new Dictionary<long, decimal>()
+            : await uow.Repository<KkdPreparationBarcodeScan>().Query()
+                .Where(x => taskLineIds.Contains(x.TaskLineId) && x.DistributionId == null)
+                .GroupBy(x => x.TaskLineId)
+                .Select(g => new { TaskLineId = g.Key, Qty = g.Sum(x => x.Quantity) })
+                .ToDictionaryAsync(x => x.TaskLineId, x => x.Qty, ct);
+        // Az önce serbest bırakılan okutmaları da açık journal'a ekle (query henüz change-tracker'ı görmeyebilir).
+        foreach (var group in consumedScans.GroupBy(x => x.TaskLineId))
+            openJournalByTaskLine[group.Key] = openJournalByTaskLine.GetValueOrDefault(group.Key) + group.Sum(x => x.Quantity);
+
         foreach (var taskLine in taskLines)
         {
             var quantity = quantityByRequestLineId[taskLine.RequestLineId];
             if (wasCompleted)
                 taskLine.DeliveredQuantity = Math.Max(0, taskLine.DeliveredQuantity - quantity);
-            taskLine.PreparedQuantity = Math.Max(0, taskLine.PreparedQuantity - quantity);
+            // Create-only (journal'sız) kısmı geri al; açık scan journal'ı koru.
+            var openJournal = openJournalByTaskLine.GetValueOrDefault(taskLine.Id);
+            var floor = taskLine.DeliveredQuantity + openJournal;
+            taskLine.PreparedQuantity = Math.Max(floor, Math.Max(0, taskLine.PreparedQuantity - quantity));
+            if (openJournal > 0)
+                taskLine.PreparedQuantity = Math.Max(taskLine.PreparedQuantity, Math.Min(taskLine.Quantity, floor));
             taskLine.UpdatedBy = actor;
             taskLine.UpdatedDate = now.UtcDateTime;
         }

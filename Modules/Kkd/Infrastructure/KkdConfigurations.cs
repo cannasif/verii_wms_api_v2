@@ -6,6 +6,7 @@ using CustomerEntity = verii_wms_api_v2.Modules.Customer.Domain.Customer;
 using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
 using UserEntity = verii_wms_api_v2.Modules.Identity.Domain.User;
 using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
+using WarehouseLocationEntity = verii_wms_api_v2.Modules.Location.Domain.WarehouseLocation;
 
 namespace verii_wms_api_v2.Modules.Kkd.Infrastructure;
 
@@ -194,11 +195,15 @@ public sealed class KkdRequestLineConfiguration : BaseEntityConfiguration<KkdReq
         b.Property(x => x.ExternalOrderNo).HasMaxLength(100);
         b.Property(x => x.ExternalOrderLineId).HasMaxLength(100);
         b.Property(x => x.ResolutionReason).HasMaxLength(1000);
+        b.Property(x => x.QuotaDecision).HasConversion<string>().HasMaxLength(20)
+            .HasDefaultValue(KkdRequestLineQuotaDecision.None);
         b.Property(x => x.RowVersion).IsRowVersion();
         b.HasOne(x => x.Request).WithMany(x => x.Lines).HasForeignKey(x => x.RequestId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne<StockEntity>().WithMany().HasForeignKey(x => x.StockId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne<UserEntity>().WithMany().HasForeignKey(x => x.ResolvedByUserId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<UserEntity>().WithMany().HasForeignKey(x => x.QuotaDecisionByUserId).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(x => new { x.RequestId, x.LineNo }).IsUnique();
+        b.HasIndex(x => new { x.BranchCode, x.QuotaDecision }).HasFilter("[QuotaDecision] = 'Pending'");
         b.HasIndex(x => new { x.BranchCode, x.Status, x.GroupCode, x.StockId });
         b.HasIndex(x => new { x.BranchCode, x.ExternalOrderNo, x.ExternalOrderLineId })
             .HasFilter("[ExternalOrderNo] IS NOT NULL AND [ExternalOrderLineId] IS NOT NULL");
@@ -336,6 +341,49 @@ public sealed class KkdPreparationTaskLineConfiguration : BaseEntityConfiguratio
         b.HasOne(x => x.RequestLine).WithMany().HasForeignKey(x => x.RequestLineId).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(x => new { x.TaskId, x.RequestLineId }).IsUnique().HasFilter("[IsDeleted] = 0");
         b.HasIndex(x => x.RequestLineId);
+    }
+}
+
+public sealed class KkdPreparationTaskLineLocationConfiguration : BaseEntityConfiguration<KkdPreparationTaskLineLocation>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdPreparationTaskLineLocation> b)
+    {
+        b.ToTable("RII_KKD_PREPARATION_TASK_LINE_LOCATION", t => t.HasCheckConstraint(
+            "CK_RII_KKD_PREP_TASK_LINE_LOCATION_QTY",
+            "[ReservedQuantity] >= 0 AND [PickedQuantity] >= 0"));
+        b.Property(x => x.SerialNo).HasMaxLength(100);
+        b.Property(x => x.LotNo).HasMaxLength(100);
+        b.Property(x => x.ReservedQuantity).HasPrecision(20, 6);
+        b.Property(x => x.PickedQuantity).HasPrecision(20, 6);
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasOne(x => x.TaskLine).WithMany(x => x.Locations).HasForeignKey(x => x.TaskLineId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<WarehouseLocationEntity>().WithMany().HasForeignKey(x => x.LocationId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => new { x.TaskLineId, x.LocationId, x.SerialNo }).HasFilter("[IsDeleted] = 0");
+    }
+}
+
+public sealed class KkdPreparationBarcodeScanConfiguration : BaseEntityConfiguration<KkdPreparationBarcodeScan>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<KkdPreparationBarcodeScan> b)
+    {
+        b.ToTable("RII_KKD_PREPARATION_BARCODE_SCAN", t => t.HasCheckConstraint(
+            "CK_RII_KKD_PREPARATION_BARCODE_SCAN_QTY",
+            "[Quantity] > 0"));
+        b.Property(x => x.BarcodeValue).HasMaxLength(250).IsRequired();
+        b.Property(x => x.NormalizedBarcode).HasMaxLength(250).IsRequired();
+        b.Property(x => x.BarcodeSource).HasMaxLength(40).IsRequired();
+        b.Property(x => x.UnitCode).HasMaxLength(20).IsRequired();
+        b.Property(x => x.LotNo).HasMaxLength(100);
+        b.Property(x => x.SerialNo).HasMaxLength(100);
+        b.Property(x => x.Quantity).HasPrecision(20, 6);
+        b.HasOne(x => x.Task).WithMany().HasForeignKey(x => x.TaskId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.TaskLine).WithMany().HasForeignKey(x => x.TaskLineId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.Distribution).WithMany().HasForeignKey(x => x.DistributionId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => x.IdempotencyKey).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x => new { x.TaskId, x.NormalizedBarcode });
+        b.HasIndex(x => new { x.TaskId, x.TaskLineId, x.ScannedAtUtc });
+        b.HasIndex(x => new { x.TaskId, x.SerialNo }).HasFilter("[IsDeleted] = 0 AND [SerialNo] IS NOT NULL");
+        b.HasIndex(x => new { x.TaskLineId, x.DistributionId }).HasFilter("[IsDeleted] = 0 AND [DistributionId] IS NULL");
     }
 }
 

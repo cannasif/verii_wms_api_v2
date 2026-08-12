@@ -19,6 +19,7 @@ public sealed class KkdController(
     IKkdDistributionService distributions,
     IKkdRequestService requests,
     IKkdPreparationTaskService preparationTasks,
+    IKkdPreparationScanPickService preparationScanPick,
     IKkdReportService reports,
     IKkdPolicyService policy,
     IWarehouseBarcodeResolver barcodeResolver,
@@ -29,16 +30,29 @@ public sealed class KkdController(
     public async Task<IActionResult> GetPolicy(CancellationToken ct)
     { await Require("WMS.KKD.POLICY.VIEW", ct); return Ok(ApiResponse<KkdPolicyDto>.Ok(await policy.GetAsync(BranchCode(), ct))); }
 
-    [HttpPut("policy")]
+    [HttpPut("policy"), HttpPost("policy")]
     public async Task<IActionResult> UpdatePolicy(UpdateKkdPolicyRequest request, CancellationToken ct)
     { await Require("WMS.KKD.POLICY.MANAGE", ct); return Ok(ApiResponse<KkdPolicyDto>.Ok(await policy.UpdateAsync(BranchCode(), request, UserId(), ct), "KKD süreç politikası kaydedildi.")); }
+
+    [HttpGet("warehouses/{warehouseId:long}/picking-staging-location")]
+    public async Task<IActionResult> PickingStagingLocation(long warehouseId, CancellationToken ct)
+    { await Require("WMS.KKD.POLICY.VIEW", ct); return Ok(ApiResponse<KkdWarehousePickingStagingLocationDto>.Ok(await definitions.GetPickingStagingLocationAsync(warehouseId, ct))); }
+
+    [HttpPut("warehouses/{warehouseId:long}/picking-staging-location"), HttpPost("warehouses/{warehouseId:long}/picking-staging-location")]
+    public async Task<IActionResult> UpdatePickingStagingLocation(long warehouseId, UpdateKkdPickingStagingLocationRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.POLICY.MANAGE", ct);
+        return Ok(ApiResponse<KkdWarehousePickingStagingLocationDto>.Ok(
+            await definitions.UpdatePickingStagingLocationAsync(warehouseId, request.LocationId, UserId(), ct),
+            "KKD toplama sanal rafı kaydedildi."));
+    }
 
     [HttpGet("departments")]
     public async Task<IActionResult> Departments(CancellationToken ct)
     { await Require("WMS.KKD.DEFINITIONS.VIEW", ct); return Ok(ApiResponse<IReadOnlyList<KkdLookupRow>>.Ok(await definitions.GetDepartmentsAsync(ct))); }
 
     [HttpPost("departments")]
-    [HttpPut("departments/{id:long}")]
+    [HttpPut("departments/{id:long}"), HttpPost("departments/{id:long}/update")]
     public async Task<IActionResult> UpsertDepartment(long? id, KkdDepartmentUpsertRequest request, CancellationToken ct)
     { await Require("WMS.KKD.DEFINITIONS.MANAGE", ct); return Ok(ApiResponse<long>.Ok(await definitions.UpsertDepartmentAsync(id, request, UserId(), ct), "KKD departmanı kaydedildi.")); }
 
@@ -67,7 +81,7 @@ public sealed class KkdController(
     { await Require("WMS.KKD.DEFINITIONS.VIEW", ct); return Ok(ApiResponse<PagedResponse<KkdEntitlementGroupLookupRow>>.Ok(await definitions.GetEntitlementGroupsPagedAsync(request, ct))); }
 
     [HttpPost("roles")]
-    [HttpPut("roles/{id:long}")]
+    [HttpPut("roles/{id:long}"), HttpPost("roles/{id:long}/update")]
     public async Task<IActionResult> UpsertRole(long? id, KkdRoleUpsertRequest request, CancellationToken ct)
     { await Require("WMS.KKD.DEFINITIONS.MANAGE", ct); return Ok(ApiResponse<long>.Ok(await definitions.UpsertRoleAsync(id, request, UserId(), ct), "KKD rolü kaydedildi.")); }
 
@@ -76,7 +90,7 @@ public sealed class KkdController(
     { await Require("WMS.KKD.EMPLOYEES.VIEW", ct); return Ok(ApiResponse<IReadOnlyList<KkdEmployeeRow>>.Ok(await definitions.GetEmployeesAsync(ct))); }
 
     [HttpPost("employees")]
-    [HttpPut("employees/{id:long}")]
+    [HttpPut("employees/{id:long}"), HttpPost("employees/{id:long}/update")]
     public async Task<IActionResult> UpsertEmployee(long? id, KkdEmployeeUpsertRequest request, CancellationToken ct)
     { await Require("WMS.KKD.EMPLOYEES.MANAGE", ct); return Ok(ApiResponse<long>.Ok(await definitions.UpsertEmployeeAsync(id, request, UserId(), ct), "KKD personeli kaydedildi.")); }
 
@@ -93,7 +107,7 @@ public sealed class KkdController(
     { await Require("WMS.KKD.MATRICES.VIEW", ct); return Ok(ApiResponse<KkdMatrixDetail>.Ok(await definitions.GetMatrixAsync(id, ct))); }
 
     [HttpPost("matrices")]
-    [HttpPut("matrices/{id:long}")]
+    [HttpPut("matrices/{id:long}"), HttpPost("matrices/{id:long}/update")]
     public async Task<IActionResult> UpsertMatrix(long? id, KkdMatrixUpsertRequest request, CancellationToken ct)
     { await Require("WMS.KKD.MATRICES.MANAGE", ct); return Ok(ApiResponse<long>.Ok(await definitions.UpsertMatrixAsync(id, request, UserId(), ct), "KKD hak matrisi kaydedildi.")); }
 
@@ -113,11 +127,11 @@ public sealed class KkdController(
     public async Task<IActionResult> CreateOverride(KkdOverrideCreateRequest request, CancellationToken ct)
     { await Require("WMS.KKD.OVERRIDES.MANAGE", ct); return Ok(ApiResponse<long>.Ok(await definitions.CreateOverrideAsync(request, UserId(), ct), "Personel ek hakkı kaydedildi.")); }
 
-    [HttpPut("overrides/{id:long}")]
+    [HttpPut("overrides/{id:long}"), HttpPost("overrides/{id:long}/update")]
     public async Task<IActionResult> UpdateOverride(long id, KkdOverrideUpdateRequest request, CancellationToken ct)
     { await Require("WMS.KKD.OVERRIDES.MANAGE", ct); return Ok(ApiResponse<long>.Ok(await definitions.UpdateOverrideAsync(id, request, UserId(), ct), "Personel ek hakkı güncellendi.")); }
 
-    [HttpDelete("overrides/{id:long}")]
+    [HttpDelete("overrides/{id:long}"), HttpPost("overrides/{id:long}/delete")]
     public async Task<IActionResult> DeleteOverride(long id, CancellationToken ct)
     { await Require("WMS.KKD.OVERRIDES.MANAGE", ct); await definitions.DeleteOverrideAsync(id, UserId(), ct); return Ok(ApiResponse<object?>.Ok(null, "Personel ek hakkı silindi.")); }
 
@@ -130,6 +144,9 @@ public sealed class KkdController(
     {
         await Require("WMS.KKD.REQUESTS.VIEW", ct);
         var boardTab = Enum.TryParse<KkdRequestBoardTab>(tab, ignoreCase: true, out var parsed) ? parsed : KkdRequestBoardTab.All;
+        // Kota onayı bekleyenler sadece ek hak tanımlama yetkisi olanlara (müdür) açık.
+        if (boardTab == KkdRequestBoardTab.QuotaPending)
+            await Require("WMS.KKD.OVERRIDES.MANAGE", ct);
         return Ok(ApiResponse<PagedResponse<KkdRequestGridRow>>.Ok(await requests.GetPagedAsync(request, UserId(), boardTab, ct)));
     }
 
@@ -148,6 +165,14 @@ public sealed class KkdController(
         return Ok(ApiResponse<KkdRequestDetail>.Ok(await requests.CreateAsync(request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.Created)));
     }
 
+    [HttpPost("requests/lines/{lineId:long}/quota-decision")]
+    public async Task<IActionResult> DecideLineQuota(long lineId, KkdQuotaDecisionRequest request, CancellationToken ct)
+    {
+        // Onay, bu talebe özel bir ek hak (override) kaydı yarattığı için aynı yetki: ek hak tanımlama.
+        await Require("WMS.KKD.OVERRIDES.MANAGE", ct);
+        return Ok(ApiResponse<KkdQuotaDecisionResult>.Ok(await requests.DecideQuotaAsync(lineId, request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.QuotaDecided)));
+    }
+
     [HttpPost("requests/{id:long}/lines/{lineId:long}/resolve")]
     public async Task<IActionResult> ResolveRequestLine(long id, long lineId, KkdRequestResolveLineRequest request, CancellationToken ct)
     {
@@ -155,7 +180,7 @@ public sealed class KkdController(
         return Ok(ApiResponse<KkdRequestDetail>.Ok(await requests.ResolveLineAsync(id, lineId, request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.Resolved)));
     }
 
-    [HttpPut("requests/{id:long}/assignment")]
+    [HttpPut("requests/{id:long}/assignment"), HttpPost("requests/{id:long}/assignment")]
     public async Task<IActionResult> AssignRequest(long id, KkdRequestAssignRequest request, CancellationToken ct)
     {
         await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
@@ -204,6 +229,73 @@ public sealed class KkdController(
         await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
         await preparationTasks.ReturnAsync(id, request, UserId(), ct);
         return Ok(ApiResponse<object?>.Ok(null, RequestMessage(KkdRequestMessageKeys.TaskReturned)));
+    }
+
+    [HttpPost("preparation-tasks/{id:long}/resolve-scan")]
+    public async Task<IActionResult> ResolvePreparationScan(long id, KkdPreparationResolveScanRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
+        return Ok(ApiResponse<KkdPreparationResolveScanResult>.Ok(
+            await preparationScanPick.ResolveScanAsync(id, request, UserId(), ct)));
+    }
+
+    [HttpPost("preparation-tasks/{id:long}/scan-pick")]
+    public async Task<IActionResult> ScanPickPreparationTask(long id, KkdPreparationScanPickRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
+        return Ok(ApiResponse<KkdPreparationScanPickResult>.Ok(
+            await preparationScanPick.ScanPickAsync(id, request, UserId(), ct),
+            "Barkod doğrulandı ve hazırlama miktarına işlendi."));
+    }
+
+    [HttpGet("preparation-tasks/{id:long}/lines/{requestLineId:long}/staged-trackings")]
+    public async Task<IActionResult> PreparationStagedTrackings(long id, long requestLineId, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
+        return Ok(ApiResponse<IReadOnlyList<KkdPreparationScanPickTracking>>.Ok(
+            await preparationScanPick.GetStagedTrackingsAsync(id, requestLineId, ct)));
+    }
+
+    /// <summary>"Bu işi yapıyorum": havuz görevinde üzerine alır, stoğu bilinen satırlara raf ataması + gerçek rezervasyon yapar.</summary>
+    [HttpPost("preparation-tasks/{id:long}/start")]
+    public async Task<IActionResult> StartPreparationTask(long id, KkdPreparationStartRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
+        return Ok(ApiResponse<KkdPreparationTaskRow>.Ok(
+            await preparationTasks.StartAsync(id, request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.TaskStarted)));
+    }
+
+    [HttpGet("preparation-tasks/lines/{lineId:long}/route-candidates")]
+    public async Task<IActionResult> RouteCandidates(long lineId, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
+        return Ok(ApiResponse<KkdRouteCandidatesResult>.Ok(
+            await preparationTasks.GetRouteCandidatesAsync(lineId, UserId(), ct)));
+    }
+
+    [HttpPost("preparation-tasks/lines/{lineId:long}/route-split")]
+    public async Task<IActionResult> ApplyRouteSplit(long lineId, KkdRouteSplitRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
+        return Ok(ApiResponse<KkdPreparationTaskRow>.Ok(
+            await preparationTasks.ApplyRouteSplitAsync(lineId, request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.RouteUpdated)));
+    }
+
+    [HttpGet("preparation-tasks/{id:long}/scans")]
+    public async Task<IActionResult> RecentPreparationScans(long id, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
+        return Ok(ApiResponse<IReadOnlyList<KkdPreparationScanRow>>.Ok(
+            await preparationScanPick.GetRecentScansAsync(id, UserId(), ct)));
+    }
+
+    /// <summary>Yanlış okutulan bir taramayı geri alır: gerçek stok hareketi ters çevrilir, rezervasyon geri yüklenir.</summary>
+    [HttpPost("preparation-tasks/{id:long}/scans/{scanId:long}/unpick")]
+    public async Task<IActionResult> UnpickScan(long id, long scanId, KkdPreparationUnpickRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
+        return Ok(ApiResponse<KkdPreparationUnpickResult>.Ok(
+            await preparationScanPick.UnpickAsync(id, scanId, request, UserId(), ct), "Tarama geri alındı."));
     }
 
     [HttpGet("requests/{id:long}/cancel-precheck")]
