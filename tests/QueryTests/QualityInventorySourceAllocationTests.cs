@@ -70,6 +70,11 @@ public sealed class QualityInventorySourceAllocationTests
             [
                 new(locationOne.Id, 100),
                 new(locationTwo.Id, 200)
+            ],
+            WarehouseRoutes:
+            [
+                new(warehouseOne.Id, null, acceptedLocation.Id, locationOne.Id, locationOne.Id),
+                new(warehouseTwo.Id, null, acceptedLocation.Id, locationTwo.Id, locationTwo.Id)
             ]), 42);
 
         Assert.Equal(locationTwo.Id, result.DefaultQuarantineLocationId);
@@ -82,6 +87,18 @@ public sealed class QualityInventorySourceAllocationTests
                 Assert.True(second.IsDefault);
             });
         Assert.Equal(2, await db.Set<QualityQuarantineDestination>().CountAsync());
+        Assert.Collection(result.WarehouseRoutes.OrderBy(route => route.SourceWarehouseCode),
+            first =>
+            {
+                Assert.Equal(warehouseOne.Id, first.SourceWarehouseId);
+                Assert.Equal(locationOne.Id, first.QuarantineLocationId);
+            },
+            second =>
+            {
+                Assert.Equal(warehouseTwo.Id, second.SourceWarehouseId);
+                Assert.Equal(locationTwo.Id, second.QuarantineLocationId);
+            });
+        Assert.Equal(2, await db.Set<QualityWarehouseRoute>().CountAsync());
     }
 
     [Fact]

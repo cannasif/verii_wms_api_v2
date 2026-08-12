@@ -29,6 +29,7 @@ public sealed class QualityParameter : BaseEntity
     public long? DefaultRejectLocationId { get; set; }
     public byte[] RowVersion { get; set; } = [];
     public ICollection<QualityQuarantineDestination> QuarantineDestinations { get; set; } = [];
+    public ICollection<QualityWarehouseRoute> WarehouseRoutes { get; set; } = [];
 }
 
 public sealed class QualityQuarantineDestination : BaseEntity
@@ -37,6 +38,23 @@ public sealed class QualityQuarantineDestination : BaseEntity
     public QualityParameter QualityParameter { get; set; } = null!;
     public long LocationId { get; set; }
     public int Priority { get; set; } = 100;
+    public bool IsActive { get; set; } = true;
+    public byte[] RowVersion { get; set; } = [];
+}
+
+/// <summary>
+/// Source warehouse specific quality movement defaults. Nullable target fields inherit the
+/// corresponding branch-level value from <see cref="QualityParameter"/>.
+/// </summary>
+public sealed class QualityWarehouseRoute : BaseEntity
+{
+    public long QualityParameterId { get; set; }
+    public QualityParameter QualityParameter { get; set; } = null!;
+    public long SourceWarehouseId { get; set; }
+    public long? QualityLocationId { get; set; }
+    public long? AcceptedLocationId { get; set; }
+    public long? QuarantineLocationId { get; set; }
+    public long? RejectLocationId { get; set; }
     public bool IsActive { get; set; } = true;
     public byte[] RowVersion { get; set; } = [];
 }

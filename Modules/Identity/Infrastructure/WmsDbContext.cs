@@ -149,6 +149,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<VehicleCheckInImage> VehicleCheckInImages => Set<VehicleCheckInImage>();
     public DbSet<QualityParameter> QualityParameters => Set<QualityParameter>();
     public DbSet<QualityQuarantineDestination> QualityQuarantineDestinations => Set<QualityQuarantineDestination>();
+    public DbSet<QualityWarehouseRoute> QualityWarehouseRoutes => Set<QualityWarehouseRoute>();
     public DbSet<QualityRule> QualityRules => Set<QualityRule>();
     public DbSet<QualityInspection> QualityInspections => Set<QualityInspection>();
     public DbSet<QualityInspectionLine> QualityInspectionLines => Set<QualityInspectionLine>();
@@ -387,6 +388,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new VehicleCheckInImageConfiguration());
         modelBuilder.ApplyConfiguration(new QualityParameterConfiguration());
         modelBuilder.ApplyConfiguration(new QualityQuarantineDestinationConfiguration());
+        modelBuilder.ApplyConfiguration(new QualityWarehouseRouteConfiguration());
         modelBuilder.ApplyConfiguration(new QualityRuleConfiguration());
         modelBuilder.ApplyConfiguration(new QualityInspectionConfiguration());
         modelBuilder.ApplyConfiguration(new QualityInspectionLineConfiguration());

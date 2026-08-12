@@ -18,6 +18,36 @@ public sealed class QualityParameterConfiguration : BaseEntityConfiguration<Qual
             .OnDelete(DeleteBehavior.Restrict);
         b.HasMany(x => x.QuarantineDestinations).WithOne(x => x.QualityParameter)
             .HasForeignKey(x => x.QualityParameterId).OnDelete(DeleteBehavior.Restrict);
+        b.HasMany(x => x.WarehouseRoutes).WithOne(x => x.QualityParameter)
+            .HasForeignKey(x => x.QualityParameterId).OnDelete(DeleteBehavior.Restrict);
+    }
+}
+
+public sealed class QualityWarehouseRouteConfiguration : BaseEntityConfiguration<QualityWarehouseRoute>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<QualityWarehouseRoute> b)
+    {
+        b.ToTable("RII_QUALITY_WAREHOUSE_ROUTES", table =>
+        {
+            table.HasCheckConstraint(
+                "CK_RII_QUALITY_WAREHOUSE_ROUTE_TARGET",
+                "[QualityLocationId] IS NOT NULL OR [AcceptedLocationId] IS NOT NULL OR [QuarantineLocationId] IS NOT NULL OR [RejectLocationId] IS NOT NULL");
+        });
+        b.Property(x => x.IsActive).HasDefaultValue(true);
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasIndex(x => new { x.QualityParameterId, x.SourceWarehouseId })
+            .IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x => new { x.BranchCode, x.SourceWarehouseId, x.IsActive });
+        b.HasOne<WarehouseEntity>().WithMany().HasForeignKey(x => x.SourceWarehouseId)
+            .OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<WarehouseLocation>().WithMany().HasForeignKey(x => x.QualityLocationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<WarehouseLocation>().WithMany().HasForeignKey(x => x.AcceptedLocationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<WarehouseLocation>().WithMany().HasForeignKey(x => x.QuarantineLocationId)
+            .OnDelete(DeleteBehavior.Restrict);
+        b.HasOne<WarehouseLocation>().WithMany().HasForeignKey(x => x.RejectLocationId)
+            .OnDelete(DeleteBehavior.Restrict);
     }
 }
 

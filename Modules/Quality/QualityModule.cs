@@ -6,5 +6,6 @@ public static class QualityModule
         .AddScoped<QualityService>()
         .AddScoped<IQualityService>(x=>x.GetRequiredService<QualityService>())
         .AddScoped<IQualityPolicyResolver>(x=>x.GetRequiredService<QualityService>())
+        .AddScoped<IQualityWarehouseRoutingResolver>(x=>x.GetRequiredService<QualityService>())
         .AddScoped<IQualityRuleImportService,QualityRuleImportService>();
 }

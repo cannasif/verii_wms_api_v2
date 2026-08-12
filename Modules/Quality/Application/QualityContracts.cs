@@ -29,6 +29,29 @@ public sealed record QualityDecisionDestinationDto(
     string LocationCode,
     string LocationName);
 
+public sealed record QualityWarehouseRouteDto(
+    long Id,
+    long SourceWarehouseId,
+    int SourceWarehouseCode,
+    string SourceWarehouseName,
+    long? QualityLocationId,
+    long? AcceptedLocationId,
+    long? QuarantineLocationId,
+    long? RejectLocationId,
+    QualityDecisionDestinationDto? QualityLocation,
+    QualityDecisionDestinationDto? AcceptedLocation,
+    QualityDecisionDestinationDto? QuarantineLocation,
+    QualityDecisionDestinationDto? RejectLocation,
+    bool IsActive);
+
+public sealed record QualityWarehouseRouteRequest(
+    long SourceWarehouseId,
+    long? QualityLocationId,
+    long? AcceptedLocationId,
+    long? QuarantineLocationId,
+    long? RejectLocationId,
+    bool IsActive = true);
+
 public sealed record QualityParameterDto(long Id, string BranchCode, bool AutoCreateInspectionOnReceipt,
     QualityInspectionMode DefaultInspectionMode, QualityFailAction DefaultFailAction, bool HoldInventoryUntilDecision,
     bool BlockPutawayUntilDecision, bool BlockErpPostingUntilDecision, bool RequireManagerApprovalForRelease,
@@ -37,6 +60,7 @@ public sealed record QualityParameterDto(long Id, string BranchCode, bool AutoCr
     long? DefaultAcceptedLocationId,
     long? DefaultQuarantineLocationId, long? DefaultRejectLocationId,
     IReadOnlyList<QualityQuarantineDestinationDto> QuarantineDestinations,
+    IReadOnlyList<QualityWarehouseRouteDto> WarehouseRoutes,
     long? UpdatedBy, DateTime? UpdatedDate);
 
 public sealed record UpdateQualityParameterRequest(string BranchCode, bool AutoCreateInspectionOnReceipt,
@@ -46,7 +70,8 @@ public sealed record UpdateQualityParameterRequest(string BranchCode, bool AutoC
     bool BlockReceiptWhenSerialMissing, bool BlockReceiptWhenExpiryMissing, long? DefaultQualityLocationId,
     long? DefaultAcceptedLocationId,
     long? DefaultQuarantineLocationId, long? DefaultRejectLocationId,
-    IReadOnlyList<QualityQuarantineDestinationRequest>? QuarantineDestinations = null);
+    IReadOnlyList<QualityQuarantineDestinationRequest>? QuarantineDestinations = null,
+    IReadOnlyList<QualityWarehouseRouteRequest>? WarehouseRoutes = null);
 
 public sealed record QualityRuleUpsertRequest(string BranchCode, string ScopeType, long? StockId, string? StockGroupCode,
     QualityInspectionMode InspectionMode, QualitySamplingMode SamplingMode, decimal SamplingValue,
@@ -182,4 +207,18 @@ public interface IQualityRuleImportService
 public interface IQualityPolicyResolver
 {
     Task<ResolvedQualityPolicy> ResolveAsync(string branchCode, long stockId, string? stockGroupCode, CancellationToken ct = default);
+}
+
+public sealed record ResolvedQualityWarehouseRoute(
+    long? QualityLocationId,
+    long? AcceptedLocationId,
+    long? QuarantineLocationId,
+    long? RejectLocationId);
+
+public interface IQualityWarehouseRoutingResolver
+{
+    Task<ResolvedQualityWarehouseRoute> ResolveWarehouseRouteAsync(
+        string branchCode,
+        long sourceWarehouseId,
+        CancellationToken ct = default);
 }
