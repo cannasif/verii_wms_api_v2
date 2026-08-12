@@ -459,7 +459,7 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
         }
     }
     private static WmsDocumentType DocumentType(WarehouseTransferBusinessContext context)=>context switch{
-        WarehouseTransferBusinessContext.InterWarehouse=>WmsDocumentType.InterWarehouseTransfer,
+        WarehouseTransferBusinessContext.InterWarehouse or WarehouseTransferBusinessContext.QualityDisposition=>WmsDocumentType.InterWarehouseTransfer,
         WarehouseTransferBusinessContext.ProductionMaterialSupply or WarehouseTransferBusinessContext.ProductionWipMove or WarehouseTransferBusinessContext.ProductionOutputMove=>WmsDocumentType.ProductionTransfer,
         WarehouseTransferBusinessContext.SubcontractingIssue or WarehouseTransferBusinessContext.SubcontractorToSubcontractor=>WmsDocumentType.SubcontractingIssue,
         WarehouseTransferBusinessContext.SubcontractingReceipt=>WmsDocumentType.SubcontractingReceipt,
