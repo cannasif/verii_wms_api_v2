@@ -43,10 +43,11 @@ public static class StockMovementTypes
     public const string AdjustmentDecrease = "AdjustmentDecrease";
     public const string CustomerReturn = "CustomerReturn";
     public const string SupplierReturn = "SupplierReturn";
+    public const string BalanceReconciliation = "BalanceReconciliation";
     public const string Reversal = "Reversal";
 
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-    { Receipt, Shipment, Transfer, AdjustmentIncrease, AdjustmentDecrease, CustomerReturn, SupplierReturn };
+    { Receipt, Shipment, Transfer, AdjustmentIncrease, AdjustmentDecrease, CustomerReturn, SupplierReturn, BalanceReconciliation };
 }
 
 public static class StockMovementStatuses

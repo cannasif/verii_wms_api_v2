@@ -242,6 +242,17 @@ public sealed class StockMovementService(
                         throw AppException.BadRequest("Transfer kaynağı/hedefi veya stok statüsü değişmelidir.");
                     Add(line.SourceWarehouseId, line.SourceLocationId, -line.Quantity, sourceStatus);
                     Add(line.TargetWarehouseId, line.TargetLocationId, line.Quantity, targetStatus); break;
+                case StockMovementTypes.BalanceReconciliation:
+                    var hasSource = line.SourceWarehouseId.HasValue || line.SourceLocationId.HasValue;
+                    var hasTarget = line.TargetWarehouseId.HasValue || line.TargetLocationId.HasValue;
+                    if (hasSource == hasTarget)
+                        throw AppException.BadRequest(
+                            "Bakiye eşitleme satırı yalnız kaynak (azaltma) veya yalnız hedef (artırma) depo/raf içermelidir.");
+                    if (hasSource)
+                        Add(line.SourceWarehouseId, line.SourceLocationId, -line.Quantity, sourceStatus);
+                    else
+                        Add(line.TargetWarehouseId, line.TargetLocationId, line.Quantity, targetStatus);
+                    break;
             }
         }
         if (result.Select(x => x.BranchCode).Distinct(StringComparer.OrdinalIgnoreCase).Count() != 1) throw AppException.BadRequest("Tek operasyonda farklı şubeler kullanılamaz.");
@@ -373,7 +384,9 @@ public sealed class StockMovementService(
 
             if (netQuantity > 0)
             {
-                var isReturnOrReversal = operation.OperationType is StockMovementTypes.CustomerReturn or StockMovementTypes.Reversal;
+                var isReturnOrReversal = operation.OperationType is StockMovementTypes.CustomerReturn
+                    or StockMovementTypes.Reversal
+                    or StockMovementTypes.BalanceReconciliation;
                 if ((row.Status == StockSerialStatus.Available && !isReturnOrReversal)
                     || (row.Status == StockSerialStatus.Consumed && !isReturnOrReversal))
                     throw AppException.Conflict($"Seri bu stok için daha önce kullanılmış. Seri: {row.SerialNo}");
@@ -406,7 +419,9 @@ public sealed class StockMovementService(
         string operationType,
         CancellationToken ct)
     {
-        if (operationType is StockMovementTypes.CustomerReturn or StockMovementTypes.Reversal)
+        if (operationType is StockMovementTypes.CustomerReturn
+            or StockMovementTypes.Reversal
+            or StockMovementTypes.BalanceReconciliation)
             return;
 
         var inboundSerials = drafts
