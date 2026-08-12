@@ -156,10 +156,10 @@ namespace verii_wms_api_v2.Migrations
                     ('ROUTE_DEFINITION', N'Rota tanım bütünlüğü', N'Seçilen her bileşen için tek bir aktif ve geçerli rota bulunmalıdır.')
                 ) definitions([Code], [Name], [Description])
                 WHERE NOT EXISTS (
-                    SELECT 1 FROM [RII_GP_RULE] rule
-                    WHERE rule.[BranchCode] = branches.[BranchCode]
-                      AND rule.[Code] = definitions.[Code]
-                      AND rule.[IsDeleted] = 0);
+                    SELECT 1 FROM [RII_GP_RULE] [existingRule]
+                    WHERE [existingRule].[BranchCode] = branches.[BranchCode]
+                      AND [existingRule].[Code] = definitions.[Code]
+                      AND [existingRule].[IsDeleted] = 0);
                 """);
         }
 
