@@ -14,6 +14,8 @@ public enum ProductionWorkOrderTransferTab
 
 public static class ProductionWorkOrderTransferGrouping
 {
+    public const string UnlinkedPendingReassignmentDescriptionMarker = "iptal sonrası atanmaya açık";
+
     public sealed class LabelContext
     {
         public Dictionary<long, int> PartialTransferIndex { get; init; } = [];
@@ -25,6 +27,18 @@ public static class ProductionWorkOrderTransferGrouping
         ?? link.ProductionHeaderId?.ToString(CultureInfo.InvariantCulture)
         ?? link.ProductionOrderNo?.Trim()
         ?? $"transfer:{link.WarehouseTransferHeaderId}";
+
+    public static bool IsUnlinkedProductionTransfer(ProductionTransferHeaderLink link) =>
+        !link.ProductionOrderId.HasValue
+        && !link.ProductionHeaderId.HasValue
+        && string.IsNullOrWhiteSpace(link.ProductionOrderNo);
+
+    public static string? ResolveAtanmayanlarListingKey(
+        ProductionTransferHeaderLink link,
+        WarehouseTransferHeader header) =>
+        link.ProductionOrderNo?.Trim()
+        ?? header.ExternalReferenceNo?.Trim()
+        ?? (IsUnlinkedProductionTransfer(link) ? header.DocumentNo?.Trim() : null);
 
     public static bool IsCompletedTab(ProductionTransferHeaderLink link) =>
         link.WorkflowStatus is ProductionTransferWorkflowStatus.Completed
@@ -46,7 +60,9 @@ public static class ProductionWorkOrderTransferGrouping
         {
             ProductionWorkOrderTransferTab.Completed => IsCompletedTab(link),
             ProductionWorkOrderTransferTab.Cancelled =>
-                header.Status == WarehouseTransferStatus.Cancelled && !openCancellationReturn,
+                header.Status == WarehouseTransferStatus.Cancelled
+                && !openCancellationReturn
+                && !HasOnlyPostCancellationReturnUnassignedRemainder(header, link),
             ProductionWorkOrderTransferTab.Picking =>
                 !IsCompletedTab(link)
                 && !IsOpenPartialTransferRemainderLink(link)
@@ -234,6 +250,23 @@ public static class ProductionWorkOrderTransferGrouping
         && task.Status is not WarehouseTransferTaskStatus.Completed
             and not WarehouseTransferTaskStatus.Cancelled;
 
+    public static bool IsUnlinkedReleasedDraftPickTask(
+        WarehouseTransferTask task,
+        ProductionTransferHeaderLink link) =>
+        IsUnlinkedProductionTransfer(link)
+        && task.TaskType == WarehouseTransferTaskType.Pick
+        && !task.Assignments.Any(assignment => !assignment.IsDeleted)
+        && task.Status is not WarehouseTransferTaskStatus.Completed
+            and not WarehouseTransferTaskStatus.Cancelled
+        && (task.Description?.Contains(UnlinkedPendingReassignmentDescriptionMarker, StringComparison.OrdinalIgnoreCase) ?? false);
+
+    public static bool IsAtanmayanlarUnassignedPickTask(
+        WarehouseTransferTask task,
+        ProductionTransferHeaderLink link,
+        IReadOnlyList<WarehouseTransferTask> allTasks) =>
+        IsPostCancellationReturnUnassignedPickTask(task, allTasks)
+        || IsUnlinkedReleasedDraftPickTask(task, link);
+
     public static bool IsCancellationReturnKalanPickTask(
         WarehouseTransferTask task,
         IReadOnlyList<WarehouseTransferTask> allTasks) =>
@@ -333,7 +366,7 @@ public static class ProductionWorkOrderTransferGrouping
             and not WarehouseTransferTaskStatus.Cancelled).ToArray();
         if (openTasks.Length == 0) return false;
 
-        return openTasks.All(t => IsPostCancellationReturnUnassignedPickTask(t, tasks));
+        return openTasks.All(t => IsAtanmayanlarUnassignedPickTask(t, link, tasks));
     }
 
     private static List<ProductionTransferHeaderLink> BuildResidualChain(

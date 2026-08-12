@@ -192,7 +192,9 @@ public sealed partial class ProductionService(
         if (links.Count == 0) return [];
 
         var candidateWorkOrders = links
-            .Select(link => link.ProductionOrderNo?.Trim() ?? link.WarehouseTransferHeader.ExternalReferenceNo?.Trim())
+            .Select(link => ProductionWorkOrderTransferGrouping.ResolveAtanmayanlarListingKey(
+                link,
+                link.WarehouseTransferHeader))
             .Where(workOrderNumber => !string.IsNullOrWhiteSpace(workOrderNumber))
             .Select(workOrderNumber => workOrderNumber!)
             .Distinct(StringComparer.OrdinalIgnoreCase)
@@ -228,11 +230,10 @@ public sealed partial class ProductionService(
             {
                 if (ProductionWorkOrderTransferGrouping.IsPostShortageHandoverUnassignedPickTask(task, link))
                     continue;
-                if (!ProductionWorkOrderTransferGrouping.IsPostCancellationReturnUnassignedPickTask(task, tasks))
+                if (!ProductionWorkOrderTransferGrouping.IsAtanmayanlarUnassignedPickTask(task, link, tasks))
                     continue;
 
-                var workOrderNumber = link.ProductionOrderNo?.Trim()
-                    ?? header.ExternalReferenceNo?.Trim();
+                var workOrderNumber = ProductionWorkOrderTransferGrouping.ResolveAtanmayanlarListingKey(link, header);
                 if (string.IsNullOrWhiteSpace(workOrderNumber)) continue;
 
                 var dedupeKey = $"{workOrderNumber}:{header.Id}:{task.Id}";
@@ -332,6 +333,13 @@ public sealed partial class ProductionService(
         var externalReferenceNo = link.WarehouseTransferHeader.ExternalReferenceNo?.Trim();
         if (!string.IsNullOrWhiteSpace(externalReferenceNo) && candidateWorkOrderNumbers.Contains(externalReferenceNo))
             return externalReferenceNo;
+
+        if (ProductionWorkOrderTransferGrouping.IsUnlinkedProductionTransfer(link))
+        {
+            var documentNo = link.WarehouseTransferHeader.DocumentNo?.Trim();
+            if (!string.IsNullOrWhiteSpace(documentNo) && candidateWorkOrderNumbers.Contains(documentNo))
+                return documentNo;
+        }
 
         return null;
     }
@@ -697,6 +705,27 @@ public sealed partial class ProductionService(
         CancellationToken ct)
     {
         var normalizedWorkOrder = workOrderNumber.Trim();
+        var contexts = ProductionSourceWorkOrderAssignmentFilter.ProductionContexts;
+        var scopedLink = await uow.Repository<ProductionTransferHeaderLink>().Query()
+            .AsNoTracking()
+            .Where(x => x.BranchCode == branch
+                && x.WarehouseTransferHeaderId == transferId
+                && contexts.Contains(x.WarehouseTransferHeader.BusinessContext))
+            .Include(x => x.WarehouseTransferHeader)
+            .SingleOrDefaultAsync(ct)
+            ?? throw AppException.NotFound("İptal kalanı transferi bulunamadı.");
+
+        if (ProductionWorkOrderTransferGrouping.IsUnlinkedProductionTransfer(scopedLink))
+        {
+            return await PrepareUnlinkedCancellationReturnRemainderWorkOrderAsync(
+                normalizedWorkOrder,
+                branch,
+                scopedLink,
+                transferId,
+                kalanTaskId,
+                ct);
+        }
+
         var basePrepared = sourceType == ProductionOrderSourceType.NetsisErpFunctions
             ? await PrepareNetsisWorkOrderAsync(normalizedWorkOrder, branch, ct)
             : await PrepareWmsSourceWorkOrderAsync(
@@ -742,6 +771,88 @@ public sealed partial class ProductionService(
         };
     }
 
+    private async Task<PreparedNetsisProductionWorkOrder> PrepareUnlinkedCancellationReturnRemainderWorkOrderAsync(
+        string documentNo,
+        string branch,
+        ProductionTransferHeaderLink scopedLink,
+        long transferId,
+        long kalanTaskId,
+        CancellationToken ct)
+    {
+        if (!string.Equals(scopedLink.WarehouseTransferHeader.DocumentNo?.Trim(), documentNo, StringComparison.OrdinalIgnoreCase))
+            throw AppException.Conflict("İptal kalanı kaydı belge numarasıyla uyuşmuyor.");
+
+        if (!int.TryParse(branch, out var branchNumber))
+            throw AppException.BadRequest("Oturum şube kodu sayısal değildir.");
+
+        var header = scopedLink.WarehouseTransferHeader;
+        var warehouseIds = new[] { header.SourceWarehouseId, header.TargetWarehouseId };
+        var warehouses = await uow.Repository<WarehouseEntity>().Query(ignoreQueryFilters: true)
+            .Where(x => warehouseIds.Contains(x.Id))
+            .ToDictionaryAsync(x => x.Id, ct);
+        warehouses.TryGetValue(header.SourceWarehouseId, out var sourceWarehouse);
+        warehouses.TryGetValue(header.TargetWarehouseId, out var targetWarehouse);
+
+        var split = await ResolveCancellationReturnRemainderMaterialSplitAsync(
+            branch,
+            new ProductionSourceWorkOrderRow(
+                ProductionOrderSourceType.NetsisErpFunctions,
+                "MANUAL",
+                1,
+                documentNo,
+                branchNumber,
+                string.Empty,
+                string.Empty,
+                null,
+                0,
+                null,
+                0,
+                header.DocumentDate.ToDateTime(TimeOnly.MinValue),
+                null,
+                header.ProjectCode,
+                targetWarehouse?.WarehouseCode ?? 0,
+                sourceWarehouse?.WarehouseCode ?? 0,
+                false),
+            transferId,
+            kalanTaskId,
+            ct);
+
+        if (split.Remaining.Count == 0 && split.Assigned.Count == 0)
+            throw AppException.Conflict("İptal kalanı için atanabilir malzeme satırı bulunamadı.");
+
+        return new PreparedNetsisProductionWorkOrder(
+            ProductionOrderSourceType.NetsisErpFunctions,
+            "MANUAL",
+            documentNo,
+            branchNumber,
+            string.Empty,
+            string.Empty,
+            "ADET",
+            split.Remaining.Sum(x => x.RequiredQuantity),
+            null,
+            null,
+            null,
+            header.SourceWarehouseId,
+            sourceWarehouse?.WarehouseCode ?? 0,
+            sourceWarehouse?.WarehouseName,
+            header.TargetWarehouseId,
+            targetWarehouse?.WarehouseCode ?? 0,
+            targetWarehouse?.WarehouseName,
+            header.DocumentDate.ToDateTime(TimeOnly.MinValue),
+            null,
+            header.ProjectCode,
+            false,
+            null,
+            null,
+            null,
+            [],
+            split.Remaining,
+            split.Assigned,
+            ProductionSourceWorkOrderListingKind.CancellationReturnRemainder,
+            transferId,
+            kalanTaskId);
+    }
+
     private async Task<CancellationReturnRemainderMaterialSplit> ResolveCancellationReturnRemainderMaterialSplitAsync(
         string branch,
         ProductionSourceWorkOrderRow templateRow,
@@ -766,21 +877,30 @@ public sealed partial class ProductionService(
 
         var header = link.WarehouseTransferHeader;
         var linkedWorkOrder = link.ProductionOrderNo?.Trim() ?? header.ExternalReferenceNo?.Trim();
-        if (!string.Equals(linkedWorkOrder, normalizedWorkOrder, StringComparison.OrdinalIgnoreCase))
+        if (ProductionWorkOrderTransferGrouping.IsUnlinkedProductionTransfer(link))
+        {
+            if (!string.Equals(header.DocumentNo?.Trim(), normalizedWorkOrder, StringComparison.OrdinalIgnoreCase))
+                throw AppException.Conflict("İptal kalanı kaydı belge numarasıyla uyuşmuyor.");
+        }
+        else if (!string.Equals(linkedWorkOrder, normalizedWorkOrder, StringComparison.OrdinalIgnoreCase))
+        {
             throw AppException.Conflict("İptal kalanı kaydı iş emri numarasıyla uyuşmuyor.");
+        }
 
         var tasks = header.Tasks.Where(x => !x.IsDeleted).ToArray();
         var kalanTask = tasks.SingleOrDefault(x => x.Id == kalanTaskId)
             ?? throw AppException.NotFound("İptal kalanı görevi bulunamadı.");
-        if (!ProductionWorkOrderTransferGrouping.IsPostCancellationReturnUnassignedPickTask(kalanTask, tasks))
+        if (!ProductionWorkOrderTransferGrouping.IsAtanmayanlarUnassignedPickTask(kalanTask, link, tasks))
             throw AppException.Conflict("Seçilen görev aktif bir iptal kalanı toplama görevi değildir.");
 
-        var recipeByKey = (await LoadFullRecipeMaterialsAsync(templateRow, branch, ct))
-            .ToDictionary(
-                material => ProductionWorkOrderMaterialAssignment.CreateKey(
-                    material.StockId,
-                    material.YapCodeId,
-                    material.OperationNumber));
+        var recipeByKey = ProductionWorkOrderTransferGrouping.IsUnlinkedProductionTransfer(link)
+            ? new Dictionary<ProductionRecipeMaterialKey, PreparedNetsisProductionMaterial>()
+            : (await LoadFullRecipeMaterialsAsync(templateRow, branch, ct))
+                .ToDictionary(
+                    material => ProductionWorkOrderMaterialAssignment.CreateKey(
+                        material.StockId,
+                        material.YapCodeId,
+                        material.OperationNumber));
 
         var lineLinksByTransferLineId = link.Lines
             .Where(x => !x.IsDeleted)

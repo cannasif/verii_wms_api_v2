@@ -88,6 +88,15 @@ public sealed class ProductionTransferTaskService(
                     x))
                 .ToList();
         }
+        else if (tab is ProductionWorkOrderTransferTab.Cancelled)
+        {
+            links = links
+                .Where(x => ProductionWorkOrderTransferGrouping.MatchesTab(
+                    ProductionWorkOrderTransferTab.Cancelled,
+                    x.WarehouseTransferHeader,
+                    x))
+                .ToList();
+        }
 
         if (links.Count == 0) return [];
 
@@ -985,6 +994,19 @@ public sealed class ProductionTransferTaskService(
                 }
 
                 await uow.Repository<WarehouseTransferTask>().AddAsync(kalanTask, token);
+            }
+
+            var link = await uow.Repository<ProductionTransferHeaderLink>().Query(true)
+                .SingleOrDefaultAsync(x => x.WarehouseTransferHeaderId == transferId, token);
+            if (kalanTask is not null
+                && link is not null
+                && ProductionWorkOrderTransferGrouping.IsUnlinkedProductionTransfer(link))
+            {
+                ProductionTransferCancellationReturnRemainderSupport.ReactivateUnlinkedTransferAfterCancellationReturn(
+                    header,
+                    link,
+                    actor,
+                    utcNow);
             }
         }
 

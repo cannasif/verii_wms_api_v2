@@ -357,8 +357,10 @@ public sealed class ProductionWorkOrderTransferGroupingTests
     }
 
     [Fact]
-    public void MatchesTab_picking_excludes_transfer_with_only_iptal_kalan_remainder()
+    public void MatchesTab_excludes_transfer_with_only_iptal_kalan_remainder_from_picking_and_cancelled()
     {
+        // Atanmayan bu tür kalan görevler artık Picking/Cancelled sekmelerinde değil,
+        // ayrı Atanmayanlar listesinde (bkz. ResolveAtanmayanlarListingKey/IsAtanmayanlarUnassignedPickTask) gösteriliyor.
         var iptaliade = new WarehouseTransferTask
         {
             Id = 50,
@@ -390,12 +392,12 @@ public sealed class ProductionWorkOrderTransferGroupingTests
             Status = WarehouseTransferStatus.Cancelled,
             Tasks = [iptaliade, kalan]
         };
-        Assert.True(ProductionWorkOrderTransferGrouping.MatchesTab(
+        Assert.False(ProductionWorkOrderTransferGrouping.MatchesTab(
             ProductionWorkOrderTransferTab.Cancelled, cancelledHeader, link));
     }
 
     [Fact]
-    public void MatchesTab_cancelled_includes_cancelled_transfer_after_completed_cancellation_return()
+    public void MatchesTab_cancelled_hides_unlinked_transfer_with_only_iptal_kalan_remainder()
     {
         var cancelReturn = new WarehouseTransferTask
         {
@@ -415,15 +417,83 @@ public sealed class ProductionWorkOrderTransferGroupingTests
         };
         var header = new WarehouseTransferHeader
         {
+            DocumentNo = "TR-100",
             Status = WarehouseTransferStatus.Cancelled,
             Tasks = [cancelReturn, kalan]
         };
-        var link = new ProductionTransferHeaderLink { WorkflowStatus = ProductionTransferWorkflowStatus.Picking };
+        var link = new ProductionTransferHeaderLink
+        {
+            ProductionOrderId = null,
+            ProductionHeaderId = null,
+            ProductionOrderNo = null,
+            WorkflowStatus = ProductionTransferWorkflowStatus.Picking
+        };
 
-        Assert.True(ProductionWorkOrderTransferGrouping.MatchesTab(
+        Assert.False(ProductionWorkOrderTransferGrouping.MatchesTab(
             ProductionWorkOrderTransferTab.Cancelled, header, link));
         Assert.False(ProductionWorkOrderTransferGrouping.MatchesTab(
             ProductionWorkOrderTransferTab.Picking, header, link));
+    }
+
+    [Fact]
+    public void MatchesTab_cancelled_includes_cancelled_work_order_linked_transfer_without_open_kalan()
+    {
+        var header = new WarehouseTransferHeader
+        {
+            Status = WarehouseTransferStatus.Cancelled,
+            Tasks =
+            [
+                new WarehouseTransferTask
+                {
+                    TaskType = WarehouseTransferTaskType.CancellationReturn,
+                    Status = WarehouseTransferTaskStatus.Completed,
+                }
+            ]
+        };
+        var link = new ProductionTransferHeaderLink
+        {
+            ProductionOrderNo = "WO-1",
+            WorkflowStatus = ProductionTransferWorkflowStatus.Cancelled
+        };
+
+        Assert.True(ProductionWorkOrderTransferGrouping.MatchesTab(
+            ProductionWorkOrderTransferTab.Cancelled, header, link));
+    }
+
+    [Fact]
+    public void IsUnlinkedReleasedDraftPickTask_matches_marked_open_pick_without_assignments()
+    {
+        var link = new ProductionTransferHeaderLink
+        {
+            ProductionOrderId = null,
+            ProductionHeaderId = null,
+            ProductionOrderNo = null,
+        };
+        var task = new WarehouseTransferTask
+        {
+            TaskType = WarehouseTransferTaskType.Pick,
+            Status = WarehouseTransferTaskStatus.Open,
+            Description = "TR-200 iptal sonrası atanmaya açık toplama işi.",
+            Assignments = []
+        };
+
+        Assert.True(ProductionWorkOrderTransferGrouping.IsUnlinkedReleasedDraftPickTask(task, link));
+        Assert.True(ProductionWorkOrderTransferGrouping.IsAtanmayanlarUnassignedPickTask(task, link, [task]));
+    }
+
+    [Fact]
+    public void ResolveAtanmayanlarListingKey_uses_document_no_for_unlinked_transfers()
+    {
+        var header = new WarehouseTransferHeader { DocumentNo = "TR-300", ExternalReferenceNo = null };
+        var link = new ProductionTransferHeaderLink
+        {
+            ProductionOrderId = null,
+            ProductionHeaderId = null,
+            ProductionOrderNo = null,
+            WarehouseTransferHeader = header,
+        };
+
+        Assert.Equal("TR-300", ProductionWorkOrderTransferGrouping.ResolveAtanmayanlarListingKey(link, header));
     }
 
     [Fact]
@@ -549,4 +619,70 @@ public sealed class ProductionWorkOrderTransferGroupingTests
                 Status = WarehouseTransferStatus.Released,
             },
         };
+
+    [Fact]
+    public void GetOrderKey_falls_back_to_transfer_id_when_work_order_missing()
+    {
+        var link = new ProductionTransferHeaderLink { WarehouseTransferHeaderId = 42 };
+
+        Assert.Equal("transfer:42", ProductionWorkOrderTransferGrouping.GetOrderKey(link));
+    }
+
+    [Fact]
+    public void GetOrderKey_keeps_distinct_keys_for_unlinked_manual_transfers()
+    {
+        var first = new ProductionTransferHeaderLink { WarehouseTransferHeaderId = 10 };
+        var second = new ProductionTransferHeaderLink { WarehouseTransferHeaderId = 20 };
+
+        Assert.NotEqual(
+            ProductionWorkOrderTransferGrouping.GetOrderKey(first),
+            ProductionWorkOrderTransferGrouping.GetOrderKey(second));
+    }
+
+    [Fact]
+    public void BuildLabelContext_supports_manual_transfers_without_work_order_reference()
+    {
+        var links = new[]
+        {
+            new ProductionTransferHeaderLink
+            {
+                WarehouseTransferHeaderId = 101,
+                WorkflowStatus = ProductionTransferWorkflowStatus.Picking,
+            },
+            new ProductionTransferHeaderLink
+            {
+                WarehouseTransferHeaderId = 202,
+                WorkflowStatus = ProductionTransferWorkflowStatus.Picking,
+            },
+        };
+
+        var context = ProductionWorkOrderTransferGrouping.BuildLabelContext(links);
+
+        Assert.Empty(context.PartialTransferIndex);
+        Assert.Empty(context.CurrentKalanHeaderIds);
+    }
+
+    [Fact]
+    public void BuildDisplayLabel_uses_document_no_for_manual_transfer_task_suffix()
+    {
+        var label = ProductionWorkOrderTransferGrouping.BuildDisplayLabel("PT-55-1", "PT-55", "-KALANTRANSFER");
+
+        Assert.Equal("PT-55-KALANTRANSFER", label);
+    }
+
+    [Fact]
+    public void GetDisplaySuffix_does_not_throw_for_manual_transfer_pick_task()
+    {
+        var link = new ProductionTransferHeaderLink { WarehouseTransferHeaderId = 77 };
+        var task = new WarehouseTransferTask
+        {
+            TaskType = WarehouseTransferTaskType.Pick,
+            Status = WarehouseTransferTaskStatus.Assigned,
+        };
+        var context = ProductionWorkOrderTransferGrouping.BuildLabelContext([link]);
+
+        var suffix = ProductionWorkOrderTransferGrouping.GetDisplaySuffix(task, link, context, [task]);
+
+        Assert.Null(suffix);
+    }
 }

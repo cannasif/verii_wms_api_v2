@@ -191,7 +191,11 @@ public sealed class ProductionTransferService(
                 true);
         }
 
-        if (await ShouldDeleteDraftInsteadOfCancelAsync(header, ct))
+        var link = await Links.Query()
+            .SingleOrDefaultAsync(x => x.WarehouseTransferHeaderId == id, ct)
+            ?? throw AppException.NotFound("Üretim transfer bağlamı bulunamadı.");
+
+        if (await ShouldDeleteDraftInsteadOfCancelAsync(header, link, ct))
         {
             var documentNo = header.DocumentNo;
             var erpStatus = header.ErpIntegrationStatus;
@@ -215,6 +219,54 @@ public sealed class ProductionTransferService(
                 false,
                 true,
                 false);
+        }
+
+        if (await ShouldReleaseUnlinkedDraftToAtanmayanlarAsync(header, link, ct))
+        {
+            return await uow.ExecuteInTransactionAsync(async token =>
+            {
+                var trackedHeader = await uow.Repository<WarehouseTransferHeader>().Query(true)
+                    .Include(x => x.Lines.Where(line => !line.IsDeleted))
+                    .Include(x => x.Tasks.Where(task => !task.IsDeleted))
+                        .ThenInclude(task => task.Lines.Where(line => !line.IsDeleted))
+                    .Include(x => x.Tasks.Where(task => !task.IsDeleted))
+                        .ThenInclude(task => task.Assignments)
+                    .Include(x => x.StatusHistory)
+                    .SingleAsync(x => x.Id == id, token);
+                var trackedLink = await Links.Query(true)
+                    .SingleAsync(x => x.WarehouseTransferHeaderId == id, token);
+
+                await ProductionTransferCancellationReturnRemainderSupport.ReleaseUnlinkedDraftToAtanmayanlarAsync(
+                    uow,
+                    reservations,
+                    trackedHeader,
+                    trackedLink,
+                    request.Reason.Trim(),
+                    request.IdempotencyKey,
+                    actor,
+                    token);
+
+                await uow.SaveChangesAsync(token);
+                await audit.WriteAsync(new(
+                    "production-transfer.unlinked-draft.release-to-pending",
+                    nameof(WarehouseTransferHeader),
+                    id.ToString(),
+                    "Succeeded",
+                    "production-transfer",
+                    NewValues: new { trackedHeader.DocumentNo, Reason = request.Reason.Trim() },
+                    ChangedFields: ["WorkflowStatus", "TaskAssignments"]), token);
+
+                return new OperationCancellationResult(
+                    "WarehouseTransfer",
+                    trackedHeader.Id,
+                    trackedHeader.DocumentNo,
+                    OperationCancellationRoute.LocalCompensation,
+                    trackedHeader.Status.ToString(),
+                    trackedHeader.ErpIntegrationStatus.ToString(),
+                    false,
+                    true,
+                    false);
+            }, ct);
         }
 
         return await cancellationCoordinator.CancelWarehouseTransferAsync(id, request, actor, ct);
@@ -759,8 +811,31 @@ public sealed class ProductionTransferService(
 
     private async Task<bool> ShouldDeleteDraftInsteadOfCancelAsync(
         WarehouseTransferHeader header,
+        ProductionTransferHeaderLink link,
         CancellationToken ct)
     {
+        if (ProductionWorkOrderTransferGrouping.IsUnlinkedProductionTransfer(link))
+            return false;
+
+        if (header.Status != WarehouseTransferStatus.Draft)
+            return false;
+
+        if (header.Lines.Any(line => !line.IsDeleted
+                && ProductionWorkOrderMaterialAssignment.ResolveEffectivePickedQuantity(line) > 0))
+            return false;
+
+        return !await uow.Repository<StockMovementOperation>().Query()
+            .AnyAsync(x => x.ReferenceType == "WarehouseTransfer" && x.ReferenceId == header.Id, ct);
+    }
+
+    private async Task<bool> ShouldReleaseUnlinkedDraftToAtanmayanlarAsync(
+        WarehouseTransferHeader header,
+        ProductionTransferHeaderLink link,
+        CancellationToken ct)
+    {
+        if (!ProductionWorkOrderTransferGrouping.IsUnlinkedProductionTransfer(link))
+            return false;
+
         if (header.Status != WarehouseTransferStatus.Draft)
             return false;
 
