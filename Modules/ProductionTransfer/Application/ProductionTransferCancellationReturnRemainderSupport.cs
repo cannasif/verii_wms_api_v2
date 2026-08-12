@@ -8,6 +8,146 @@ namespace verii_wms_api_v2.Modules.ProductionTransfer.Application;
 
 internal static class ProductionTransferCancellationReturnRemainderSupport
 {
+    public static async Task ReleaseUnlinkedDraftToAtanmayanlarAsync(
+        IUnitOfWork uow,
+        IWarehouseTransferReservationService reservations,
+        WarehouseTransferHeader header,
+        ProductionTransferHeaderLink link,
+        string reason,
+        Guid idempotencyKey,
+        long actor,
+        CancellationToken ct)
+    {
+        var utcNow = DateTime.UtcNow;
+        var now = DateTimeOffset.UtcNow;
+
+        if (WarehouseTransferReservationService.UsesTransferReservations(header))
+        {
+            await reservations.ReleaseAllAsync(
+                header,
+                $"WT:{header.Id}:RESERVE:UNLINKED-DRAFT-CANCEL:{idempotencyKey:N}",
+                reason,
+                actor,
+                ct);
+        }
+
+        foreach (var task in header.Tasks.Where(x => !x.IsDeleted).ToArray())
+        {
+            foreach (var assignment in task.Assignments.Where(x => !x.IsDeleted).ToArray())
+            {
+                assignment.IsDeleted = true;
+                assignment.DeletedBy = actor;
+                assignment.DeletedDate = utcNow;
+            }
+
+            if (task.Status is WarehouseTransferTaskStatus.Completed or WarehouseTransferTaskStatus.Cancelled)
+                continue;
+
+            if (task.TaskType != WarehouseTransferTaskType.Pick)
+            {
+                task.Status = WarehouseTransferTaskStatus.Cancelled;
+                task.UpdatedBy = actor;
+                task.UpdatedDate = utcNow;
+                continue;
+            }
+
+            task.Status = WarehouseTransferTaskStatus.Open;
+            task.Description = $"{header.DocumentNo} {ProductionWorkOrderTransferGrouping.UnlinkedPendingReassignmentDescriptionMarker} toplama işi.";
+            task.UpdatedBy = actor;
+            task.UpdatedDate = utcNow;
+        }
+
+        var openPickTask = header.Tasks.FirstOrDefault(x => !x.IsDeleted
+            && x.TaskType == WarehouseTransferTaskType.Pick
+            && x.Status is not WarehouseTransferTaskStatus.Completed
+                and not WarehouseTransferTaskStatus.Cancelled);
+        if (openPickTask is null)
+        {
+            openPickTask = new WarehouseTransferTask
+            {
+                BranchCode = header.BranchCode,
+                Header = header,
+                TaskNo = $"{header.DocumentNo}-1",
+                TaskType = WarehouseTransferTaskType.Pick,
+                WarehouseId = header.SourceWarehouseId,
+                Status = WarehouseTransferTaskStatus.Open,
+                Priority = header.Priority,
+                Description = $"{header.DocumentNo} {ProductionWorkOrderTransferGrouping.UnlinkedPendingReassignmentDescriptionMarker} toplama işi.",
+                CreatedBy = actor,
+                CreatedDate = utcNow,
+            };
+            foreach (var line in header.Lines.Where(x => !x.IsDeleted))
+            {
+                openPickTask.Lines.Add(new WarehouseTransferTaskLine
+                {
+                    BranchCode = header.BranchCode,
+                    CreatedBy = actor,
+                    CreatedDate = utcNow,
+                    Task = openPickTask,
+                    Line = line,
+                    WtLineId = line.Id,
+                    PlannedQuantity = line.RequestedQuantity,
+                    ProcessedQuantity = 0,
+                    SourceLocationId = line.DefaultSourceLocationId,
+                });
+            }
+
+            await uow.Repository<WarehouseTransferTask>().AddAsync(openPickTask, ct);
+        }
+
+        link.WorkflowStatus = ProductionTransferWorkflowStatus.Planned;
+        link.UpdatedBy = actor;
+        link.UpdatedDate = utcNow;
+        header.UpdatedBy = actor;
+        header.UpdatedDate = utcNow;
+        header.StatusHistory.Add(new WarehouseTransferStatusHistory
+        {
+            BranchCode = header.BranchCode,
+            CreatedBy = actor,
+            CreatedDate = utcNow,
+            StatusArea = WarehouseTransferStatusArea.Operation,
+            ToStatus = header.Status.ToString(),
+            ChangedAtUtc = now,
+            ChangedBy = actor,
+            Description = "İş emrisiz taslak transfer iptal edildi; belge Atanmayanlar kuyruğuna bırakıldı.",
+            CorrelationId = idempotencyKey,
+        });
+    }
+
+    public static void ReactivateUnlinkedTransferAfterCancellationReturn(
+        WarehouseTransferHeader header,
+        ProductionTransferHeaderLink link,
+        long actor,
+        DateTime utcNow)
+    {
+        var hasPickedQuantity = header.Lines.Any(line => !line.IsDeleted && line.PickedQuantity > 0);
+        header.Status = hasPickedQuantity
+            ? WarehouseTransferStatus.Released
+            : WarehouseTransferStatus.Draft;
+        header.CancelledAtUtc = null;
+        header.CancelledBy = null;
+        header.UpdatedBy = actor;
+        header.UpdatedDate = utcNow;
+
+        foreach (var line in header.Lines.Where(x => !x.IsDeleted))
+        {
+            if (line.RequestedQuantity <= line.PickedQuantity)
+                continue;
+
+            line.Status = line.PickedQuantity > 0
+                ? WarehouseTransferLineStatus.PartiallyPicked
+                : WarehouseTransferLineStatus.Open;
+            line.UpdatedBy = actor;
+            line.UpdatedDate = utcNow;
+        }
+
+        link.WorkflowStatus = hasPickedQuantity
+            ? ProductionTransferWorkflowStatus.Picking
+            : ProductionTransferWorkflowStatus.Planned;
+        link.UpdatedBy = actor;
+        link.UpdatedDate = utcNow;
+    }
+
     public static async Task ReleaseUnpickedRemainderToWorkOrderAsync(
         IUnitOfWork uow,
         WarehouseTransferHeader header,
