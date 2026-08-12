@@ -229,6 +229,75 @@ public sealed class InitialWarehouseImportTests
     }
 
     [Fact]
+    public async Task Combined_opening_import_infers_flat_location_metadata_and_normalizes_customer_code()
+    {
+        await using var db = CreateDb();
+        db.Add(new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" });
+        await db.SaveChangesAsync();
+        var locations = new RecordingLocationImportService();
+        var balances = new RecordingOpeningBalanceImportService();
+        var service = new WarehouseOpeningImportService(Uow(db), locations, balances);
+        await using var stream = CombinedOpeningWorkbook(
+            [1, "MB - C01", "", "", "STK-01", 2m, ""]);
+
+        var preview = await service.PreviewAsync(stream, "0");
+        stream.Position = 0;
+        await service.ImportAsync(stream, "0", preview.FileHash, "opening-customer-0001");
+
+        Assert.Equal(2, preview.NewLocationCount);
+        Assert.Contains(preview.Warnings, x => x.Contains("tipi Rack", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(preview.Warnings, x => x.Contains("raf kodu", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(locations.ImportedDefinitions, x =>
+            x.Code == "WMS-OPENING-ZONE" && x.Type == LocationTypes.Zone);
+        Assert.Contains(locations.ImportedDefinitions, x =>
+            x.Code == "MB-C01" && x.Name == "MB - C01" && x.Type == LocationTypes.Rack);
+        Assert.Equal("MB-C01", balances.ImportedLocationCode);
+    }
+
+    [Fact]
+    public async Task Combined_opening_preview_accepts_seven_column_customer_balance_workbook()
+    {
+        await using var db = CreateDb();
+        db.Add(new Warehouse { BranchCode = "0", WarehouseCode = 6000, WarehouseName = "Merkez" });
+        await db.SaveChangesAsync();
+        var service = new WarehouseOpeningImportService(
+            Uow(db), new RecordingLocationImportService(), new RecordingOpeningBalanceImportService());
+        await using var stream = CustomerBalanceWorkbook();
+
+        var preview = await service.PreviewAsync(stream, "0");
+
+        Assert.Equal(1, preview.BalanceRowCount);
+        Assert.Equal(67.86m, preview.TotalQuantity);
+        Assert.Contains(preview.Warnings, x => x.Contains("7 kolonlu", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task Combined_opening_import_normalizes_turkish_location_type()
+    {
+        await using var db = CreateDb();
+        var warehouse = new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" };
+        db.Add(warehouse);
+        await db.SaveChangesAsync();
+        db.Add(new WarehouseLocation
+        {
+            BranchCode = "0", WarehouseId = warehouse.Id, Code = "ZONE-1", Name = "Bölge 1",
+            LocationType = LocationTypes.Zone, BarcodeEntryMode = BarcodeEntryModes.Auto, IsActive = true
+        });
+        await db.SaveChangesAsync();
+        var locations = new RecordingLocationImportService();
+        var service = new WarehouseOpeningImportService(
+            Uow(db), locations, new RecordingOpeningBalanceImportService());
+        await using var stream = CombinedOpeningWorkbook(
+            [1, "RAF-01", "Raf 1", "Raf", "STK-01", 1m, "", "ZONE-1"]);
+
+        var preview = await service.PreviewAsync(stream, "0");
+        stream.Position = 0;
+        await service.ImportAsync(stream, "0", preview.FileHash, "opening-customer-0002");
+
+        Assert.Contains(locations.ImportedDefinitions, x => x.Code == "RAF-01" && x.Type == LocationTypes.Rack);
+    }
+
+    [Fact]
     public async Task Combined_opening_preview_accepts_fifty_thousand_serial_rows_in_bounded_batches()
     {
         await using var db = CreateDb();
@@ -276,7 +345,7 @@ public sealed class InitialWarehouseImportTests
             var source = rows[index];
             object?[] values =
             [
-                source[0], source[1], source[2], source[3], null,
+                source[0], source[1], source[2], source[3], source.Length > 7 ? source[7] : null,
                 null, null, null, null, null, null,
                 true, true, false,
                 source[4], null, source[5], "ADET", null, source[6],
@@ -317,6 +386,21 @@ public sealed class InitialWarehouseImportTests
             sheet.Cell(row, 20).Value = $"SR-{index + 1:D6}";
             sheet.Cell(row, 21).Value = "Available";
         }
+        var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        stream.Position = 0;
+        return stream;
+    }
+
+    private static MemoryStream CustomerBalanceWorkbook()
+    {
+        using var workbook = new XLWorkbook();
+        var sheet = workbook.Worksheets.Add("Sayfa1");
+        string[] headers = ["TARIH", "STOKKODU", "STOK_ADI", "SERI_NO", "DEPOKOD", "HUCREKODU", "BAKIYE"];
+        for (var column = 0; column < headers.Length; column++) sheet.Cell(1, column + 1).Value = headers[column];
+        object?[] values = [new DateTime(2026, 8, 12), "STK-01", "Test stok", null, 6000, "BPROFIL", 67.86m];
+        for (var column = 0; column < values.Length; column++)
+            if (values[column] is not null) sheet.Cell(2, column + 1).Value = XLCellValue.FromObject(values[column]);
         var stream = new MemoryStream();
         workbook.SaveAs(stream);
         stream.Position = 0;
@@ -427,6 +511,7 @@ public sealed class InitialWarehouseImportTests
         public int ImportedRows { get; private set; }
         public string? ImportedName { get; private set; }
         public string? ImportedType { get; private set; }
+        public IReadOnlyList<(string Code, string Name, string Type)> ImportedDefinitions { get; private set; } = [];
 
         public Task<byte[]> CreateTemplateAsync(string branchCode, CancellationToken cancellationToken = default) =>
             Task.FromResult(Array.Empty<byte>());
@@ -441,6 +526,8 @@ public sealed class InitialWarehouseImportTests
             ImportedRows = rows.Count;
             ImportedName = rows.FirstOrDefault()?.Cell(3).GetString();
             ImportedType = rows.FirstOrDefault()?.Cell(4).GetString();
+            ImportedDefinitions = rows.Select(x =>
+                (x.Cell(2).GetString(), x.Cell(3).GetString(), x.Cell(4).GetString())).ToList();
             return Task.FromResult(new LocationImportResult(
                 rows.Count, rows.Count, 0,
                 rows.Select(x => new LocationImportRowResult(
@@ -451,6 +538,7 @@ public sealed class InitialWarehouseImportTests
     private sealed class RecordingOpeningBalanceImportService : IOpeningBalanceImportService
     {
         public int ImportedRows { get; private set; }
+        public string? ImportedLocationCode { get; private set; }
 
         public Task<byte[]> CreateTemplateAsync(string branchCode, CancellationToken cancellationToken = default) =>
             Task.FromResult(Array.Empty<byte>());
@@ -484,6 +572,7 @@ public sealed class InitialWarehouseImportTests
             using var workbook = new XLWorkbook(workbookStream);
             var rows = workbook.Worksheet("İlk Raf Bakiyeleri").RowsUsed().Where(x => x.RowNumber() > 1).ToList();
             ImportedRows = rows.Count;
+            ImportedLocationCode = rows.FirstOrDefault()?.Cell(2).GetString();
             var total = rows.Sum(x => x.Cell(5).GetValue<decimal>());
             return Task.FromResult(new OpeningBalanceImportResult(
                 1, Guid.NewGuid(), false, rows.Count, total,
