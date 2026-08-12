@@ -92,6 +92,10 @@ public sealed class RecurringJobRegistrationHostedService(
             "identity-session-cleanup",
             service => service.DeleteObsoleteSessionsAsync(CancellationToken.None),
             Cron.Daily(3, 15));
+        recurringJobs.AddOrUpdate<IGoodsReceiptErpSuccessJob>(
+            "quality-dat-after-goods-receipt-erp-recovery",
+            service => service.RetryPendingAsync(CancellationToken.None),
+            "*/5 * * * *");
         recurringJobs.RemoveIfExists("goods-receipt-automatic-erp-posting");
     }
 }

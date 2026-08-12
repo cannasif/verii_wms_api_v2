@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
@@ -11,7 +12,9 @@ namespace verii_wms_api_v2.Modules.ErpIntegration.Application;
 
 public sealed class GoodsReceiptErpPostingCoordinator(
     IUnitOfWork unitOfWork,
-    IErpPostingService erpPostingService) : IGoodsReceiptErpPostingCoordinator
+    IErpPostingService erpPostingService,
+    IBackgroundJobClient backgroundJobs,
+    ILogger<GoodsReceiptErpPostingCoordinator> logger) : IGoodsReceiptErpPostingCoordinator
 {
     public async Task<ErpPostingResult?> PostIfEligibleAsync(
         long goodsReceiptId,
@@ -28,8 +31,13 @@ public sealed class GoodsReceiptErpPostingCoordinator(
         if (header is null)
             throw AppException.NotFound("Mal kabul kaydı bulunamadı.");
 
-        if (header.ErpIntegrationStatus is ErpIntegrationStatus.Succeeded
-            or ErpIntegrationStatus.Cancelled)
+        if (header.ErpIntegrationStatus == ErpIntegrationStatus.Succeeded)
+        {
+            EnqueueFollowUp(header.Id, actorUserId);
+            return null;
+        }
+
+        if (header.ErpIntegrationStatus == ErpIntegrationStatus.Cancelled)
         {
             return null;
         }
@@ -105,5 +113,21 @@ public sealed class GoodsReceiptErpPostingCoordinator(
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(
             $"goods-receipt:{goodsReceiptId}:automatic-erp-posting:v1"));
         return new Guid(hash.AsSpan(0, 16));
+    }
+
+    private void EnqueueFollowUp(long goodsReceiptId, long actorUserId)
+    {
+        try
+        {
+            backgroundJobs.Enqueue<IGoodsReceiptErpSuccessJob>(job =>
+                job.ProcessGoodsReceiptAsync(goodsReceiptId, actorUserId, CancellationToken.None));
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(
+                exception,
+                "Existing goods-receipt ERP success could not queue quality DAT follow-up. GoodsReceiptId={GoodsReceiptId}",
+                goodsReceiptId);
+        }
     }
 }
