@@ -1,5 +1,7 @@
 using System.Data;
+using System.Globalization;
 using System.Security.Cryptography;
+using System.Text;
 using ClosedXML.Excel;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Location.Application;
@@ -50,6 +52,8 @@ public sealed class WarehouseOpeningImportService(
     public const int MaxRows = 50_000;
     public const int MaxFileSize = 64 * 1024 * 1024;
     private const int LastTemplateRow = MaxRows + 1;
+    private const string OpeningSheetName = "Depo Açılışları";
+    private const string DefaultOpeningZoneCode = "WMS-OPENING-ZONE";
     private static readonly string[] Headers =
     [
         "WarehouseCode", "LocationCode", "LocationName", "LocationType", "ParentLocationCode",
@@ -70,6 +74,10 @@ public sealed class WarehouseOpeningImportService(
     [
         "WarehouseCode", "LocationCode", "StockCode", "YapCode", "Quantity", "UnitCode",
         "LotNo", "SerialNo", "StockStatus", "OccurredAt", "Description"
+    ];
+    private static readonly string[] CustomerBalanceHeaders =
+    [
+        "TARIH", "STOKKODU", "STOK_ADI", "SERI_NO", "DEPOKOD", "HUCREKODU", "BAKIYE"
     ];
 
     public async Task<byte[]> CreateTemplateAsync(
@@ -170,18 +178,20 @@ public sealed class WarehouseOpeningImportService(
     {
         var bytes = await ReadBytesAsync(source, cancellationToken);
         using var workbook = OpenWorkbook(bytes);
-        var sheet = workbook.Worksheets.FirstOrDefault(x => x.Name == "Depo Açılışları")
-            ?? throw AppException.BadRequest("'Depo Açılışları' çalışma sayfası bulunamadı.");
-        ValidateHeaders(sheet);
+        var (sheet, format) = ResolveInputSheet(workbook);
+        var inputHeaders = format == WorkbookFormat.Standard ? Headers : CustomerBalanceHeaders;
         var usedRows = sheet.RowsUsed()
             .Where(x => x.RowNumber() > 1
-                && Enumerable.Range(1, Headers.Length).Any(c => !string.IsNullOrWhiteSpace(x.Cell(c).GetString())))
+                && Enumerable.Range(1, inputHeaders.Length).Any(c => !string.IsNullOrWhiteSpace(x.Cell(c).GetString())))
             .Take(MaxRows + 1)
             .ToList();
         if (usedRows.Count == 0) throw AppException.BadRequest("Aktarılacak depo açılış satırı bulunamadı.");
         if (usedRows.Count > MaxRows) throw AppException.BadRequest($"En fazla {MaxRows} satır aktarılabilir.");
 
-        var rows = usedRows.Select(Parse).ToList();
+        var parsedRows = usedRows.Select(x => format == WorkbookFormat.Standard ? Parse(x) : ParseCustomerBalance(x)).ToList();
+        var normalizedLocationCodeCount = parsedRows.Count(x =>
+            !string.Equals(x.LocationCode, NormalizeLocationCode(x.LocationCode, x.RowNumber), StringComparison.Ordinal));
+        var rows = parsedRows.Select(NormalizeLocationMetadata).ToList();
         foreach (var row in rows)
         {
             if (string.IsNullOrWhiteSpace(row.WarehouseCode))
@@ -214,6 +224,8 @@ public sealed class WarehouseOpeningImportService(
             x => $"{x.WarehouseCode}|{x.LocationCode}",
             StringComparer.OrdinalIgnoreCase);
         var newLocations = new List<FlatRow>();
+        var supportZoneWarehouseIds = new HashSet<long>();
+        var inferredLocationMetadataCount = 0;
         var existingLocationCount = 0;
         foreach (var group in groups)
         {
@@ -237,11 +249,31 @@ public sealed class WarehouseOpeningImportService(
             ValidateConsistent(group, x => x.IsPickable, "IsPickable");
             ValidateConsistent(group, x => x.IsPutaway, "IsPutaway");
             ValidateConsistent(group, x => x.IsQuarantine, "IsQuarantine");
+            var locationType = FirstValue(group, x => x.LocationType);
+            var parentLocationCode = FirstValue(group, x => x.ParentLocationCode);
+            var inferredFlatHierarchy = string.IsNullOrWhiteSpace(locationType)
+                && string.IsNullOrWhiteSpace(parentLocationCode);
+            if (inferredFlatHierarchy)
+            {
+                if (string.Equals(first.LocationCode, DefaultOpeningZoneCode, StringComparison.OrdinalIgnoreCase))
+                    throw AppException.BadRequest(
+                        $"Satır {first.RowNumber}: '{DefaultOpeningZoneCode}' kodu sistemin otomatik açılış bölgesi için ayrılmıştır.");
+
+                locationType = LocationTypes.Rack;
+                parentLocationCode = DefaultOpeningZoneCode;
+                inferredLocationMetadataCount++;
+                if (!existingKeys.Contains(Key(warehouseId, DefaultOpeningZoneCode))
+                    && supportZoneWarehouseIds.Add(warehouseId))
+                {
+                    newLocations.Add(CreateOpeningZone(first));
+                }
+            }
+
             var definition = first with
             {
-                LocationName = FirstValue(group, x => x.LocationName),
-                LocationType = FirstValue(group, x => x.LocationType),
-                ParentLocationCode = FirstValue(group, x => x.ParentLocationCode),
+                LocationName = FirstValue(group, x => x.LocationName) ?? first.LocationCode,
+                LocationType = locationType,
+                ParentLocationCode = parentLocationCode,
                 Barcode = FirstValue(group, x => x.Barcode),
                 ZoneCode = FirstValue(group, x => x.ZoneCode),
                 AisleNo = FirstValue(group, x => x.AisleNo),
@@ -268,6 +300,10 @@ public sealed class WarehouseOpeningImportService(
             rows,
             newLocations,
             existingLocationCount,
+            inferredLocationMetadataCount,
+            normalizedLocationCodeCount,
+            format == WorkbookFormat.CustomerBalance,
+            supportZoneWarehouseIds.Count,
             BuildLocationWorkbook(newLocations),
             BuildBalanceWorkbook(balanceRows));
     }
@@ -301,6 +337,15 @@ public sealed class WarehouseOpeningImportService(
         var warnings = new List<string>();
         if (prepared.ExistingLocationCount > 0)
             warnings.Add($"{prepared.ExistingLocationCount} raf zaten mevcut; yeniden oluşturulmadan kullanılacak.");
+        if (prepared.InferredLocationMetadataCount > 0)
+            warnings.Add(
+                $"{prepared.InferredLocationMetadataCount} yeni rafın adı kodundan, tipi Rack olarak ve üst bölgesi otomatik tamamlandı.");
+        if (prepared.SupportZoneCount > 0)
+            warnings.Add($"{prepared.SupportZoneCount} depo için '{DefaultOpeningZoneCode}' üst bölgesi oluşturulacak.");
+        if (prepared.NormalizedLocationCodeCount > 0)
+            warnings.Add($"{prepared.NormalizedLocationCodeCount} raf kodu WMS kod standardına dönüştürüldü.");
+        if (prepared.UsedCustomerBalanceFormat)
+            warnings.Add("7 kolonlu müşteri bakiye formatı algılandı ve WMS depo açılış formatına dönüştürüldü.");
         return new(
             prepared.FileHash,
             prepared.Rows.Select(x => x.WarehouseCode).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
@@ -361,10 +406,10 @@ public sealed class WarehouseOpeningImportService(
     private static FlatRow Parse(IXLRow row) => new(
         row.RowNumber(),
         Text(row, 1),
-        Text(row, 2).ToUpperInvariant(),
+        Text(row, 2),
         Null(Text(row, 3)),
         Null(Text(row, 4)),
-        Null(Text(row, 5))?.ToUpperInvariant(),
+        Null(Text(row, 5)),
         Null(Text(row, 6)),
         Null(Text(row, 7)),
         Integer(row, 8),
@@ -381,8 +426,79 @@ public sealed class WarehouseOpeningImportService(
         Null(Text(row, 19)),
         Null(Text(row, 20)),
         Null(Text(row, 21)) ?? "Available",
-        Null(Text(row, 22)),
+        OptionalDateText(row, 22),
         Null(Text(row, 23)));
+
+    private static FlatRow ParseCustomerBalance(IXLRow row) => new(
+        row.RowNumber(),
+        Text(row, 5),
+        Text(row, 6),
+        Null(Text(row, 6)),
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        null,
+        true,
+        true,
+        false,
+        Null(Text(row, 2)),
+        null,
+        Decimal(row, 7),
+        null,
+        null,
+        Null(Text(row, 4)),
+        "Available",
+        OptionalDateText(row, 1),
+        string.IsNullOrWhiteSpace(Text(row, 3))
+            ? "Müşteri devir açılış bakiyesi"
+            : $"Müşteri devir açılış bakiyesi - {Text(row, 3)}");
+
+    private static FlatRow NormalizeLocationMetadata(FlatRow row)
+    {
+        var originalCode = row.LocationCode.Trim();
+        var normalizedCode = NormalizeLocationCode(originalCode, row.RowNumber);
+        return row with
+        {
+            LocationCode = normalizedCode,
+            LocationName = string.IsNullOrWhiteSpace(row.LocationName)
+                ? string.Equals(originalCode, normalizedCode, StringComparison.Ordinal) ? null : originalCode
+                : row.LocationName.Trim(),
+            LocationType = NormalizeLocationType(row.LocationType),
+            ParentLocationCode = string.IsNullOrWhiteSpace(row.ParentLocationCode)
+                ? null
+                : NormalizeLocationCode(row.ParentLocationCode, row.RowNumber)
+        };
+    }
+
+    private static FlatRow CreateOpeningZone(FlatRow source) => source with
+    {
+        LocationCode = DefaultOpeningZoneCode,
+        LocationName = "Depo Açılış Bölgesi",
+        LocationType = LocationTypes.Zone,
+        ParentLocationCode = null,
+        Barcode = null,
+        ZoneCode = "OPENING",
+        AisleNo = null,
+        RackNo = null,
+        LevelNo = null,
+        BinNo = null,
+        IsPickable = false,
+        IsPutaway = false,
+        IsQuarantine = false,
+        StockCode = null,
+        YapCode = null,
+        Quantity = null,
+        UnitCode = null,
+        LotNo = null,
+        SerialNo = null,
+        StockStatus = "Available",
+        OccurredAt = null,
+        Description = "Düz müşteri raf kodları için sistem tarafından oluşturulan üst bölge."
+    };
 
     private static void ValidateConsistent(
         IEnumerable<FlatRow> rows,
@@ -457,13 +573,96 @@ public sealed class WarehouseOpeningImportService(
                 $"Satır {row.RowNumber()}: {Headers[column - 1]} true veya false olmalıdır.")
         };
 
-    private static void ValidateHeaders(IXLWorksheet sheet)
+    private static (IXLWorksheet Sheet, WorkbookFormat Format) ResolveInputSheet(XLWorkbook workbook)
     {
-        var actual = Enumerable.Range(1, Headers.Length)
-            .Select(x => sheet.Cell(1, x).GetString().Trim()).ToArray();
-        if (!actual.SequenceEqual(Headers, StringComparer.Ordinal))
-            throw AppException.BadRequest(
-                $"Excel başlıkları veya sırası geçersiz. Beklenen: {string.Join(", ", Headers)}.");
+        var namedStandard = workbook.Worksheets.FirstOrDefault(x =>
+            string.Equals(x.Name, OpeningSheetName, StringComparison.OrdinalIgnoreCase));
+        if (namedStandard is not null && HasHeaders(namedStandard, Headers))
+            return (namedStandard, WorkbookFormat.Standard);
+
+        var standard = workbook.Worksheets.FirstOrDefault(x => HasHeaders(x, Headers));
+        if (standard is not null) return (standard, WorkbookFormat.Standard);
+
+        var customer = workbook.Worksheets.FirstOrDefault(x => HasHeaders(x, CustomerBalanceHeaders));
+        if (customer is not null) return (customer, WorkbookFormat.CustomerBalance);
+
+        throw AppException.BadRequest(
+            $"Excel başlıkları geçersiz. WMS şablonu ({string.Join(", ", Headers)}) veya müşteri bakiye formatı ({string.Join(", ", CustomerBalanceHeaders)}) kullanılmalıdır.");
+    }
+
+    private static bool HasHeaders(IXLWorksheet sheet, IReadOnlyList<string> expected) =>
+        Enumerable.Range(1, expected.Count)
+            .Select(x => sheet.Cell(1, x).GetString().Trim())
+            .SequenceEqual(expected, StringComparer.OrdinalIgnoreCase);
+
+    private static string? OptionalDateText(IXLRow row, int column)
+    {
+        var cell = row.Cell(column);
+        if (cell.IsEmpty()) return null;
+        if (cell.TryGetValue<DateTime>(out var value))
+            return value.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+        return Null(cell.GetString());
+    }
+
+    private static string? NormalizeLocationType(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var normalized = NormalizeAlias(value);
+        return normalized switch
+        {
+            "ZONE" or "BOLGE" or "ALAN" => LocationTypes.Zone,
+            "AISLE" or "KORIDOR" => LocationTypes.Aisle,
+            "RACK" or "RAF" => LocationTypes.Rack,
+            "SHELF" or "SEVIYE" or "KAT" => LocationTypes.Shelf,
+            "CELL" or "HUCRE" or "GOZ" => LocationTypes.Cell,
+            "RECEIVING" or "MAL-KABUL" or "KABUL" => LocationTypes.Receiving,
+            "STAGING" or "HAZIRLAMA" or "BEKLEME" => LocationTypes.Staging,
+            "SHIPPING" or "SEVK" => LocationTypes.Shipping,
+            "QUARANTINE" or "KARANTINA" => LocationTypes.Quarantine,
+            "VIRTUAL" or "SANAL" => LocationTypes.Virtual,
+            _ => value.Trim()
+        };
+    }
+
+    private static string NormalizeLocationCode(string value, int rowNumber)
+    {
+        var normalized = NormalizeAlias(value);
+        if (string.IsNullOrWhiteSpace(normalized))
+            throw AppException.BadRequest($"Satır {rowNumber}: LocationCode geçerli bir kod üretmiyor.");
+        if (normalized.Length <= 50) return normalized;
+
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)))[..8];
+        return $"{normalized[..41].TrimEnd('-', '.', '_')}-{hash}";
+    }
+
+    private static string NormalizeAlias(string value)
+    {
+        var source = value.Trim()
+            .Replace('ı', 'i')
+            .Normalize(NormalizationForm.FormD);
+        var result = new StringBuilder(source.Length);
+        var pendingSeparator = false;
+        foreach (var character in source)
+        {
+            if (CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.NonSpacingMark) continue;
+            var upper = char.ToUpperInvariant(character);
+            if ((upper is >= 'A' and <= 'Z') || char.IsDigit(upper) || upper is '.' or '_')
+            {
+                if (pendingSeparator && result.Length > 0 && result[^1] is not '-' and not '.' and not '_')
+                    result.Append('-');
+                result.Append(upper);
+                pendingSeparator = false;
+            }
+            else if (upper == '-')
+            {
+                pendingSeparator = result.Length > 0;
+            }
+            else
+            {
+                pendingSeparator = result.Length > 0;
+            }
+        }
+        return result.ToString().Trim('-', '.', '_');
     }
 
     private static async Task<byte[]> ReadBytesAsync(Stream source, CancellationToken cancellationToken)
@@ -477,7 +676,7 @@ public sealed class WarehouseOpeningImportService(
             if (read == 0) break;
             total += read;
             if (total > MaxFileSize)
-                throw AppException.BadRequest("XLSX dosyası en fazla 8 MB olabilir.");
+                throw AppException.BadRequest("XLSX dosyası en fazla 64 MB olabilir.");
             await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
         }
         if (total == 0) throw AppException.BadRequest("Yüklenecek XLSX dosyası boş olamaz.");
@@ -563,6 +762,16 @@ public sealed class WarehouseOpeningImportService(
         IReadOnlyList<FlatRow> Rows,
         IReadOnlyList<FlatRow> NewLocations,
         int ExistingLocationCount,
+        int InferredLocationMetadataCount,
+        int NormalizedLocationCodeCount,
+        bool UsedCustomerBalanceFormat,
+        int SupportZoneCount,
         byte[] LocationWorkbook,
         byte[] BalanceWorkbook);
+
+    private enum WorkbookFormat
+    {
+        Standard,
+        CustomerBalance
+    }
 }
