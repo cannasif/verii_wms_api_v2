@@ -8,6 +8,7 @@ using verii_wms_api_v2.Modules.Location.Application;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Stock.Domain;
 using verii_wms_api_v2.Modules.StockBalance.Application;
+using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Application;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
 using verii_wms_api_v2.Modules.Warehouse.Domain;
@@ -203,6 +204,202 @@ public sealed class InitialWarehouseImportTests
         Assert.Single(recorder.ValidatedRequests[0].Lines);
     }
 
+    [Theory]
+    [InlineData(5, 7, 2, true)]
+    [InlineData(5, 3, 2, false)]
+    public async Task Warehouse_opening_reconciliation_posts_only_the_required_difference(
+        decimal currentQuantity,
+        decimal excelQuantity,
+        decimal expectedDifference,
+        bool increase)
+    {
+        await using var db = CreateDb();
+        var warehouse = new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" };
+        var location = new WarehouseLocation
+        {
+            BranchCode = "0", WarehouseId = 0, Code = "A01", Name = "A01",
+            LocationType = LocationTypes.Cell, BarcodeEntryMode = BarcodeEntryModes.Auto, IsActive = true
+        };
+        var stock = new Stock { BranchCode = "0", ErpStockCode = "STK-01", StockName = "Test stok", BaseUnitCode = "ADET" };
+        db.AddRange(warehouse, stock);
+        await db.SaveChangesAsync();
+        location.WarehouseId = warehouse.Id;
+        db.Add(location);
+        await db.SaveChangesAsync();
+        db.Add(new LocationStockBalance
+        {
+            BranchCode = "0", DimensionKey = "test", WarehouseId = warehouse.Id,
+            LocationId = location.Id, StockId = stock.Id, UnitCode = "ADET",
+            StockStatus = "Available", Quantity = currentQuantity,
+            AvailableQuantity = currentQuantity
+        });
+        await db.SaveChangesAsync();
+
+        var recorder = new RecordingStockMovementService();
+        var service = new OpeningBalanceImportService(Uow(db), recorder);
+        var state = await service.AnalyzeWarehouseStateAsync([warehouse.Id]);
+        await using var stream = OpeningBalanceWorkbookWithRows(
+            [1, "A01", "STK-01", excelQuantity]);
+
+        var result = await service.ImportWarehouseOpeningAsync(
+            stream, "0", "reconcile-difference", true, state.SnapshotHash);
+
+        Assert.False(result.IsReplay);
+        var request = Assert.Single(recorder.PostedRequests);
+        Assert.Equal(StockMovementTypes.BalanceReconciliation, request.OperationType);
+        var line = Assert.Single(request.Lines);
+        Assert.Equal(expectedDifference, line.Quantity);
+        Assert.Equal(increase, line.TargetWarehouseId.HasValue);
+        Assert.Equal(!increase, line.SourceWarehouseId.HasValue);
+    }
+
+    [Fact]
+    public async Task Warehouse_opening_reconciliation_zeros_a_balance_omitted_from_excel()
+    {
+        await using var db = CreateDb();
+        var warehouse = new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" };
+        var oldStock = new Stock { BranchCode = "0", ErpStockCode = "OLD", StockName = "Eski", BaseUnitCode = "ADET" };
+        var newStock = new Stock { BranchCode = "0", ErpStockCode = "NEW", StockName = "Yeni", BaseUnitCode = "ADET" };
+        db.AddRange(warehouse, oldStock, newStock);
+        await db.SaveChangesAsync();
+        var location = new WarehouseLocation
+        {
+            BranchCode = "0", WarehouseId = warehouse.Id, Code = "A01", Name = "A01",
+            LocationType = LocationTypes.Cell, BarcodeEntryMode = BarcodeEntryModes.Auto, IsActive = true
+        };
+        db.Add(location);
+        await db.SaveChangesAsync();
+        db.Add(new LocationStockBalance
+        {
+            BranchCode = "0", DimensionKey = "old", WarehouseId = warehouse.Id,
+            LocationId = location.Id, StockId = oldStock.Id, UnitCode = "ADET",
+            StockStatus = "Available", Quantity = 5, AvailableQuantity = 5
+        });
+        await db.SaveChangesAsync();
+
+        var recorder = new RecordingStockMovementService();
+        var service = new OpeningBalanceImportService(Uow(db), recorder);
+        var state = await service.AnalyzeWarehouseStateAsync([warehouse.Id]);
+        await using var stream = OpeningBalanceWorkbookWithRows([1, "A01", "NEW", 2m]);
+
+        await service.ImportWarehouseOpeningAsync(
+            stream, "0", "reconcile-omitted", true, state.SnapshotHash);
+
+        var request = Assert.Single(recorder.PostedRequests);
+        Assert.Equal(2, request.Lines.Count);
+        var decrease = Assert.Single(request.Lines, x => x.StockId == oldStock.Id);
+        Assert.Equal(5, decrease.Quantity);
+        Assert.Equal(location.Id, decrease.SourceLocationId);
+        var increase = Assert.Single(request.Lines, x => x.StockId == newStock.Id);
+        Assert.Equal(2, increase.Quantity);
+        Assert.Equal(location.Id, increase.TargetLocationId);
+    }
+
+    [Fact]
+    public async Task Warehouse_opening_reconciliation_is_blocked_while_stock_is_reserved()
+    {
+        await using var db = CreateDb();
+        var warehouse = new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" };
+        var stock = new Stock { BranchCode = "0", ErpStockCode = "STK-01", StockName = "Test", BaseUnitCode = "ADET" };
+        db.AddRange(warehouse, stock);
+        await db.SaveChangesAsync();
+        var location = new WarehouseLocation
+        {
+            BranchCode = "0", WarehouseId = warehouse.Id, Code = "A01", Name = "A01",
+            LocationType = LocationTypes.Cell, BarcodeEntryMode = BarcodeEntryModes.Auto, IsActive = true
+        };
+        db.Add(location);
+        await db.SaveChangesAsync();
+        db.Add(new LocationStockBalance
+        {
+            BranchCode = "0", DimensionKey = "reserved", WarehouseId = warehouse.Id,
+            LocationId = location.Id, StockId = stock.Id, UnitCode = "ADET",
+            StockStatus = "Available", Quantity = 5, ReservedQuantity = 1, AvailableQuantity = 4
+        });
+        await db.SaveChangesAsync();
+        var service = new OpeningBalanceImportService(Uow(db), new RecordingStockMovementService());
+        var state = await service.AnalyzeWarehouseStateAsync([warehouse.Id]);
+        await using var stream = OpeningBalanceWorkbookWithRows([1, "A01", "STK-01", 5m]);
+
+        var error = await Assert.ThrowsAsync<verii_wms_api_v2.Shared.Application.Exceptions.AppException>(
+            () => service.ImportWarehouseOpeningAsync(
+                stream, "0", "reconcile-reserved", true, state.SnapshotHash));
+
+        Assert.Contains("rezerve", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Warehouse_opening_reconciliation_creates_no_movement_when_excel_already_matches()
+    {
+        await using var db = CreateDb();
+        var warehouse = new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" };
+        var stock = new Stock { BranchCode = "0", ErpStockCode = "STK-01", StockName = "Test", BaseUnitCode = "ADET" };
+        db.AddRange(warehouse, stock);
+        await db.SaveChangesAsync();
+        var location = new WarehouseLocation
+        {
+            BranchCode = "0", WarehouseId = warehouse.Id, Code = "A01", Name = "A01",
+            LocationType = LocationTypes.Cell, BarcodeEntryMode = BarcodeEntryModes.Auto, IsActive = true
+        };
+        db.Add(location);
+        await db.SaveChangesAsync();
+        db.Add(new LocationStockBalance
+        {
+            BranchCode = "0", DimensionKey = "same", WarehouseId = warehouse.Id,
+            LocationId = location.Id, StockId = stock.Id, UnitCode = "ADET",
+            StockStatus = "Available", Quantity = 5, AvailableQuantity = 5
+        });
+        await db.SaveChangesAsync();
+        var recorder = new RecordingStockMovementService();
+        var service = new OpeningBalanceImportService(Uow(db), recorder);
+        var state = await service.AnalyzeWarehouseStateAsync([warehouse.Id]);
+        await using var stream = OpeningBalanceWorkbookWithRows([1, "A01", "STK-01", 5m]);
+
+        var result = await service.ImportWarehouseOpeningAsync(
+            stream, "0", "reconcile-no-change", true, state.SnapshotHash);
+
+        Assert.False(result.IsReplay);
+        Assert.Equal(0, result.BatchCount);
+        Assert.Empty(recorder.PostedRequests);
+    }
+
+    [Fact]
+    public async Task Warehouse_opening_reconciliation_rejects_a_stale_preview_snapshot()
+    {
+        await using var db = CreateDb();
+        var warehouse = new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" };
+        var stock = new Stock { BranchCode = "0", ErpStockCode = "STK-01", StockName = "Test", BaseUnitCode = "ADET" };
+        db.AddRange(warehouse, stock);
+        await db.SaveChangesAsync();
+        var location = new WarehouseLocation
+        {
+            BranchCode = "0", WarehouseId = warehouse.Id, Code = "A01", Name = "A01",
+            LocationType = LocationTypes.Cell, BarcodeEntryMode = BarcodeEntryModes.Auto, IsActive = true
+        };
+        db.Add(location);
+        await db.SaveChangesAsync();
+        var balance = new LocationStockBalance
+        {
+            BranchCode = "0", DimensionKey = "changed", WarehouseId = warehouse.Id,
+            LocationId = location.Id, StockId = stock.Id, UnitCode = "ADET",
+            StockStatus = "Available", Quantity = 5, AvailableQuantity = 5
+        };
+        db.Add(balance);
+        await db.SaveChangesAsync();
+        var service = new OpeningBalanceImportService(Uow(db), new RecordingStockMovementService());
+        var previewState = await service.AnalyzeWarehouseStateAsync([warehouse.Id]);
+        balance.Quantity = 6;
+        balance.AvailableQuantity = 6;
+        await db.SaveChangesAsync();
+        await using var stream = OpeningBalanceWorkbookWithRows([1, "A01", "STK-01", 7m]);
+
+        var error = await Assert.ThrowsAsync<verii_wms_api_v2.Shared.Application.Exceptions.AppException>(
+            () => service.ImportWarehouseOpeningAsync(
+                stream, "0", "reconcile-stale", true, previewState.SnapshotHash));
+
+        Assert.Contains("ön doğrulamadan sonra değişti", error.Message);
+    }
+
     [Fact]
     public async Task Combined_opening_preview_deduplicates_repeated_location_and_preserves_each_serial_row()
     {
@@ -266,7 +463,8 @@ public sealed class InitialWarehouseImportTests
 
         var preview = await service.PreviewAsync(stream, "0");
         stream.Position = 0;
-        await service.ImportAsync(stream, "0", preview.FileHash, "opening-customer-0001");
+        await service.ImportAsync(stream, "0", preview.FileHash, "opening-customer-0001",
+            false, preview.BalanceSnapshotHash);
 
         Assert.Equal(2, preview.NewLocationCount);
         Assert.Contains(preview.Warnings, x => x.Contains("tipi Rack", StringComparison.OrdinalIgnoreCase));
@@ -321,7 +519,8 @@ public sealed class InitialWarehouseImportTests
 
         var preview = await service.PreviewAsync(stream, "0");
         stream.Position = 0;
-        await service.ImportAsync(stream, "0", preview.FileHash, "opening-customer-0002");
+        await service.ImportAsync(stream, "0", preview.FileHash, "opening-customer-0002",
+            false, preview.BalanceSnapshotHash);
 
         Assert.Contains(locations.ImportedDefinitions, x => x.Code == "RAF-01" && x.Type == LocationTypes.Rack);
     }
@@ -344,7 +543,8 @@ public sealed class InitialWarehouseImportTests
 
         var preview = await service.PreviewAsync(stream, "0");
         stream.Position = 0;
-        await service.ImportAsync(stream, "0", preview.FileHash, "single-location-name");
+        await service.ImportAsync(stream, "0", preview.FileHash, "single-location-name",
+            false, preview.BalanceSnapshotHash);
 
         var location = Assert.Single(locations.ImportedDefinitions, x => x.Code == "K");
         Assert.Equal("K Raf", location.Name);
@@ -371,7 +571,7 @@ public sealed class InitialWarehouseImportTests
     }
 
     [Fact]
-    public async Task Combined_opening_preview_rejects_used_warehouse_before_creating_locations()
+    public async Task Combined_opening_preview_requires_explicit_reconciliation_for_used_warehouse()
     {
         await using var db = CreateDb();
         var warehouse = new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" };
@@ -401,15 +601,21 @@ public sealed class InitialWarehouseImportTests
         });
         await db.SaveChangesAsync();
         var locations = new RecordingLocationImportService();
+        var balances = new RecordingOpeningBalanceImportService
+        {
+            WarehouseState = new WarehouseOpeningBalanceState(
+                new string('A', 64), 1, 1, 1m, 0, 0m)
+        };
         var service = new WarehouseOpeningImportService(
-            Uow(db), locations, new RecordingOpeningBalanceImportService());
+            Uow(db), locations, balances);
         await using var stream = CombinedOpeningWorkbook(
             [1, "YENI", "Yeni Raf", "Rack", "STK-01", 1m, ""]);
 
-        var error = await Assert.ThrowsAsync<verii_wms_api_v2.Shared.Application.Exceptions.AppException>(
-            () => service.PreviewAsync(stream, "0"));
+        var preview = await service.PreviewAsync(stream, "0");
 
-        Assert.Contains("stok hareketi mevcut", error.Message);
+        Assert.True(preview.RequiresBalanceReplacement);
+        Assert.Equal(1, preview.ExistingMovementCount);
+        Assert.Equal(1m, preview.CurrentTotalQuantity);
         Assert.Equal(0, locations.ImportedRows);
     }
 
@@ -637,6 +843,35 @@ public sealed class InitialWarehouseImportTests
         return stream;
     }
 
+    private static MemoryStream OpeningBalanceWorkbookWithRows(params object[][] rows)
+    {
+        using var workbook = new XLWorkbook();
+        var sheet = workbook.Worksheets.Add("İlk Raf Bakiyeleri");
+        string[] headers =
+        [
+            "WarehouseCode", "LocationCode", "StockCode", "YapCode", "Quantity", "UnitCode",
+            "LotNo", "SerialNo", "StockStatus", "OccurredAt", "Description"
+        ];
+        for (var column = 0; column < headers.Length; column++)
+            sheet.Cell(1, column + 1).Value = headers[column];
+        for (var index = 0; index < rows.Length; index++)
+        {
+            var source = rows[index];
+            object?[] values =
+            [
+                source[0], source[1], source[2], null, source[3], "ADET",
+                null, null, "Available", null, "Kesin bakiye eşitlemesi"
+            ];
+            for (var column = 0; column < values.Length; column++)
+                if (values[column] is not null)
+                    sheet.Cell(index + 2, column + 1).Value = XLCellValue.FromObject(values[column]);
+        }
+        var stream = new MemoryStream();
+        workbook.SaveAs(stream);
+        stream.Position = 0;
+        return stream;
+    }
+
     private static void WriteLocationRow(IXLWorksheet sheet, int row, string code, string type, string? parent)
     {
         object?[] values =
@@ -704,6 +939,7 @@ public sealed class InitialWarehouseImportTests
     {
         public PostStockMovementRequest? LastRequest { get; private set; }
         public List<PostStockMovementRequest> ValidatedRequests { get; } = [];
+        public List<PostStockMovementRequest> PostedRequests { get; } = [];
 
         public Task ValidateAsync(PostStockMovementRequest request, CancellationToken cancellationToken = default)
         {
@@ -714,6 +950,7 @@ public sealed class InitialWarehouseImportTests
         public Task<StockMovementPostResult> PostAsync(PostStockMovementRequest request, CancellationToken cancellationToken = default)
         {
             LastRequest = request;
+            PostedRequests.Add(request);
             return Task.FromResult(new StockMovementPostResult(1, Guid.NewGuid(), false, request.Lines.Count));
         }
         public Task<StockMovementDetail> GetByIdAsync(long id, CancellationToken cancellationToken = default) => throw new NotSupportedException();
@@ -754,6 +991,8 @@ public sealed class InitialWarehouseImportTests
     {
         public int ImportedRows { get; private set; }
         public string? ImportedLocationCode { get; private set; }
+        public WarehouseOpeningBalanceState WarehouseState { get; set; } = new(
+            new string('0', 64), 0, 0, 0, 0, 0);
 
         public Task<byte[]> CreateTemplateAsync(string branchCode, CancellationToken cancellationToken = default) =>
             Task.FromResult(Array.Empty<byte>());
@@ -769,18 +1008,27 @@ public sealed class InitialWarehouseImportTests
             Stream workbookStream,
             string branchCode,
             string idempotencyKey,
+            bool replaceExistingBalances = false,
+            string? expectedBalanceSnapshotHash = null,
             CancellationToken cancellationToken = default)
             => RecordAsync(workbookStream);
 
         public async Task<OpeningBalanceImportValidation> ValidateWarehouseOpeningAsync(
             Stream workbookStream,
             string branchCode,
+            bool replaceExistingBalances = false,
+            string? expectedBalanceSnapshotHash = null,
             CancellationToken cancellationToken = default)
         {
             var result = await RecordAsync(workbookStream);
             return new(result.TotalRows, result.TotalQuantity,
                 (int)Math.Ceiling(result.TotalRows / (decimal)OpeningBalanceImportService.MovementBatchSize));
         }
+
+        public Task<WarehouseOpeningBalanceState> AnalyzeWarehouseStateAsync(
+            IReadOnlyCollection<long> warehouseIds,
+            CancellationToken cancellationToken = default) =>
+            Task.FromResult(WarehouseState);
 
         private Task<OpeningBalanceImportResult> RecordAsync(Stream workbookStream)
         {

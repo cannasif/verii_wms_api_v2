@@ -40,6 +40,13 @@ public sealed record OpeningBalanceImportResult(long OperationId, Guid Operation
     decimal TotalQuantity, IReadOnlyList<OpeningBalanceImportRowResult> Rows,
     int BatchCount = 1, bool RowsTruncated = false);
 public sealed record OpeningBalanceImportValidation(int TotalRows, decimal TotalQuantity, int BatchCount);
+public sealed record WarehouseOpeningBalanceState(
+    string SnapshotHash,
+    int ExistingMovementCount,
+    int CurrentBalanceRowCount,
+    decimal CurrentTotalQuantity,
+    int ReservedBalanceRowCount,
+    decimal ReservedQuantity);
 
 public sealed record StockReservationLineRequest(long ReferenceLineId, long WarehouseId, long LocationId, long StockId,
     long? YapCodeId, string UnitCode, string? LotNo, string? SerialNo, string StockStatus, decimal QuantityDelta);
@@ -84,9 +91,16 @@ public interface IOpeningBalanceImportService
         Stream workbookStream,
         string branchCode,
         string idempotencyKey,
+        bool replaceExistingBalances = false,
+        string? expectedBalanceSnapshotHash = null,
         CancellationToken cancellationToken = default);
     Task<OpeningBalanceImportValidation> ValidateWarehouseOpeningAsync(
         Stream workbookStream,
         string branchCode,
+        bool replaceExistingBalances = false,
+        string? expectedBalanceSnapshotHash = null,
+        CancellationToken cancellationToken = default);
+    Task<WarehouseOpeningBalanceState> AnalyzeWarehouseStateAsync(
+        IReadOnlyCollection<long> warehouseIds,
         CancellationToken cancellationToken = default);
 }

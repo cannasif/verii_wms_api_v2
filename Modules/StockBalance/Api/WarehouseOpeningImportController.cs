@@ -46,13 +46,16 @@ public sealed class WarehouseOpeningImportController(
         [FromQuery] string branchCode,
         [FromQuery] string previewHash,
         [FromQuery] string idempotencyKey,
+        [FromQuery] bool replaceExistingBalances,
+        [FromQuery] string balanceSnapshotHash,
         CancellationToken cancellationToken)
     {
         await RequirePermissions(cancellationToken);
         ValidateFile(file);
         await using var stream = file!.OpenReadStream();
         var result = await service.ImportAsync(
-            stream, branchCode, previewHash, idempotencyKey, cancellationToken);
+            stream, branchCode, previewHash, idempotencyKey,
+            replaceExistingBalances, balanceSnapshotHash, cancellationToken);
         return Ok(ApiResponse<WarehouseOpeningImportResult>.Ok(
             result,
             "Raf tanımları ve ilk stok/seri bakiyeleri güvenli partiler halinde kaydedildi."));

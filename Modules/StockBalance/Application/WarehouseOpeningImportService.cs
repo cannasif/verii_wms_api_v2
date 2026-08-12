@@ -17,6 +17,7 @@ namespace verii_wms_api_v2.Modules.StockBalance.Application;
 
 public sealed record WarehouseOpeningPreview(
     string FileHash,
+    string BalanceSnapshotHash,
     int WarehouseCount,
     int NewLocationCount,
     int ExistingLocationCount,
@@ -25,6 +26,12 @@ public sealed record WarehouseOpeningPreview(
     int SerialCount,
     decimal TotalQuantity,
     int BatchCount,
+    int ExistingMovementCount,
+    int CurrentBalanceRowCount,
+    decimal CurrentTotalQuantity,
+    int ReservedBalanceRowCount,
+    decimal ReservedQuantity,
+    bool RequiresBalanceReplacement,
     IReadOnlyList<string> Warnings);
 
 public sealed record WarehouseOpeningImportResult(
@@ -44,6 +51,8 @@ public interface IWarehouseOpeningImportService
         string branchCode,
         string previewHash,
         string idempotencyKey,
+        bool replaceExistingBalances,
+        string balanceSnapshotHash,
         CancellationToken cancellationToken = default);
 }
 
@@ -153,13 +162,15 @@ public sealed class WarehouseOpeningImportService(
         CancellationToken cancellationToken = default)
     {
         var prepared = await PrepareAsync(workbookStream, branchCode, cancellationToken);
+        var state = await openingBalanceImport.AnalyzeWarehouseStateAsync(
+            prepared.WarehouseIds, cancellationToken);
         if (prepared.NewLocations.Count > 0)
-            return ToPreview(prepared, prepared.TotalQuantity, prepared.BatchCount);
+            return ToPreview(prepared, prepared.TotalQuantity, prepared.BatchCount, state);
 
         await using var balanceStream = new MemoryStream(prepared.BalanceWorkbook);
         var validation = await openingBalanceImport.ValidateWarehouseOpeningAsync(
-            balanceStream, branchCode, cancellationToken);
-        return ToPreview(prepared, validation.TotalQuantity, validation.BatchCount);
+            balanceStream, branchCode, true, state.SnapshotHash, cancellationToken);
+        return ToPreview(prepared, validation.TotalQuantity, validation.BatchCount, state);
     }
 
     public async Task<WarehouseOpeningImportResult> ImportAsync(
@@ -167,6 +178,8 @@ public sealed class WarehouseOpeningImportService(
         string branchCode,
         string previewHash,
         string idempotencyKey,
+        bool replaceExistingBalances,
+        string balanceSnapshotHash,
         CancellationToken cancellationToken = default)
     {
         var prepared = await PrepareAsync(workbookStream, branchCode, cancellationToken);
@@ -174,7 +187,9 @@ public sealed class WarehouseOpeningImportService(
             throw AppException.Conflict(
                 "Yüklenecek dosya ön doğrulaması yapılan dosyayla aynı değil. Dosyayı yeniden ön doğrulayın.");
 
-        return await ExecutePreparedAsync(prepared, branchCode, idempotencyKey, cancellationToken);
+        return await ExecutePreparedAsync(
+            prepared, branchCode, idempotencyKey, replaceExistingBalances,
+            balanceSnapshotHash, cancellationToken);
     }
 
     private async Task<PreparedWorkbook> PrepareAsync(
@@ -310,8 +325,6 @@ public sealed class WarehouseOpeningImportService(
 
         var balanceRows = rows.Where(x => !string.IsNullOrWhiteSpace(x.StockCode)).ToList();
         await ValidateBalanceReferencesAsync(balanceRows, warehouseByCode, cancellationToken);
-        if (newLocations.Count > 0)
-            await EnsureWarehousesHaveNoMovementsAsync(warehouses, cancellationToken);
         var totalQuantity = balanceRows.Sum(x => x.Quantity ?? 0);
         var batchCount = balanceRows
             .GroupBy(x => warehouseByCode[x.WarehouseCode].BranchCode, StringComparer.OrdinalIgnoreCase)
@@ -321,6 +334,7 @@ public sealed class WarehouseOpeningImportService(
 
         return new(
             Convert.ToHexString(SHA256.HashData(bytes)),
+            warehouses.Select(x => x.Id).Distinct().OrderBy(x => x).ToArray(),
             rows,
             newLocations,
             existingLocationCount,
@@ -387,30 +401,12 @@ public sealed class WarehouseOpeningImportService(
         }
     }
 
-    private async Task EnsureWarehousesHaveNoMovementsAsync(
-        IReadOnlyCollection<WarehouseLookupRow> warehouses,
-        CancellationToken cancellationToken)
-    {
-        var warehouseIds = warehouses.Select(x => x.Id).ToList();
-        long? usedWarehouseId;
-        using (unitOfWork.BeginBranchScope(null))
-        {
-            usedWarehouseId = await unitOfWork.Repository<StockMovementEntry>().Query()
-                .Where(x => warehouseIds.Contains(x.WarehouseId))
-                .Select(x => (long?)x.WarehouseId)
-                .FirstOrDefaultAsync(cancellationToken);
-        }
-
-        if (!usedWarehouseId.HasValue) return;
-        var warehouseCode = warehouses.First(x => x.Id == usedWarehouseId.Value).WarehouseCode;
-        throw AppException.Conflict(
-            $"{warehouseCode} deposunda stok hareketi mevcut. İlk bakiye yalnız hareket defteri boş depoya aktarılabilir.");
-    }
-
     private async Task<WarehouseOpeningImportResult> ExecutePreparedAsync(
         PreparedWorkbook prepared,
         string branchCode,
         string idempotencyKey,
+        bool replaceExistingBalances,
+        string balanceSnapshotHash,
         CancellationToken cancellationToken)
     {
         LocationImportResult? locationResult = null;
@@ -423,14 +419,16 @@ public sealed class WarehouseOpeningImportService(
 
         await using var balanceStream = new MemoryStream(prepared.BalanceWorkbook);
         var balanceResult = await openingBalanceImport.ImportWarehouseOpeningAsync(
-            balanceStream, branchCode, idempotencyKey, cancellationToken);
+            balanceStream, branchCode, idempotencyKey, replaceExistingBalances,
+            balanceSnapshotHash, cancellationToken);
         return new(prepared.FileHash, locationResult, balanceResult);
     }
 
     private static WarehouseOpeningPreview ToPreview(
         PreparedWorkbook prepared,
         decimal totalQuantity,
-        int batchCount)
+        int batchCount,
+        WarehouseOpeningBalanceState state)
     {
         var balanceRows = prepared.Rows.Where(x => !string.IsNullOrWhiteSpace(x.StockCode)).ToList();
         var warnings = new List<string>();
@@ -445,8 +443,16 @@ public sealed class WarehouseOpeningImportService(
             warnings.Add($"{prepared.NormalizedLocationCodeCount} raf kodu WMS kod standardına dönüştürüldü.");
         if (prepared.UsedCustomerBalanceFormat)
             warnings.Add("7 kolonlu müşteri bakiye formatı algılandı ve WMS depo açılış formatına dönüştürüldü.");
+        var requiresReplacement = state.ExistingMovementCount > 0 || state.CurrentBalanceRowCount > 0;
+        if (requiresReplacement)
+            warnings.Add(
+                "Seçilen depolarda mevcut hareket/bakiye var. Onaylanırsa geçmiş silinmeden yalnız fark hareketleri yazılır; Excel'de bulunmayan mevcut raf bakiyeleri sıfıra getirilir.");
+        if (state.ReservedQuantity > 0)
+            warnings.Add(
+                $"{state.ReservedQuantity:N4} miktar açık emirlere rezerve. Rezervasyonlar kapanmadan bakiye eşitlemesi yapılamaz.");
         return new(
             prepared.FileHash,
+            state.SnapshotHash,
             prepared.Rows.Select(x => x.WarehouseCode).Distinct(StringComparer.OrdinalIgnoreCase).Count(),
             prepared.NewLocations.Count,
             prepared.ExistingLocationCount,
@@ -455,6 +461,12 @@ public sealed class WarehouseOpeningImportService(
             balanceRows.Count(x => !string.IsNullOrWhiteSpace(x.SerialNo)),
             totalQuantity,
             batchCount,
+            state.ExistingMovementCount,
+            state.CurrentBalanceRowCount,
+            state.CurrentTotalQuantity,
+            state.ReservedBalanceRowCount,
+            state.ReservedQuantity,
+            requiresReplacement,
             warnings);
     }
 
@@ -889,6 +901,7 @@ public sealed class WarehouseOpeningImportService(
 
     private sealed record PreparedWorkbook(
         string FileHash,
+        IReadOnlyList<long> WarehouseIds,
         IReadOnlyList<FlatRow> Rows,
         IReadOnlyList<FlatRow> NewLocations,
         int ExistingLocationCount,

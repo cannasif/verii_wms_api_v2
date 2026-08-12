@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using verii_wms_api_v2.Modules.Location.Domain;
+using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Application;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
@@ -160,12 +161,15 @@ public sealed class OpeningBalanceImportService(
         string idempotencyKey,
         CancellationToken cancellationToken = default)
         => ImportCoreAsync(
-            workbookStream, branchCode, idempotencyKey, MaxRows, MaxFileSize, false, cancellationToken);
+            workbookStream, branchCode, idempotencyKey, MaxRows, MaxFileSize, false,
+            false, null, cancellationToken);
 
     public Task<OpeningBalanceImportResult> ImportWarehouseOpeningAsync(
         Stream workbookStream,
         string branchCode,
         string idempotencyKey,
+        bool replaceExistingBalances = false,
+        string? expectedBalanceSnapshotHash = null,
         CancellationToken cancellationToken = default)
         => ImportCoreAsync(
             workbookStream,
@@ -174,11 +178,15 @@ public sealed class OpeningBalanceImportService(
             WarehouseOpeningMaxRows,
             WarehouseOpeningMaxFileSize,
             false,
+            replaceExistingBalances,
+            expectedBalanceSnapshotHash,
             cancellationToken);
 
     public async Task<OpeningBalanceImportValidation> ValidateWarehouseOpeningAsync(
         Stream workbookStream,
         string branchCode,
+        bool replaceExistingBalances = false,
+        string? expectedBalanceSnapshotHash = null,
         CancellationToken cancellationToken = default)
     {
         var result = await ImportCoreAsync(
@@ -188,6 +196,8 @@ public sealed class OpeningBalanceImportService(
             WarehouseOpeningMaxRows,
             WarehouseOpeningMaxFileSize,
             true,
+            replaceExistingBalances,
+            expectedBalanceSnapshotHash,
             cancellationToken);
         return new(result.TotalRows, result.TotalQuantity, result.BatchCount);
     }
@@ -199,6 +209,8 @@ public sealed class OpeningBalanceImportService(
         int maxRows,
         int maxFileSize,
         bool validateOnly,
+        bool replaceExistingBalances,
+        string? expectedBalanceSnapshotHash,
         CancellationToken cancellationToken)
     {
         var key = idempotencyKey?.Trim() ?? string.Empty;
@@ -337,7 +349,8 @@ public sealed class OpeningBalanceImportService(
                     warehouse.BranchCode,
                     new StockMovementLineRequest(
                         stock.Id, yapCodeId, quantity, null, null, warehouse.Id, location.Id,
-                        Null(Text(row, 6)), Null(Text(row, 7)), Null(Text(row, 8)), status)));
+                        Null(Text(row, 6)) ?? stock.BaseUnitCode,
+                        Null(Text(row, 7)), Null(Text(row, 8)), status)));
                 resultRows.Add(new(row.RowNumber(), "Ready", warehouseCode, locationCode, stockCode, "Doğrulandı."));
             }
             catch (AppException exception)
@@ -354,45 +367,77 @@ public sealed class OpeningBalanceImportService(
         // change while the visible workbook remains identical, which would break resume.
         var movementLines = requestLines.Select(x => x.Line).ToList();
         var fileHash = BuildLogicalFileHash("warehouse-derived", occurredAt, movementLines, rows);
-        var referenceNo = $"OPENING:{fileHash}";
         var description = string.Join(" | ", rows.Select(x => Null(Text(x, 11)))
             .Where(x => x is not null).Distinct().Take(5));
-        var postRequests = requestLines
+        var targetWarehouseIds = requestLines.Select(x => x.TargetWarehouseId!.Value).Distinct().ToList();
+        var referenceType = "OpeningBalanceImport";
+        var referenceNo = $"OPENING:{fileHash}";
+        var operationType = StockMovementTypes.AdjustmentIncrease;
+        var batchHash = fileHash;
+        IReadOnlyList<BranchMovementLine> linesToPost = requestLines;
+
+        if (replaceExistingBalances)
+        {
+            var expectedHash = expectedBalanceSnapshotHash?.Trim().ToUpperInvariant() ?? string.Empty;
+            if (expectedHash.Length != 64 || expectedHash.Any(x => !Uri.IsHexDigit(x)))
+                throw AppException.BadRequest(
+                    "Bakiye eşitleme için geçerli ön izleme özeti zorunludur. Dosyayı yeniden ön doğrulayın.");
+
+            batchHash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+                $"{fileHash}|{expectedHash}|balance-reconciliation-v1")));
+            referenceType = "OpeningBalanceReconciliation";
+            referenceNo = $"OPENING-RECON:{batchHash}";
+            operationType = StockMovementTypes.BalanceReconciliation;
+
+            var baseline = await LoadWarehouseStateAsync(
+                targetWarehouseIds, referenceNo, cancellationToken);
+            if (baseline.State.ReservedQuantity > 0)
+                throw AppException.Conflict(
+                    $"Seçilen depolarda {baseline.State.ReservedQuantity:N4} rezerve miktar var. Açık emir rezervasyonları serbest bırakılmadan Excel bakiyesiyle eşitleme yapılamaz.");
+            if (!string.Equals(baseline.State.SnapshotHash, expectedHash, StringComparison.Ordinal))
+                throw AppException.Conflict(
+                    "Depo bakiyesi ön doğrulamadan sonra değişti. Yanlış fark hareketi oluşmaması için dosyayı yeniden ön doğrulayın.");
+
+            linesToPost = BuildReconciliationLines(requestLines, baseline.Rows);
+        }
+        else
+        {
+            long? foreignWarehouseId;
+            using (unitOfWork.BeginBranchScope(null))
+            {
+                var operations = unitOfWork.Repository<StockMovementOperation>().Query();
+                foreignWarehouseId = await unitOfWork.Repository<StockMovementEntry>().Query()
+                    .Where(entry => targetWarehouseIds.Contains(entry.WarehouseId)
+                        && !operations.Any(operation => operation.Id == entry.OperationId
+                            && operation.ReferenceType == "OpeningBalanceImport"
+                            && operation.ReferenceNo == referenceNo))
+                    .Select(entry => (long?)entry.WarehouseId)
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
+            if (foreignWarehouseId.HasValue)
+            {
+                var code = warehouses.First(x => x.Id == foreignWarehouseId.Value).WarehouseCode;
+                throw AppException.Conflict(
+                    $"{code} deposunda stok hareketi mevcut. Dosyayı kesin bakiye olarak uygulamak için ön izleme ekranındaki 'mevcut bakiyeleri eşitle' onayını kullanın.");
+            }
+        }
+
+        var postRequests = linesToPost
             .GroupBy(x => x.BranchCode, StringComparer.OrdinalIgnoreCase)
             .SelectMany(group => group.Select(x => x.Line).Chunk(MovementBatchSize)
             .Select((lines, index) => new BranchPostRequest(
                 group.Key,
                 new PostStockMovementRequest(
-                BuildBatchKey(group.Key, fileHash, index),
-                StockMovementTypes.AdjustmentIncrease,
-                "OpeningBalanceImport",
+                BuildBatchKey(group.Key, batchHash, index),
+                operationType,
+                referenceType,
                 referenceNo,
                 null,
                 occurredAt,
-                "İlk raf bakiyesi aktarımı",
+                replaceExistingBalances ? "Excel kesin bakiye eşitlemesi" : "İlk raf bakiyesi aktarımı",
                 description,
                 lines))))
             .ToList();
-
-        long? foreignWarehouseId;
-        using (unitOfWork.BeginBranchScope(null))
-        {
-            var operations = unitOfWork.Repository<StockMovementOperation>().Query();
-            var targetWarehouseIds = requestLines.Select(x => x.TargetWarehouseId!.Value).Distinct().ToList();
-            foreignWarehouseId = await unitOfWork.Repository<StockMovementEntry>().Query()
-                .Where(entry => targetWarehouseIds.Contains(entry.WarehouseId)
-                    && !operations.Any(operation => operation.Id == entry.OperationId
-                        && operation.ReferenceType == "OpeningBalanceImport"
-                        && operation.ReferenceNo == referenceNo))
-                .Select(entry => (long?)entry.WarehouseId)
-                .FirstOrDefaultAsync(cancellationToken);
-        }
-        if (foreignWarehouseId.HasValue)
-        {
-            var code = warehouses.First(x => x.Id == foreignWarehouseId.Value).WarehouseCode;
-            throw AppException.Conflict(
-                $"{code} deposunda bu dosyadan bağımsız stok hareketi mevcut. İlk bakiye yalnız hareket defteri boş depoya aktarılabilir.");
-        }
 
         // A retry of the exact same file must be able to resume after a process or
         // network interruption. Already committed chunks are replayed by PostAsync;
@@ -420,6 +465,17 @@ public sealed class OpeningBalanceImportService(
             return new(0, Guid.Empty, false, rows.Count, movementLines.Sum(x => x.Quantity), [],
                 postRequests.Count, rows.Count > 500);
 
+        if (postRequests.Count == 0)
+        {
+            var unchangedRows = resultRows.Take(500).Select(x => x with
+            {
+                Status = "Unchanged",
+                Message = "Mevcut bakiye Excel miktarıyla zaten aynı; hareket oluşturulmadı."
+            }).ToList();
+            return new(0, Guid.Empty, false, rows.Count, movementLines.Sum(x => x.Quantity),
+                unchangedRows, 0, resultRows.Count > 500);
+        }
+
         var postedBatches = new List<StockMovementPostResult>(postRequests.Count);
         foreach (var request in postRequests)
         {
@@ -439,6 +495,182 @@ public sealed class OpeningBalanceImportService(
         return new(first.OperationId, first.OperationCode, allReplayed, rows.Count,
             requestLines.Sum(x => x.Quantity), finalRows, postedBatches.Count,
             resultRows.Count > resultRowLimit);
+    }
+
+    public async Task<WarehouseOpeningBalanceState> AnalyzeWarehouseStateAsync(
+        IReadOnlyCollection<long> warehouseIds,
+        CancellationToken cancellationToken = default)
+    {
+        if (warehouseIds.Count == 0)
+            throw AppException.BadRequest("Bakiye analizi için en az bir depo gereklidir.");
+        return (await LoadWarehouseStateAsync(
+            warehouseIds.Distinct().OrderBy(x => x).ToArray(), null, cancellationToken)).State;
+    }
+
+    private async Task<WarehouseBalanceSnapshot> LoadWarehouseStateAsync(
+        IReadOnlyCollection<long> warehouseIds,
+        string? reconciliationReferenceNo,
+        CancellationToken cancellationToken)
+    {
+        List<BalanceSnapshotRow> currentRows;
+        List<AppliedSnapshotDelta> appliedDeltas = [];
+        int movementCount;
+        using (unitOfWork.BeginBranchScope(null))
+        {
+            currentRows = await unitOfWork.Repository<LocationStockBalance>().Query()
+                .Where(x => warehouseIds.Contains(x.WarehouseId))
+                .Select(x => new BalanceSnapshotRow(
+                    x.BranchCode, x.WarehouseId, x.LocationId, x.StockId, x.YapCodeId,
+                    x.UnitCode, x.LotNo, x.SerialNo, x.StockStatus,
+                    x.Quantity, x.ReservedQuantity))
+                .ToListAsync(cancellationToken);
+            movementCount = await unitOfWork.Repository<StockMovementEntry>().Query()
+                .CountAsync(x => warehouseIds.Contains(x.WarehouseId), cancellationToken);
+
+            if (!string.IsNullOrWhiteSpace(reconciliationReferenceNo))
+            {
+                var operations = unitOfWork.Repository<StockMovementOperation>().Query();
+                appliedDeltas = await unitOfWork.Repository<StockMovementEntry>().Query()
+                    .Where(entry => warehouseIds.Contains(entry.WarehouseId)
+                        && operations.Any(operation => operation.Id == entry.OperationId
+                            && operation.ReferenceType == "OpeningBalanceReconciliation"
+                            && operation.ReferenceNo == reconciliationReferenceNo))
+                    .Select(x => new AppliedSnapshotDelta(
+                        x.BranchCode, x.WarehouseId, x.LocationId, x.StockId, x.YapCodeId,
+                        x.UnitCode, x.LotNo, x.SerialNo, x.StockStatus, x.QuantityDelta))
+                    .ToListAsync(cancellationToken);
+            }
+        }
+
+        var reconstructed = currentRows
+            .GroupBy(ToDimension)
+            .ToDictionary(
+                x => x.Key,
+                x => new MutableBalanceSnapshot(x.First(), x.Sum(y => y.Quantity), x.Sum(y => y.ReservedQuantity)));
+        foreach (var deltaGroup in appliedDeltas.GroupBy(ToDimension))
+        {
+            if (!reconstructed.TryGetValue(deltaGroup.Key, out var row))
+            {
+                var first = deltaGroup.First();
+                row = new MutableBalanceSnapshot(
+                    new BalanceSnapshotRow(
+                        first.BranchCode, first.WarehouseId, first.LocationId, first.StockId,
+                        first.YapCodeId, first.UnitCode, first.LotNo ?? string.Empty,
+                        first.SerialNo ?? string.Empty, first.StockStatus, 0, 0),
+                    0,
+                    0);
+                reconstructed[deltaGroup.Key] = row;
+            }
+            row.Quantity -= deltaGroup.Sum(x => x.QuantityDelta);
+        }
+
+        var rows = reconstructed.Values
+            .Where(x => x.Quantity != 0 || x.ReservedQuantity != 0)
+            .Select(x => x.Source with
+            {
+                Quantity = x.Quantity,
+                ReservedQuantity = x.ReservedQuantity
+            })
+            .OrderBy(x => ToDimension(x).SortKey, StringComparer.Ordinal)
+            .ToList();
+        var snapshotHash = BuildBalanceSnapshotHash(warehouseIds, rows);
+        var reservedRows = currentRows.Where(x => x.ReservedQuantity != 0).ToList();
+        return new WarehouseBalanceSnapshot(
+            new WarehouseOpeningBalanceState(
+                snapshotHash,
+                movementCount,
+                rows.Count,
+                rows.Sum(x => x.Quantity),
+                reservedRows.Count,
+                reservedRows.Sum(x => x.ReservedQuantity)),
+            rows);
+    }
+
+    private static IReadOnlyList<BranchMovementLine> BuildReconciliationLines(
+        IReadOnlyCollection<BranchMovementLine> targetLines,
+        IReadOnlyCollection<BalanceSnapshotRow> currentRows)
+    {
+        var targets = targetLines
+            .GroupBy(x => ToDimension(x.Line, x.BranchCode))
+            .ToDictionary(x => x.Key, x => new TargetSnapshot(x.First(), x.Sum(y => y.Quantity)));
+        var current = currentRows
+            .GroupBy(ToDimension)
+            .ToDictionary(x => x.Key, x => new CurrentSnapshot(x.First(), x.Sum(y => y.Quantity)));
+        var decreases = new List<BranchMovementLine>(current.Count);
+        var increases = new List<BranchMovementLine>(targets.Count);
+
+        foreach (var key in targets.Keys.Union(current.Keys).OrderBy(x => x.SortKey, StringComparer.Ordinal))
+        {
+            var targetQuantity = targets.TryGetValue(key, out var target) ? target.Quantity : 0;
+            var currentQuantity = current.TryGetValue(key, out var existing) ? existing.Quantity : 0;
+            var difference = targetQuantity - currentQuantity;
+            if (difference == 0) continue;
+
+            if (difference > 0)
+            {
+                var source = target!.Line;
+                increases.Add(new BranchMovementLine(
+                    source.BranchCode,
+                    source.Line with { Quantity = difference }));
+                continue;
+            }
+
+            var row = existing!.Row;
+            decreases.Add(new BranchMovementLine(
+                row.BranchCode,
+                new StockMovementLineRequest(
+                    row.StockId,
+                    row.YapCodeId,
+                    -difference,
+                    row.WarehouseId,
+                    row.LocationId,
+                    null,
+                    null,
+                    row.UnitCode,
+                    Null(row.LotNo),
+                    Null(row.SerialNo),
+                    row.StockStatus)));
+        }
+        return [.. decreases, .. increases];
+    }
+
+    private static BalanceDimension ToDimension(BalanceSnapshotRow row) => new(
+        row.BranchCode.Trim().ToUpperInvariant(), row.WarehouseId, row.LocationId, row.StockId,
+        row.YapCodeId, NormalizeDimensionText(row.UnitCode, "ADET"),
+        NormalizeDimensionText(row.LotNo), NormalizeDimensionText(row.SerialNo),
+        NormalizeDimensionText(row.StockStatus, "AVAILABLE"));
+
+    private static BalanceDimension ToDimension(AppliedSnapshotDelta row) => new(
+        row.BranchCode.Trim().ToUpperInvariant(), row.WarehouseId, row.LocationId, row.StockId,
+        row.YapCodeId, NormalizeDimensionText(row.UnitCode, "ADET"),
+        NormalizeDimensionText(row.LotNo), NormalizeDimensionText(row.SerialNo),
+        NormalizeDimensionText(row.StockStatus, "AVAILABLE"));
+
+    private static BalanceDimension ToDimension(StockMovementLineRequest row, string branchCode) => new(
+        branchCode.Trim().ToUpperInvariant(), row.TargetWarehouseId!.Value, row.TargetLocationId!.Value,
+        row.StockId, row.YapCodeId, NormalizeDimensionText(row.UnitCode, "ADET"),
+        NormalizeDimensionText(row.LotNo), NormalizeDimensionText(row.SerialNo),
+        NormalizeDimensionText(row.TargetStockStatus ?? row.StockStatus, "AVAILABLE"));
+
+    private static string NormalizeDimensionText(string? value, string fallback = "") =>
+        string.IsNullOrWhiteSpace(value) ? fallback : value.Trim().ToUpperInvariant();
+
+    private static string BuildBalanceSnapshotHash(
+        IReadOnlyCollection<long> warehouseIds,
+        IReadOnlyCollection<BalanceSnapshotRow> rows)
+    {
+        var payload = new
+        {
+            Warehouses = warehouseIds.Distinct().OrderBy(x => x).ToArray(),
+            Rows = rows.Select(x => new
+            {
+                Dimension = ToDimension(x).SortKey,
+                x.Quantity,
+                x.ReservedQuantity
+            }).OrderBy(x => x.Dimension, StringComparer.Ordinal).ToArray()
+        };
+        return Convert.ToHexString(SHA256.HashData(
+            Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload))));
     }
 
     private static string BuildBatchKey(string branch, string fileHash, int index) =>
@@ -574,4 +806,61 @@ public sealed class OpeningBalanceImportService(
     {
         public string IdempotencyKey => Request.IdempotencyKey;
     }
+
+    private readonly record struct BalanceDimension(
+        string BranchCode,
+        long WarehouseId,
+        long LocationId,
+        long StockId,
+        long? YapCodeId,
+        string UnitCode,
+        string LotNo,
+        string SerialNo,
+        string StockStatus)
+    {
+        public string SortKey =>
+            $"{BranchCode}|{WarehouseId:D20}|{LocationId:D20}|{StockId:D20}|{YapCodeId.GetValueOrDefault():D20}|{UnitCode}|{LotNo}|{SerialNo}|{StockStatus}";
+    }
+
+    private sealed record BalanceSnapshotRow(
+        string BranchCode,
+        long WarehouseId,
+        long LocationId,
+        long StockId,
+        long? YapCodeId,
+        string UnitCode,
+        string LotNo,
+        string SerialNo,
+        string StockStatus,
+        decimal Quantity,
+        decimal ReservedQuantity);
+
+    private sealed record AppliedSnapshotDelta(
+        string BranchCode,
+        long WarehouseId,
+        long LocationId,
+        long StockId,
+        long? YapCodeId,
+        string UnitCode,
+        string? LotNo,
+        string? SerialNo,
+        string StockStatus,
+        decimal QuantityDelta);
+
+    private sealed class MutableBalanceSnapshot(
+        BalanceSnapshotRow source,
+        decimal quantity,
+        decimal reservedQuantity)
+    {
+        public BalanceSnapshotRow Source { get; } = source;
+        public decimal Quantity { get; set; } = quantity;
+        public decimal ReservedQuantity { get; } = reservedQuantity;
+    }
+
+    private sealed record WarehouseBalanceSnapshot(
+        WarehouseOpeningBalanceState State,
+        IReadOnlyList<BalanceSnapshotRow> Rows);
+
+    private sealed record TargetSnapshot(BranchMovementLine Line, decimal Quantity);
+    private sealed record CurrentSnapshot(BalanceSnapshotRow Row, decimal Quantity);
 }
