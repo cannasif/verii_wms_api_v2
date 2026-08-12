@@ -27,6 +27,11 @@ public interface IKkdEntitlementService
     Task<KkdEntitlementCheckResult> CheckAsync(KkdEntitlementCheckRequest request, CancellationToken cancellationToken = default);
 }
 
+/// <summary>Bir talep kaleminin kota aşımına müdürün verdiği karar. Onay, bu talebe özel (tek günlük)
+/// bir <see cref="KkdEmployeeEntitlementOverride"/> yaratır — genel bir hak artışı değildir.</summary>
+public sealed record KkdQuotaDecisionRequest(Guid IdempotencyKey, bool Approve, string Reason);
+public sealed record KkdQuotaDecisionResult(long RequestLineId, string QuotaDecision, long? QuotaOverrideId);
+
 public sealed record KkdDepartmentUpsertRequest(string Code, string Name, bool IsActive = true);
 public sealed record KkdRoleUpsertRequest(long? DepartmentId, string Code, string Name, bool IsActive = true);
 public sealed record KkdEmployeeUpsertRequest(long CustomerId, long? UserId, string EmployeeCode, string FirstName, string LastName,
@@ -73,6 +78,8 @@ public sealed record KkdRuleDetail(long Id, string GroupCode, string? GroupName,
 public sealed record KkdMatrixDetail(long Id, long CustomerId, long DepartmentId, long RoleId, string Code, string Name,
     DateOnly? EffectiveFrom, DateOnly? EffectiveTo, bool IsActive, string? Description,
     IReadOnlyList<KkdRuleDetail> Rules, byte[] RowVersion);
+public sealed record KkdWarehousePickingStagingLocationDto(long WarehouseId, long? KkdPickingStagingLocationId);
+public sealed record UpdateKkdPickingStagingLocationRequest(long? LocationId);
 
 public interface IKkdDefinitionService
 {
@@ -96,4 +103,6 @@ public interface IKkdDefinitionService
     Task<long> CreateOverrideAsync(KkdOverrideCreateRequest request, long actor, CancellationToken ct = default);
     Task<long> UpdateOverrideAsync(long id, KkdOverrideUpdateRequest request, long actor, CancellationToken ct = default);
     Task DeleteOverrideAsync(long id, long actor, CancellationToken ct = default);
+    Task<KkdWarehousePickingStagingLocationDto> GetPickingStagingLocationAsync(long warehouseId, CancellationToken ct = default);
+    Task<KkdWarehousePickingStagingLocationDto> UpdatePickingStagingLocationAsync(long warehouseId, long? locationId, long actor, CancellationToken ct = default);
 }

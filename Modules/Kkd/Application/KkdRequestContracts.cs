@@ -1,3 +1,4 @@
+using verii_wms_api_v2.Modules.BarcodeDesigner.Application;
 using verii_wms_api_v2.Modules.Kkd.Domain;
 using verii_wms_api_v2.Shared;
 
@@ -52,7 +53,9 @@ public enum KkdRequestBoardTab
     Preparing = 2,
     Completed = 3,
     Cancelled = 4,
-    Mine = 5
+    Mine = 5,
+    /// <summary>Sadece kota onayı yetkisi olanlara gösterilir: en az bir kalemi QuotaDecision=Pending olan talepler.</summary>
+    QuotaPending = 6
 }
 
 public sealed record KkdRequestTabCounts(
@@ -60,7 +63,8 @@ public sealed record KkdRequestTabCounts(
     int Preparing,
     int Completed,
     int Cancelled,
-    int Mine);
+    int Mine,
+    int QuotaPending);
 
 public sealed record KkdRequestGridRow(
     long Id,
@@ -101,12 +105,20 @@ public sealed record KkdRequestGridRow(
     public int UnassignedLineCount { get; init; }
     /// <summary>İstek sahibinin bu talepteki aktif görevi (Benim İşlerim navigasyonu).</summary>
     public long? MyActiveTaskId { get; init; }
+    /// <summary>MyActiveTaskId "Bu işi yapıyorum" ile başlatıldı mı (raf ataması + rezervasyon yapıldı) — "Toplama yap"/"İşe devam et" ayrımı için.</summary>
+    public bool MyActiveTaskStarted { get; init; }
+    /// <summary>MyActiveTaskId'nin canlı toplanan (PreparedQuantity) toplamı — henüz teslim edilmemiş.</summary>
+    public decimal MyActiveTaskPreparedQuantity { get; init; }
     /// <summary>Aktif görev atanan kullanıcı adları (Hazırlamada kolonunda gösterim).</summary>
     public IReadOnlyList<string> ActiveAssigneeNames { get; init; } = Array.Empty<string>();
     /// <summary>Depo havuzuna bırakılmış (kişiye atanmamış) aktif bir görev var mı.</summary>
     public bool HasPoolTask { get; init; }
     /// <summary>Havuzdaki görevin id'si; "Havuzdan üzerime al" aksiyonu bunu kullanır.</summary>
     public long? PoolTaskId { get; init; }
+    /// <summary>MyActiveTaskId'nin kalemlerinden kota kararı bekleyen (Pending/Rejected) sayısı — toplama bu yüzden başlayamıyor olabilir.</summary>
+    public int MyActiveTaskQuotaPendingCount { get; init; }
+    /// <summary>MyActiveTaskId'nin kalemlerinden müdürce onaylanmış (Approved) kota kararı sayısı.</summary>
+    public int MyActiveTaskQuotaApprovedCount { get; init; }
 }
 
 public sealed record KkdRequestLineResolutionRow(
@@ -138,6 +150,9 @@ public sealed record KkdRequestLineDetail(
     long? ResolvedByUserId,
     DateTimeOffset? ResolvedAtUtc,
     string? ResolutionReason,
+    string QuotaDecision,
+    long? QuotaDecisionByUserId,
+    DateTimeOffset? QuotaDecisionAtUtc,
     string RowVersion,
     IReadOnlyList<KkdRequestLineResolutionRow> Resolutions);
 
@@ -199,6 +214,41 @@ public sealed record KkdPreparationReturnRequest(
     string Reason,
     string? ExpectedRowVersion);
 
+/// <summary>"Bu işi yapıyorum": havuz görevinde önce üzerine alır, sonra stoğu bilinen satırlara
+/// raf ataması + gerçek rezervasyon yapar. Stoğu henüz bilinmeyen satırlar atlanır.</summary>
+public sealed record KkdPreparationStartRequest(
+    Guid IdempotencyKey,
+    string? ExpectedRowVersion);
+
+public sealed record KkdRouteCandidateRow(
+    long LocationId,
+    string LocationCode,
+    string LocationName,
+    decimal AvailableQuantity,
+    string? SerialNo,
+    string? LotNo);
+
+public sealed record KkdRouteCandidatesResult(
+    bool IsSerial,
+    IReadOnlyList<KkdRouteCandidateRow> Candidates);
+
+public sealed record KkdRouteSplitSelection(long LocationId, decimal Quantity, string? SerialNo);
+
+public sealed record KkdRouteSplitRequest(
+    Guid IdempotencyKey,
+    IReadOnlyList<KkdRouteSplitSelection> Selections,
+    string? ExpectedTaskLineRowVersion);
+
+/// <summary>Bir görev satırının bir rafa ayrılmış rezervasyon/toplama izi.</summary>
+public sealed record KkdPreparationTaskLineLocationRow(
+    long LocationId,
+    string LocationCode,
+    string LocationName,
+    decimal ReservedQuantity,
+    decimal PickedQuantity,
+    string? SerialNo,
+    string? LotNo);
+
 public sealed record KkdPreparationTaskLineRow(
     long Id,
     long RequestLineId,
@@ -213,7 +263,9 @@ public sealed record KkdPreparationTaskLineRow(
     decimal PreparedQuantity,
     decimal DeliveredQuantity,
     string LineStatus,
-    string RequestLineRowVersion);
+    string RequestLineRowVersion,
+    string QuotaDecision,
+    IReadOnlyList<KkdPreparationTaskLineLocationRow> Locations);
 
 public sealed record KkdPreparationTaskRow(
     long Id,
@@ -247,6 +299,68 @@ public sealed record KkdRequestCancelPrecheckResult(
     long? ActiveDistributionId,
     long? ActiveWarehouseOutboundId);
 
+public sealed record KkdPreparationResolveScanRequest(
+    string Barcode,
+    long? ExpectedTaskLineId = null);
+
+public sealed record KkdPreparationResolveScanResult(
+    long TaskLineId,
+    long RequestLineId,
+    bool NeedsGroupResolve,
+    string GroupCode,
+    long StockId,
+    string StockCode,
+    string StockName,
+    string UnitCode,
+    string? LotNo,
+    string? SerialNo,
+    long? SuggestedLocationId,
+    bool RequireSerial,
+    bool RequireLot,
+    decimal RemainingQuantity,
+    decimal DefaultQuantity,
+    bool IsSerial,
+    /// <summary>Üretim ile aynı: seri veya (depo eşiği > 0 ve default ≤ eşik).</summary>
+    bool CanAutoPick,
+    /// <summary>Kaynak deponun AutoPickWithoutConfirmMaxQuantity değeri.</summary>
+    decimal? AutoPickWithoutConfirmMaxQuantity,
+    string RawBarcode,
+    string Source,
+    /// <summary>Birden fazla raf/seri varsa kullanıcının seçebilmesi için tüm adaylar.</summary>
+    IReadOnlyList<WarehouseBarcodeBalanceCandidate> BalanceCandidates);
+
+public sealed record KkdPreparationScanPickRequest(
+    Guid IdempotencyKey,
+    string Barcode,
+    long? ExpectedTaskLineId,
+    decimal? Quantity,
+    long? SourceLocationId,
+    /// <summary>Grup→stok çözümünde talep kalemi concurrency kontrolü.</summary>
+    string? ExpectedRequestLineRowVersion = null,
+    /// <summary>Üretimdeki ConfirmAboveThreshold: eşik üstü miktarda kullanıcı onayı.</summary>
+    bool ConfirmAboveThreshold = false);
+
+public sealed record KkdPreparationScanPickTracking(
+    decimal Quantity,
+    string? LotNo,
+    string? SerialNo,
+    long? SourceLocationId);
+
+public sealed record KkdPreparationScanPickResult(
+    bool IsReplay,
+    long TaskLineId,
+    long RequestLineId,
+    decimal AcceptedQuantity,
+    decimal LinePreparedQuantity,
+    decimal LineQuantity,
+    long StockId,
+    string StockCode,
+    string StockName,
+    string? LotNo,
+    string? SerialNo,
+    long? SourceLocationId,
+    KkdPreparationTaskRow Task);
+
 public interface IKkdPreparationTaskService
 {
     Task<IReadOnlyList<KkdPreparationTaskRow>> GetByRequestAsync(long requestId, long actor, CancellationToken ct = default);
@@ -255,6 +369,39 @@ public interface IKkdPreparationTaskService
     Task<KkdPreparationTaskRow> ClaimTaskAsync(long taskId, KkdPreparationClaimTaskRequest request, long actor, CancellationToken ct = default);
     Task<KkdPreparationTaskRow> HandoffAsync(long taskId, KkdPreparationHandoffRequest request, long actor, CancellationToken ct = default);
     Task ReturnAsync(long taskId, KkdPreparationReturnRequest request, long actor, CancellationToken ct = default);
+    Task<KkdPreparationTaskRow> StartAsync(long taskId, KkdPreparationStartRequest request, long actor, CancellationToken ct = default);
+    Task<KkdRouteCandidatesResult> GetRouteCandidatesAsync(long taskLineId, long actor, CancellationToken ct = default);
+    Task<KkdPreparationTaskRow> ApplyRouteSplitAsync(long taskLineId, KkdRouteSplitRequest request, long actor, CancellationToken ct = default);
+}
+
+/// <summary>Yanlış okutulan bir taramayı geri alır: gerçek stok hareketini tersine çevirir.</summary>
+public sealed record KkdPreparationUnpickRequest(Guid IdempotencyKey);
+
+public sealed record KkdPreparationUnpickResult(long ScanId, long TaskLineId, decimal RevertedQuantity, KkdPreparationTaskRow Task);
+
+/// <summary>"Son okutmalar" listesi — geri alma (Unpick) butonunun hedef aldığı satırlar.</summary>
+public sealed record KkdPreparationScanRow(
+    long Id,
+    long TaskLineId,
+    long StockId,
+    string StockCode,
+    string StockName,
+    decimal Quantity,
+    string UnitCode,
+    string? LotNo,
+    string? SerialNo,
+    long? SourceLocationId,
+    DateTimeOffset ScannedAtUtc,
+    bool IsReversed,
+    bool CanUnpick);
+
+public interface IKkdPreparationScanPickService
+{
+    Task<KkdPreparationResolveScanResult> ResolveScanAsync(long taskId, KkdPreparationResolveScanRequest request, long actor, CancellationToken ct = default);
+    Task<KkdPreparationScanPickResult> ScanPickAsync(long taskId, KkdPreparationScanPickRequest request, long actor, CancellationToken ct = default);
+    Task<IReadOnlyList<KkdPreparationScanPickTracking>> GetStagedTrackingsAsync(long taskId, long requestLineId, CancellationToken ct = default);
+    Task<KkdPreparationUnpickResult> UnpickAsync(long taskId, long scanId, KkdPreparationUnpickRequest request, long actor, CancellationToken ct = default);
+    Task<IReadOnlyList<KkdPreparationScanRow>> GetRecentScansAsync(long taskId, long actor, CancellationToken ct = default);
 }
 
 public interface IKkdRequestService
@@ -268,4 +415,5 @@ public interface IKkdRequestService
     Task<KkdRequestCancelPrecheckResult> GetCancelPrecheckAsync(long id, CancellationToken ct = default);
     Task<KkdRequestDetail> CancelAsync(long id, KkdRequestCancelRequest request, long actor, CancellationToken ct = default);
     Task<KkdRequestDetail> ReactivateAsync(long id, KkdRequestReactivateRequest request, long actor, CancellationToken ct = default);
+    Task<KkdQuotaDecisionResult> DecideQuotaAsync(long lineId, KkdQuotaDecisionRequest request, long actor, CancellationToken ct = default);
 }

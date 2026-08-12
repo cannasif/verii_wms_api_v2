@@ -88,7 +88,19 @@ public sealed class ErpMirrorService(IUnitOfWork unitOfWork, INetsisReadService 
                 await Customers.AddAsync(entity, cancellationToken); map[key] = entity; inserted++;
             }
             else updated++;
-            entity.BusinessUnitCode = row.IsletmeKodu; entity.CustomerName = Clean(row.CariIsim, code);
+            entity.BusinessUnitCode = row.IsletmeKodu;
+            entity.CustomerName = Clean(row.CariIsim, code);
+            entity.Phone1 = Trim(row.CariTel);
+            entity.Phone2 = Trim(row.CariTel2);
+            entity.Phone3 = Trim(row.CariTel3);
+            entity.City = Trim(row.CariIl);
+            entity.District = Trim(row.CariIlce);
+            entity.CountryCode = Trim(row.UlkeKodu);
+            entity.Address = Trim(row.CariAdres);
+            entity.CustomerType = Trim(row.CariTip);
+            entity.TaxOffice = Trim(row.VergiDairesi);
+            entity.Email = Trim(row.Email);
+            entity.Website = Trim(row.Web);
             Activate(entity, now); entity.LastSyncDate = now;
         }
         var deactivated = SoftDeleteMissing(existing, source.Select(x => Key(x.SubeKodu, x.CariKod)).ToHashSet(StringComparer.OrdinalIgnoreCase), x => Key(x.BranchCode, x.CustomerCode), now);
@@ -156,7 +168,28 @@ public sealed class ErpMirrorService(IUnitOfWork unitOfWork, INetsisReadService 
         var search = request.Search?.Trim();
         var query = Customers.Query()
             .Where(x => string.IsNullOrWhiteSpace(search) || x.BranchCode.Contains(search) || x.CustomerCode.Contains(search) || x.CustomerName.Contains(search))
-            .Select(x => new CustomerMirrorDto(x.Id, x.BranchCode, x.BusinessUnitCode, x.CustomerCode, x.CustomerName, x.LastSyncDate, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate))
+            .Select(x => new CustomerMirrorDto(
+                x.Id,
+                x.BranchCode,
+                x.BusinessUnitCode,
+                x.CustomerCode,
+                x.CustomerName,
+                x.Phone1,
+                x.Phone2,
+                x.Phone3,
+                x.City,
+                x.District,
+                x.CountryCode,
+                x.Address,
+                x.CustomerType,
+                x.TaxOffice,
+                x.Email,
+                x.Website,
+                x.LastSyncDate,
+                x.CreatedBy,
+                x.CreatedDate,
+                x.UpdatedBy,
+                x.UpdatedDate))
             .ApplyAdvancedFilters(request).ApplySort(request, nameof(CustomerMirrorDto.CustomerCode));
         return PageAsync(query, request, ct);
     }

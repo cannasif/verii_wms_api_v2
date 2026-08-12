@@ -369,6 +369,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new KkdValidationLogConfiguration());
         modelBuilder.ApplyConfiguration(new KkdPreparationTaskConfiguration());
         modelBuilder.ApplyConfiguration(new KkdPreparationTaskLineConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdPreparationTaskLineLocationConfiguration());
+        modelBuilder.ApplyConfiguration(new KkdPreparationBarcodeScanConfiguration());
         modelBuilder.ApplyConfiguration(new GoodsReceiptPolicyConfiguration());
         modelBuilder.ApplyConfiguration(new GoodsReceiptExecutionConfiguration());
         modelBuilder.ApplyConfiguration(new GoodsReceiptExecutionLineConfiguration());

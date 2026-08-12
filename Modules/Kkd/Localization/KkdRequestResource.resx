@@ -49,4 +49,13 @@
   <data name="WarehouseAccessDenied" xml:space="preserve"><value>Bu depoya erişim yetkiniz yok.</value></data>
   <data name="TaskClaimedFromPool" xml:space="preserve"><value>Görev depo havuzundan üzerinize alındı.</value></data>
   <data name="PoolLabel" xml:space="preserve"><value>Depo Havuzu</value></data>
+  <data name="TaskStarted" xml:space="preserve"><value>Toplama başlatıldı; stoğu bilinen kalemler için raflar rezerve edildi.</value></data>
+  <data name="StockNotResolved" xml:space="preserve"><value>Bu kalemin stoğu/bedeni henüz bilinmiyor; önce okutarak veya stok listesinden çözümleyin.</value></data>
+  <data name="InsufficientRouteBalance" xml:space="preserve"><value>Seçilen raf/seri için yeterli bakiye yok; liste güncel değil, tekrar deneyin.</value></data>
+  <data name="RouteUpdated" xml:space="preserve"><value>Rota güncellendi.</value></data>
+  <data name="QuotaDecisionRequired" xml:space="preserve"><value>Kota aşan kalemler var; atama yapılmadan önce müdür bu kalemler için onay/red kararı vermelidir.</value></data>
+  <data name="QuotaDecisionPending" xml:space="preserve"><value>Bu görevde kota kararı bekleyen kalem var; müdür onayı gelmeden toplama başlatılamaz.</value></data>
+  <data name="QuotaDecisionAlreadyMade" xml:space="preserve"><value>Bu kalem için kota kararı zaten verilmiş.</value></data>
+  <data name="QuotaDecisionNotNeeded" xml:space="preserve"><value>Bu kalem kotayı aşmıyor, karar gerekmiyor.</value></data>
+  <data name="QuotaDecided" xml:space="preserve"><value>Kota kararı kaydedildi.</value></data>
 </root>

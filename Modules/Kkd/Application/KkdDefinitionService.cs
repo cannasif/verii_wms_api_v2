@@ -1,15 +1,50 @@
+using System.Data;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Kkd.Domain;
+using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 using CustomerEntity = verii_wms_api_v2.Modules.Customer.Domain.Customer;
 using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
+using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 
 namespace verii_wms_api_v2.Modules.Kkd.Application;
 
 public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionService
 {
+    /// <summary>Depo bazlı KKD toplama sanal rafı — canlı toplamada kaynak raftan buraya stok hareketi postalanır.</summary>
+    public async Task<KkdWarehousePickingStagingLocationDto> GetPickingStagingLocationAsync(long warehouseId, CancellationToken ct = default)
+    {
+        var row = await uow.Repository<WarehouseEntity>().Query().Where(x => x.Id == warehouseId)
+            .Select(x => new { x.Id, x.KkdPickingStagingLocationId }).SingleOrDefaultAsync(ct)
+            ?? throw AppException.NotFound("Depo bulunamadı.");
+        return new(row.Id, row.KkdPickingStagingLocationId);
+    }
+
+    public async Task<KkdWarehousePickingStagingLocationDto> UpdatePickingStagingLocationAsync(
+        long warehouseId, long? locationId, long actor, CancellationToken ct = default)
+    {
+        return await uow.ExecuteInTransactionAsync(async token =>
+        {
+            var warehouse = await uow.Repository<WarehouseEntity>().Query(true)
+                .SingleOrDefaultAsync(x => x.Id == warehouseId, token)
+                ?? throw AppException.NotFound("Depo bulunamadı.");
+            if (locationId.HasValue)
+            {
+                var valid = await uow.Repository<WarehouseLocation>().Query().AnyAsync(x =>
+                    x.Id == locationId.Value && x.WarehouseId == warehouseId && x.IsActive && x.IsPutaway, token);
+                if (!valid)
+                    throw AppException.BadRequest("KKD toplama sanal rafı depoya ait, aktif ve yerleştirmeye uygun olmalıdır.");
+            }
+            warehouse.KkdPickingStagingLocationId = locationId;
+            warehouse.UpdatedBy = actor;
+            warehouse.UpdatedDate = DateTime.UtcNow;
+            await uow.SaveChangesAsync(token);
+            return new KkdWarehousePickingStagingLocationDto(warehouse.Id, warehouse.KkdPickingStagingLocationId);
+        }, ct, IsolationLevel.Serializable);
+    }
+
     public async Task<IReadOnlyList<KkdLookupRow>> GetDepartmentsAsync(CancellationToken ct = default) =>
         await uow.Repository<KkdDepartment>().Query().OrderBy(x => x.Name)
             .Select(x => new KkdLookupRow(x.Id, x.Code, x.Name, x.IsActive)).ToListAsync(ct);

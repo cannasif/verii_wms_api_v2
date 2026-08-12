@@ -5,5 +5,26 @@ public sealed record WarehouseMirrorDto(long Id, string BranchCode, int Warehous
     long? DefaultGoodsReceiptLocationId, DateTime? LastSyncDate, long? CreatedBy, DateTime? CreatedDate,
     long? UpdatedBy, DateTime? UpdatedDate);
 public sealed record StockMirrorDto(long Id, string BranchCode, short BusinessUnitCode, string ErpStockCode, string StockName, string UnitCode, string? ManufacturerCode, string? GroupCode, string? Code1, string? Code2, string? Code3, string? Code4, string? Code5, DateTime? LastSyncDate, long? CreatedBy, DateTime? CreatedDate, long? UpdatedBy, DateTime? UpdatedDate);
-public sealed record CustomerMirrorDto(long Id, string BranchCode, short BusinessUnitCode, string CustomerCode, string CustomerName, DateTime? LastSyncDate, long? CreatedBy, DateTime? CreatedDate, long? UpdatedBy, DateTime? UpdatedDate);
+public sealed record CustomerMirrorDto(
+    long Id,
+    string BranchCode,
+    short BusinessUnitCode,
+    string CustomerCode,
+    string CustomerName,
+    string? Phone1,
+    string? Phone2,
+    string? Phone3,
+    string? City,
+    string? District,
+    string? CountryCode,
+    string? Address,
+    string? CustomerType,
+    string? TaxOffice,
+    string? Email,
+    string? Website,
+    DateTime? LastSyncDate,
+    long? CreatedBy,
+    DateTime? CreatedDate,
+    long? UpdatedBy,
+    DateTime? UpdatedDate);
 public sealed record ConfigurationCodeMirrorDto(long Id, string BranchCode, string ConfigurationCode, string Description, string? ConfigurableStockCode, long? StockId, DateTime? LastSyncDate, long? CreatedBy, DateTime? CreatedDate, long? UpdatedBy, DateTime? UpdatedDate);

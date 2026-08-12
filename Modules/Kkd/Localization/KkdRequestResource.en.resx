@@ -49,4 +49,13 @@
   <data name="WarehouseAccessDenied" xml:space="preserve"><value>You do not have access to this warehouse.</value></data>
   <data name="TaskClaimedFromPool" xml:space="preserve"><value>The task was claimed from the warehouse pool.</value></data>
   <data name="PoolLabel" xml:space="preserve"><value>Warehouse Pool</value></data>
+  <data name="TaskStarted" xml:space="preserve"><value>Picking started; shelves reserved for lines with a known stock.</value></data>
+  <data name="StockNotResolved" xml:space="preserve"><value>This line's stock/size is not resolved yet; scan it or pick it from the stock list first.</value></data>
+  <data name="InsufficientRouteBalance" xml:space="preserve"><value>Not enough balance for the selected shelf/serial; the list is stale, try again.</value></data>
+  <data name="RouteUpdated" xml:space="preserve"><value>Route updated.</value></data>
+  <data name="QuotaDecisionRequired" xml:space="preserve"><value>Some lines exceed the quota; a manager must approve or reject them before assignment.</value></data>
+  <data name="QuotaDecisionPending" xml:space="preserve"><value>This task has lines awaiting a quota decision; picking cannot start until a manager decides.</value></data>
+  <data name="QuotaDecisionAlreadyMade" xml:space="preserve"><value>A quota decision has already been made for this line.</value></data>
+  <data name="QuotaDecisionNotNeeded" xml:space="preserve"><value>This line does not exceed the quota; no decision is needed.</value></data>
+  <data name="QuotaDecided" xml:space="preserve"><value>Quota decision recorded.</value></data>
 </root>

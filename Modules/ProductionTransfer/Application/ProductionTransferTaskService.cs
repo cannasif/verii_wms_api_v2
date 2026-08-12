@@ -250,6 +250,101 @@ public sealed class ProductionTransferTaskService(
             return await MapAsync(transferId, token);
         }, ct, IsolationLevel.Serializable);
 
+    public Task<IReadOnlyList<ProductionTransferAssigneeOptionDto>> GetEligibleAssigneesAsync(CancellationToken ct = default) =>
+        LoadEligibleAssigneesAsync(ct);
+
+    public Task<ProductionTransferTaskBoardDto> ReleaseToPoolAsync(
+        long transferId,
+        long taskId,
+        ReleaseProductionTransferTaskToPoolRequest request,
+        long actor,
+        CancellationToken ct = default) =>
+        uow.ExecuteInTransactionAsync(async token =>
+        {
+            if (request.WarehouseId <= 0) throw AppException.BadRequest("Depo seçilmelidir.");
+            var task = await LoadTaskAsync(transferId, taskId, token);
+            if (task.TaskType is WarehouseTransferTaskType.CancellationReturn or WarehouseTransferTaskType.AssignmentReturn)
+                throw AppException.BadRequest("İade görevi depo havuzuna bırakılamaz.");
+            if (task.Status is WarehouseTransferTaskStatus.Completed or WarehouseTransferTaskStatus.Cancelled)
+                throw AppException.Conflict("Tamamlanmış veya iptal edilmiş görev depo havuzuna bırakılamaz.");
+            if (task.Lines.Any(x => !x.IsDeleted && x.ProcessedQuantity > 0))
+                throw AppException.Conflict("Toplanmış stok bulunan görev depo havuzuna bırakılamaz.");
+
+            _ = await uow.Repository<WarehouseEntity>().Query()
+                    .SingleOrDefaultAsync(x => x.Id == request.WarehouseId && x.BranchCode == task.BranchCode, token)
+                ?? throw AppException.BadRequest("Seçilen depo bulunamadı.");
+
+            foreach (var assignment in task.Assignments.Where(x => !x.IsDeleted))
+            {
+                assignment.IsDeleted = true;
+                assignment.DeletedBy = actor;
+                assignment.DeletedDate = DateTime.UtcNow;
+            }
+
+            task.WarehouseId = request.WarehouseId;
+            task.Status = WarehouseTransferTaskStatus.Open;
+            task.AcceptedAtUtc = null;
+            task.AcceptedBy = null;
+            task.StartedAtUtc = null;
+            task.StartedBy = null;
+            task.UpdatedBy = actor;
+            task.UpdatedDate = DateTime.UtcNow;
+            await uow.SaveChangesAsync(token);
+            await audit.WriteAsync(new("production-transfer.task.release-to-pool", nameof(WarehouseTransferTask), task.Id.ToString(), "Succeeded", "production-transfer",
+                NewValues: new { TransferId = transferId, TaskId = task.Id, request.WarehouseId }, ChangedFields: ["WarehouseId", "Assignments", "Status"]), token);
+            return await MapAsync(transferId, token);
+        }, ct, IsolationLevel.Serializable);
+
+    public Task<ProductionTransferTaskBoardDto> ClaimTaskAsync(
+        long transferId,
+        long taskId,
+        ClaimProductionTransferTaskRequest request,
+        long actor,
+        CancellationToken ct = default) =>
+        uow.ExecuteInTransactionAsync(async token =>
+        {
+            if (request.IdempotencyKey == Guid.Empty) throw AppException.BadRequest("Geçersiz idempotency anahtarı.");
+            var task = await LoadTaskAsync(transferId, taskId, token);
+            if (task.TaskType is WarehouseTransferTaskType.CancellationReturn or WarehouseTransferTaskType.AssignmentReturn)
+                throw AppException.BadRequest("İade görevi üzerine alınamaz.");
+            if (task.Status is WarehouseTransferTaskStatus.Completed or WarehouseTransferTaskStatus.Cancelled)
+                throw AppException.Conflict("Tamamlanmış veya iptal edilmiş görev üzerine alınamaz.");
+            if (task.Assignments.Any(x => !x.IsDeleted && x.UserId == actor)) return await MapAsync(transferId, token);
+            if (task.Assignments.Any(x => !x.IsDeleted))
+                throw AppException.Conflict("Görev zaten bir kullanıcıya atanmış.");
+
+            await EnsureWarehouseAccessForClaimAsync(actor, task.WarehouseId, token);
+
+            var user = await uow.Repository<User>().Query().SingleOrDefaultAsync(x => x.Id == actor && x.IsActive, token)
+                ?? throw AppException.BadRequest("Kullanıcı bulunamadı veya aktif değil.");
+            var previousAssignment = task.Assignments.SingleOrDefault(x => x.UserId == user.Id);
+            if (previousAssignment is not null)
+            {
+                previousAssignment.IsDeleted = false;
+                previousAssignment.DeletedBy = null;
+                previousAssignment.DeletedDate = null;
+                previousAssignment.IsPrimary = true;
+                previousAssignment.AssignedAtUtc = DateTimeOffset.UtcNow;
+                previousAssignment.AssignedBy = actor;
+                previousAssignment.AcceptedAtUtc = null;
+                previousAssignment.UpdatedBy = actor;
+                previousAssignment.UpdatedDate = DateTime.UtcNow;
+            }
+            else task.Assignments.Add(new WarehouseTransferTaskAssignment
+            {
+                BranchCode = task.BranchCode, Task = task, UserId = user.Id, IsPrimary = true,
+                AssignedAtUtc = DateTimeOffset.UtcNow, AssignedBy = actor,
+                CreatedBy = actor, CreatedDate = DateTime.UtcNow
+            });
+            task.Status = WarehouseTransferTaskStatus.Assigned;
+            task.UpdatedBy = actor;
+            task.UpdatedDate = DateTime.UtcNow;
+            await uow.SaveChangesAsync(token);
+            await audit.WriteAsync(new("production-transfer.task.claim", nameof(WarehouseTransferTask), task.Id.ToString(), "Succeeded", "production-transfer",
+                NewValues: new { TransferId = transferId, TaskId = task.Id, UserId = user.Id }, ChangedFields: ["Assignments", "Status"]), token);
+            return await MapAsync(transferId, token);
+        }, ct, IsolationLevel.Serializable);
+
     public Task<ProductionTransferTaskBoardDto> RemoveAssignmentAsync(long transferId, long taskId, long userId, long actor, CancellationToken ct = default) =>
         uow.ExecuteInTransactionAsync(async token =>
         {
@@ -1366,14 +1461,27 @@ public sealed class ProductionTransferTaskService(
             return new ProductionTransferWorkloadDto(group.Key, workloadUsers.GetValueOrDefault(group.Key, $"Kullanıcı #{group.Key}"), assigned, completed,
                 plannedQuantity, processedQuantity, plannedQuantity <= 0 ? 0 : decimal.Round(processedQuantity * 100m / plannedQuantity, 2));
         }).OrderBy(x => x.Username).ToList();
+        var eligibleAssignees = await LoadEligibleAssigneesAsync(ct);
+        return new(header.Id, header.DocumentNo, header.Status, header.SourceWarehouseId, tasks, workloads, eligibleAssignees);
+    }
+
+    private async Task<IReadOnlyList<ProductionTransferAssigneeOptionDto>> LoadEligibleAssigneesAsync(CancellationToken ct)
+    {
         var activeUsers = await uow.Repository<User>().Query().Where(user => user.IsActive)
             .OrderBy(user => user.Username).Select(user => new { user.Id, user.Username }).ToListAsync(ct);
         var activeUserIds = activeUsers.Select(x => x.Id).ToArray();
         var warehouseAssignments = await uow.Repository<UserWarehouseAssignment>().Query()
             .Where(x => activeUserIds.Contains(x.UserId)).Select(x => new { x.UserId, x.WarehouseId }).ToListAsync(ct);
-        var eligibleAssignees = activeUsers.Select(user => new ProductionTransferAssigneeOptionDto(
+        return activeUsers.Select(user => new ProductionTransferAssigneeOptionDto(
             user.Id, user.Username, warehouseAssignments.Where(x => x.UserId == user.Id).Select(x => x.WarehouseId).Distinct().ToArray())).ToList();
-        return new(header.Id, header.DocumentNo, header.Status, header.SourceWarehouseId, tasks, workloads, eligibleAssignees);
+    }
+
+    private async Task EnsureWarehouseAccessForClaimAsync(long actor, long warehouseId, CancellationToken ct)
+    {
+        var warehouseIds = await uow.Repository<UserWarehouseAssignment>().Query()
+            .Where(x => x.UserId == actor).Select(x => x.WarehouseId).ToArrayAsync(ct);
+        if (warehouseIds.Length > 0 && !warehouseIds.Contains(warehouseId))
+            throw AppException.Forbidden("Bu depoda tanımlı olmadığınız için görevi üstlenemezsiniz.");
     }
 
     private async Task<int> NextRemainderSuffixAsync(string documentNo, CancellationToken ct)

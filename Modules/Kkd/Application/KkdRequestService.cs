@@ -5,6 +5,8 @@ using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Kkd.Domain;
 using verii_wms_api_v2.Modules.Kkd.Localization;
+using verii_wms_api_v2.Modules.StockBalance.Application;
+using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -16,6 +18,9 @@ namespace verii_wms_api_v2.Modules.Kkd.Application;
 public sealed class KkdRequestService(
     IUnitOfWork uow,
     IAuditLogWriter audit,
+    IStockBalanceService balances,
+    IKkdDefinitionService definitions,
+    IKkdEntitlementService entitlements,
     IStringLocalizer<KkdRequestResource> localizer) : IKkdRequestService
 {
     private static readonly HashSet<string> AllowedSearchFields = new(StringComparer.OrdinalIgnoreCase)
@@ -82,7 +87,8 @@ public sealed class KkdRequestService(
         var completed = await ApplyTabFilter(query, KkdRequestBoardTab.Completed, actor, warehouseScope).CountAsync(ct);
         var cancelled = await ApplyTabFilter(query, KkdRequestBoardTab.Cancelled, actor, warehouseScope).CountAsync(ct);
         var mine = await ApplyTabFilter(query, KkdRequestBoardTab.Mine, actor, warehouseScope).CountAsync(ct);
-        return new KkdRequestTabCounts(pending, preparing, completed, cancelled, mine);
+        var quotaPending = await ApplyTabFilter(query, KkdRequestBoardTab.QuotaPending, actor, warehouseScope).CountAsync(ct);
+        return new KkdRequestTabCounts(pending, preparing, completed, cancelled, mine, quotaPending);
     }
 
     /// <summary>
@@ -122,6 +128,10 @@ public sealed class KkdRequestService(
                     && (task.Status == KkdPreparationTaskStatus.Assigned || task.Status == KkdPreparationTaskStatus.InPreparation)
                     && (task.AssignedUserId == actor
                         || (task.AssignedUserId == null && restricted && warehouseIds.Contains(task.WarehouseId)))))),
+            // Sadece kota onay yetkisi olanlara gösterilir (kontrol controller/frontend'de) — henüz karar
+            // verilmemiş (Pending) kalemi olan talepler; Rejected zaten kararlanmış, kuyrukta beklemez.
+            KkdRequestBoardTab.QuotaPending => query.Where(x => x.Lines.Any(line =>
+                line.QuotaDecision == KkdRequestLineQuotaDecision.Pending)),
             _ => query,
         };
     }
@@ -149,7 +159,15 @@ public sealed class KkdRequestService(
         var activeTasks = await uow.Repository<KkdPreparationTask>().Query()
             .Where(x => requestIds.Contains(x.RequestId)
                 && (x.Status == KkdPreparationTaskStatus.Assigned || x.Status == KkdPreparationTaskStatus.InPreparation))
-            .Select(x => new { x.RequestId, x.Id, x.AssignedUserId, LineIds = x.Lines.Select(l => l.RequestLineId) })
+            .Select(x => new
+            {
+                x.RequestId, x.Id, x.AssignedUserId, x.StartedAtUtc,
+                LineIds = x.Lines.Select(l => l.RequestLineId),
+                PreparedQuantity = x.Lines.Sum(l => l.PreparedQuantity),
+                QuotaPendingCount = x.Lines.Count(l => l.RequestLine.QuotaDecision == KkdRequestLineQuotaDecision.Pending
+                    || l.RequestLine.QuotaDecision == KkdRequestLineQuotaDecision.Rejected),
+                QuotaApprovedCount = x.Lines.Count(l => l.RequestLine.QuotaDecision == KkdRequestLineQuotaDecision.Approved),
+            })
             .ToListAsync(ct);
         var tasksByRequest = activeTasks.ToLookup(x => x.RequestId);
         var coveredLineIds = activeTasks.SelectMany(x => x.LineIds).ToHashSet();
@@ -182,6 +200,7 @@ public sealed class KkdRequestService(
                 .Select(x => usernames.GetValueOrDefault(x.AssignedUserId!.Value, $"#{x.AssignedUserId}"))
                 .Distinct().ToArray();
             var poolTask = requestTasks.FirstOrDefault(x => !x.AssignedUserId.HasValue);
+            var myTask = requestTasks.FirstOrDefault(x => x.AssignedUserId == actor);
             return item with
             {
                 AssignedUserName = item.AssignedUserId.HasValue ? usernames.GetValueOrDefault(item.AssignedUserId.Value) : null,
@@ -192,7 +211,13 @@ public sealed class KkdRequestService(
                 WarehouseOutboundId = latestDistribution.TryGetValue(item.Id, out var linked) ? linked.WarehouseOutboundId : null,
                 ActiveTaskCount = requestTasks.Length,
                 UnassignedLineCount = unassignedByRequest.GetValueOrDefault(item.Id),
-                MyActiveTaskId = requestTasks.FirstOrDefault(x => x.AssignedUserId == actor)?.Id,
+                MyActiveTaskId = myTask?.Id,
+                // "Bu işi yapıyorum" ile başlatıldı mı (raf ataması + rezervasyon yapıldı mı) — board'da
+                // "Toplama yap" ile "İşe devam et" ayrımı ve taslak/devam eden göstergesi için.
+                MyActiveTaskStarted = myTask?.StartedAtUtc is not null,
+                MyActiveTaskPreparedQuantity = myTask?.PreparedQuantity ?? 0,
+                MyActiveTaskQuotaPendingCount = myTask?.QuotaPendingCount ?? 0,
+                MyActiveTaskQuotaApprovedCount = myTask?.QuotaApprovedCount ?? 0,
                 ActiveAssigneeNames = assigneeNames,
                 HasPoolTask = poolTask is not null,
                 PoolTaskId = poolTask?.Id,
@@ -323,10 +348,39 @@ public sealed class KkdRequestService(
             if (line.AllocatedQuantity > 0 || line.DeliveredQuantity > 0)
                 throw AppException.Conflict(Message(KkdRequestMessageKeys.StockCannotChange));
 
+            // Barkod okutulamadığında/yanlış stoğa bağlandığında "Stok listesi" ile her zaman yeniden
+            // bağlanabilir — ama gerçek toplama (PreparedQuantity>0, canlı stok hareketi zaten postalanmış)
+            // başladıysa artık değiştirilemez. Henüz sadece rezerve edilmiş (raf ayrılmış ama toplanmamış)
+            // raflar varsa, eski stoktan serbest bırakılır ki raf kilitli kalmasın.
+            var taskLines = await uow.Repository<KkdPreparationTaskLine>().Query(true)
+                .Include(x => x.Task)
+                .Include(x => x.Locations)
+                .Where(x => x.RequestLineId == line.Id)
+                .ToListAsync(token);
+            if (taskLines.Any(x => x.PreparedQuantity > 0))
+                throw AppException.Conflict(Message(KkdRequestMessageKeys.StockCannotChange));
+
             var stock = await ValidateStockAsync(request.StockId, line.GroupCode, token);
             await EnsureGroupEntitlementAsync(entity.Employee, line.GroupCode, DateTimeOffset.UtcNow, token);
             var old = new { line.StockId, line.StockCodeSnapshot, line.StockNameSnapshot, line.Status };
             var now = DateTimeOffset.UtcNow;
+            foreach (var taskLine in taskLines)
+            {
+                var existingLocations = taskLine.Locations.Where(l => l.ReservedQuantity > 0).ToArray();
+                if (existingLocations.Length == 0) continue;
+                await balances.PostReservationAsync(new(
+                    $"{request.IdempotencyKey}:release-{taskLine.Id}", "KkdPreparationTaskLine", taskLine.Id, taskLine.Task.TaskNo,
+                    StockReservationOperationTypes.Release, "KKD stok listesinden yeniden bağlama",
+                    existingLocations.Select(l => new StockReservationLineRequest(
+                        taskLine.Id, taskLine.Task.WarehouseId, l.LocationId, line.StockId!.Value, null,
+                        line.UnitCode, l.LotNo, l.SerialNo, "Available", -l.ReservedQuantity)).ToList()), token);
+                foreach (var loc in existingLocations)
+                {
+                    loc.ReservedQuantity = 0;
+                    loc.UpdatedBy = actor;
+                    loc.UpdatedDate = now.UtcDateTime;
+                }
+            }
             await Resolutions.AddAsync(new KkdRequestLineResolution
             {
                 IdempotencyKey = request.IdempotencyKey,
@@ -360,6 +414,64 @@ public sealed class KkdRequestService(
                 NewValues: new { line.StockId, line.StockCodeSnapshot, line.StockNameSnapshot, line.Status },
                 ChangedFields: ["StockId", "StockCodeSnapshot", "StockNameSnapshot", "UnitCode", "Status"]), token);
             return await GetDetailAsync(entity.Id, actor, token);
+        }, ct, IsolationLevel.Serializable);
+    }
+
+    /// <summary>Kota aşımı kararı — talebe özel. Onay, bu talebe/kaleme özgü (tek günlük) bir
+    /// <see cref="KkdEmployeeEntitlementOverride"/> yaratır (<see cref="IKkdDefinitionService.CreateOverrideAsync"/>
+    /// zaten var olan mekanizma, burada yeniden kullanılıyor). Talep iptal olursa bu override <see cref="CancelAsync"/>
+    /// içinde geçersizleştirilir. Karar <see cref="KkdRequestLine"/> üzerinde tutulur — bu sayede iş devri
+    /// (<see cref="KkdPreparationTaskService.HandoffAsync"/>) veya havuza iade sırasında kaybolmaz.</summary>
+    public async Task<KkdQuotaDecisionResult> DecideQuotaAsync(long lineId, KkdQuotaDecisionRequest request, long actor, CancellationToken ct = default)
+    {
+        ValidateReason(request.Reason);
+        return await uow.ExecuteInTransactionAsync(async token =>
+        {
+            var line = await uow.Repository<KkdRequestLine>().Query(true).Include(x => x.Request)
+                .SingleOrDefaultAsync(x => x.Id == lineId, token)
+                ?? throw AppException.NotFound(Message(KkdRequestMessageKeys.LineNotFound));
+            if (line.Request.WarehouseId.HasValue)
+                await EnsureWarehouseAccessAsync(actor, line.Request.WarehouseId.Value, token);
+
+            var wantedDecision = request.Approve ? KkdRequestLineQuotaDecision.Approved : KkdRequestLineQuotaDecision.Rejected;
+            if (line.QuotaDecision == wantedDecision)
+                return new KkdQuotaDecisionResult(line.Id, line.QuotaDecision.ToString(), line.QuotaOverrideId);
+            if (line.QuotaDecision is KkdRequestLineQuotaDecision.Approved or KkdRequestLineQuotaDecision.Rejected)
+                throw AppException.Conflict(Message(KkdRequestMessageKeys.QuotaDecisionAlreadyMade));
+            if (line.QuotaDecision == KkdRequestLineQuotaDecision.None)
+            {
+                // Bu satır "üzerime al" ile hiç Pending işaretlenmemiş olabilir (ör. Ata ekranından geliyor) —
+                // ClaimAsync'in aksine burada Pending'e güvenemeyiz, kotayı canlı kontrol etmemiz gerekiyor.
+                var remaining = Math.Max(0, line.RequestedQuantity - line.CancelledQuantity);
+                var today = DateOnly.FromDateTime(DateTimeOffset.UtcNow.UtcDateTime);
+                var isOverQuota = line.StockId.HasValue
+                    && !(await entitlements.CheckAsync(new(line.Request.EmployeeId, line.StockId.Value, remaining, today), token)).IsAllowed;
+                if (!isOverQuota)
+                    throw AppException.Conflict(Message(KkdRequestMessageKeys.QuotaDecisionNotNeeded));
+            }
+
+            var now = DateTimeOffset.UtcNow;
+            long? overrideId = null;
+            if (request.Approve)
+            {
+                var remaining = Math.Max(0, line.RequestedQuantity - line.CancelledQuantity);
+                var today = DateOnly.FromDateTime(now.UtcDateTime);
+                overrideId = await definitions.CreateOverrideAsync(new KkdOverrideCreateRequest(
+                    line.Request.EmployeeId, null, line.GroupCode, remaining, today, today,
+                    $"{line.Request.RequestNo} kota onayı: {request.Reason.Trim()}"), actor, token);
+            }
+            line.QuotaDecision = wantedDecision;
+            line.QuotaDecisionByUserId = actor;
+            line.QuotaDecisionAtUtc = now;
+            line.QuotaOverrideId = overrideId;
+            line.UpdatedBy = actor;
+            line.UpdatedDate = now.UtcDateTime;
+            await SaveAsync(token);
+            await audit.WriteAsync(new AuditLogWriteEntry(
+                "kkd.request-line.quota-decision", nameof(KkdRequestLine), line.Id.ToString(), "Succeeded", "kkd-request",
+                Reason: request.Reason.Trim(), NewValues: new { line.QuotaDecision, line.QuotaOverrideId },
+                ChangedFields: ["QuotaDecision", "QuotaOverrideId"]), token);
+            return new KkdQuotaDecisionResult(line.Id, line.QuotaDecision.ToString(), line.QuotaOverrideId);
         }, ct, IsolationLevel.Serializable);
     }
 
@@ -438,6 +550,18 @@ public sealed class KkdRequestService(
             CheckVersion(entity.RowVersion, request.ExpectedRowVersion);
             if (entity.Lines.Any(x => x.AllocatedQuantity > 0 || x.DeliveredQuantity > 0))
                 throw AppException.Conflict(Message(KkdRequestMessageKeys.RequestHasProgress));
+            // Talep iptalinde açık hazırlama görevleri de kapanır.
+            var openTasks = await uow.Repository<KkdPreparationTask>().Query(true)
+                .Include(x => x.Lines).ThenInclude(x => x.RequestLine)
+                .Include(x => x.Lines).ThenInclude(x => x.Locations)
+                .Where(x => x.RequestId == entity.Id
+                    && (x.Status == KkdPreparationTaskStatus.Assigned || x.Status == KkdPreparationTaskStatus.InPreparation))
+                .ToListAsync(token);
+            // Canlı toplama (gerçek stok hareketi) zaten yapılmış bir görev varsa iptal engellenir —
+            // ReturnAsync'teki TaskHasProgress kuralıyla tutarlı; önce geri alma (Unpick) gerekir.
+            if (openTasks.Any(x => x.Lines.Any(l => l.PreparedQuantity > 0)))
+                throw AppException.Conflict(Message(KkdRequestMessageKeys.TaskHasProgress));
+
             var old = Snapshot(entity);
             var now = DateTimeOffset.UtcNow;
             entity.Status = KkdRequestStatus.Cancelled;
@@ -445,6 +569,20 @@ public sealed class KkdRequestService(
             entity.CancellationReason = request.Reason.Trim();
             entity.UpdatedBy = actor;
             entity.UpdatedDate = now.UtcDateTime;
+            // Onaylanmış kota istisnası bu talebe özeldi — talep iptal olunca o istisna da geçersiz olur,
+            // personel bunu başka bir talepte kullanamaz.
+            var overrideIds = entity.Lines.Where(x => x.QuotaOverrideId.HasValue).Select(x => x.QuotaOverrideId!.Value).ToArray();
+            if (overrideIds.Length > 0)
+            {
+                var overrides = await uow.Repository<KkdEmployeeEntitlementOverride>().Query(true)
+                    .Where(x => overrideIds.Contains(x.Id)).ToListAsync(token);
+                foreach (var item in overrides)
+                {
+                    item.IsActive = false;
+                    item.UpdatedBy = actor;
+                    item.UpdatedDate = now.UtcDateTime;
+                }
+            }
             foreach (var line in entity.Lines)
             {
                 line.CancelledQuantity = line.RequestedQuantity;
@@ -452,13 +590,26 @@ public sealed class KkdRequestService(
                 line.UpdatedBy = actor;
                 line.UpdatedDate = now.UtcDateTime;
             }
-            // Talep iptalinde açık hazırlama görevleri de kapanır.
-            var openTasks = await uow.Repository<KkdPreparationTask>().Query(true)
-                .Where(x => x.RequestId == entity.Id
-                    && (x.Status == KkdPreparationTaskStatus.Assigned || x.Status == KkdPreparationTaskStatus.InPreparation))
-                .ToListAsync(token);
             foreach (var task in openTasks)
             {
+                // Henüz toplanmamış ama "Bu işi yapıyorum" ile rezerve edilmiş raflar varsa serbest bırak.
+                foreach (var line in task.Lines.Where(x => x.RequestLine.StockId.HasValue
+                    && x.Locations.Any(l => l.ReservedQuantity > 0)))
+                {
+                    var existingLocations = line.Locations.Where(l => l.ReservedQuantity > 0).ToArray();
+                    await balances.PostReservationAsync(new(
+                        $"{request.IdempotencyKey}:release-{line.Id}", "KkdPreparationTaskLine", line.Id, task.TaskNo,
+                        StockReservationOperationTypes.Release, "KKD talebi iptal edildi",
+                        existingLocations.Select(l => new StockReservationLineRequest(
+                            line.Id, task.WarehouseId, l.LocationId, line.RequestLine.StockId!.Value, null,
+                            line.RequestLine.UnitCode, l.LotNo, l.SerialNo, "Available", -l.ReservedQuantity)).ToList()), token);
+                    foreach (var loc in existingLocations)
+                    {
+                        loc.ReservedQuantity = 0;
+                        loc.UpdatedBy = actor;
+                        loc.UpdatedDate = now.UtcDateTime;
+                    }
+                }
                 task.Status = KkdPreparationTaskStatus.Cancelled;
                 task.ClosedAtUtc = now;
                 task.ClosureReason = request.Reason.Trim();
@@ -660,7 +811,8 @@ public sealed class KkdRequestService(
             line.StockNameSnapshot, line.UnitCode, line.RequestedQuantity, line.AllocatedQuantity,
             line.DeliveredQuantity, Math.Max(0, line.RequestedQuantity - line.AllocatedQuantity - line.DeliveredQuantity - line.CancelledQuantity),
             line.Status.ToString(), line.ExternalOrderNo, line.ExternalOrderLineId, line.ResolvedByUserId,
-            line.ResolvedAtUtc, line.ResolutionReason, Convert.ToBase64String(line.RowVersion),
+            line.ResolvedAtUtc, line.ResolutionReason, line.QuotaDecision.ToString(), line.QuotaDecisionByUserId,
+            line.QuotaDecisionAtUtc, Convert.ToBase64String(line.RowVersion),
             line.Resolutions.OrderByDescending(item => item.ResolvedAtUtc).Select(item => new KkdRequestLineResolutionRow(
                 item.Id, item.PreviousStockId, item.StockId, item.StockCodeSnapshot, item.StockNameSnapshot,
                 item.Reason, item.CreatedBy, item.ResolvedAtUtc)).ToArray())).ToArray());
