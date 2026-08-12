@@ -224,15 +224,45 @@ public sealed class GoodsReceiptDocumentValidationTests
     }
 
     [Fact]
-    public void Quality_gated_receipt_cannot_be_received_directly_into_putaway_location()
+    public void Quality_gated_receipt_cannot_be_received_directly_into_normal_putaway_location()
     {
+        var receiving = new WarehouseLocation
+        {
+            LocationType = LocationTypes.Receiving,
+            IsPutaway = true
+        };
+        var rack = new WarehouseLocation
+        {
+            LocationType = LocationTypes.Rack,
+            IsPutaway = true
+        };
+
         var exception = Assert.Throws<AppException>(() =>
             GoodsReceiptOperationsService.ValidateQualityReceivingLocations(
                 requiresQuality: true,
                 blockPutawayUntilQualityDecision: true,
-                selectedLocationsArePutaway: [false, true]));
+                selectedLocations: [receiving, rack]));
 
         Assert.Contains("kabul veya staging", exception.Message);
+    }
+
+    [Theory]
+    [InlineData(LocationTypes.Receiving)]
+    [InlineData(LocationTypes.Staging)]
+    public void Quality_gated_receipt_accepts_receiving_areas_even_when_putaway_capability_is_enabled(
+        string locationType)
+    {
+        GoodsReceiptOperationsService.ValidateQualityReceivingLocations(
+            requiresQuality: true,
+            blockPutawayUntilQualityDecision: true,
+            selectedLocations:
+            [
+                new WarehouseLocation
+                {
+                    LocationType = locationType,
+                    IsPutaway = true
+                }
+            ]);
     }
 
     [Theory]
@@ -245,7 +275,14 @@ public sealed class GoodsReceiptDocumentValidationTests
         GoodsReceiptOperationsService.ValidateQualityReceivingLocations(
             requiresQuality,
             blockPutawayUntilQualityDecision,
-            selectedLocationsArePutaway: [true]);
+            selectedLocations:
+            [
+                new WarehouseLocation
+                {
+                    LocationType = LocationTypes.Rack,
+                    IsPutaway = true
+                }
+            ]);
     }
 
     [Fact]

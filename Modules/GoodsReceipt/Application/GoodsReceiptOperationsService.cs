@@ -443,7 +443,7 @@ public sealed class GoodsReceiptOperationsService(
                         qualityAlreadyApproved, resolved[input.StockId],
                         request.ForceQualityControl || input.ForceQualityControl))
                     .Select(input => lineLocations[
-                        input.ReceivingLocationId ?? request.ReceivingLocationId].IsPutaway));
+                        input.ReceivingLocationId ?? request.ReceivingLocationId]));
 
             ValidateTrackedLines(
                 request, stocks, resolved, trackingPolicies,
@@ -810,11 +810,12 @@ public sealed class GoodsReceiptOperationsService(
     internal static void ValidateQualityReceivingLocations(
         bool requiresQuality,
         bool blockPutawayUntilQualityDecision,
-        IEnumerable<bool> selectedLocationsArePutaway)
+        IEnumerable<WarehouseLocation> selectedLocations)
     {
         if (requiresQuality
             && blockPutawayUntilQualityDecision
-            && selectedLocationsArePutaway.Any(isPutaway => isPutaway))
+            && selectedLocations.Any(location =>
+                location.LocationType is not (LocationTypes.Receiving or LocationTypes.Staging)))
             throw AppException.BadRequest(
                 "Kalite kararı verilene kadar rafa kaldırma kapalıdır. Kalite kontrollü ürün için kabul veya staging alanı seçiniz.");
     }

@@ -137,4 +137,71 @@ public sealed class QualityWarehouseDispositionTests
 
         Assert.Equal(1002, locationId);
     }
+
+    [Fact]
+    public void Explicit_quality_target_does_not_require_stale_receipt_fallback_location()
+    {
+        var inspectionLine = new QualityInspectionLine
+        {
+            Id = 1,
+            GoodsReceiptLineId = 10,
+            StockId = 100,
+            StockCodeSnapshot = "STK-1",
+            Quantity = 1
+        };
+        var receiptLine = new GoodsReceiptLine
+        {
+            Id = 10,
+            TargetWarehouseId = 1,
+            DefaultReceivingLocationId = 43
+        };
+
+        var required = QualityService.ResolveRequiredDecisionTargetLocationIds(
+            [new QualityService.QualityDecisionPart(
+                inspectionLine,
+                QualityDecision.Accepted,
+                1,
+                TargetLocationId: 95)],
+            new Dictionary<long, GoodsReceiptLine> { [receiptLine.Id] = receiptLine },
+            new QualityParameter(),
+            new Dictionary<long, QualityWarehouseRoute>(),
+            headerReceivingLocationId: 43,
+            []);
+
+        Assert.Equal([95], required);
+        Assert.DoesNotContain(43, required);
+    }
+
+    [Fact]
+    public void Accepted_quality_decision_without_explicit_target_uses_configured_fallback()
+    {
+        var inspectionLine = new QualityInspectionLine
+        {
+            Id = 1,
+            GoodsReceiptLineId = 10,
+            StockId = 100,
+            StockCodeSnapshot = "STK-1",
+            Quantity = 1
+        };
+        var receiptLine = new GoodsReceiptLine
+        {
+            Id = 10,
+            TargetWarehouseId = 1,
+            DefaultReceivingLocationId = 43
+        };
+        var parameter = new QualityParameter { DefaultAcceptedLocationId = 95 };
+
+        var required = QualityService.ResolveRequiredDecisionTargetLocationIds(
+            [new QualityService.QualityDecisionPart(
+                inspectionLine,
+                QualityDecision.Accepted,
+                1)],
+            new Dictionary<long, GoodsReceiptLine> { [receiptLine.Id] = receiptLine },
+            parameter,
+            new Dictionary<long, QualityWarehouseRoute>(),
+            headerReceivingLocationId: 43,
+            []);
+
+        Assert.Equal([95], required);
+    }
 }
