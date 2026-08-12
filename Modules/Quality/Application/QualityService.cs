@@ -531,11 +531,13 @@ public sealed class QualityService(
             var movementLocations = await uow.Repository<WarehouseLocation>().Query()
                 .Where(location => movementLocationIds.Contains(location.Id))
                 .ToDictionaryAsync(location => location.Id, token);
-            var requiredLocationIds = receiptLocationIds
-                .Concat(acceptedFallbackLocationIds)
-                .Concat(decisionTargetLocationIds)
-                .Distinct()
-                .ToArray();
+            var requiredLocationIds = ResolveRequiredDecisionTargetLocationIds(
+                decisionParts,
+                grLines,
+                parameter,
+                warehouseRoutes,
+                gr.ReceivingLocationId,
+                globalQuarantineDestinations);
             if (requiredLocationIds.Any(locationId => !movementLocations.ContainsKey(locationId)))
                 throw AppException.Conflict("Kalite stok hareketi için hedef raf bulunamadı veya kullanıma kapatılmış.");
 
@@ -1574,6 +1576,47 @@ public sealed class QualityService(
         ?? defaultPutawayLocationId
         ?? defaultReceivingLocationId
         ?? headerReceivingLocationId;
+    internal static IReadOnlySet<long> ResolveRequiredDecisionTargetLocationIds(
+        IReadOnlyList<QualityDecisionPart> decisionParts,
+        IReadOnlyDictionary<long, GoodsReceiptLine> receiptLines,
+        QualityParameter parameter,
+        IReadOnlyDictionary<long, QualityWarehouseRoute> warehouseRoutes,
+        long headerReceivingLocationId,
+        IReadOnlyCollection<QualityQuarantineDestinationDto> globalQuarantineDestinations)
+    {
+        var result = new HashSet<long>();
+        foreach (var part in decisionParts)
+        {
+            if (!part.Line.GoodsReceiptLineId.HasValue
+                || !receiptLines.TryGetValue(part.Line.GoodsReceiptLineId.Value, out var receiptLine))
+                continue;
+
+            var defaults = ResolveWarehouseRouteDefaults(
+                parameter,
+                warehouseRoutes,
+                receiptLine.TargetWarehouseId);
+            var targetLocationId = part.Decision switch
+            {
+                QualityDecision.Accepted => part.TargetLocationId ?? ResolveAcceptedLocationId(
+                    defaults.AcceptedLocationId,
+                    receiptLine.DefaultPutawayLocationId,
+                    receiptLine.DefaultReceivingLocationId,
+                    headerReceivingLocationId),
+                QualityDecision.Quarantined => part.TargetLocationId
+                    ?? defaults.QuarantineLocationId
+                    ?? ResolveQuarantineDestination(
+                        globalQuarantineDestinations,
+                        null,
+                        receiptLine.TargetWarehouseId).LocationId,
+                QualityDecision.Rejected => part.TargetLocationId ?? defaults.RejectLocationId,
+                _ => null
+            };
+            if (targetLocationId.HasValue)
+                result.Add(targetLocationId.Value);
+        }
+
+        return result;
+    }
     private string Message(string key) => localizer[key].Value;
     internal static void SynchronizeGoodsReceiptStatus(GoodsReceiptHeader receipt, long actor) =>
         GoodsReceiptExecutionService.RefreshHeaderStatus(receipt, actor);

@@ -12,6 +12,7 @@ using verii_wms_api_v2.Modules.ErpIntegration.Infrastructure;
 using verii_wms_api_v2.Modules.GoodsReceipt.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.ProjectSettings.Domain;
+using verii_wms_api_v2.Modules.Quality.Domain;
 using verii_wms_api_v2.Modules.Shipping.Domain;
 using verii_wms_api_v2.Modules.NetsisRead.Application;
 using verii_wms_api_v2.Modules.NetsisRead.Application.Dtos;
@@ -57,7 +58,7 @@ public sealed class ErpPostingService(
         var targetWarehouse = await GetWarehouseAsync(header.TargetWarehouseId, cancellationToken);
         var request = await MapGoodsReceiptAsync(header, targetWarehouse, cancellationToken);
         var externalDocumentNo = ResolveGoodsReceiptErpDocumentNo(header);
-        return await PostAsync(
+        var result = await PostAsync(
             ErpPostingSourceType.GoodsReceipt,
             header.Id,
             externalDocumentNo,
@@ -70,6 +71,9 @@ public sealed class ErpPostingService(
             header,
             userId,
             cancellationToken);
+        if (result.Status == ErpPostingStatus.Succeeded)
+            EnqueueGoodsReceiptSuccessFollowUp(header.Id, userId);
+        return result;
     }
 
     public async Task<ErpPostingResult> PostWarehouseTransferAsync(
@@ -85,6 +89,7 @@ public sealed class ErpPostingService(
             .Include(x => x.SourceDocuments)
             .SingleOrDefaultAsync(x => x.Id == id, cancellationToken)
             ?? throw AppException.NotFound("Depolar arası transfer kaydı bulunamadı.");
+        await ValidateQualityDispositionErpPrerequisiteAsync(header, cancellationToken);
         if (!IsWarehouseTransferReadyForErp(header.Status))
             throw AppException.Conflict("ERP transfer kaydı için transferin sevk edilmiş olması gerekir.");
         if (header.ApprovalStatus is OperationApprovalStatus.Pending or OperationApprovalStatus.Rejected)
@@ -107,6 +112,53 @@ public sealed class ErpPostingService(
             header,
             userId,
             cancellationToken);
+    }
+
+    private async Task ValidateQualityDispositionErpPrerequisiteAsync(
+        WarehouseTransferHeader header,
+        CancellationToken cancellationToken)
+    {
+        if (header.BusinessContext != WarehouseTransferBusinessContext.QualityDisposition)
+            return;
+        if (header.Status != WarehouseTransferStatus.Completed)
+            throw AppException.Conflict(
+                "Kalite kaynaklı DAT, stok hareketi tamamlanmadan ERP'ye gönderilemez.");
+
+        var receiptStatuses = await (
+                from disposition in unitOfWork.Repository<QualityInspectionDisposition>().Query()
+                join inspection in unitOfWork.Repository<QualityInspection>().Query()
+                    on disposition.QualityInspectionId equals inspection.Id
+                join receipt in unitOfWork.Repository<GoodsReceiptHeader>().Query()
+                    on inspection.SourceDocumentId equals receipt.Id
+                where disposition.WarehouseTransferId == header.Id
+                    && inspection.SourceDocumentType == "GoodsReceipt"
+                select receipt.ErpIntegrationStatus)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        if (receiptStatuses.Count == 0)
+            throw AppException.Conflict(
+                "Kalite kaynaklı DAT için bağlı mal kabul kaydı bulunamadı.");
+        if (receiptStatuses.Any(status => status != ErpIntegrationStatus.Succeeded))
+            throw AppException.Conflict(
+                "Kalite kaynaklı DAT, bağlı mal kabul irsaliyesi ERP'de başarıyla oluşmadan gönderilemez.");
+    }
+
+    private void EnqueueGoodsReceiptSuccessFollowUp(long goodsReceiptId, long actorUserId)
+    {
+        try
+        {
+            backgroundJobs.Enqueue<IGoodsReceiptErpSuccessJob>(job =>
+                job.ProcessGoodsReceiptAsync(goodsReceiptId, actorUserId, CancellationToken.None));
+        }
+        catch (Exception exception)
+        {
+            // ERP posting is already committed. Do not report it as failed because the recurring
+            // recovery job will find and complete pending quality DAT records.
+            logger.LogError(
+                exception,
+                "Goods-receipt ERP posting succeeded but quality DAT follow-up could not be queued. GoodsReceiptId={GoodsReceiptId}",
+                goodsReceiptId);
+        }
     }
 
     internal static bool IsWarehouseTransferReadyForErp(WarehouseTransferStatus status) =>

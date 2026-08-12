@@ -17,10 +17,14 @@ public sealed class WarehouseTransfersController(
     IOperationCancellationCoordinator cancellationCoordinator,
     IPermissionAuthorizationService permissions) : ControllerBase
 {
-    private static readonly WarehouseTransferBusinessContext[] OperationalContexts =
+    private static readonly WarehouseTransferBusinessContext[] ReadableContexts =
     [
         WarehouseTransferBusinessContext.InterWarehouse,
         WarehouseTransferBusinessContext.QualityDisposition
+    ];
+    private static readonly WarehouseTransferBusinessContext[] InteractiveOperationContexts =
+    [
+        WarehouseTransferBusinessContext.InterWarehouse
     ];
 
     [HttpPost("drafts")]
@@ -45,7 +49,7 @@ public sealed class WarehouseTransfersController(
     {
         await Require("WMS.WAREHOUSE_TRANSFER.VIEW", ct);
         return Ok(ApiResponse<WarehouseTransferDetail>.Ok(await service.GetDetailForContextAsync(
-            id, OperationalContexts, ct)));
+            id, ReadableContexts, ct)));
     }
 
     [HttpPut("{id:long}"), HttpPost("{id:long}/update")]
@@ -148,5 +152,5 @@ public sealed class WarehouseTransfersController(
         service.EnsureContextAsync(id, [WarehouseTransferBusinessContext.InterWarehouse], ct);
 
     private Task EnsureOperationalContext(long id, CancellationToken ct) =>
-        service.EnsureContextAsync(id, OperationalContexts, ct);
+        service.EnsureContextAsync(id, InteractiveOperationContexts, ct);
 }

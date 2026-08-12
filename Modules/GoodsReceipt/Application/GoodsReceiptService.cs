@@ -148,7 +148,7 @@ public sealed class GoodsReceiptService(
                     .Where(item => GoodsReceiptOperationsService.RequiresQualityForLine(
                         false, qualityPolicies[stockByCode[item.Source.StockCode!].Id],
                         request.ForceQualityControl || item.Request.ForceQualityControl))
-                    .Select(item => receivingLocations[item.Request.ReceivingLocationId].IsPutaway));
+                    .Select(item => receivingLocations[item.Request.ReceivingLocationId]));
 
             var yapCodes = sourceSelected.Select(x => x.Source.YapCode).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             var yaps = await unitOfWork.Repository<YapCodeEntity>().Query().Where(x => x.BranchCode == branch && yapCodes.Contains(x.ConfigurationCode)).ToListAsync(ct);

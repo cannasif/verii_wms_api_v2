@@ -67,6 +67,108 @@ public sealed class WarehouseTransferOperationService(
         long id, WarehouseTransferOperationRequest request, long actor, CancellationToken ct = default) =>
         ExecuteMovementAsync(id, request, actor, TransferPhase.Putaway, ct);
 
+    public Task<WarehouseTransferOperationResult> CompleteQualityDispositionAsync(
+        long id,
+        Guid idempotencyKey,
+        long actor,
+        CancellationToken ct = default)
+    {
+        if (id <= 0 || idempotencyKey == Guid.Empty)
+            throw AppException.BadRequest("Geçerli kalite transferi ve idempotency anahtarı zorunludur.");
+
+        return uow.ExecuteInTransactionAsync(async token =>
+        {
+            var header = await LoadAsync(id, token);
+            if (header.BusinessContext != WarehouseTransferBusinessContext.QualityDisposition)
+                throw AppException.Conflict("Yalnızca kalite kararı kaynaklı DAT bu otomatik akışla tamamlanabilir.");
+            if (header.Status == WarehouseTransferStatus.Cancelled)
+                throw AppException.Conflict("İptal edilmiş kalite transferi tamamlanamaz.");
+            if (header.ErpIntegrationStatus is ErpIntegrationStatus.Processing
+                or ErpIntegrationStatus.CommitUncertain
+                or ErpIntegrationStatus.Succeeded
+                or ErpIntegrationStatus.Cancelled)
+                throw AppException.Conflict("ERP aktarımı başlamış kalite transferinin stok yürütmesi değiştirilemez.");
+
+            var movementRequest = BuildQualityDispositionMovementRequest(header, idempotencyKey);
+            var existingMovement = await uow.Repository<StockMovementOperation>().Query()
+                .FirstOrDefaultAsync(x => x.IdempotencyKey == movementRequest.IdempotencyKey, token);
+            if (header.Status == WarehouseTransferStatus.Completed)
+                return Result(header, existingMovement?.Id, true);
+            if (header.Status != WarehouseTransferStatus.Draft)
+                throw AppException.Conflict("Kalite kaynaklı DAT yalnızca taslak durumundan otomatik tamamlanabilir.");
+            if (header.ApprovalStatus == OperationApprovalStatus.Rejected)
+                throw AppException.Conflict("Reddedilmiş kalite transferi otomatik tamamlanamaz.");
+
+            await reservations.ReleaseAllAsync(
+                header,
+                $"WT:{header.Id}:RESERVE:QUALITY-COMPLETE:{idempotencyKey:N}",
+                "Kalite DAT tek adımlı otomatik yürütme öncesi rezervasyon kapatma.",
+                actor,
+                token);
+            var movement = await movements.PostAsync(movementRequest, token);
+            var now = DateTimeOffset.UtcNow;
+            foreach (var line in header.Lines)
+            {
+                line.ReservedQuantity = 0;
+                line.PickedQuantity = line.RequestedQuantity;
+                line.ShippedQuantity = line.RequestedQuantity;
+                line.ReceivedQuantity = line.RequestedQuantity;
+                line.PutawayQuantity = line.RequestedQuantity;
+                line.Status = WarehouseTransferLineStatus.Putaway;
+                line.UpdatedBy = actor;
+                line.UpdatedDate = now.UtcDateTime;
+                foreach (var tracking in line.Trackings)
+                {
+                    tracking.ReservedQuantity = 0;
+                    tracking.PickedQuantity = tracking.PlannedQuantity;
+                    tracking.ShippedQuantity = tracking.PlannedQuantity;
+                    tracking.ReceivedQuantity = tracking.PlannedQuantity;
+                    tracking.PutawayQuantity = tracking.PlannedQuantity;
+                    tracking.Status = WarehouseTransferTrackingStatus.Putaway;
+                    tracking.UpdatedBy = actor;
+                    tracking.UpdatedDate = now.UtcDateTime;
+                }
+            }
+
+            if (header.RequireApproval)
+                header.ApprovalStatus = OperationApprovalStatus.Approved;
+            header.Status = WarehouseTransferStatus.Completed;
+            header.ReleasedAtUtc ??= now;
+            header.ReleasedBy ??= actor;
+            header.ShippedAtUtc ??= now;
+            header.ShippedBy ??= actor;
+            header.ReceivedAtUtc ??= now;
+            header.ReceivedBy ??= actor;
+            header.CompletedAtUtc ??= now;
+            header.CompletedBy ??= actor;
+            header.UpdatedBy = actor;
+            header.UpdatedDate = now.UtcDateTime;
+            AddHistory(
+                header,
+                WarehouseTransferStatus.Completed.ToString(),
+                idempotencyKey,
+                "Mal kabul ERP irsaliyesi sonrasında kalite DAT otomatik tamamlandı.",
+                actor);
+            await uow.SaveChangesAsync(token);
+            await audit.WriteAsync(new(
+                "warehouse-transfer.quality-complete",
+                nameof(WarehouseTransferHeader),
+                header.Id.ToString(),
+                "Succeeded",
+                "quality",
+                NewValues: new
+                {
+                    header.DocumentNo,
+                    GoodsReceiptErpPrerequisite = "Succeeded",
+                    movement.OperationId,
+                    LineCount = header.Lines.Count,
+                    Quantity = header.Lines.Sum(x => x.RequestedQuantity)
+                },
+                ChangedFields: ["Status", "ApprovalStatus", "Quantities", "StockMovement"]), token);
+            return Result(header, movement.OperationId, movement.IsReplay);
+        }, ct, IsolationLevel.Serializable);
+    }
+
     public Task<WarehouseTransferOperationResult> CancelAsync(
         long id, WarehouseTransferTransitionRequest request, long actor, CancellationToken ct = default) =>
         CancelCoreAsync(id, request, actor, false, ct);
@@ -612,6 +714,69 @@ public sealed class WarehouseTransferOperationService(
             request.OccurredAtUtc?.UtcDateTime,
             Clean(request.Reason, 500),
             $"{phase} operation for {header.DocumentNo}",
+            rows);
+    }
+
+    internal static PostStockMovementRequest BuildQualityDispositionMovementRequest(
+        WarehouseTransferHeader header,
+        Guid idempotencyKey)
+    {
+        if (header.Lines.Count == 0)
+            throw AppException.Conflict("Kalite transferinde yürütülecek stok satırı bulunamadı.");
+
+        var rows = new List<StockMovementLineRequest>();
+        foreach (var line in header.Lines)
+        {
+            if (!line.DefaultSourceLocationId.HasValue || !line.DefaultTargetLocationId.HasValue)
+                throw AppException.Conflict($"{line.LineNo}. kalite transfer satırında kaynak ve hedef raf zorunludur.");
+
+            if (line.Trackings.Count == 0)
+            {
+                rows.Add(new StockMovementLineRequest(
+                    line.StockId,
+                    line.YapCodeId,
+                    line.RequestedQuantity,
+                    line.SourceWarehouseId,
+                    line.DefaultSourceLocationId,
+                    line.TargetWarehouseId,
+                    line.DefaultTargetLocationId,
+                    line.UnitCode,
+                    null,
+                    null,
+                    line.SourceStockStatus,
+                    line.SourceStockStatus,
+                    line.TargetStockStatus));
+                continue;
+            }
+
+            var trackingQuantity = line.Trackings.Sum(x => x.PlannedQuantity);
+            if (trackingQuantity != line.RequestedQuantity)
+                throw AppException.Conflict($"{line.LineNo}. kalite transfer satırının takip miktarı belge miktarıyla eşleşmiyor.");
+            rows.AddRange(line.Trackings.Select(tracking => new StockMovementLineRequest(
+                line.StockId,
+                line.YapCodeId,
+                tracking.PlannedQuantity,
+                line.SourceWarehouseId,
+                tracking.SourceLocationId ?? line.DefaultSourceLocationId,
+                line.TargetWarehouseId,
+                tracking.TargetLocationId ?? line.DefaultTargetLocationId,
+                line.UnitCode,
+                tracking.LotNo,
+                tracking.SerialNo,
+                line.SourceStockStatus,
+                line.SourceStockStatus,
+                line.TargetStockStatus)));
+        }
+
+        return new PostStockMovementRequest(
+            $"WT:{header.Id}:QUALITY-COMPLETE:{idempotencyKey:N}",
+            StockMovementTypes.Transfer,
+            "WarehouseTransfer",
+            header.DocumentNo,
+            header.Id,
+            null,
+            "QualityDispositionAfterGoodsReceiptErp",
+            $"Quality disposition transfer for {header.DocumentNo}",
             rows);
     }
 

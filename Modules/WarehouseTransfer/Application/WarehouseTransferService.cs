@@ -34,7 +34,8 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
             await UserWarehouseAccessService.EnsureAsync(
                 uow, actor, branch, [request.SourceWarehouseId, request.TargetWarehouseId], token);
             var policy=await policyService.GetAsync(branch,token);
-            ValidateMode(request,policy);
+            var qualityDisposition=request.BusinessContext==WarehouseTransferBusinessContext.QualityDisposition;
+            if(!qualityDisposition)ValidateMode(request,policy);
             var taskBased=request.InitiationMode is WarehouseTransferInitiationMode.OrderBasedTask or WarehouseTransferInitiationMode.StockBasedTask;
             var orderBased=request.InitiationMode is WarehouseTransferInitiationMode.OrderBasedTask or WarehouseTransferInitiationMode.OrderBasedDirectTransfer;
             var assigneeIds=(request.AssignedUserIds??[]).Distinct().ToArray();
@@ -85,14 +86,19 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
                 SourceStagingLocationId=request.SourceStagingLocationId,TargetReceivingLocationId=request.TargetReceivingLocationId,TargetPutawayLocationId=request.TargetPutawayLocationId,
                 Status=WarehouseTransferStatus.Draft,ErpIntegrationStatus=ErpIntegrationStatus.Pending,
                 PlannedDispatchAtUtc=request.PlannedDispatchAtUtc?.ToUniversalTime(),PlannedArrivalAtUtc=request.PlannedArrivalAtUtc?.ToUniversalTime(),
-                RequireApproval=policy.RequireApproval,ApprovalStatus=policy.RequireApproval?OperationApprovalStatus.Pending:OperationApprovalStatus.NotRequired,
+                RequireApproval=!qualityDisposition&&policy.RequireApproval,
+                ApprovalStatus=!qualityDisposition&&policy.RequireApproval?OperationApprovalStatus.Pending:OperationApprovalStatus.NotRequired,
                 AllowPartialPicking=policy.AllowPartialPicking,AllowPartialShipment=policy.AllowPartialShipment,AllowPartialReceipt=policy.AllowPartialReceipt,
-                RequireDestinationAcceptance=policy.RequireDestinationAcceptance,RequirePutaway=policy.RequirePutaway,
-                CreateTransitInventory=policy.CreateTransitInventory,DiscrepancyPolicy=policy.DiscrepancyPolicy,
+                RequireDestinationAcceptance=!qualityDisposition&&policy.RequireDestinationAcceptance,
+                RequirePutaway=!qualityDisposition&&policy.RequirePutaway,
+                CreateTransitInventory=!qualityDisposition&&policy.CreateTransitInventory,DiscrepancyPolicy=policy.DiscrepancyPolicy,
                 CancellationReturnPolicy=policy.CancellationReturnPolicy,
-                ReservationPolicy=policy.ReservationPolicy,DirectPostingPolicy=policy.DirectPostingPolicy,
-                RequireAssignee=policy.RequireAssigneeForTask,RequireSourceLocation=policy.RequireSourceLocation,
-                RequireTargetLocation=policy.RequireTargetLocation,RequireShipmentInformation=policy.RequireShipmentInformation,
+                ReservationPolicy=qualityDisposition?WarehouseTransferReservationPolicy.None:policy.ReservationPolicy,
+                DirectPostingPolicy=qualityDisposition?WarehouseTransferDirectPostingPolicy.OneStep:policy.DirectPostingPolicy,
+                RequireAssignee=!qualityDisposition&&policy.RequireAssigneeForTask,
+                RequireSourceLocation=qualityDisposition||policy.RequireSourceLocation,
+                RequireTargetLocation=qualityDisposition||policy.RequireTargetLocation,
+                RequireShipmentInformation=!qualityDisposition&&policy.RequireShipmentInformation,
                 AutoRelease=policy.AutoReleaseTaskBased,MinimumFulfillmentPercent=policy.MinimumFulfillmentPercent,
                 Priority=request.Priority,Description=Clean(request.Description,2000)
             };

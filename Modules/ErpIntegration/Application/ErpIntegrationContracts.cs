@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using Hangfire;
 using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 using verii_wms_api_v2.Modules.GoodsReceipt.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
@@ -321,6 +322,24 @@ public enum NetsisItemSlipInvoiceType
 {
     DomesticClosed = 1,
     DomesticOpen = 2
+}
+
+/// <summary>
+/// Runs durable WMS follow-up work only after the goods-receipt ERP posting is conclusive.
+/// The implementation is idempotent; Hangfire retries and the recovery scan may safely overlap.
+/// </summary>
+public interface IGoodsReceiptErpSuccessJob
+{
+    [AutomaticRetry(Attempts = 5, DelaysInSeconds = [30, 60, 120, 300, 600])]
+    [DisableConcurrentExecution(900)]
+    Task ProcessGoodsReceiptAsync(
+        long goodsReceiptId,
+        long actorUserId,
+        CancellationToken cancellationToken = default);
+
+    [AutomaticRetry(Attempts = 0)]
+    [DisableConcurrentExecution(900)]
+    Task RetryPendingAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed class NetsisItemSlipHeader
