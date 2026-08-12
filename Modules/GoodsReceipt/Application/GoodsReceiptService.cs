@@ -36,7 +36,8 @@ public sealed class GoodsReceiptService(
     ISerialNumberPolicyService serialNumberPolicyService,
     IDocumentNumberAllocator numberAllocator,
     IAuditLogWriter audit,
-    IStringLocalizer<GoodsReceiptResource> localizer) : IGoodsReceiptService
+    IStringLocalizer<GoodsReceiptResource> localizer,
+    IQualityWarehouseRoutingResolver? qualityWarehouseRoutingResolver = null) : IGoodsReceiptService
 {
     private IGenericRepository<GoodsReceiptHeader> Headers => unitOfWork.Repository<GoodsReceiptHeader>();
 
@@ -229,6 +230,13 @@ public sealed class GoodsReceiptService(
                 header.Tasks.Add(task);
                 return (warehouseId, task);
             }).ToDictionary(x => x.warehouseId, x => x.task);
+            var qualityWarehouseRoutes = new Dictionary<long, ResolvedQualityWarehouseRoute>();
+            foreach (var warehouseId in sourceSelected.Select(item => item.Request.TargetWarehouseId).Distinct())
+                qualityWarehouseRoutes[warehouseId] = qualityWarehouseRoutingResolver is null
+                    ? new(null, null, null, null)
+                    : await qualityWarehouseRoutingResolver.ResolveWarehouseRouteAsync(branch, warehouseId, ct);
+            if (qualityWarehouseRoutes.Count == 1)
+                header.QualityLocationId ??= qualityWarehouseRoutes.Values.Single().QualityLocationId;
             var lineNo = 0;
             foreach (var item in sourceSelected.OrderBy(x => x.Source.OrderNumber).ThenBy(x => x.Source.OrderId))
             {
@@ -236,6 +244,9 @@ public sealed class GoodsReceiptService(
                 var trackingPolicy = trackingPolicies[stock.Id];
                 if (!string.IsNullOrWhiteSpace(source.YapCode)) yap = yapByCode[source.YapCode];
                 var unit = StockUnitPolicy.Resolve(stock, source.UnitCode);
+                var qualityRequired = GoodsReceiptOperationsService.RequiresQualityForLine(
+                    false, qualityPolicies[stock.Id],
+                    request.ForceQualityControl || item.Request.ForceQualityControl);
                 var line = Stamp(new GoodsReceiptLine { BranchCode = branch, Header = header, LineNo = ++lineNo, StockId = stock.Id,
                     StockCodeSnapshot = stock.ErpStockCode, StockNameSnapshot = stock.StockName, YapCodeId = yap?.Id, YapCodeSnapshot = yap?.ConfigurationCode,
                     UnitCode = unit, BaseUnitCode = unit, ExpectedQuantity = item.Request.Quantity, TrackingType = trackingPolicy.TrackingType,
@@ -244,9 +255,7 @@ public sealed class GoodsReceiptService(
                     RequireExpirationDate = trackingPolicy.RequireExpirationDate,
                     AllowOverReceipt = request.AllowOverReceipt, OverReceiptTolerancePercent = request.OverReceiptTolerancePercent,
                     AllowUnderReceipt = receiptPolicy.AllowUnderReceipt,
-                    RequireQualityControl = GoodsReceiptOperationsService.RequiresQualityForLine(
-                        false, qualityPolicies[stock.Id],
-                        request.ForceQualityControl || item.Request.ForceQualityControl),
+                    RequireQualityControl = qualityRequired,
                     QualityRoutingSource = GoodsReceiptOperationsService.ResolveQualityRoutingSource(
                         qualityPolicies[stock.Id], request.ForceQualityControl || item.Request.ForceQualityControl),
                     DefaultReceivingLocationId = item.Request.ReceivingLocationId, Status = GoodsReceiptLineStatus.Open }, actorUserId, now);

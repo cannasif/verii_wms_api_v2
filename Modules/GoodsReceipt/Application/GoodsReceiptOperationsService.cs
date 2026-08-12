@@ -44,7 +44,8 @@ public sealed class GoodsReceiptOperationsService(
     IAuditLogWriter audit,
     IGoodsReceiptErpPostingCoordinator erpPosting,
     IGoodsReceiptOnReceiptLabelService onReceiptLabels,
-    IGoodsReceiptOrderSource orderSource) : IGoodsReceiptOperationsService
+    IGoodsReceiptOrderSource orderSource,
+    IQualityWarehouseRoutingResolver? qualityWarehouseRoutingResolver = null) : IGoodsReceiptOperationsService
 {
     private IGenericRepository<GoodsReceiptHeader> Headers => unitOfWork.Repository<GoodsReceiptHeader>();
     private IGenericRepository<GoodsReceiptExecution> Executions => unitOfWork.Repository<GoodsReceiptExecution>();
@@ -536,6 +537,10 @@ public sealed class GoodsReceiptOperationsService(
                     SupplierCodeSnapshot = supplier.CustomerCode, SupplierNameSnapshot = supplier.CustomerName
                 }, actor), token);
 
+            var qualityWarehouseRoute = qualityWarehouseRoutingResolver is null
+                ? null
+                : await qualityWarehouseRoutingResolver.ResolveWarehouseRouteAsync(branch, warehouse.Id, token);
+            header.QualityLocationId ??= qualityWarehouseRoute?.QualityLocationId;
             var grLines = new List<GoodsReceiptLine>();
             for (var index = 0; index < request.Lines.Count; index++)
             {
@@ -693,13 +698,15 @@ public sealed class GoodsReceiptOperationsService(
         for (var index = 0; index < lines.Count; index++)
         {
             var line = lines[index]; var input = request.Lines[index];
+            var qualityHold = ShouldHoldInventoryForQuality(line, header);
             execution.Lines.Add(Stamp(new GoodsReceiptExecutionLine { BranchCode = header.BranchCode, Execution = execution,
                 Line = line, LineNo = index + 1, StockId = line.StockId, YapCodeId = line.YapCodeId,
                 Quantity = input.Quantity, UnitCode = line.UnitCode, LotNo = Clean(input.LotNo, 100), SerialNo = Clean(input.SerialNo, 100),
                 ManufacturingDate = input.ManufacturingDate, ExpirationDate = input.ExpirationDate,
                 ScannedBarcode = Clean(input.ScannedBarcode, 250), WarehouseId = line.TargetWarehouseId,
-                LocationId = line.DefaultReceivingLocationId ?? header.ReceivingLocationId,
-                StockStatus = ShouldHoldInventoryForQuality(line, header) ? "QualityHold" : "Available",
+                LocationId = ResolveQualityInventoryLocationId(
+                    line, header, line.DefaultReceivingLocationId ?? header.ReceivingLocationId),
+                StockStatus = qualityHold ? "QualityHold" : "Available",
                 GoodsReceiptLabelId = input.GoodsReceiptLabelId,
                 QualityInspectionLineId = inspectionLineByGrLine.GetValueOrDefault(line.Id)?.Id }, actor));
         }
@@ -850,6 +857,14 @@ public sealed class GoodsReceiptOperationsService(
         line.RequireQualityControl
         && (header.HoldInventoryUntilQualityDecision
             || line.QualityRoutingSource == GoodsReceiptQualityRoutingSource.ManualReceipt);
+
+    internal static long ResolveQualityInventoryLocationId(
+        GoodsReceiptLine line,
+        GoodsReceiptHeader header,
+        long requestedLocationId) =>
+        ShouldHoldInventoryForQuality(line, header)
+            ? header.QualityLocationId ?? requestedLocationId
+            : requestedLocationId;
 
     internal static void ValidateManualQualityPolicy(
         GoodsReceiptErpQualityGatePolicy qualityGatePolicy,

@@ -33,7 +33,8 @@ public sealed class GoodsReceiptExecutionService(
     IWarehouseBarcodeResolver barcodeResolver,
     IAuditLogWriter audit,
     IGoodsReceiptErpPostingCoordinator erpPosting,
-    IGoodsReceiptOnReceiptLabelService onReceiptLabels) : IGoodsReceiptExecutionService
+    IGoodsReceiptOnReceiptLabelService onReceiptLabels,
+    IQualityWarehouseRoutingResolver? qualityWarehouseRouting = null) : IGoodsReceiptExecutionService
 {
     public async Task<ReceiveGoodsReceiptTaskResult> ReceiveAsync(long taskId, ReceiveGoodsReceiptTaskRequest request,
         long actor, CancellationToken ct = default)
@@ -137,6 +138,21 @@ public sealed class GoodsReceiptExecutionService(
                 policy,
                 taskLine.Line.RequireQualityControl);
             taskLine.Line.RequireQualityControl = requiresQuality;
+            if (GoodsReceiptOperationsService.ShouldHoldInventoryForQuality(taskLine.Line, task.Header))
+            {
+                var qualityRoute = qualityWarehouseRouting is null
+                    ? null
+                    : await qualityWarehouseRouting.ResolveWarehouseRouteAsync(task.BranchCode, task.WarehouseId, token);
+                var qualityLocationId = qualityRoute?.QualityLocationId ?? task.Header.QualityLocationId;
+                if (qualityLocationId.HasValue && qualityLocationId.Value != locationId)
+                {
+                    locationId = qualityLocationId.Value;
+                    location = await uow.Repository<WarehouseLocation>().FindByIdAsync(locationId, false, token)
+                        ?? throw AppException.BadRequest("Kalite bekleme rafı bulunamadı.");
+                    if (!location.IsActive || location.WarehouseId != task.WarehouseId || location.IsPickable)
+                        throw AppException.BadRequest("Kalite bekleme rafı aktif, kaynak depoya bağlı ve toplamaya kapalı olmalıdır.");
+                }
+            }
             var now = DateTimeOffset.UtcNow;
             QualityInspection? inspection = null;
             QualityInspectionLine? inspectionLine = null;
