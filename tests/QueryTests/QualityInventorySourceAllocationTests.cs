@@ -47,7 +47,7 @@ public sealed class QualityInventorySourceAllocationTests
         await db.SaveChangesAsync();
 
         await using var unitOfWork = new UnitOfWork(db, HttpContext("0"));
-        var service = new QualityService(unitOfWork, new RecordingAuditLogWriter(), null!, null!, null!, null!);
+        var service = new QualityService(unitOfWork, new RecordingAuditLogWriter(), null!, null!, null!, null!, null!);
         var result = await service.UpdateParametersAsync(new UpdateQualityParameterRequest(
             BranchCode: "0",
             AutoCreateInspectionOnReceipt: true,
@@ -109,7 +109,7 @@ public sealed class QualityInventorySourceAllocationTests
             .Options);
         await using var unitOfWork = new UnitOfWork(db, new HttpContextAccessor());
         var audit = new RecordingAuditLogWriter();
-        var service = new QualityService(unitOfWork, audit, null!, null!, null!, null!);
+        var service = new QualityService(unitOfWork, audit, null!, null!, null!, null!, null!);
         var request = new DecideQualityInspectionRequest(
             Guid.Empty,
             QualityDecision.Accepted,

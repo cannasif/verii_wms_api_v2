@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="ReceiptMustBeCompletedBeforeRouting" xml:space="preserve"><value>Mal kabul fiziksel olarak tamamlanmadan GKK depo/raf kararı ve buna bağlı DAT oluşturulamaz.</value></data>
+  <data name="DatDocumentSeriesRequired" xml:space="preserve"><value>GKK hedef deposu mal kabul deposundan farklı olduğu için DAT belge serisi seçilmelidir.</value></data>
+  <data name="DatDocumentSeriesInvalid" xml:space="preserve"><value>Seçilen DAT belge serisi aktif değil, bu şubeye ait değil veya depolar arası transfer için kullanılamaz.</value></data>
+</root>

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="ReceiptMustBeCompletedBeforeRouting" xml:space="preserve"><value>Eine GKK-Lager-/Lagerplatzentscheidung und der zugehörige Lagertransfer können erst nach Abschluss des physischen Wareneingangs erstellt werden.</value></data>
+  <data name="DatDocumentSeriesRequired" xml:space="preserve"><value>Eine Belegserie für den Lagertransfer muss gewählt werden, da sich das GKK-Ziellager vom Wareneingangslager unterscheidet.</value></data>
+  <data name="DatDocumentSeriesInvalid" xml:space="preserve"><value>Die gewählte Belegserie ist inaktiv, gehört zu einer anderen Niederlassung oder ist für Lagertransfers nicht zulässig.</value></data>
+</root>

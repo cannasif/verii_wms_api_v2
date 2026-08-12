@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="ReceiptMustBeCompletedBeforeRouting" xml:space="preserve"><value>La decisione GKK su magazzino/ubicazione e il relativo trasferimento non possono essere creati prima del completamento del ricevimento fisico.</value></data>
+  <data name="DatDocumentSeriesRequired" xml:space="preserve"><value>È necessario selezionare una serie documento di trasferimento perché il magazzino di destinazione GKK è diverso dal magazzino di ricevimento.</value></data>
+  <data name="DatDocumentSeriesInvalid" xml:space="preserve"><value>La serie documento selezionata non è attiva, appartiene a un'altra filiale o non può essere usata per trasferimenti tra magazzini.</value></data>
+</root>

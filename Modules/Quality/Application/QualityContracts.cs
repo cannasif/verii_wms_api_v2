@@ -29,6 +29,13 @@ public sealed record QualityDecisionDestinationDto(
     string LocationCode,
     string LocationName);
 
+public sealed record QualityDatDocumentSeriesDto(
+    long Id,
+    string Code,
+    string Name,
+    string PreviewDocumentNumber,
+    bool IsDefault);
+
 public sealed record QualityWarehouseRouteDto(
     long Id,
     long SourceWarehouseId,
@@ -133,7 +140,8 @@ public sealed record DecideQualityInspectionRequest(Guid IdempotencyKey, Quality
     string? ReasonCode, string? Note, IReadOnlyList<long>? LineIds, string? RowVersion,
     IReadOnlyList<QualityInspectionQuantityDecisionRequest>? QuantityDecisions = null,
     long? QuarantineLocationId = null,
-    IReadOnlyList<QualityInspectionDispositionRequest>? Dispositions = null);
+    IReadOnlyList<QualityInspectionDispositionRequest>? Dispositions = null,
+    long? WarehouseTransferDocumentSeriesId = null);
 
 public sealed record QualityDecisionResult(
     long GoodsReceiptId,
@@ -178,9 +186,12 @@ public sealed record QualityInspectionDispositionDto(
 public sealed record QualityInspectionDetail(QualityInspectionGridRow Header,
     IReadOnlyList<QualityInspectionLineDto> Lines, string? Note, byte[] RowVersion,
     bool AllowPartialDecision, bool RequireManagerApprovalForRelease,
+    WarehouseOperationStatus? SourceOperationStatus,
+    bool CanDecideInventoryDisposition,
     IReadOnlyList<QualityQuarantineDestinationDto> QuarantineDestinations,
     QualityDecisionDestinationDto? DefaultAcceptedDestination,
     QualityDecisionDestinationDto? DefaultRejectedDestination,
+    IReadOnlyList<QualityDatDocumentSeriesDto> WarehouseTransferDocumentSeries,
     IReadOnlyList<QualityInspectionDispositionDto> Dispositions);
 
 public interface IQualityService

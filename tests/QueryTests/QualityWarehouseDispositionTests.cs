@@ -2,6 +2,7 @@ using verii_wms_api_v2.Modules.Quality.Application;
 using verii_wms_api_v2.Modules.Quality.Domain;
 using verii_wms_api_v2.Modules.GoodsReceipt.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
+using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using Xunit;
 
 namespace verii_wms_api_v2.QueryTests;
@@ -18,6 +19,21 @@ public sealed class QualityWarehouseDispositionTests
     public void Different_warehouse_disposition_requires_a_DAT()
     {
         Assert.True(QualityService.RequiresDat(10, 20));
+    }
+
+    [Theory]
+    [InlineData(WarehouseOperationStatus.Processed, true)]
+    [InlineData(WarehouseOperationStatus.Completed, true)]
+    [InlineData(WarehouseOperationStatus.Draft, false)]
+    [InlineData(WarehouseOperationStatus.Released, false)]
+    [InlineData(WarehouseOperationStatus.InProgress, false)]
+    [InlineData(WarehouseOperationStatus.PartiallyProcessed, false)]
+    [InlineData(WarehouseOperationStatus.Cancelled, false)]
+    public void Quality_inventory_disposition_requires_a_physically_completed_receipt(
+        WarehouseOperationStatus status,
+        bool expected)
+    {
+        Assert.Equal(expected, QualityService.IsReceiptReadyForQualityDisposition(status));
     }
 
     [Fact]

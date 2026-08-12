@@ -213,7 +213,7 @@ public sealed class QualityRuleResolutionTests
     }
 
     private static QualityService CreateService(WmsDbContext db) =>
-        new(new UnitOfWork(db, new HttpContextAccessor()), null!, null!, null!, null!, null!);
+        new(new UnitOfWork(db, new HttpContextAccessor()), null!, null!, null!, null!, null!, null!);
 
     private static WmsDbContext CreateDbContext()
     {

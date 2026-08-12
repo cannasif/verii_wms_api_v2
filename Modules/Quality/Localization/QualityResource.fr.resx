@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="ReceiptMustBeCompletedBeforeRouting" xml:space="preserve"><value>La décision GKK d'entrepôt/emplacement et le transfert associé ne peuvent pas être créés avant la fin de la réception physique.</value></data>
+  <data name="DatDocumentSeriesRequired" xml:space="preserve"><value>Une série de documents de transfert doit être sélectionnée, car l'entrepôt cible GKK diffère de l'entrepôt de réception.</value></data>
+  <data name="DatDocumentSeriesInvalid" xml:space="preserve"><value>La série de documents sélectionnée est inactive, appartient à une autre agence ou ne peut pas être utilisée pour les transferts entre entrepôts.</value></data>
+</root>

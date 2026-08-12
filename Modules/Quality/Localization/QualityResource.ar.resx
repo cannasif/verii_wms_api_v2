@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <resheader name="resmimetype"><value>text/microsoft-resx</value></resheader>
+  <resheader name="version"><value>2.0</value></resheader>
+  <resheader name="reader"><value>System.Resources.ResXResourceReader, System.Windows.Forms</value></resheader>
+  <resheader name="writer"><value>System.Resources.ResXResourceWriter, System.Windows.Forms</value></resheader>
+  <data name="ReceiptMustBeCompletedBeforeRouting" xml:space="preserve"><value>لا يمكن إنشاء قرار مستودع/موقع GKK أو تحويل المستودع المرتبط به قبل اكتمال الاستلام الفعلي.</value></data>
+  <data name="DatDocumentSeriesRequired" xml:space="preserve"><value>يجب اختيار سلسلة مستند تحويل لأن مستودع وجهة GKK يختلف عن مستودع الاستلام.</value></data>
+  <data name="DatDocumentSeriesInvalid" xml:space="preserve"><value>سلسلة مستند التحويل المحددة غير نشطة أو تابعة لفرع آخر أو لا تصلح للتحويلات بين المستودعات.</value></data>
+</root>

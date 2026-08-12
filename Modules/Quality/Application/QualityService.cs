@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Localization;
 using System.Data;
 using System.Security.Cryptography;
 using verii_wms_api_v2.Modules.Audit.Application;
@@ -10,6 +11,7 @@ using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.Quality.Domain;
+using verii_wms_api_v2.Modules.Quality.Localization;
 using verii_wms_api_v2.Modules.Stock.Domain;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Application;
@@ -36,6 +38,7 @@ public sealed class QualityService(
     IWarehouseTransferService warehouseTransfer,
     IDocumentSeriesService documentSeries,
     IGoodsReceiptErpPostingCoordinator erpPosting,
+    IStringLocalizer<QualityResource> localizer,
     IStockTrackingPolicyResolver? stockTrackingPolicyResolver = null) : IQualityService, IQualityPolicyResolver, IQualityWarehouseRoutingResolver
 {
     private IGenericRepository<QualityParameter> Parameters => uow.Repository<QualityParameter>();
@@ -222,7 +225,7 @@ public sealed class QualityService(
             .Select(x => new { x.WarehouseCode, x.WarehouseName }).FirstOrDefaultAsync(ct);
         var receipt = inspection.SourceDocumentType == "GoodsReceipt"
             ? await uow.Repository<GoodsReceiptHeader>().Query().Where(x => x.Id == inspection.SourceDocumentId)
-                .Select(x => new { x.WaybillNo, x.ElectronicWaybillNo }).FirstOrDefaultAsync(ct)
+                .Select(x => new { x.WaybillNo, x.ElectronicWaybillNo, x.Status }).FirstOrDefaultAsync(ct)
             : null;
         var creator = inspection.CreatedBy.HasValue
             ? await (from user in uow.Repository<User>().Query()
@@ -259,6 +262,15 @@ public sealed class QualityService(
                 }).ToArray();
         var defaultAcceptedDestination = await GetDecisionDestinationAsync(routeDefaults.AcceptedLocationId, ct);
         var defaultRejectedDestination = await GetDecisionDestinationAsync(routeDefaults.RejectLocationId, ct);
+        var warehouseTransferDocumentSeries = (await documentSeries.GetLookupAsync(
+                WmsDocumentType.InterWarehouseTransfer, inspection.BranchCode, ct))
+            .Select(series => new QualityDatDocumentSeriesDto(
+                series.Id,
+                series.Code,
+                series.Name,
+                series.PreviewDocumentNumber,
+                series.IsDefault))
+            .ToArray();
         var dispositionHistory = await Dispositions.Query()
             .Where(x => x.QualityInspectionId == inspection.Id)
             .OrderBy(x => x.DecisionAtUtc)
@@ -289,7 +301,10 @@ public sealed class QualityService(
             .ToListAsync(ct);
         return new QualityInspectionDetail(header, lines, inspection.Note, inspection.RowVersion,
             parameter.AllowPartialDecision, parameter.RequireManagerApprovalForRelease,
-            quarantineDestinations, defaultAcceptedDestination, defaultRejectedDestination, dispositionHistory);
+            receipt?.Status,
+            receipt is not null && IsReceiptReadyForQualityDisposition(receipt.Status),
+            quarantineDestinations, defaultAcceptedDestination, defaultRejectedDestination,
+            warehouseTransferDocumentSeries, dispositionHistory);
     }
 
     public async Task<QualityDecisionResult> DecideInspectionAsync(long id, DecideQualityInspectionRequest request, long actor,
@@ -321,6 +336,8 @@ public sealed class QualityService(
                 .Include(x => x.Tasks)
                 .FirstOrDefaultAsync(x => x.Id == inspection.SourceDocumentId, token)
                 ?? throw AppException.NotFound("Mal kabul kaydı bulunamadı.");
+            if (!IsReceiptReadyForQualityDisposition(gr.Status))
+                throw AppException.Conflict(Message(QualityMessageKeys.ReceiptMustBeCompletedBeforeRouting));
             var parameter = await Parameters.FirstOrDefaultAsync(x => x.BranchCode == inspection.BranchCode && x.ParameterKey == "DEFAULT", false, token)
                 ?? Default(inspection.BranchCode);
             var warehouseRoutes = await GetActiveWarehouseRoutesAsync(parameter, token);
@@ -611,9 +628,13 @@ public sealed class QualityService(
             var datIdByRoute = new Dictionary<(long SourceWarehouseId, long TargetWarehouseId), long>();
             if (datDispositions.Count > 0)
             {
-                var series = (await documentSeries.GetLookupAsync(WmsDocumentType.InterWarehouseTransfer, inspection.BranchCode, token))
-                    .FirstOrDefault(x => x.IsDefault)
-                    ?? throw AppException.Conflict("Kalite kaynaklı depo değişikliği için varsayılan DAT belge serisi tanımlı değil.");
+                if (!request.WarehouseTransferDocumentSeriesId.HasValue
+                    || request.WarehouseTransferDocumentSeriesId.Value <= 0)
+                    throw AppException.Conflict(Message(QualityMessageKeys.DatDocumentSeriesRequired));
+                var series = (await documentSeries.GetLookupAsync(
+                        WmsDocumentType.InterWarehouseTransfer, inspection.BranchCode, token))
+                    .FirstOrDefault(x => x.Id == request.WarehouseTransferDocumentSeriesId.Value)
+                    ?? throw AppException.Conflict(Message(QualityMessageKeys.DatDocumentSeriesInvalid));
                 foreach (var group in datDispositions.GroupBy(x => new { x.SourceWarehouseId, x.TargetWarehouseId }))
                 {
                     var dat = await warehouseTransfer.CreateDraftAsync(new CreateWarehouseTransferDraftRequest(
@@ -749,6 +770,7 @@ public sealed class QualityService(
             await audit.WriteAsync(new("quality.inspection.decide", nameof(QualityInspection), id.ToString(), "Succeeded", "quality",
                 NewValues: new { request.IdempotencyKey, request.Decision, request.LineIds, request.ReasonCode,
                     request.QuantityDecisions, request.Dispositions, request.QuarantineLocationId,
+                    request.WarehouseTransferDocumentSeriesId,
                     MovementId = movement?.OperationId, WarehouseTransferIds = datIds },
                 ChangedFields: ["Status", "Lines", "InventoryStatus"]), token);
                 return gr.Id;
@@ -771,7 +793,8 @@ public sealed class QualityService(
                     request.ReasonCode,
                     request.QuantityDecisions,
                     request.Dispositions,
-                    request.QuarantineLocationId
+                    request.QuarantineLocationId,
+                    request.WarehouseTransferDocumentSeriesId
                 }), ct);
             throw;
         }
@@ -1454,6 +1477,9 @@ public sealed class QualityService(
                     ? QualityDecision.Rejected
                     : QualityDecision.Accepted;
     internal static bool RequiresDat(long sourceWarehouseId,long targetWarehouseId)=>sourceWarehouseId!=targetWarehouseId;
+    internal static bool IsReceiptReadyForQualityDisposition(WarehouseOperationStatus status) =>
+        status is WarehouseOperationStatus.Processed or WarehouseOperationStatus.Completed;
+    private string Message(string key) => localizer[key].Value;
     internal static void SynchronizeGoodsReceiptStatus(GoodsReceiptHeader receipt, long actor) =>
         GoodsReceiptExecutionService.RefreshHeaderStatus(receipt, actor);
 
