@@ -4,19 +4,49 @@ using verii_wms_api_v2.Shared;
 
 namespace verii_wms_api_v2.Modules.Quality.Application;
 
+public sealed record QualityQuarantineDestinationDto(
+    long Id,
+    long LocationId,
+    long WarehouseId,
+    int WarehouseCode,
+    string WarehouseName,
+    string LocationCode,
+    string LocationName,
+    int Priority,
+    bool IsDefault,
+    bool IsActive);
+
+public sealed record QualityQuarantineDestinationRequest(
+    long LocationId,
+    int Priority,
+    bool IsActive = true);
+
+public sealed record QualityDecisionDestinationDto(
+    long LocationId,
+    long WarehouseId,
+    int WarehouseCode,
+    string WarehouseName,
+    string LocationCode,
+    string LocationName);
+
 public sealed record QualityParameterDto(long Id, string BranchCode, bool AutoCreateInspectionOnReceipt,
     QualityInspectionMode DefaultInspectionMode, QualityFailAction DefaultFailAction, bool HoldInventoryUntilDecision,
     bool BlockPutawayUntilDecision, bool BlockErpPostingUntilDecision, bool RequireManagerApprovalForRelease,
     bool AllowPartialDecision, bool AllowDirectReceiptWhenNoRule, bool BlockReceiptWhenLotMissing,
     bool BlockReceiptWhenSerialMissing, bool BlockReceiptWhenExpiryMissing, long? DefaultQualityLocationId,
-    long? DefaultQuarantineLocationId, long? DefaultRejectLocationId, long? UpdatedBy, DateTime? UpdatedDate);
+    long? DefaultAcceptedLocationId,
+    long? DefaultQuarantineLocationId, long? DefaultRejectLocationId,
+    IReadOnlyList<QualityQuarantineDestinationDto> QuarantineDestinations,
+    long? UpdatedBy, DateTime? UpdatedDate);
 
 public sealed record UpdateQualityParameterRequest(string BranchCode, bool AutoCreateInspectionOnReceipt,
     QualityInspectionMode DefaultInspectionMode, QualityFailAction DefaultFailAction, bool HoldInventoryUntilDecision,
     bool BlockPutawayUntilDecision, bool BlockErpPostingUntilDecision, bool RequireManagerApprovalForRelease,
     bool AllowPartialDecision, bool AllowDirectReceiptWhenNoRule, bool BlockReceiptWhenLotMissing,
     bool BlockReceiptWhenSerialMissing, bool BlockReceiptWhenExpiryMissing, long? DefaultQualityLocationId,
-    long? DefaultQuarantineLocationId, long? DefaultRejectLocationId);
+    long? DefaultAcceptedLocationId,
+    long? DefaultQuarantineLocationId, long? DefaultRejectLocationId,
+    IReadOnlyList<QualityQuarantineDestinationRequest>? QuarantineDestinations = null);
 
 public sealed record QualityRuleUpsertRequest(string BranchCode, string ScopeType, long? StockId, string? StockGroupCode,
     QualityInspectionMode InspectionMode, QualitySamplingMode SamplingMode, decimal SamplingValue,
@@ -63,11 +93,22 @@ public sealed record QualityInspectionQuantityDecisionRequest(
     long LineId,
     decimal AcceptedQuantity,
     decimal RejectedQuantity,
-    decimal QuarantineQuantity);
+    decimal QuarantineQuantity,
+    long? QuarantineLocationId = null);
+
+public sealed record QualityInspectionDispositionRequest(
+    long LineId,
+    QualityDecision Decision,
+    decimal Quantity,
+    long? TargetLocationId = null,
+    string? ReasonCode = null,
+    string? Note = null);
 
 public sealed record DecideQualityInspectionRequest(Guid IdempotencyKey, QualityDecision Decision,
     string? ReasonCode, string? Note, IReadOnlyList<long>? LineIds, string? RowVersion,
-    IReadOnlyList<QualityInspectionQuantityDecisionRequest>? QuantityDecisions = null);
+    IReadOnlyList<QualityInspectionQuantityDecisionRequest>? QuantityDecisions = null,
+    long? QuarantineLocationId = null,
+    IReadOnlyList<QualityInspectionDispositionRequest>? Dispositions = null);
 
 public sealed record QualityDecisionResult(
     long GoodsReceiptId,
@@ -82,12 +123,40 @@ public sealed record QualityDecisionResult(
 public sealed record QualityInspectionLineDto(long Id, long? GoodsReceiptLineId, long StockId,
     string StockCode, string? StockName, string? YapCode, string? LotNo, string? SerialNo,
     DateOnly? ExpiryDate, decimal Quantity, decimal SampleQuantity, decimal AcceptedQuantity,
-    decimal RejectedQuantity, decimal QuarantineQuantity, QualityDecision Decision,
+    decimal RejectedQuantity, decimal QuarantineQuantity, long? QuarantineLocationId, QualityDecision Decision,
     string? ReasonCode, string? ReasonNote, long? DecisionBy, DateTimeOffset? DecisionAtUtc);
+
+public sealed record QualityInspectionDispositionDto(
+    long Id,
+    long LineId,
+    Guid IdempotencyKey,
+    int SequenceNo,
+    QualityDecision Decision,
+    decimal Quantity,
+    long SourceWarehouseId,
+    long SourceLocationId,
+    long TargetWarehouseId,
+    long TargetLocationId,
+    string SourceWarehouseCode,
+    string SourceLocationCode,
+    string TargetWarehouseCode,
+    string TargetLocationCode,
+    string SourceStockStatus,
+    string TargetStockStatus,
+    long? StockMovementOperationId,
+    long? WarehouseTransferId,
+    string? ReasonCode,
+    string? ReasonNote,
+    long DecisionBy,
+    DateTimeOffset DecisionAtUtc);
 
 public sealed record QualityInspectionDetail(QualityInspectionGridRow Header,
     IReadOnlyList<QualityInspectionLineDto> Lines, string? Note, byte[] RowVersion,
-    bool AllowPartialDecision, bool RequireManagerApprovalForRelease);
+    bool AllowPartialDecision, bool RequireManagerApprovalForRelease,
+    IReadOnlyList<QualityQuarantineDestinationDto> QuarantineDestinations,
+    QualityDecisionDestinationDto? DefaultAcceptedDestination,
+    QualityDecisionDestinationDto? DefaultRejectedDestination,
+    IReadOnlyList<QualityInspectionDispositionDto> Dispositions);
 
 public interface IQualityService
 {

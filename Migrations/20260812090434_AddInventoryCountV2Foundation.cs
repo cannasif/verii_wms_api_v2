@@ -531,24 +531,24 @@ namespace verii_wms_api_v2.Migrations
                     { 2811L, false, true, "0", "WMS.INVENTORY_COUNT.POLICY.MANAGE", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, null, true, "Sayım politikalarını yönet", null, null }
                 });
 
-            migrationBuilder.InsertData(
-                table: "RII_PERMISSION_GROUP_PERMISSIONS",
-                columns: new[] { "Id", "BranchCode", "CreatedBy", "CreatedDate", "DeletedBy", "DeletedDate", "PermissionDefinitionId", "PermissionGroupId", "UpdatedBy", "UpdatedDate" },
-                values: new object[,]
-                {
-                    { 2800L, "0", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, 2800L, 1001L, null, null },
-                    { 2801L, "0", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, 2801L, 1001L, null, null },
-                    { 2802L, "0", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, 2802L, 1001L, null, null },
-                    { 2803L, "0", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, 2803L, 1001L, null, null },
-                    { 2804L, "0", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, 2804L, 1001L, null, null },
-                    { 2805L, "0", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, 2805L, 1001L, null, null },
-                    { 2806L, "0", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, 2806L, 1001L, null, null },
-                    { 2807L, "0", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, 2807L, 1001L, null, null },
-                    { 2808L, "0", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, 2808L, 1001L, null, null },
-                    { 2809L, "0", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, 2809L, 1001L, null, null },
-                    { 2810L, "0", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, 2810L, 1001L, null, null },
-                    { 2811L, "0", null, new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc), null, null, 2811L, 1001L, null, null }
-                });
+            // Permission-group mapping identifiers are operational identity values and can
+            // already be occupied in long-lived databases. Seed by the business key and let
+            // SQL Server allocate the primary key so the migration remains idempotent.
+            migrationBuilder.Sql("""
+                INSERT INTO [RII_PERMISSION_GROUP_PERMISSIONS]
+                    ([BranchCode], [CreatedDate], [PermissionDefinitionId], [PermissionGroupId])
+                SELECT N'0', '2026-07-21T00:00:00.0000000Z', permission.[Id], CAST(1001 AS bigint)
+                FROM [RII_PERMISSION_DEFINITIONS] permission
+                WHERE permission.[Id] BETWEEN 2800 AND 2811
+                  AND NOT EXISTS
+                  (
+                      SELECT 1
+                      FROM [RII_PERMISSION_GROUP_PERMISSIONS] mapping
+                      WHERE mapping.[PermissionGroupId] = 1001
+                        AND mapping.[PermissionDefinitionId] = permission.[Id]
+                        AND mapping.[DeletedDate] IS NULL
+                  );
+                """);
 
             migrationBuilder.CreateIndex(
                 name: "IX_RII_INVENTORY_COUNT_ADJUSTMENT_HeaderId",
@@ -834,65 +834,11 @@ namespace verii_wms_api_v2.Migrations
             migrationBuilder.DropTable(
                 name: "RII_INVENTORY_COUNT_HEADER");
 
-            migrationBuilder.DeleteData(
-                table: "RII_PERMISSION_GROUP_PERMISSIONS",
-                keyColumn: "Id",
-                keyValue: 2800L);
-
-            migrationBuilder.DeleteData(
-                table: "RII_PERMISSION_GROUP_PERMISSIONS",
-                keyColumn: "Id",
-                keyValue: 2801L);
-
-            migrationBuilder.DeleteData(
-                table: "RII_PERMISSION_GROUP_PERMISSIONS",
-                keyColumn: "Id",
-                keyValue: 2802L);
-
-            migrationBuilder.DeleteData(
-                table: "RII_PERMISSION_GROUP_PERMISSIONS",
-                keyColumn: "Id",
-                keyValue: 2803L);
-
-            migrationBuilder.DeleteData(
-                table: "RII_PERMISSION_GROUP_PERMISSIONS",
-                keyColumn: "Id",
-                keyValue: 2804L);
-
-            migrationBuilder.DeleteData(
-                table: "RII_PERMISSION_GROUP_PERMISSIONS",
-                keyColumn: "Id",
-                keyValue: 2805L);
-
-            migrationBuilder.DeleteData(
-                table: "RII_PERMISSION_GROUP_PERMISSIONS",
-                keyColumn: "Id",
-                keyValue: 2806L);
-
-            migrationBuilder.DeleteData(
-                table: "RII_PERMISSION_GROUP_PERMISSIONS",
-                keyColumn: "Id",
-                keyValue: 2807L);
-
-            migrationBuilder.DeleteData(
-                table: "RII_PERMISSION_GROUP_PERMISSIONS",
-                keyColumn: "Id",
-                keyValue: 2808L);
-
-            migrationBuilder.DeleteData(
-                table: "RII_PERMISSION_GROUP_PERMISSIONS",
-                keyColumn: "Id",
-                keyValue: 2809L);
-
-            migrationBuilder.DeleteData(
-                table: "RII_PERMISSION_GROUP_PERMISSIONS",
-                keyColumn: "Id",
-                keyValue: 2810L);
-
-            migrationBuilder.DeleteData(
-                table: "RII_PERMISSION_GROUP_PERMISSIONS",
-                keyColumn: "Id",
-                keyValue: 2811L);
+            migrationBuilder.Sql("""
+                DELETE FROM [RII_PERMISSION_GROUP_PERMISSIONS]
+                WHERE [PermissionGroupId] = 1001
+                  AND [PermissionDefinitionId] BETWEEN 2800 AND 2811;
+                """);
 
             migrationBuilder.DeleteData(
                 table: "RII_PERMISSION_DEFINITIONS",

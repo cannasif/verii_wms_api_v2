@@ -14,6 +14,8 @@ using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 using verii_wms_api_v2.Modules.ErpIntegration.Infrastructure;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.GoodsReceipt.Infrastructure;
+using verii_wms_api_v2.Modules.GeneratorProduction.Domain;
+using verii_wms_api_v2.Modules.GeneratorProduction.Infrastructure;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.IncomingInvoice.Domain;
 using verii_wms_api_v2.Modules.IncomingInvoice.Infrastructure;
@@ -146,9 +148,11 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<VehicleCheckInHeader> VehicleCheckInHeaders => Set<VehicleCheckInHeader>();
     public DbSet<VehicleCheckInImage> VehicleCheckInImages => Set<VehicleCheckInImage>();
     public DbSet<QualityParameter> QualityParameters => Set<QualityParameter>();
+    public DbSet<QualityQuarantineDestination> QualityQuarantineDestinations => Set<QualityQuarantineDestination>();
     public DbSet<QualityRule> QualityRules => Set<QualityRule>();
     public DbSet<QualityInspection> QualityInspections => Set<QualityInspection>();
     public DbSet<QualityInspectionLine> QualityInspectionLines => Set<QualityInspectionLine>();
+    public DbSet<QualityInspectionDisposition> QualityInspectionDispositions => Set<QualityInspectionDisposition>();
     public DbSet<SerialNumberRule> SerialNumberRules => Set<SerialNumberRule>();
     public DbSet<StockSerialRegistry> StockSerialRegistry => Set<StockSerialRegistry>();
     public DbSet<StockTrackingPolicy> StockTrackingPolicies => Set<StockTrackingPolicy>();
@@ -224,6 +228,20 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<ProductionOutputExpectation> ProductionOutputExpectations => Set<ProductionOutputExpectation>();
     public DbSet<ProductionOrderAssignment> ProductionOrderAssignments => Set<ProductionOrderAssignment>();
     public DbSet<ProductionOrderDependency> ProductionOrderDependencies => Set<ProductionOrderDependency>();
+    public DbSet<GeneratorProductionProject> GeneratorProductionProjects => Set<GeneratorProductionProject>();
+    public DbSet<GeneratorProductionStation> GeneratorProductionStations => Set<GeneratorProductionStation>();
+    public DbSet<GeneratorProductionShift> GeneratorProductionShifts => Set<GeneratorProductionShift>();
+    public DbSet<GeneratorProductionStationShift> GeneratorProductionStationShifts => Set<GeneratorProductionStationShift>();
+    public DbSet<GeneratorProductionCalendarException> GeneratorProductionCalendarExceptions => Set<GeneratorProductionCalendarException>();
+    public DbSet<GeneratorProductionResource> GeneratorProductionResources => Set<GeneratorProductionResource>();
+    public DbSet<GeneratorProductionStationResource> GeneratorProductionStationResources => Set<GeneratorProductionStationResource>();
+    public DbSet<GeneratorProductionRoute> GeneratorProductionRoutes => Set<GeneratorProductionRoute>();
+    public DbSet<GeneratorProductionRouteOperation> GeneratorProductionRouteOperations => Set<GeneratorProductionRouteOperation>();
+    public DbSet<GeneratorProductionRouteDependency> GeneratorProductionRouteDependencies => Set<GeneratorProductionRouteDependency>();
+    public DbSet<GeneratorProductionOperation> GeneratorProductionOperations => Set<GeneratorProductionOperation>();
+    public DbSet<GeneratorProductionOperationDependency> GeneratorProductionOperationDependencies => Set<GeneratorProductionOperationDependency>();
+    public DbSet<GeneratorProductionPlanRevision> GeneratorProductionPlanRevisions => Set<GeneratorProductionPlanRevision>();
+    public DbSet<GeneratorProductionRule> GeneratorProductionRules => Set<GeneratorProductionRule>();
     public DbSet<ProductionTransferHeaderLink> ProductionTransferHeaderLinks => Set<ProductionTransferHeaderLink>();
     public DbSet<ProductionTransferLineLink> ProductionTransferLineLinks => Set<ProductionTransferLineLink>();
     public DbSet<ProductionTransferPolicy> ProductionTransferPolicies => Set<ProductionTransferPolicy>();
@@ -365,9 +383,11 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new VehicleCheckInHeaderConfiguration());
         modelBuilder.ApplyConfiguration(new VehicleCheckInImageConfiguration());
         modelBuilder.ApplyConfiguration(new QualityParameterConfiguration());
+        modelBuilder.ApplyConfiguration(new QualityQuarantineDestinationConfiguration());
         modelBuilder.ApplyConfiguration(new QualityRuleConfiguration());
         modelBuilder.ApplyConfiguration(new QualityInspectionConfiguration());
         modelBuilder.ApplyConfiguration(new QualityInspectionLineConfiguration());
+        modelBuilder.ApplyConfiguration(new QualityInspectionDispositionConfiguration());
         modelBuilder.ApplyConfiguration(new SerialNumberRuleConfiguration());
         modelBuilder.ApplyConfiguration(new StockSerialRegistryConfiguration());
         modelBuilder.ApplyConfiguration(new StockTrackingPolicyConfiguration());
@@ -443,6 +463,20 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new ProductionOutputExpectationConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionOrderAssignmentConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionOrderDependencyConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionProjectConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionStationConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionShiftConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionStationShiftConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionCalendarExceptionConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionResourceConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionStationResourceConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionRouteConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionRouteOperationConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionRouteDependencyConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionOperationConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionOperationDependencyConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionPlanRevisionConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionRuleConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionTransferHeaderLinkConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionTransferLineLinkConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionTransferBarcodeScanConfiguration());
@@ -689,6 +723,13 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             new PermissionDefinition { Id=2605, BranchCode="0", Code="WMS.PROCUREMENT.APPROVE", Name="Satınalma belgelerini onayla", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionDefinition>().HasData(
             new PermissionDefinition { Id=2700, BranchCode="0", Code="WMS.WAREHOUSE_ASSISTANT.QUERY_ALL_USERS", Name="Depo asistanında tüm kullanıcıların işlemlerini sorgula", Description="Depo asistanında başka kullanıcıların ve tüm kullanıcıların denetim kayıtlarını sorgulamaya izin verir.", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
+        modelBuilder.Entity<PermissionDefinition>().HasData(
+            new PermissionDefinition { Id=2900, BranchCode="0", Code="WMS.GENERATOR_PRODUCTION.VIEW", Name="Jeneratör üretim projelerini ve planını görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2901, BranchCode="0", Code="WMS.GENERATOR_PRODUCTION.CREATE", Name="Jeneratör üretim projesi oluştur ve düzenle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2902, BranchCode="0", Code="WMS.GENERATOR_PRODUCTION.PLAN", Name="Jeneratör üretim planını önizle ve uygula", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2903, BranchCode="0", Code="WMS.GENERATOR_PRODUCTION.OPERATE", Name="Jeneratör üretim operasyonlarını yürüt", IsActive=true, AvailableOnWeb=true, AvailableOnMobile=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2904, BranchCode="0", Code="WMS.GENERATOR_PRODUCTION.SETTINGS.VIEW", Name="Jeneratör üretim tanımlarını görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2905, BranchCode="0", Code="WMS.GENERATOR_PRODUCTION.SETTINGS.MANAGE", Name="Jeneratör üretim istasyon, rota, vardiya ve kurallarını yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionGroup>().HasData(new PermissionGroup { Id=1001, BranchCode="0", Name="System Administrators", Description="Tam sistem yönetimi", IsSystemAdmin=true, IsProtected=true, TemplateKey="SYSTEM_ADMINISTRATORS", IsActive=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(1,8).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(9,7).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
@@ -715,7 +756,6 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2512,4).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2600,6).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(new PermissionGroupPermission { Id=2700, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=2700, CreatedDate=seedDate });
-        modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2800,12).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<UserPermissionGroup>().HasData(new UserPermissionGroup { Id=1001, BranchCode="0", UserId=1, PermissionGroupId=1001, CreatedDate=seedDate });
     }
 
@@ -757,6 +797,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             throw new InvalidOperationException("KKD hak tüketim kayıtları değiştirilemez veya silinemez; ters tüketim kaydı kullanın.");
         if (ChangeTracker.Entries<KkdDistributionEntitlementAllocation>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("KKD hak rezervasyon kayıtları değiştirilemez veya silinemez; dağıtım iptaliyle serbest bırakın.");
+        if (ChangeTracker.Entries<GeneratorProductionPlanRevision>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Jeneratör üretim plan revizyonları değiştirilemez veya silinemez; yeni revizyon kaydı oluşturun.");
     }
 
     private static BarcodePolicyProfileSegment Segment(long id,long profileId,int order,BarcodePolicyField field,bool required)=>new(){Id=id,BranchCode="0",BarcodePolicyProfileId=profileId,Order=order,SegmentType=BarcodePolicySegmentType.Field,SourceField=field,IsRequired=required,Transform=BarcodeValueTransform.Upper,SequenceLength=8,DateFormat="yyyyMMdd",CreatedDate=new DateTime(2026,7,21,0,0,0,DateTimeKind.Utc)};

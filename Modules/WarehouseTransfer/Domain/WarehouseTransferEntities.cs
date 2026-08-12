@@ -28,7 +28,8 @@ public enum WarehouseTransferBusinessContext
     ProductionOutputMove = 4,
     SubcontractingIssue = 5,
     SubcontractingReceipt = 6,
-    SubcontractorToSubcontractor = 7
+    SubcontractorToSubcontractor = 7,
+    QualityDisposition = 8
 }
 
 public enum WarehouseTransferProcessType

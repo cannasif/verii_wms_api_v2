@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 
@@ -11,9 +12,11 @@ using verii_wms_api_v2.Modules.Identity.Infrastructure;
 namespace verii_wms_api_v2.Migrations
 {
     [DbContext(typeof(WmsDbContext))]
-    partial class WmsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260812163050_AddGeneratorProductionFoundation")]
+    partial class AddGeneratorProductionFoundation
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -3611,6 +3614,60 @@ namespace verii_wms_api_v2.Migrations
                             CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
                             IsDeleted = false,
                             PermissionDefinitionId = 2700L,
+                            PermissionGroupId = 1001L
+                        },
+                        new
+                        {
+                            Id = 2900L,
+                            BranchCode = "0",
+                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
+                            IsDeleted = false,
+                            PermissionDefinitionId = 2900L,
+                            PermissionGroupId = 1001L
+                        },
+                        new
+                        {
+                            Id = 2901L,
+                            BranchCode = "0",
+                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
+                            IsDeleted = false,
+                            PermissionDefinitionId = 2901L,
+                            PermissionGroupId = 1001L
+                        },
+                        new
+                        {
+                            Id = 2902L,
+                            BranchCode = "0",
+                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
+                            IsDeleted = false,
+                            PermissionDefinitionId = 2902L,
+                            PermissionGroupId = 1001L
+                        },
+                        new
+                        {
+                            Id = 2903L,
+                            BranchCode = "0",
+                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
+                            IsDeleted = false,
+                            PermissionDefinitionId = 2903L,
+                            PermissionGroupId = 1001L
+                        },
+                        new
+                        {
+                            Id = 2904L,
+                            BranchCode = "0",
+                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
+                            IsDeleted = false,
+                            PermissionDefinitionId = 2904L,
+                            PermissionGroupId = 1001L
+                        },
+                        new
+                        {
+                            Id = 2905L,
+                            BranchCode = "0",
+                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
+                            IsDeleted = false,
+                            PermissionDefinitionId = 2905L,
                             PermissionGroupId = 1001L
                         });
                 });

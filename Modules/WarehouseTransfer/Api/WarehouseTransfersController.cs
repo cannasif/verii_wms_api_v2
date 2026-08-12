@@ -17,6 +17,12 @@ public sealed class WarehouseTransfersController(
     IOperationCancellationCoordinator cancellationCoordinator,
     IPermissionAuthorizationService permissions) : ControllerBase
 {
+    private static readonly WarehouseTransferBusinessContext[] OperationalContexts =
+    [
+        WarehouseTransferBusinessContext.InterWarehouse,
+        WarehouseTransferBusinessContext.QualityDisposition
+    ];
+
     [HttpPost("drafts")]
     public async Task<IActionResult> CreateDraft(CreateWarehouseTransferDraftRequest request, CancellationToken ct)
     {
@@ -39,7 +45,7 @@ public sealed class WarehouseTransfersController(
     {
         await Require("WMS.WAREHOUSE_TRANSFER.VIEW", ct);
         return Ok(ApiResponse<WarehouseTransferDetail>.Ok(await service.GetDetailForContextAsync(
-            id, [WarehouseTransferBusinessContext.InterWarehouse], ct)));
+            id, OperationalContexts, ct)));
     }
 
     [HttpPut("{id:long}"), HttpPost("{id:long}/update")]
@@ -64,7 +70,7 @@ public sealed class WarehouseTransfersController(
     public async Task<IActionResult> Approve(long id, WarehouseTransferTransitionRequest request, CancellationToken ct)
     {
         await Require("WMS.WAREHOUSE_TRANSFER.APPROVE", ct);
-        await EnsureInterWarehouse(id, ct);
+        await EnsureOperationalContext(id, ct);
         return Ok(ApiResponse<WarehouseTransferOperationResult>.Ok(
             await operations.ApproveAsync(id, request, CurrentUserId(), ct), "Transfer onaylandı."));
     }
@@ -73,7 +79,7 @@ public sealed class WarehouseTransfersController(
     public async Task<IActionResult> Release(long id, WarehouseTransferTransitionRequest request, CancellationToken ct)
     {
         await Require("WMS.WAREHOUSE_TRANSFER.OPERATE", ct);
-        await EnsureInterWarehouse(id, ct);
+        await EnsureOperationalContext(id, ct);
         return Ok(ApiResponse<WarehouseTransferOperationResult>.Ok(
             await operations.ReleaseAsync(id, request, CurrentUserId(), ct), "Transfer serbest bırakıldı."));
     }
@@ -82,7 +88,7 @@ public sealed class WarehouseTransfersController(
     public async Task<IActionResult> Pick(long id, WarehouseTransferOperationRequest request, CancellationToken ct)
     {
         await Require("WMS.WAREHOUSE_TRANSFER.OPERATE", ct);
-        await EnsureInterWarehouse(id, ct);
+        await EnsureOperationalContext(id, ct);
         return Ok(ApiResponse<WarehouseTransferOperationResult>.Ok(
             await operations.PickAsync(id, request, CurrentUserId(), ct), "Toplama işlendi."));
     }
@@ -91,7 +97,7 @@ public sealed class WarehouseTransfersController(
     public async Task<IActionResult> Dispatch(long id, WarehouseTransferOperationRequest request, CancellationToken ct)
     {
         await Require("WMS.WAREHOUSE_TRANSFER.OPERATE", ct);
-        await EnsureInterWarehouse(id, ct);
+        await EnsureOperationalContext(id, ct);
         return Ok(ApiResponse<WarehouseTransferOperationResult>.Ok(
             await operations.DispatchAsync(id, request, CurrentUserId(), ct), "Transfer sevk edildi."));
     }
@@ -100,7 +106,7 @@ public sealed class WarehouseTransfersController(
     public async Task<IActionResult> Receive(long id, WarehouseTransferOperationRequest request, CancellationToken ct)
     {
         await Require("WMS.WAREHOUSE_TRANSFER.OPERATE", ct);
-        await EnsureInterWarehouse(id, ct);
+        await EnsureOperationalContext(id, ct);
         return Ok(ApiResponse<WarehouseTransferOperationResult>.Ok(
             await operations.ReceiveAsync(id, request, CurrentUserId(), ct), "Transfer kabul edildi."));
     }
@@ -109,7 +115,7 @@ public sealed class WarehouseTransfersController(
     public async Task<IActionResult> Putaway(long id, WarehouseTransferOperationRequest request, CancellationToken ct)
     {
         await Require("WMS.WAREHOUSE_TRANSFER.OPERATE", ct);
-        await EnsureInterWarehouse(id, ct);
+        await EnsureOperationalContext(id, ct);
         return Ok(ApiResponse<WarehouseTransferOperationResult>.Ok(
             await operations.PutawayAsync(id, request, CurrentUserId(), ct), "Transfer rafa yerleştirildi."));
     }
@@ -118,6 +124,8 @@ public sealed class WarehouseTransfersController(
     public async Task<IActionResult> Cancel(long id, WarehouseTransferTransitionRequest request, CancellationToken ct)
     {
         await Require("WMS.WAREHOUSE_TRANSFER.CANCEL", ct);
+        // Quality-originated DATs are immutable follow-up documents. Cancelling one without
+        // reopening/correcting the linked quality disposition would leave quality and stock state inconsistent.
         await EnsureInterWarehouse(id, ct);
         return Ok(ApiResponse<OperationCancellationResult>.Ok(
             await cancellationCoordinator.CancelWarehouseTransferAsync(
@@ -138,4 +146,7 @@ public sealed class WarehouseTransfersController(
 
     private Task EnsureInterWarehouse(long id, CancellationToken ct) =>
         service.EnsureContextAsync(id, [WarehouseTransferBusinessContext.InterWarehouse], ct);
+
+    private Task EnsureOperationalContext(long id, CancellationToken ct) =>
+        service.EnsureContextAsync(id, OperationalContexts, ct);
 }

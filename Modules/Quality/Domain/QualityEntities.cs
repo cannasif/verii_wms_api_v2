@@ -24,8 +24,20 @@ public sealed class QualityParameter : BaseEntity
     public bool BlockReceiptWhenSerialMissing { get; set; }
     public bool BlockReceiptWhenExpiryMissing { get; set; }
     public long? DefaultQualityLocationId { get; set; }
+    public long? DefaultAcceptedLocationId { get; set; }
     public long? DefaultQuarantineLocationId { get; set; }
     public long? DefaultRejectLocationId { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+    public ICollection<QualityQuarantineDestination> QuarantineDestinations { get; set; } = [];
+}
+
+public sealed class QualityQuarantineDestination : BaseEntity
+{
+    public long QualityParameterId { get; set; }
+    public QualityParameter QualityParameter { get; set; } = null!;
+    public long LocationId { get; set; }
+    public int Priority { get; set; } = 100;
+    public bool IsActive { get; set; } = true;
     public byte[] RowVersion { get; set; } = [];
 }
 
@@ -74,6 +86,7 @@ public sealed class QualityInspection : BaseEntity
     public string? Note { get; set; }
     public byte[] RowVersion { get; set; } = [];
     public ICollection<QualityInspectionLine> Lines { get; set; } = [];
+    public ICollection<QualityInspectionDisposition> Dispositions { get; set; } = [];
 }
 
 public sealed class QualityInspectionLine : BaseEntity
@@ -95,10 +108,44 @@ public sealed class QualityInspectionLine : BaseEntity
     public decimal AcceptedQuantity { get; set; }
     public decimal RejectedQuantity { get; set; }
     public decimal QuarantineQuantity { get; set; }
+    public long? QuarantineLocationId { get; set; }
     public QualityDecision Decision { get; set; } = QualityDecision.Pending;
     public string? ReasonCode { get; set; }
     public string? ReasonNote { get; set; }
     public long? DecisionBy { get; set; }
     public DateTimeOffset? DecisionAtUtc { get; set; }
     public byte[] RowVersion { get; set; } = [];
+    public ICollection<QualityInspectionDisposition> Dispositions { get; set; } = [];
+}
+
+/// <summary>
+/// Immutable execution evidence for each partial quality decision. A single inspection line can be
+/// distributed to multiple decisions and warehouse/location targets in the same request.
+/// </summary>
+public sealed class QualityInspectionDisposition : BaseEntity
+{
+    public long QualityInspectionId { get; set; }
+    public QualityInspection QualityInspection { get; set; } = null!;
+    public long QualityInspectionLineId { get; set; }
+    public QualityInspectionLine QualityInspectionLine { get; set; } = null!;
+    public Guid IdempotencyKey { get; set; }
+    public int SequenceNo { get; set; }
+    public QualityDecision Decision { get; set; }
+    public decimal Quantity { get; set; }
+    public long SourceWarehouseId { get; set; }
+    public long SourceLocationId { get; set; }
+    public long TargetWarehouseId { get; set; }
+    public long TargetLocationId { get; set; }
+    public string SourceWarehouseCodeSnapshot { get; set; } = string.Empty;
+    public string SourceLocationCodeSnapshot { get; set; } = string.Empty;
+    public string TargetWarehouseCodeSnapshot { get; set; } = string.Empty;
+    public string TargetLocationCodeSnapshot { get; set; } = string.Empty;
+    public string SourceStockStatus { get; set; } = string.Empty;
+    public string TargetStockStatus { get; set; } = string.Empty;
+    public long? StockMovementOperationId { get; set; }
+    public long? WarehouseTransferId { get; set; }
+    public string? ReasonCode { get; set; }
+    public string? ReasonNote { get; set; }
+    public long DecisionBy { get; set; }
+    public DateTimeOffset DecisionAtUtc { get; set; }
 }
