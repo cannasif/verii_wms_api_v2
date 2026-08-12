@@ -5,6 +5,25 @@ using verii_wms_api_v2.Shared.Infrastructure;
 
 namespace verii_wms_api_v2.Modules.GeneratorProduction.Infrastructure;
 
+public sealed class GeneratorProductionPolicyConfiguration : BaseEntityConfiguration<GeneratorProductionPolicy>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<GeneratorProductionPolicy> b)
+    {
+        b.ToTable("RII_GP_POLICY", t =>
+        {
+            t.HasCheckConstraint("CK_RII_GP_POLICY_PRIORITY", "[MinimumProjectPriority] >= 0 AND [MaximumProjectPriority] <= 100 AND [MinimumProjectPriority] <= [DefaultProjectPriority] AND [DefaultProjectPriority] <= [MaximumProjectPriority]");
+            t.HasCheckConstraint("CK_RII_GP_POLICY_QUANTITY", "[DefaultProjectQuantity] > 0 AND [DefaultProjectQuantity] <= [MaximumProjectQuantity] AND [MaximumProjectQuantity] <= 10000");
+            t.HasCheckConstraint("CK_RII_GP_POLICY_DAYS", "[DefaultLeadTimeDays] > 0 AND [MaximumScheduleRangeDays] > 0 AND [SchedulePastDays] >= 0 AND [ScheduleFutureDays] > 0 AND [SchedulePastDays] + [ScheduleFutureDays] <= [MaximumScheduleRangeDays] AND [GanttDefaultWindowDays] BETWEEN 1 AND [MaximumScheduleRangeDays] AND [WorkingCalendarSearchLimitDays] > 0");
+            t.HasCheckConstraint("CK_RII_GP_POLICY_REASON", "[MinimumPlanReasonLength] BETWEEN 3 AND 1000 AND [MinimumOperationReasonLength] BETWEEN 3 AND 1000");
+            t.HasCheckConstraint("CK_RII_GP_POLICY_REFRESH", "[AndonRefreshSeconds] BETWEEN 5 AND 3600");
+        });
+        b.Property(x => x.PolicyKey).HasMaxLength(30).IsRequired();
+        b.Property(x => x.PlanningOrderStrategy).HasConversion<string>().HasMaxLength(40);
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasIndex(x => new { x.BranchCode, x.PolicyKey }).IsUnique().HasFilter("[IsDeleted] = 0");
+    }
+}
+
 public sealed class GeneratorProductionProjectConfiguration : BaseEntityConfiguration<GeneratorProductionProject>
 {
     protected override void ConfigureEntity(EntityTypeBuilder<GeneratorProductionProject> b)
@@ -36,7 +55,7 @@ public sealed class GeneratorProductionShiftConfiguration : BaseEntityConfigurat
 {
     protected override void ConfigureEntity(EntityTypeBuilder<GeneratorProductionShift> b)
     {
-        b.ToTable("RII_GP_SHIFT"); b.Property(x => x.Code).HasMaxLength(30).IsRequired(); b.Property(x => x.Name).HasMaxLength(100).IsRequired();
+        b.ToTable("RII_GP_SHIFT"); b.Property(x => x.Code).HasMaxLength(30).IsRequired(); b.Property(x => x.Name).HasMaxLength(100).IsRequired(); b.Property(x => x.RowVersion).IsRowVersion();
         b.HasIndex(x => new { x.BranchCode, x.Code }).IsUnique().HasFilter("[IsDeleted] = 0");
     }
 }
@@ -48,6 +67,7 @@ public sealed class GeneratorProductionStationShiftConfiguration : BaseEntityCon
         b.ToTable("RII_GP_STATION_SHIFT", t => t.HasCheckConstraint("CK_RII_GP_STATION_SHIFT_CAPACITY", "[WeekdayMask] BETWEEN 0 AND 127 AND [CapacityMinutes] >= 0 AND [PersonnelCapacity] >= 0 AND [MachineCapacity] >= 0"));
         b.HasOne(x => x.Station).WithMany(x => x.Shifts).HasForeignKey(x => x.StationId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne(x => x.Shift).WithMany().HasForeignKey(x => x.ShiftId).OnDelete(DeleteBehavior.Restrict);
+        b.Property(x => x.RowVersion).IsRowVersion();
         b.HasIndex(x => new { x.StationId, x.ShiftId }).IsUnique().HasFilter("[IsDeleted] = 0");
     }
 }
@@ -68,6 +88,7 @@ public sealed class GeneratorProductionResourceConfiguration : BaseEntityConfigu
     {
         b.ToTable("RII_GP_RESOURCE", t => t.HasCheckConstraint("CK_RII_GP_RESOURCE_CAPACITY", "[Capacity] > 0")); b.Property(x => x.Code).HasMaxLength(50).IsRequired();
         b.Property(x => x.Name).HasMaxLength(200).IsRequired(); b.Property(x => x.ResourceType).HasConversion<string>().HasMaxLength(30);
+        b.Property(x => x.RowVersion).IsRowVersion();
         b.HasIndex(x => new { x.BranchCode, x.Code }).IsUnique().HasFilter("[IsDeleted] = 0");
     }
 }
@@ -109,7 +130,7 @@ public sealed class GeneratorProductionRouteDependencyConfiguration : BaseEntity
 {
     protected override void ConfigureEntity(EntityTypeBuilder<GeneratorProductionRouteDependency> b)
     {
-        b.ToTable("RII_GP_ROUTE_DEPENDENCY"); b.Property(x => x.DependencyType).HasConversion<string>().HasMaxLength(30);
+        b.ToTable("RII_GP_ROUTE_DEPENDENCY", t => t.HasCheckConstraint("CK_RII_GP_ROUTE_DEPENDENCY_LAG", "[LagMinutes] BETWEEN -10080 AND 10080")); b.Property(x => x.DependencyType).HasConversion<string>().HasMaxLength(30);
         b.HasOne(x => x.Route).WithMany(x => x.Dependencies).HasForeignKey(x => x.RouteId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne(x => x.PredecessorOperation).WithMany().HasForeignKey(x => x.PredecessorOperationId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne(x => x.SuccessorOperation).WithMany().HasForeignKey(x => x.SuccessorOperationId).OnDelete(DeleteBehavior.Restrict);

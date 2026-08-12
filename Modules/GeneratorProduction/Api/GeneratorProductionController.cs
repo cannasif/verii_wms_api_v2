@@ -21,6 +21,13 @@ public sealed class GeneratorProductionController(IGeneratorProductionService se
     [HttpGet("projects/{id:long}")]
     public async Task<IActionResult> Project(long id, CancellationToken ct) { await Require("WMS.GENERATOR_PRODUCTION.VIEW", ct); return Ok(ApiResponse<GeneratorProjectDetail>.Ok(await service.GetProjectAsync(id, ct))); }
 
+    [HttpGet("projects/{id:long}/operations")]
+    public async Task<IActionResult> ProjectOperations(long id, CancellationToken ct)
+    {
+        await Require("WMS.GENERATOR_PRODUCTION.VIEW", ct);
+        return Ok(ApiResponse<IReadOnlyList<GeneratorScheduleRow>>.Ok(await service.GetProjectOperationsAsync(id, ct)));
+    }
+
     [HttpPost("projects")]
     public async Task<IActionResult> CreateProject(CreateGeneratorProjectRequest request, CancellationToken ct)
     {
@@ -44,6 +51,29 @@ public sealed class GeneratorProductionController(IGeneratorProductionService se
 
     [HttpGet("definitions")]
     public async Task<IActionResult> Definitions(CancellationToken ct) { await Require("WMS.GENERATOR_PRODUCTION.SETTINGS.VIEW", ct); return Ok(ApiResponse<GeneratorDefinitionsResult>.Ok(await service.GetDefinitionsAsync(ct))); }
+
+    [HttpGet("definitions/policy")]
+    public async Task<IActionResult> Policy(CancellationToken ct)
+    {
+        await Require("WMS.GENERATOR_PRODUCTION.SETTINGS.VIEW", ct);
+        return Ok(ApiResponse<GeneratorPolicyRow>.Ok(await service.GetPolicyAsync(ct)));
+    }
+
+    [HttpPut("definitions/policy"), HttpPost("definitions/policy/update")]
+    public async Task<IActionResult> UpdatePolicy(UpdateGeneratorPolicyRequest request, CancellationToken ct)
+    {
+        await Require("WMS.GENERATOR_PRODUCTION.SETTINGS.MANAGE", ct);
+        return Ok(ApiResponse<GeneratorPolicyRow>.Ok(
+            await service.UpdatePolicyAsync(request, UserId(), ct), "Jeneratör üretim parametreleri kaydedildi."));
+    }
+
+    [HttpPut("definitions/rules/{id:long}"), HttpPost("definitions/rules/{id:long}/update")]
+    public async Task<IActionResult> UpdateRule(long id, UpdateGeneratorRuleRequest request, CancellationToken ct)
+    {
+        await Require("WMS.GENERATOR_PRODUCTION.SETTINGS.MANAGE", ct);
+        return Ok(ApiResponse<GeneratorRuleRow>.Ok(
+            await service.UpdateRuleAsync(id, request, UserId(), ct), "Planlama kuralı kaydedildi."));
+    }
 
     [HttpPost("definitions/bootstrap")]
     public async Task<IActionResult> Bootstrap(CancellationToken ct)
@@ -71,6 +101,21 @@ public sealed class GeneratorProductionController(IGeneratorProductionService se
     {
         await Require("WMS.GENERATOR_PRODUCTION.VIEW", ct);
         return Ok(ApiResponse<IReadOnlyList<GeneratorScheduleRow>>.Ok(await service.GetScheduleAsync(fromUtc, toUtc, ct)));
+    }
+
+    [HttpGet("planning/revisions")]
+    public async Task<IActionResult> Revisions([FromQuery] long? projectId, [FromQuery] int take = 100, CancellationToken ct = default)
+    {
+        await Require("WMS.GENERATOR_PRODUCTION.VIEW", ct);
+        return Ok(ApiResponse<IReadOnlyList<GeneratorPlanRevisionRow>>.Ok(await service.GetPlanRevisionsAsync(projectId, take, ct)));
+    }
+
+    [HttpPost("operations/{operationId:long}/transition")]
+    public async Task<IActionResult> TransitionOperation(long operationId, GeneratorOperationTransitionRequest request, CancellationToken ct)
+    {
+        await Require("WMS.GENERATOR_PRODUCTION.OPERATE", ct);
+        return Ok(ApiResponse<GeneratorScheduleRow>.Ok(
+            await service.TransitionOperationAsync(operationId, request, UserId(), ct), "Jeneratör üretim operasyonu güncellendi."));
     }
 
     private long UserId() => long.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id) ? id : throw AppException.Unauthorized("Kullanıcı kimliği bulunamadı.");

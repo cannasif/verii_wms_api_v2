@@ -228,6 +228,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<ProductionOutputExpectation> ProductionOutputExpectations => Set<ProductionOutputExpectation>();
     public DbSet<ProductionOrderAssignment> ProductionOrderAssignments => Set<ProductionOrderAssignment>();
     public DbSet<ProductionOrderDependency> ProductionOrderDependencies => Set<ProductionOrderDependency>();
+    public DbSet<GeneratorProductionPolicy> GeneratorProductionPolicies => Set<GeneratorProductionPolicy>();
     public DbSet<GeneratorProductionProject> GeneratorProductionProjects => Set<GeneratorProductionProject>();
     public DbSet<GeneratorProductionStation> GeneratorProductionStations => Set<GeneratorProductionStation>();
     public DbSet<GeneratorProductionShift> GeneratorProductionShifts => Set<GeneratorProductionShift>();
@@ -465,6 +466,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new ProductionOutputExpectationConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionOrderAssignmentConfiguration());
         modelBuilder.ApplyConfiguration(new ProductionOrderDependencyConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionPolicyConfiguration());
         modelBuilder.ApplyConfiguration(new GeneratorProductionProjectConfiguration());
         modelBuilder.ApplyConfiguration(new GeneratorProductionStationConfiguration());
         modelBuilder.ApplyConfiguration(new GeneratorProductionShiftConfiguration());

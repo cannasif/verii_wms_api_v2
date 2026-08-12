@@ -7,9 +7,36 @@ public enum GeneratorProjectStatus { Draft, ReadyToPlan, Planned, Released, InPr
 public enum GeneratorPartType { Common, Stator, Rotor, Stiffener, FinalAssembly, Outbound }
 public enum GeneratorStationArea { CommonEntry, Stator, Rotor, Stiffener, FinalAssembly, Outbound }
 public enum GeneratorOperationStatus { Draft, Planned, Ready, InProgress, Paused, Completed, Blocked, Cancelled }
+public enum GeneratorOperationAction { Start, Pause, Resume, Complete, ReportProblem, ResolveProblem }
 public enum GeneratorDependencyType { FinishToStart, StartToStart, FinishToFinish }
 public enum GeneratorRuleSeverity { Information, Warning, Error }
 public enum GeneratorResourceType { Personnel, Team, Welding, RobotWelding, ResinCassette, CuringOven, Laser, PigCart, Crane, Transport, Machine }
+public enum GeneratorPlanningOrderStrategy { PriorityThenDelivery, DeliveryThenPriority, ManualOrderThenDelivery }
+
+public sealed class GeneratorProductionPolicy : BaseEntity
+{
+    public string PolicyKey { get; set; } = "DEFAULT";
+    public int MinimumProjectPriority { get; set; } = 0;
+    public int MaximumProjectPriority { get; set; } = 100;
+    public int DefaultProjectPriority { get; set; } = 50;
+    public int DefaultProjectQuantity { get; set; } = 1;
+    public int MaximumProjectQuantity { get; set; } = 100;
+    public int DefaultLeadTimeDays { get; set; } = 30;
+    public int MinimumPlanReasonLength { get; set; } = 5;
+    public int MinimumOperationReasonLength { get; set; } = 3;
+    public int MaximumScheduleRangeDays { get; set; } = 366;
+    public int SchedulePastDays { get; set; } = 60;
+    public int ScheduleFutureDays { get; set; } = 180;
+    public int GanttDefaultWindowDays { get; set; } = 45;
+    public int AndonRefreshSeconds { get; set; } = 15;
+    public int WorkingCalendarSearchLimitDays { get; set; } = 3660;
+    public bool RequireComponentForFinalAssembly { get; set; } = true;
+    public bool RequireMaterialAvailabilityToStart { get; set; } = true;
+    public bool RequireProblemClosureToComplete { get; set; } = true;
+    public bool RequirePositiveCompletionQuantity { get; set; } = true;
+    public GeneratorPlanningOrderStrategy PlanningOrderStrategy { get; set; } = GeneratorPlanningOrderStrategy.PriorityThenDelivery;
+    public byte[] RowVersion { get; set; } = [];
+}
 
 public sealed class GeneratorProductionProject : BaseEntity
 {
@@ -26,7 +53,7 @@ public sealed class GeneratorProductionProject : BaseEntity
     public DateTime PlannedStartAtUtc { get; set; }
     public DateTime PlannedDeliveryAtUtc { get; set; }
     public GeneratorProjectStatus Status { get; set; } = GeneratorProjectStatus.Draft;
-    public int Priority { get; set; } = 50;
+    public int Priority { get; set; }
     public int Quantity { get; set; } = 1;
     public bool HasStator { get; set; } = true;
     public bool HasRotor { get; set; } = true;
@@ -65,6 +92,7 @@ public sealed class GeneratorProductionShift : BaseEntity
     public TimeOnly EndTime { get; set; }
     public int PlanningOrder { get; set; }
     public bool IsActive { get; set; } = true;
+    public byte[] RowVersion { get; set; } = [];
 }
 
 public sealed class GeneratorProductionStationShift : BaseEntity
@@ -80,6 +108,7 @@ public sealed class GeneratorProductionStationShift : BaseEntity
     public bool CraneAvailable { get; set; }
     public bool TransportAvailable { get; set; }
     public bool IsActive { get; set; } = true;
+    public byte[] RowVersion { get; set; } = [];
 }
 
 public sealed class GeneratorProductionCalendarException : BaseEntity
@@ -102,6 +131,7 @@ public sealed class GeneratorProductionResource : BaseEntity
     public int Capacity { get; set; } = 1;
     public bool IsExclusive { get; set; }
     public bool IsActive { get; set; } = true;
+    public byte[] RowVersion { get; set; } = [];
 }
 
 public sealed class GeneratorProductionStationResource : BaseEntity
@@ -214,6 +244,7 @@ public sealed class GeneratorProductionRule : BaseEntity
     public string Description { get; set; } = string.Empty;
     public GeneratorRuleSeverity Severity { get; set; }
     public bool IsEnabled { get; set; } = true;
+    public bool IsSystemRequired { get; set; }
     public string? ParametersJson { get; set; }
     public byte[] RowVersion { get; set; } = [];
 }
