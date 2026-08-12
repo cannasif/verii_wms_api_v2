@@ -65,7 +65,7 @@ public sealed class LocationImportService(IUnitOfWork unitOfWork, ILocationServi
         {
             new[] { "Alan", "Zorunlu", "Kural", "Örnek", "Not", "Davranış" },
             new[] { "WarehouseCode", "Evet", "Şubedeki depo kodu", "1", "Depolar sayfasından", "Kodla eşleştirilir" },
-            new[] { "LocationCode", "Evet", "A-Z, 0-9, nokta, alt çizgi veya tire; en fazla 50", "A01-R01-G01", "Depo içinde tekil", "Büyük harfe çevrilir" },
+            new[] { "LocationCode", "Evet", "A-Z, 0-9, nokta, eğik çizgi (/), alt çizgi veya tire; en fazla 50", "A01/R01-G01", "Depo içinde tekil", "Büyük harfe çevrilir" },
             new[] { "LocationType", "Evet", string.Join(" | ", LocationTypes.All), "Cell", "Listeden seçin", "Hiyerarşi doğrulanır" },
             new[] { "ParentLocationCode", "Tipe göre", "Aynı depodaki üst lokasyon", "A01-R01", "Zone kök olmalıdır", "Dosyadaki üst satır da olabilir" },
             new[] { "BarcodeEntryMode", "Evet", "Auto | Manual", "Auto", "Manual ise Barcode zorunlu", "Auto barkodu sistem üretir" },

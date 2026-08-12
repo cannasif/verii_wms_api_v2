@@ -768,16 +768,17 @@ public sealed class WarehouseOpeningImportService(
 
     private static string NormalizeLocationCode(string value, int rowNumber)
     {
-        var normalized = NormalizeAlias(value);
+        var normalized = NormalizeAlias(value, preserveSlash: true);
         if (string.IsNullOrWhiteSpace(normalized))
             throw AppException.BadRequest($"Satır {rowNumber}: LocationCode geçerli bir kod üretmiyor.");
-        if (normalized.Length <= 50) return normalized;
+        if (normalized.Length <= LocationCodePolicy.MaxLength) return normalized;
 
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalized)))[..8];
-        return $"{normalized[..41].TrimEnd('-', '.', '_')}-{hash}";
+        var prefixLength = LocationCodePolicy.MaxLength - hash.Length - 1;
+        return $"{normalized[..prefixLength].TrimEnd('-', '.', '_', '/')}-{hash}";
     }
 
-    private static string NormalizeAlias(string value)
+    private static string NormalizeAlias(string value, bool preserveSlash = false)
     {
         var source = value.Trim()
             .Replace('ı', 'i')
@@ -788,9 +789,9 @@ public sealed class WarehouseOpeningImportService(
         {
             if (CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.NonSpacingMark) continue;
             var upper = char.ToUpperInvariant(character);
-            if ((upper is >= 'A' and <= 'Z') || char.IsDigit(upper) || upper is '.' or '_')
+            if ((upper is >= 'A' and <= 'Z') || char.IsDigit(upper) || upper is '.' or '_' || (preserveSlash && upper == '/'))
             {
-                if (pendingSeparator && result.Length > 0 && result[^1] is not '-' and not '.' and not '_')
+                if (pendingSeparator && result.Length > 0 && result[^1] is not '-' and not '.' and not '_' and not '/')
                     result.Append('-');
                 result.Append(upper);
                 pendingSeparator = false;
@@ -804,7 +805,7 @@ public sealed class WarehouseOpeningImportService(
                 pendingSeparator = result.Length > 0;
             }
         }
-        return result.ToString().Trim('-', '.', '_');
+        return result.ToString().Trim('-', '.', '_', '/');
     }
 
     private static async Task<byte[]> ReadBytesAsync(Stream source, CancellationToken cancellationToken)

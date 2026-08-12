@@ -7,7 +7,7 @@
   <data name="LocationNotFound" xml:space="preserve"><value>Location was not found.</value></data>
   <data name="WarehouseChangeBlocked" xml:space="preserve"><value>The warehouse of a location with child locations cannot be changed.</value></data>
   <data name="DeleteHasChildren" xml:space="preserve"><value>A location with child locations cannot be deleted.</value></data>
-  <data name="InvalidCode" xml:space="preserve"><value>Location code must contain 1-50 characters and may only include letters, numbers, dots, hyphens and underscores.</value></data>
+  <data name="InvalidCode" xml:space="preserve"><value>Location code must contain 1-50 characters and may include letters, numbers, dots, forward slashes, hyphens and underscores.</value></data>
   <data name="InvalidName" xml:space="preserve"><value>Location name must contain 2-150 characters.</value></data>
   <data name="InvalidFieldLengths" xml:space="preserve"><value>One or more location fields exceed their allowed length.</value></data>
   <data name="InvalidAddressNumber" xml:space="preserve"><value>Aisle, rack, level or bin number is invalid.</value></data>

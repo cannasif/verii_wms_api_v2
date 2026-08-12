@@ -1,4 +1,3 @@
-using System.Text.RegularExpressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using verii_wms_api_v2.Modules.Audit.Application;
@@ -13,7 +12,7 @@ using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
 
 namespace verii_wms_api_v2.Modules.Location.Application;
 
-public sealed partial class LocationService(IUnitOfWork unitOfWork, IAuditLogWriter audit, IStringLocalizer<LocationResource> localizer) : ILocationService
+public sealed class LocationService(IUnitOfWork unitOfWork, IAuditLogWriter audit, IStringLocalizer<LocationResource> localizer) : ILocationService
 {
     private IGenericRepository<WarehouseLocation> Locations => unitOfWork.Repository<WarehouseLocation>();
     private IGenericRepository<WarehouseEntity> Warehouses => unitOfWork.Repository<WarehouseEntity>();
@@ -254,9 +253,9 @@ public sealed partial class LocationService(IUnitOfWork unitOfWork, IAuditLogWri
 
     private async Task<ResolvedLocation> ValidateAsync(LocationUpsertRequest request, long? currentId, CancellationToken cancellationToken)
     {
-        var code = request.Code?.Trim().ToUpperInvariant() ?? string.Empty;
+        var code = LocationCodePolicy.Normalize(request.Code);
         var name = request.Name?.Trim() ?? string.Empty;
-        if (!CodePattern().IsMatch(code)) throw AppException.BadRequest(Message(LocationMessageKeys.InvalidCode));
+        if (!LocationCodePolicy.IsValid(code)) throw AppException.BadRequest(Message(LocationMessageKeys.InvalidCode));
         if (name.Length is < 2 or > 150) throw AppException.BadRequest(Message(LocationMessageKeys.InvalidName));
         if (request.Description?.Length > 500 || request.ZoneCode?.Length > 50 || request.CapacityUnit?.Length > 20) throw AppException.BadRequest(Message(LocationMessageKeys.InvalidFieldLengths));
         if (request.AisleNo is < 0 or > 9999 || request.RackNo is < 0 or > 9999 || request.LevelNo is < 0 or > 9999 || request.BinNo is < 0 or > 9999) throw AppException.BadRequest(Message(LocationMessageKeys.InvalidAddressNumber));
@@ -387,6 +386,4 @@ public sealed partial class LocationService(IUnitOfWork unitOfWork, IAuditLogWri
     private sealed record WarehouseValidationRow(long Id, string BranchCode, int WarehouseCode);
     private sealed record LocationValidationRow(long Id, long? ParentLocationId, string Code, string LocationType, string? Barcode);
 
-    [GeneratedRegex("^[A-Z0-9][A-Z0-9._-]{0,49}$", RegexOptions.CultureInvariant)]
-    private static partial Regex CodePattern();
 }

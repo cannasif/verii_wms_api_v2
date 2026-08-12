@@ -477,6 +477,29 @@ public sealed class InitialWarehouseImportTests
     }
 
     [Fact]
+    public async Task Combined_opening_import_preserves_supported_slash_and_hyphen_in_location_code()
+    {
+        await using var db = CreateDb();
+        db.AddRange(
+            new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" },
+            new Stock { BranchCode = "0", ErpStockCode = "STK-01", StockName = "Test stok", BaseUnitCode = "ADET" });
+        await db.SaveChangesAsync();
+        var locations = new RecordingLocationImportService();
+        var balances = new RecordingOpeningBalanceImportService();
+        var service = new WarehouseOpeningImportService(Uow(db), locations, balances);
+        await using var stream = CombinedOpeningWorkbook(
+            [1, "A/01-B", "A/01-B Raf", "Rack", "STK-01", 2m, ""]);
+
+        var preview = await service.PreviewAsync(stream, "0");
+        stream.Position = 0;
+        await service.ImportAsync(stream, "0", preview.FileHash, "opening-slash-hyphen-0001",
+            false, preview.BalanceSnapshotHash);
+
+        Assert.Contains(locations.ImportedDefinitions, x => x.Code == "A/01-B");
+        Assert.Equal("A/01-B", balances.ImportedLocationCode);
+    }
+
+    [Fact]
     public async Task Combined_opening_preview_accepts_seven_column_customer_balance_workbook()
     {
         await using var db = CreateDb();
