@@ -8,6 +8,23 @@ public sealed record DashboardActivity(
     string Timestamp,
     string Status);
 
+public sealed record DashboardDailyOperationPoint(
+    string Date,
+    int GoodsReceiptCount,
+    int ShipmentCount,
+    int TransferCount);
+
+public sealed record DashboardInventoryHealth(
+    int AvailablePositionCount,
+    int ReservedPositionCount,
+    int QualityHoldPositionCount,
+    int UnavailablePositionCount);
+
+public sealed record DashboardSystemHealth(
+    string GeneratedAtUtc,
+    string? LastBalanceProjectionAtUtc,
+    int ErpIssueCount);
+
 public sealed record DashboardSummary(
     int StockItemCount,
     int GoodsReceiptOrderCount,
@@ -15,6 +32,14 @@ public sealed record DashboardSummary(
     int PendingGoodsReceiptApprovalCount,
     int MyAssignedTaskCount,
     int ActiveTransferOrderCount,
+    int GoodsReceiptTodayCount,
+    int ShipmentTodayCount,
+    int TransferTodayCount,
+    int PendingQualityInspectionCount,
+    int OpenOperationCount,
+    DashboardInventoryHealth InventoryHealth,
+    IReadOnlyList<DashboardDailyOperationPoint> DailyOperations,
+    DashboardSystemHealth SystemHealth,
     IReadOnlyList<DashboardActivity> RecentActivities);
 
 public interface IDashboardService
