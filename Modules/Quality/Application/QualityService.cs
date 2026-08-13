@@ -208,13 +208,20 @@ public sealed class QualityService(
             WarehouseName=x.Warehouse==null?null:x.Warehouse.WarehouseName,SupplierId=x.Inspection.SupplierId,
             SourceWaybillNo=x.Receipt==null?null:(x.Receipt.ElectronicWaybillNo??x.Receipt.WaybillNo),
             CreatedByName=x.User==null?null:(x.Detail==null?x.User.Username:(x.Detail.FirstName+" "+x.Detail.LastName)),
+            IsPriority=x.Inspection.IsPriority,
             Status=x.Inspection.Status.ToString(),LineCount=x.Inspection.Lines.Count,TotalQuantity=x.Inspection.Lines.Sum(line=>line.Quantity),
             CreatedAtUtc=x.Inspection.CreatedAtUtc,QueuedAtUtc=x.Inspection.QueuedAtUtc,DecidedAtUtc=x.Inspection.DecidedAtUtc,InspectorUserId=x.Inspection.InspectorUserId,
             CreatedBy=x.Inspection.CreatedBy,CreatedDate=x.Inspection.CreatedDate,UpdatedBy=x.Inspection.UpdatedBy,UpdatedDate=x.Inspection.UpdatedDate });
         var search=request.Search?.Trim(); q=q.Where(x=>string.IsNullOrWhiteSpace(search)||x.InspectionNo.Contains(search)||x.SourceDocumentNo.Contains(search)
             ||(x.SourceWaybillNo!=null&&x.SourceWaybillNo.Contains(search))||(x.CreatedByName!=null&&x.CreatedByName.Contains(search))
             ||(x.WarehouseName!=null&&x.WarehouseName.Contains(search)));
-        return await q.ApplyAdvancedFilters(request).ApplySort(request,nameof(QualityInspectionGridRow.QueuedAtUtc)).ToPagedResponseAsync(request,ct);
+        var filtered = q.ApplyAdvancedFilters(request);
+        if (string.IsNullOrWhiteSpace(request.SortBy))
+            return await filtered.OrderByDescending(x => x.IsPriority)
+                .ThenBy(x => x.QueuedAtUtc)
+                .ThenBy(x => x.Id)
+                .ToPagedResponseAsync(request, ct);
+        return await filtered.ApplySort(request,nameof(QualityInspectionGridRow.QueuedAtUtc)).ToPagedResponseAsync(request,ct);
     }
 
     public async Task<QualityInspectionDetail> GetInspectionAsync(long id, CancellationToken ct = default)
@@ -239,7 +246,7 @@ public sealed class QualityService(
             SourceDocumentId = inspection.SourceDocumentId, SourceDocumentNo = inspection.SourceDocumentNo,
             WarehouseId = inspection.WarehouseId, WarehouseCode = warehouse?.WarehouseCode, WarehouseName = warehouse?.WarehouseName,
             SupplierId = inspection.SupplierId, SourceWaybillNo = receipt == null ? null : receipt.ElectronicWaybillNo ?? receipt.WaybillNo,
-            CreatedByName = creator, Status = inspection.Status.ToString(), LineCount = inspection.Lines.Count,
+            CreatedByName = creator, IsPriority = inspection.IsPriority, Status = inspection.Status.ToString(), LineCount = inspection.Lines.Count,
             TotalQuantity = inspection.Lines.Sum(x => x.Quantity), CreatedAtUtc = inspection.CreatedAtUtc,
             QueuedAtUtc = inspection.QueuedAtUtc, DecidedAtUtc = inspection.DecidedAtUtc, InspectorUserId = inspection.InspectorUserId,
             CreatedBy = inspection.CreatedBy, CreatedDate = inspection.CreatedDate, UpdatedBy = inspection.UpdatedBy, UpdatedDate = inspection.UpdatedDate };
@@ -370,6 +377,33 @@ public sealed class QualityService(
             quarantineDestinations, defaultAcceptedDestination, defaultRejectedDestination,
             warehouseTransferDocumentSeries, dispositionHistory);
     }
+
+    public Task<QualityInspectionPriorityResult> ToggleInspectionPriorityAsync(
+        long id,
+        long actor,
+        CancellationToken ct = default) =>
+        uow.ExecuteInTransactionAsync(async token =>
+        {
+            var inspection = await Inspections.Query(true)
+                .FirstOrDefaultAsync(value => value.Id == id, token)
+                ?? throw AppException.NotFound(Message(QualityMessageKeys.InspectionNotFound));
+            if (!CanPrioritize(inspection.Status))
+                throw AppException.Conflict(Message(QualityMessageKeys.PriorityOnlyForOpenInspection));
+
+            var previous = inspection.IsPriority;
+            var current = TogglePriority(inspection, actor);
+            await uow.SaveChangesAsync(token);
+            await audit.WriteAsync(new(
+                "quality.inspection.priority.toggle",
+                nameof(QualityInspection),
+                id.ToString(),
+                "Succeeded",
+                "quality",
+                OldValues: new { IsPriority = previous },
+                NewValues: new { IsPriority = current },
+                ChangedFields: [nameof(QualityInspection.IsPriority)]), token);
+            return new QualityInspectionPriorityResult(id, current);
+        }, ct, IsolationLevel.Serializable);
 
     public async Task<QualityDecisionResult> DecideInspectionAsync(long id, DecideQualityInspectionRequest request, long actor,
         bool canReleaseQuarantine, CancellationToken ct = default)
@@ -850,6 +884,7 @@ public sealed class QualityService(
                 releasesQuarantine);
             inspection.Status = decisionState.InspectionStatus;
             inspection.DecidedAtUtc = decisionState.IsTerminal ? now : null;
+            if (decisionState.IsTerminal) inspection.IsPriority = false;
             inspection.InspectorUserId = actor; inspection.Note = Clean(request.Note, 1000);
             inspection.UpdatedBy = actor; inspection.UpdatedDate = DateTime.UtcNow;
             gr.QualityStatus = decisionState.ReceiptStatus;
@@ -1618,6 +1653,20 @@ public sealed class QualityService(
         return result;
     }
     private string Message(string key) => localizer[key].Value;
+
+    internal static bool CanPrioritize(QualityInspectionStatus status) => status is
+        QualityInspectionStatus.Pending or
+        QualityInspectionStatus.InProgress or
+        QualityInspectionStatus.PartiallyDecided or
+        QualityInspectionStatus.Quarantined;
+
+    internal static bool TogglePriority(QualityInspection inspection, long actor)
+    {
+        inspection.IsPriority = !inspection.IsPriority;
+        inspection.UpdatedBy = actor;
+        inspection.UpdatedDate = DateTime.UtcNow;
+        return inspection.IsPriority;
+    }
     internal static void SynchronizeGoodsReceiptStatus(GoodsReceiptHeader receipt, long actor) =>
         GoodsReceiptExecutionService.RefreshHeaderStatus(receipt, actor);
 

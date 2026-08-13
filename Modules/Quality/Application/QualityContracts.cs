@@ -111,6 +111,7 @@ public sealed class QualityInspectionGridRow
     public string SourceDocumentType { get; init; } = string.Empty; public long SourceDocumentId { get; init; } public string SourceDocumentNo { get; init; } = string.Empty;
     public long WarehouseId { get; init; } public int? WarehouseCode { get; init; } public string? WarehouseName { get; init; } public long? SupplierId { get; init; }
     public string? SourceWaybillNo { get; init; } public string? CreatedByName { get; init; }
+    public bool IsPriority { get; init; }
     public string Status { get; init; } = string.Empty; public int LineCount { get; init; } public decimal TotalQuantity { get; init; }
     public DateTimeOffset CreatedAtUtc { get; init; } public DateTimeOffset? QueuedAtUtc { get; init; } public DateTimeOffset? DecidedAtUtc { get; init; } public long? InspectorUserId { get; init; }
     public long? CreatedBy { get; init; } public DateTime? CreatedDate { get; init; } public long? UpdatedBy { get; init; } public DateTime? UpdatedDate { get; init; }
@@ -195,6 +196,8 @@ public sealed record QualityInspectionDetail(QualityInspectionGridRow Header,
     IReadOnlyList<QualityDatDocumentSeriesDto> WarehouseTransferDocumentSeries,
     IReadOnlyList<QualityInspectionDispositionDto> Dispositions);
 
+public sealed record QualityInspectionPriorityResult(long InspectionId, bool IsPriority);
+
 public interface IQualityService
 {
     Task<QualityParameterDto> GetParametersAsync(string branchCode, CancellationToken ct = default);
@@ -206,6 +209,7 @@ public interface IQualityService
     Task DeleteRuleAsync(long id, long actor, CancellationToken ct = default);
     Task<PagedResponse<QualityInspectionGridRow>> GetInspectionsPagedAsync(PagedRequest request, CancellationToken ct = default);
     Task<QualityInspectionDetail> GetInspectionAsync(long id, CancellationToken ct = default);
+    Task<QualityInspectionPriorityResult> ToggleInspectionPriorityAsync(long id, long actor, CancellationToken ct = default);
     Task<QualityDecisionResult> DecideInspectionAsync(long id, DecideQualityInspectionRequest request, long actor,
         bool canReleaseQuarantine, CancellationToken ct = default);
 }

@@ -94,6 +94,7 @@ public sealed class QualityInspection : BaseEntity
     public string SourceDocumentNo { get; set; } = string.Empty;
     public long WarehouseId { get; set; }
     public long? SupplierId { get; set; }
+    public bool IsPriority { get; set; }
     public QualityInspectionStatus Status { get; set; } = QualityInspectionStatus.Pending;
     public DateTimeOffset CreatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     public DateTimeOffset? QueuedAtUtc { get; set; }

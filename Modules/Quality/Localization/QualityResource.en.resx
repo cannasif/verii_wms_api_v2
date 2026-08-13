@@ -7,4 +7,6 @@
   <data name="ReceiptMustBeCompletedBeforeRouting" xml:space="preserve"><value>A GKK warehouse/location decision and its related inter-warehouse transfer cannot be created before physical goods receipt is completed.</value></data>
   <data name="DatDocumentSeriesRequired" xml:space="preserve"><value>An inter-warehouse transfer document series must be selected because the GKK target warehouse differs from the goods receipt warehouse.</value></data>
   <data name="DatDocumentSeriesInvalid" xml:space="preserve"><value>The selected inter-warehouse transfer document series is inactive, belongs to another branch, or cannot be used for inter-warehouse transfers.</value></data>
+  <data name="InspectionNotFound" xml:space="preserve"><value>Quality inspection was not found.</value></data>
+  <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>Only open quality inspections awaiting a decision can be prioritized.</value></data>
 </root>

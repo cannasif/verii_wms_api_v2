@@ -7,4 +7,6 @@
   <data name="ReceiptMustBeCompletedBeforeRouting" xml:space="preserve"><value>Mal kabul fiziksel olarak tamamlanmadan GKK depo/raf kararı ve buna bağlı DAT oluşturulamaz.</value></data>
   <data name="DatDocumentSeriesRequired" xml:space="preserve"><value>GKK hedef deposu mal kabul deposundan farklı olduğu için DAT belge serisi seçilmelidir.</value></data>
   <data name="DatDocumentSeriesInvalid" xml:space="preserve"><value>Seçilen DAT belge serisi aktif değil, bu şubeye ait değil veya depolar arası transfer için kullanılamaz.</value></data>
+  <data name="InspectionNotFound" xml:space="preserve"><value>Kalite kontrolü bulunamadı.</value></data>
+  <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>Yalnızca karar bekleyen açık GKK kayıtlarına öncelik verilebilir.</value></data>
 </root>

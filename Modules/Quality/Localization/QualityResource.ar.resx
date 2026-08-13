@@ -7,4 +7,6 @@
   <data name="ReceiptMustBeCompletedBeforeRouting" xml:space="preserve"><value>لا يمكن إنشاء قرار مستودع/موقع GKK أو تحويل المستودع المرتبط به قبل اكتمال الاستلام الفعلي.</value></data>
   <data name="DatDocumentSeriesRequired" xml:space="preserve"><value>يجب اختيار سلسلة مستند تحويل لأن مستودع وجهة GKK يختلف عن مستودع الاستلام.</value></data>
   <data name="DatDocumentSeriesInvalid" xml:space="preserve"><value>سلسلة مستند التحويل المحددة غير نشطة أو تابعة لفرع آخر أو لا تصلح للتحويلات بين المستودعات.</value></data>
+  <data name="InspectionNotFound" xml:space="preserve"><value>لم يتم العثور على فحص الجودة.</value></data>
+  <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>يمكن إعطاء الأولوية فقط لفحوصات الجودة المفتوحة التي تنتظر قرارًا.</value></data>
 </root>

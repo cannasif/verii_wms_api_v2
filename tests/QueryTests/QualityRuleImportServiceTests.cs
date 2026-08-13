@@ -135,6 +135,7 @@ public sealed class QualityRuleImportServiceTests
         public Task DeleteRuleAsync(long id, long actor, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<PagedResponse<QualityInspectionGridRow>> GetInspectionsPagedAsync(PagedRequest request, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<QualityInspectionDetail> GetInspectionAsync(long id, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<QualityInspectionPriorityResult> ToggleInspectionPriorityAsync(long id, long actor, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<QualityDecisionResult> DecideInspectionAsync(long id, DecideQualityInspectionRequest request, long actor, bool canReleaseQuarantine, CancellationToken ct = default) => throw new NotSupportedException();
     }
 }

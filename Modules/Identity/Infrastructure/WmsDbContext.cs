@@ -601,6 +601,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             new PermissionDefinition { Id=1050, BranchCode="0", Code="WMS.QUALITY.INSPECTIONS.VIEW", Name="Kalite kontrollerini görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=1051, BranchCode="0", Code="WMS.QUALITY.INSPECTIONS.DECIDE", Name="Kalite kararı ver", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=1052, BranchCode="0", Code="WMS.QUALITY.INSPECTIONS.RELEASE", Name="Karantinadaki ürünü serbest bırak", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=10520, BranchCode="0", Code="WMS.QUALITY.INSPECTIONS.PRIORITIZE", Name="GKK kayıtlarına öncelik ver ve önceliği kaldır", Description="Açık kalite inceleme kayıtlarının operasyon sırasını önceliklendirmeye izin verir.", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=1053, BranchCode="0", Code="WMS.SERIAL_RULES.VIEW", Name="Seri maske kurallarını görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=1054, BranchCode="0", Code="WMS.SERIAL_RULES.MANAGE", Name="Seri maske kurallarını yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionDefinition>().HasData(

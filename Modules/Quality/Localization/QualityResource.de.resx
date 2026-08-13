@@ -7,4 +7,6 @@
   <data name="ReceiptMustBeCompletedBeforeRouting" xml:space="preserve"><value>Eine GKK-Lager-/Lagerplatzentscheidung und der zugehörige Lagertransfer können erst nach Abschluss des physischen Wareneingangs erstellt werden.</value></data>
   <data name="DatDocumentSeriesRequired" xml:space="preserve"><value>Eine Belegserie für den Lagertransfer muss gewählt werden, da sich das GKK-Ziellager vom Wareneingangslager unterscheidet.</value></data>
   <data name="DatDocumentSeriesInvalid" xml:space="preserve"><value>Die gewählte Belegserie ist inaktiv, gehört zu einer anderen Niederlassung oder ist für Lagertransfers nicht zulässig.</value></data>
+  <data name="InspectionNotFound" xml:space="preserve"><value>Die Qualitätsprüfung wurde nicht gefunden.</value></data>
+  <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>Nur offene Qualitätsprüfungen, die auf eine Entscheidung warten, können priorisiert werden.</value></data>
 </root>

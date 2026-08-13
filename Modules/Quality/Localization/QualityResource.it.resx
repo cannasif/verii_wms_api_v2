@@ -7,4 +7,6 @@
   <data name="ReceiptMustBeCompletedBeforeRouting" xml:space="preserve"><value>La decisione GKK su magazzino/ubicazione e il relativo trasferimento non possono essere creati prima del completamento del ricevimento fisico.</value></data>
   <data name="DatDocumentSeriesRequired" xml:space="preserve"><value>È necessario selezionare una serie documento di trasferimento perché il magazzino di destinazione GKK è diverso dal magazzino di ricevimento.</value></data>
   <data name="DatDocumentSeriesInvalid" xml:space="preserve"><value>La serie documento selezionata non è attiva, appartiene a un'altra filiale o non può essere usata per trasferimenti tra magazzini.</value></data>
+  <data name="InspectionNotFound" xml:space="preserve"><value>Il controllo qualità non è stato trovato.</value></data>
+  <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>È possibile dare priorità solo ai controlli qualità aperti in attesa di decisione.</value></data>
 </root>

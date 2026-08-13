@@ -7,4 +7,6 @@
   <data name="ReceiptMustBeCompletedBeforeRouting" xml:space="preserve"><value>La décision GKK d'entrepôt/emplacement et le transfert associé ne peuvent pas être créés avant la fin de la réception physique.</value></data>
   <data name="DatDocumentSeriesRequired" xml:space="preserve"><value>Une série de documents de transfert doit être sélectionnée, car l'entrepôt cible GKK diffère de l'entrepôt de réception.</value></data>
   <data name="DatDocumentSeriesInvalid" xml:space="preserve"><value>La série de documents sélectionnée est inactive, appartient à une autre agence ou ne peut pas être utilisée pour les transferts entre entrepôts.</value></data>
+  <data name="InspectionNotFound" xml:space="preserve"><value>Le contrôle qualité est introuvable.</value></data>
+  <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>Seuls les contrôles qualité ouverts en attente de décision peuvent être prioritaires.</value></data>
 </root>

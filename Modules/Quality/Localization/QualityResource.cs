@@ -7,4 +7,6 @@ public static class QualityMessageKeys
     public const string ReceiptMustBeCompletedBeforeRouting = nameof(ReceiptMustBeCompletedBeforeRouting);
     public const string DatDocumentSeriesRequired = nameof(DatDocumentSeriesRequired);
     public const string DatDocumentSeriesInvalid = nameof(DatDocumentSeriesInvalid);
+    public const string InspectionNotFound = nameof(InspectionNotFound);
+    public const string PriorityOnlyForOpenInspection = nameof(PriorityOnlyForOpenInspection);
 }
