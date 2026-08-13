@@ -25,6 +25,10 @@ public sealed class StockImageLibraryTests
         Assert.Equal("[IsDeleted] = 0 AND [IsPrimary] = 1",primary.GetFilter());
         var order=Assert.Single(entity.GetIndexes(),x=>x.GetDatabaseName()=="UX_StockImage_Branch_Stock_SortOrder");
         Assert.True(order.IsUnique);
+        var stockRelation=Assert.Single(entity.GetForeignKeys());
+        Assert.Equal(typeof(Stock),stockRelation.PrincipalEntityType.ClrType);
+        Assert.DoesNotContain(entity.GetProperties(),property=>
+            property.Name.Contains("GoodsReceipt",StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]

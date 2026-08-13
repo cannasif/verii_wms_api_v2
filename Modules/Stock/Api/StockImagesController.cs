@@ -13,12 +13,27 @@ namespace verii_wms_api_v2.Modules.Stock.Api;
 public sealed class StockImagesController(IStockImageService service,IPermissionAuthorizationService permissions):ControllerBase
 {
     [HttpGet]
-    public async Task<IActionResult> List(long stockId,CancellationToken ct){await Require("ERP.MIRROR.VIEW",ct);return Ok(ApiResponse<IReadOnlyList<StockImageDto>>.Ok(await service.ListAsync(stockId,Branch(),ct)));}
+    public async Task<IActionResult> List(long stockId,CancellationToken ct)
+    {
+        await RequireAny([
+            "ERP.MIRROR.VIEW",
+            "WMS.GOODS_RECEIPT.VIEW",
+            "WMS.GOODS_RECEIPT.CREATE",
+            "WMS.GOODS_RECEIPT.RECEIVE"
+        ],ct);
+        return Ok(ApiResponse<IReadOnlyList<StockImageDto>>.Ok(await service.ListAsync(stockId,Branch(),ct)));
+    }
 
     [HttpPost,Consumes("multipart/form-data"),RequestSizeLimit(105_000_000),RequestFormLimits(MultipartBodyLengthLimit=105_000_000)]
     public async Task<IActionResult> Upload(long stockId,List<IFormFile>? files,[FromForm]List<string>? altTexts,CancellationToken ct)
     {
-        await Require("ERP.MIRROR.SYNC",ct);
+        // Mal kabul ekranı yalnız yükleme noktasıdır. Dosya doğrudan stockId ile stok
+        // kartına bağlanır; mal kabul veya mal kabul satırı için ek kaydı oluşturulmaz.
+        await RequireAny([
+            "ERP.MIRROR.SYNC",
+            "WMS.GOODS_RECEIPT.CREATE",
+            "WMS.GOODS_RECEIPT.RECEIVE"
+        ],ct);
         if(files is null||files.Count==0)throw AppException.BadRequest("En az bir görsel seçilmelidir.");
         var uploads=new List<StockImageUpload>(files.Count);
         for(var i=0;i<files.Count;i++)
@@ -42,4 +57,10 @@ public sealed class StockImagesController(IStockImageService service,IPermission
     private string Branch()=>User.FindFirstValue(JwtTokenIssuer.BranchCodeClaim)?.Trim()??throw AppException.Unauthorized("Şube bilgisi bulunamadı.");
     private long UserId()=>long.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier),out var id)?id:throw AppException.Unauthorized("Kullanıcı kimliği bulunamadı.");
     private async Task Require(string code,CancellationToken ct){if(!await permissions.HasPermissionAsync(User,code,ct))throw AppException.Forbidden();}
+    private async Task RequireAny(IReadOnlyCollection<string> codes,CancellationToken ct)
+    {
+        foreach(var code in codes)
+            if(await permissions.HasPermissionAsync(User,code,ct))return;
+        throw AppException.Forbidden();
+    }
 }
