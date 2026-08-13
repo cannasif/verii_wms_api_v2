@@ -930,12 +930,8 @@ public sealed class GoodsReceiptOperationsService(
         }
     }
 
-    private static decimal Sample(decimal quantity, ResolvedQualityPolicy policy) => policy.SamplingMode switch
-    {
-        QualitySamplingMode.Percentage => Math.Min(quantity, Math.Ceiling(quantity * policy.SamplingValue / 100m)),
-        QualitySamplingMode.FixedQuantity => Math.Min(quantity, policy.SamplingValue),
-        _ => quantity
-    };
+    private static decimal Sample(decimal quantity, ResolvedQualityPolicy policy) =>
+        QualitySamplingCalculator.Calculate(quantity, policy.SamplingMode, policy.SamplingValue);
     private static T Stamp<T>(T entity, long actor) where T : verii_wms_api_v2.Shared.Domain.BaseEntity { entity.CreatedBy = actor; entity.CreatedDate = DateTime.UtcNow; return entity; }
     private static string TaskNo(string documentNo)
     {

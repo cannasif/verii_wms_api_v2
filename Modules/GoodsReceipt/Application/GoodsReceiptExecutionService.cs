@@ -508,12 +508,8 @@ public sealed class GoodsReceiptExecutionService(
             header.CompletedBy ??= actor;
         }
     }
-    private static decimal Sample(decimal quantity, ResolvedQualityPolicy policy) => policy.SamplingMode switch
-    {
-        QualitySamplingMode.Percentage => Math.Min(quantity, Math.Ceiling(quantity * policy.SamplingValue / 100m)),
-        QualitySamplingMode.FixedQuantity => Math.Min(quantity, policy.SamplingValue),
-        _ => quantity
-    };
+    private static decimal Sample(decimal quantity, ResolvedQualityPolicy policy) =>
+        QualitySamplingCalculator.Calculate(quantity, policy.SamplingMode, policy.SamplingValue);
     private static string ExecutionNo(string documentNo, int sequence)
     { var value = $"{documentNo}-EX-{sequence:0000}"; return value.Length <= 60 ? value : value[^60..]; }
     private static string InspectionNo(string documentNo, Guid key)
