@@ -13,6 +13,32 @@ namespace verii_wms_api_v2.Modules.ErpMirror.Infrastructure;
 
 public sealed class ErpMirrorService(IUnitOfWork unitOfWork, INetsisReadService netsis, ILogger<ErpMirrorService> logger) : IErpMirrorService
 {
+    private static readonly IReadOnlyDictionary<string, string> CustomerSearchColumns =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["id"] = nameof(CustomerMirrorDto.Id),
+            ["branchCode"] = nameof(CustomerMirrorDto.BranchCode),
+            ["businessUnitCode"] = nameof(CustomerMirrorDto.BusinessUnitCode),
+            ["customerCode"] = nameof(CustomerMirrorDto.CustomerCode),
+            ["customerName"] = nameof(CustomerMirrorDto.CustomerName),
+            ["phone1"] = nameof(CustomerMirrorDto.Phone1),
+            ["phone2"] = nameof(CustomerMirrorDto.Phone2),
+            ["phone3"] = nameof(CustomerMirrorDto.Phone3),
+            ["city"] = nameof(CustomerMirrorDto.City),
+            ["district"] = nameof(CustomerMirrorDto.District),
+            ["countryCode"] = nameof(CustomerMirrorDto.CountryCode),
+            ["address"] = nameof(CustomerMirrorDto.Address),
+            ["customerType"] = nameof(CustomerMirrorDto.CustomerType),
+            ["taxOffice"] = nameof(CustomerMirrorDto.TaxOffice),
+            ["email"] = nameof(CustomerMirrorDto.Email),
+            ["website"] = nameof(CustomerMirrorDto.Website),
+            ["createdBy"] = nameof(CustomerMirrorDto.CreatedBy),
+            ["updatedBy"] = nameof(CustomerMirrorDto.UpdatedBy)
+        };
+
+    private static readonly string[] CustomerDefaultSearchColumns =
+        ["branchCode", "customerCode", "customerName"];
+
     private IGenericRepository<WarehouseEntity> Warehouses => unitOfWork.Repository<WarehouseEntity>();
     private IGenericRepository<StockEntity> Stocks => unitOfWork.Repository<StockEntity>();
     private IGenericRepository<CustomerEntity> Customers => unitOfWork.Repository<CustomerEntity>();
@@ -165,9 +191,7 @@ public sealed class ErpMirrorService(IUnitOfWork unitOfWork, INetsisReadService 
     }
     public Task<PagedResponse<CustomerMirrorDto>> GetCustomersPagedAsync(PagedRequest request, CancellationToken ct = default)
     {
-        var search = request.Search?.Trim();
         var query = Customers.Query()
-            .Where(x => string.IsNullOrWhiteSpace(search) || x.BranchCode.Contains(search) || x.CustomerCode.Contains(search) || x.CustomerName.Contains(search))
             .Select(x => new CustomerMirrorDto(
                 x.Id,
                 x.BranchCode,
@@ -190,6 +214,11 @@ public sealed class ErpMirrorService(IUnitOfWork unitOfWork, INetsisReadService 
                 x.CreatedDate,
                 x.UpdatedBy,
                 x.UpdatedDate))
+            .ApplySearch(
+                request,
+                CustomerSearchColumns,
+                CustomerDefaultSearchColumns,
+                AdvancedQueryExtensions.TurkishCaseInsensitiveSearchCollation)
             .ApplyAdvancedFilters(request).ApplySort(request, nameof(CustomerMirrorDto.CustomerCode));
         return PageAsync(query, request, ct);
     }

@@ -168,6 +168,34 @@ public sealed class AdvancedQueryExtensionsTests
     }
 
     [Fact]
+    public void Turkish_case_insensitive_search_collation_translates_to_sql_server()
+    {
+        using var db = SqlServerContext();
+        var query = db.Customers.Select(x => new CustomerSearchRow(x.Id, x.CustomerCode, x.CustomerName));
+        var request = new PagedRequest
+        {
+            Search = "sabit",
+            SearchFields = ["name"]
+        };
+        var columns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["code"] = nameof(CustomerSearchRow.Code),
+            ["name"] = nameof(CustomerSearchRow.Name)
+        };
+
+        var sql = query.ApplySearch(
+                request,
+                columns,
+                ["code", "name"],
+                AdvancedQueryExtensions.TurkishCaseInsensitiveSearchCollation)
+            .ToQueryString();
+
+        Assert.Contains("COLLATE Turkish_100_CI_AI", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("LIKE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("CustomerCode] COLLATE", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Search_rejects_a_field_outside_the_allow_list()
     {
         var request = new PagedRequest
@@ -417,6 +445,7 @@ public sealed class AdvancedQueryExtensionsTests
 
     private sealed record QueryRow(long Id, int SortKey, QueryStatus Status, decimal Quantity, int? OptionalCode);
     private sealed record SearchRow(long Id, string Code, string Name, string Prefix);
+    private sealed record CustomerSearchRow(long Id, string Code, string Name);
     private sealed class AutoSearchRow
     {
         public long Id { get; init; }

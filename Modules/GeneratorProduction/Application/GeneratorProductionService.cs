@@ -29,22 +29,23 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
 
     public async Task<PagedResponse<GeneratorProjectRow>> GetProjectsAsync(PagedRequest request, CancellationToken ct = default)
     {
-        var query = Projects.Query();
-        if (!string.IsNullOrWhiteSpace(request.EffectiveSearch))
-        {
-            var term = request.EffectiveSearch.Trim();
-            query = query.Where(x => x.ProjectCode.Contains(term) || x.ProjectName.Contains(term)
-                || (x.GeneratorType != null && x.GeneratorType.Contains(term))
-                || (x.SerialNumber != null && x.SerialNumber.Contains(term))
-                || (x.CustomerNameSnapshot != null && x.CustomerNameSnapshot.Contains(term)));
-        }
-
-        return await query.OrderBy(x => x.Status).ThenByDescending(x => x.Priority).ThenBy(x => x.PlannedDeliveryAtUtc)
+        var query = Projects.Query()
             .Select(x => new GeneratorProjectRow(
                 x.Id, x.ProjectCode, x.ProjectName, x.GeneratorType, x.SerialNumber, x.CustomerNameSnapshot,
                 x.Status, x.Priority, x.Quantity, x.PlannedStartAtUtc, x.PlannedDeliveryAtUtc,
                 x.PlanningOrder, x.Operations.Count, x.Operations.Count(o => o.Status == GeneratorOperationStatus.Completed),
                 Convert.ToBase64String(x.RowVersion)))
+            .ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["id"] = nameof(GeneratorProjectRow.Id),
+                ["projectCode"] = nameof(GeneratorProjectRow.ProjectCode),
+                ["projectName"] = nameof(GeneratorProjectRow.ProjectName),
+                ["generatorType"] = nameof(GeneratorProjectRow.GeneratorType),
+                ["serialNumber"] = nameof(GeneratorProjectRow.SerialNumber),
+                ["customerName"] = nameof(GeneratorProjectRow.CustomerName)
+            }, ["projectCode", "projectName"]);
+
+        return await query.OrderBy(x => x.Status).ThenByDescending(x => x.Priority).ThenBy(x => x.PlannedDeliveryAtUtc)
             .ToPagedResponseAsync(request, ct, 200);
     }
 

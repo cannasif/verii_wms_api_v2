@@ -2,12 +2,15 @@ using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json.Serialization;
+using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 
 namespace verii_wms_api_v2.Shared;
 
 public static class AdvancedQueryExtensions
 {
+    public const string TurkishCaseInsensitiveSearchCollation = "Turkish_100_CI_AI";
+
     private const int MaximumFilterCount = 20;
     private const int MaximumSearchFieldCount = 12;
     private const int MaximumSearchTermCount = 10;
@@ -25,7 +28,8 @@ public static class AdvancedQueryExtensions
         this IQueryable<T> query,
         PagedRequest request,
         IReadOnlyDictionary<string, string> columnMapping,
-        IReadOnlyCollection<string>? defaultColumns = null)
+        IReadOnlyCollection<string>? defaultColumns = null,
+        string? stringCollation = null)
     {
         ArgumentNullException.ThrowIfNull(query);
         ArgumentNullException.ThrowIfNull(request);
@@ -81,7 +85,7 @@ public static class AdvancedQueryExtensions
             Expression? anyColumn = null;
             foreach (var member in members)
             {
-                var current = BuildGeneralSearchMatch(member, term);
+                var current = BuildGeneralSearchMatch(member, term, stringCollation);
                 if (current is null) continue;
                 anyColumn = anyColumn is null ? current : Expression.OrElse(anyColumn, current);
             }
@@ -119,15 +123,24 @@ public static class AdvancedQueryExtensions
             || IsNumericType(type);
     }
 
-    private static Expression? BuildGeneralSearchMatch(Expression member, string term)
+    private static Expression? BuildGeneralSearchMatch(Expression member, string term, string? stringCollation)
     {
         var propertyType = member.Type;
         var underlying = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
         if (underlying == typeof(string))
         {
             var notNull = Expression.NotEqual(member, Expression.Constant(null, typeof(string)));
+            var searchTarget = string.IsNullOrWhiteSpace(stringCollation)
+                ? member
+                : Expression.Call(
+                    typeof(RelationalDbFunctionsExtensions),
+                    nameof(RelationalDbFunctionsExtensions.Collate),
+                    [typeof(string)],
+                    Expression.Property(null, typeof(EF), nameof(EF.Functions)),
+                    member,
+                    Expression.Constant(stringCollation));
             var contains = Expression.Call(
-                member,
+                searchTarget,
                 typeof(string).GetMethod(nameof(string.Contains), [typeof(string)])!,
                 Expression.Constant(term));
             return Expression.AndAlso(notNull, contains);
