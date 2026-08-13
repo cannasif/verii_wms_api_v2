@@ -114,7 +114,14 @@ public sealed partial class ProductionService(
             .GroupBy(x=>$"{x.SourceType}:{x.SourceSystemCode}:{x.WorkOrderNumber.Trim()}",StringComparer.OrdinalIgnoreCase)
             .Select(x=>x.First())
             .ToArray();
-        var assignmentSnapshot=await BuildWorkOrderAssignmentSnapshotAsync(branch, snapshotRows, ct);
+        // The work-order list must stay lightweight. Recipe materialization belongs to the
+        // selected work-order prepare endpoint; loading every recipe here made the initial
+        // production-transfer screen proportional to all listed work orders.
+        var assignmentSnapshot=await BuildWorkOrderAssignmentSnapshotAsync(
+            branch,
+            snapshotRows,
+            loadRecipes: false,
+            ct: ct);
         var fullyAssignedWorkOrders=assignmentSnapshot.GetFullyAssignedWorkOrderNumbers(ordered);
         var unassigned=ProductionSourceWorkOrderAssignmentFilter.ExcludeAssigned(ordered, fullyAssignedWorkOrders);
         var merged=MergeUnassignedWithCancellationRemaindersAsync(

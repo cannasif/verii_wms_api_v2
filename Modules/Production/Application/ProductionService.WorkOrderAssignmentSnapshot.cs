@@ -199,6 +199,7 @@ public sealed partial class ProductionService
     private async Task<WorkOrderAssignmentSnapshot> BuildWorkOrderAssignmentSnapshotAsync(
         string branch,
         IReadOnlyList<ProductionSourceWorkOrderRow> rows,
+        bool loadRecipes,
         CancellationToken ct)
     {
         var normalizedWorkOrders = rows
@@ -238,11 +239,16 @@ public sealed partial class ProductionService
                 withTransfers.Add(workOrderNumber);
         }
 
-        var recipeRows = rows
-            .GroupBy(row => row.WorkOrderNumber.Trim(), StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.First())
-            .ToArray();
-        var recipesByWorkOrder = await LoadRecipeMaterialsByWorkOrderAsync(branch, recipeRows, ct);
+        IReadOnlyDictionary<string, IReadOnlyList<PreparedNetsisProductionMaterial>> recipesByWorkOrder =
+            new Dictionary<string, IReadOnlyList<PreparedNetsisProductionMaterial>>(StringComparer.OrdinalIgnoreCase);
+        if (loadRecipes)
+        {
+            var recipeRows = rows
+                .GroupBy(row => row.WorkOrderNumber.Trim(), StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .ToArray();
+            recipesByWorkOrder = await LoadRecipeMaterialsByWorkOrderAsync(branch, recipeRows, ct);
+        }
 
         return new WorkOrderAssignmentSnapshot(
             withTransfers,
