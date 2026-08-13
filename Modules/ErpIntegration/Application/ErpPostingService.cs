@@ -35,7 +35,8 @@ public sealed class ErpPostingService(
     IOptions<ErpStockBalanceSyncOptions> balanceSyncOptionsAccessor,
     IBackgroundJobClient backgroundJobs,
     IHttpContextAccessor httpContextAccessor,
-    ILogger<ErpPostingService> logger) : IErpPostingService
+    ILogger<ErpPostingService> logger,
+    TimeProvider timeProvider) : IErpPostingService
 {
     private static readonly JsonSerializerOptions HashJsonOptions = new(JsonSerializerDefaults.Web);
     private IGenericRepository<ErpPostingRecord> Postings => unitOfWork.Repository<ErpPostingRecord>();
@@ -642,15 +643,6 @@ public sealed class ErpPostingService(
         }
 
         var headerProjectCode = ResolveHeaderProjectCode(usedOrderRows);
-        var orderDeliveryDate = usedOrderRows
-            .Where(x => x.DeliveryDate.HasValue)
-            .Select(x => x.DeliveryDate!.Value)
-            .OrderBy(x => x)
-            .FirstOrDefault();
-        if (usedOrderRows.Count > 0 && orderDeliveryDate == default)
-            orderDeliveryDate = header.DocumentDate == default
-                ? DateTime.Now
-                : header.DocumentDate.ToDateTime(TimeOnly.MinValue);
         return NewRequest(
             options.GoodsReceiptDocumentType,
             options.GoodsReceiptSeries,
@@ -663,7 +655,7 @@ public sealed class ErpPostingService(
             header.Description,
             lines,
             headerProjectCode,
-            orderDeliveryDate == default ? null : orderDeliveryDate,
+            ResolveGoodsReceiptDeliveryDate(timeProvider),
             ResolveGoodsReceiptInvoiceType(options));
     }
 
@@ -679,6 +671,12 @@ public sealed class ErpPostingService(
 
     internal static decimal GoodsReceiptQuantityForErp(GoodsReceiptLine line) =>
         line.ReceivedQuantity;
+
+    internal static DateTime ResolveGoodsReceiptDeliveryDate(TimeProvider provider)
+    {
+        ArgumentNullException.ThrowIfNull(provider);
+        return provider.GetLocalNow().DateTime;
+    }
 
     internal static string ResolveGoodsReceiptErpDocumentNo(GoodsReceiptHeader header)
     {
@@ -1010,7 +1008,7 @@ public sealed class ErpPostingService(
         NetsisItemSlipInvoiceType invoiceType = NetsisItemSlipInvoiceType.DomesticClosed)
     {
         if (lines.Count == 0) throw AppException.Conflict("ERP belgesi için pozitif miktarlı en az bir kalem gerekir.");
-        var now = DateTime.Now;
+        var now = timeProvider.GetLocalNow().DateTime;
         var resolvedDocumentDate = documentDate == default
             ? now
             : documentDate.ToDateTime(TimeOnly.MinValue);

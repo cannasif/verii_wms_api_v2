@@ -49,6 +49,23 @@ public sealed class GoodsReceiptNetsisOrderLinkTests
     }
 
     [Fact]
+    public void GoodsReceiptDeliveryDate_UsesErpPostingLocalDateInsteadOfPurchaseOrderDate()
+    {
+        var localZone = TimeZoneInfo.CreateCustomTimeZone(
+            "WMS test timezone",
+            TimeSpan.FromHours(3),
+            "WMS test timezone",
+            "WMS test timezone");
+        var provider = new FixedTimeProvider(
+            new DateTimeOffset(2026, 8, 13, 21, 15, 30, TimeSpan.Zero),
+            localZone);
+
+        var result = ErpPostingService.ResolveGoodsReceiptDeliveryDate(provider);
+
+        Assert.Equal(new DateTime(2026, 8, 14, 0, 15, 30), result);
+    }
+
+    [Fact]
     public void HeaderProject_UsesOnlyCommonLinkedOrderProject()
     {
         var sameProject = new[]
@@ -177,4 +194,12 @@ public sealed class GoodsReceiptNetsisOrderLinkTests
             10,
             0,
             10);
+
+    private sealed class FixedTimeProvider(
+        DateTimeOffset utcNow,
+        TimeZoneInfo localTimeZone) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utcNow;
+        public override TimeZoneInfo LocalTimeZone => localTimeZone;
+    }
 }

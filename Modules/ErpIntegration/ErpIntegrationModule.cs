@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.ErpIntegration.Infrastructure;
 using verii_wms_api_v2.Modules.ProductionTransfer.Application;
@@ -12,6 +13,7 @@ public static class ErpIntegrationModule
         IConfiguration configuration)
     {
         services.AddMemoryCache();
+        services.TryAddSingleton(TimeProvider.System);
         services.Configure<NetsisOptions>(configuration.GetSection(NetsisOptions.SectionName));
         services.PostConfigure<NetsisOptions>(options => ApplyLegacyOptions(options, configuration));
 
