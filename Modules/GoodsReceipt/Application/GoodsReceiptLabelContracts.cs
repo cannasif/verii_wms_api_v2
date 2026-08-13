@@ -6,7 +6,8 @@ namespace verii_wms_api_v2.Modules.GoodsReceipt.Application;
 public sealed record GenerateGoodsReceiptLabelLineRequest(long TaskLineId, int LabelCount = 1, decimal? QuantityPerLabel = null);
 public sealed record GenerateGoodsReceiptLabelBatchRequest(Guid IdempotencyKey, long TaskId,
     IReadOnlyList<GenerateGoodsReceiptLabelLineRequest> Lines, string? Description);
-public sealed record GoodsReceiptLabelBatchRow(long Id, long GoodsReceiptId, string DocumentNo, long? TaskId,
+public sealed record GoodsReceiptLabelBatchRow(long Id, long GoodsReceiptId, string DocumentNo,
+    string? WaybillNo, string? ElectronicWaybillNo, long? TaskId,
     string? TaskNo, string BatchNo, GoodsReceiptLabelBatchStatus Status, int TotalLabelCount,
     int PrintedLabelCount, int ConsumedLabelCount, int VoidLabelCount, DateTimeOffset? LastPrintedAtUtc,
     long? CreatedBy, DateTime? CreatedDate, byte[] RowVersion);

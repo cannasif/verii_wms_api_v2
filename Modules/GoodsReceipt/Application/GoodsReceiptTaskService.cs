@@ -51,11 +51,14 @@ public sealed class GoodsReceiptTaskService(
                      where string.IsNullOrWhiteSpace(search)
                          || task.TaskNo.Contains(search)
                          || header.DocumentNo.Contains(search)
+                         || (header.WaybillNo != null && header.WaybillNo.Contains(search))
+                         || (header.ElectronicWaybillNo != null && header.ElectronicWaybillNo.Contains(search))
                          || (header.SupplierCodeSnapshot != null && header.SupplierCodeSnapshot.Contains(search))
                          || (header.SupplierNameSnapshot != null && header.SupplierNameSnapshot.Contains(search))
                      select new { Task = task, Header = header, Warehouse = warehouse };
         var query = joined.Select(x => new GoodsReceiptTaskGridRow(
-            x.Task.Id, x.Header.Id, x.Task.BranchCode, x.Task.TaskNo, x.Header.DocumentNo, x.Task.TaskType, x.Task.Status,
+            x.Task.Id, x.Header.Id, x.Task.BranchCode, x.Task.TaskNo, x.Header.DocumentNo,
+            x.Header.WaybillNo, x.Header.ElectronicWaybillNo, x.Task.TaskType, x.Task.Status,
             x.Header.Status, x.Header.ProcessType, x.Header.LabelStrategy, x.Task.Priority, x.Warehouse.Id, x.Warehouse.WarehouseCode,
             x.Warehouse.WarehouseName, x.Header.SupplierCodeSnapshot, x.Header.SupplierNameSnapshot,
             lines.Count(line => line.GrTaskId == x.Task.Id),

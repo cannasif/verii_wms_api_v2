@@ -131,12 +131,16 @@ public sealed class GoodsReceiptLabelService(
         var joined = from batch in Batches.Query()
                      join header in headers on batch.GrHeaderId equals header.Id
                      select new { Batch = batch, Header = header };
-        var query = joined.Select(x => new GoodsReceiptLabelBatchRow(x.Batch.Id, x.Header.Id, x.Header.DocumentNo, null, null,
+        var query = joined.Select(x => new GoodsReceiptLabelBatchRow(x.Batch.Id, x.Header.Id, x.Header.DocumentNo,
+            x.Header.WaybillNo, x.Header.ElectronicWaybillNo, null, null,
             x.Batch.BatchNo, x.Batch.Status, x.Batch.TotalLabelCount, x.Batch.PrintedLabelCount,
             x.Batch.ConsumedLabelCount, x.Batch.VoidLabelCount, x.Batch.LastPrintedAtUtc,
             x.Batch.CreatedBy, x.Batch.CreatedDate, x.Batch.RowVersion));
         var search = request.Search?.Trim();
-        query = query.Where(x => string.IsNullOrWhiteSpace(search) || x.BatchNo.Contains(search) || x.DocumentNo.Contains(search));
+        query = query.Where(x => string.IsNullOrWhiteSpace(search)
+            || x.BatchNo.Contains(search)
+            || (x.WaybillNo != null && x.WaybillNo.Contains(search))
+            || (x.ElectronicWaybillNo != null && x.ElectronicWaybillNo.Contains(search)));
         return await query.ApplyAdvancedFilters(request).ApplySort(request, nameof(GoodsReceiptLabelBatchRow.CreatedDate))
             .ToPagedResponseAsync(request, ct);
     }
@@ -420,7 +424,8 @@ public sealed class GoodsReceiptLabelService(
                           join taskRow in uow.Repository<GoodsReceiptTask>().Query() on line.GrTaskId equals taskRow.Id
                           where line.Id == taskLineId.Value select taskRow).FirstOrDefaultAsync(ct);
         }
-        var row = new GoodsReceiptLabelBatchRow(batch.Id, header.Id, header.DocumentNo, task?.Id, task?.TaskNo,
+        var row = new GoodsReceiptLabelBatchRow(batch.Id, header.Id, header.DocumentNo,
+            header.WaybillNo, header.ElectronicWaybillNo, task?.Id, task?.TaskNo,
             batch.BatchNo, batch.Status, batch.TotalLabelCount, batch.PrintedLabelCount, batch.ConsumedLabelCount,
             batch.VoidLabelCount, batch.LastPrintedAtUtc, batch.CreatedBy, batch.CreatedDate, batch.RowVersion);
         return new(row, await MapRowsAsync(batch.Labels.OrderBy(x => x.Id).ToList(), ct));

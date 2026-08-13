@@ -6,6 +6,7 @@ namespace verii_wms_api_v2.Modules.GoodsReceipt.Application;
 
 public sealed record GoodsReceiptTaskGridRow(
     long Id, long GoodsReceiptId, string BranchCode, string TaskNo, string DocumentNo,
+    string? WaybillNo, string? ElectronicWaybillNo,
     GoodsReceiptTaskType TaskType, GoodsReceiptTaskStatus Status,
     WarehouseOperationStatus ReceiptStatus, GoodsReceiptProcessType ProcessType,
     GoodsReceiptLabelStrategy LabelStrategy, byte Priority,
