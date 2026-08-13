@@ -9,4 +9,17 @@
   <data name="DatDocumentSeriesInvalid" xml:space="preserve"><value>Seçilen DAT belge serisi aktif değil, bu şubeye ait değil veya depolar arası transfer için kullanılamaz.</value></data>
   <data name="InspectionNotFound" xml:space="preserve"><value>Kalite kontrolü bulunamadı.</value></data>
   <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>Yalnızca karar bekleyen açık GKK kayıtlarına öncelik verilebilir.</value></data>
+  <data name="ControlQuantityRequired" xml:space="preserve"><value>Karar verilen her GKK satırı için bu işlemde fiziksel olarak kontrol edilen miktarı girin.</value></data>
+  <data name="ControlQuantityMustBePositive" xml:space="preserve"><value>'{0}' için GKK kontrol miktarı negatif olamaz.</value></data>
+  <data name="ControlQuantityExceedsLot" xml:space="preserve"><value>'{0}' için kontrol edilen {1:0.######} miktar, karar bekleyen {2:0.######} miktarı aşamaz.</value></data>
+  <data name="ControlQuantityBelowMinimum" xml:space="preserve"><value>'{0}' için kontrol edilen {1:0.######} miktar yetersizdir. Kalite kuralına göre en az {2:0.######} miktar fiziksel olarak kontrol edilmelidir.</value></data>
+  <data name="WorkIdempotencyKeyRequired" xml:space="preserve"><value>GKK çalışma isteği için benzersiz işlem anahtarı zorunludur.</value></data>
+  <data name="WorkCannotStartForClosedInspection" xml:space="preserve"><value>Sonuçlandırılmış veya iptal edilmiş GKK incelemesi yeniden başlatılamaz.</value></data>
+  <data name="ReceiptMustBeCompletedBeforeWork" xml:space="preserve"><value>GKK çalışması başlamadan önce bağlı mal kabul fiziksel olarak tamamlanmalıdır.</value></data>
+  <data name="WorkAlreadyActiveByAnotherUser" xml:space="preserve"><value>Bu GKK incelemesinde {0} çalışıyor. Devralmak için mevcut oturum önce durdurulmalıdır.</value></data>
+  <data name="WorkStopReasonRequired" xml:space="preserve"><value>Duruş nedeni seçilmelidir.</value></data>
+  <data name="WorkOtherStopNoteRequired" xml:space="preserve"><value>Duruş nedeni Diğer ise açıklama zorunludur.</value></data>
+  <data name="WorkHasNoActiveSession" xml:space="preserve"><value>Durdurulabilecek aktif bir GKK çalışma oturumu bulunmuyor.</value></data>
+  <data name="WorkPauseRequiresOwnerOrSupervisor" xml:space="preserve"><value>Başka bir kullanıcının GKK oturumunu yalnızca kalite sorumlusu durdurabilir.</value></data>
+  <data name="WorkMustBeActiveForCurrentUser" xml:space="preserve"><value>Kararı uygulamadan önce GKK incelemesini kendi kullanıcınızla başlatın. Başka bir kullanıcı çalışıyorsa önce duruş veya vardiya devri yapılmalıdır.</value></data>
 </root>

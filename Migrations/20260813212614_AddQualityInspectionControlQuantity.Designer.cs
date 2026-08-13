@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 
@@ -11,9 +12,11 @@ using verii_wms_api_v2.Modules.Identity.Infrastructure;
 namespace verii_wms_api_v2.Migrations
 {
     [DbContext(typeof(WmsDbContext))]
-    partial class WmsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260813212614_AddQualityInspectionControlQuantity")]
+    partial class AddQualityInspectionControlQuantity
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -874,32 +877,6 @@ namespace verii_wms_api_v2.Migrations
                             IsActive = true,
                             IsDeleted = false,
                             Name = "GKK kayıtlarına öncelik ver ve önceliği kaldır"
-                        },
-                        new
-                        {
-                            Id = 10521L,
-                            AvailableOnMobile = true,
-                            AvailableOnWeb = true,
-                            BranchCode = "0",
-                            Code = "WMS.QUALITY.INSPECTIONS.EXECUTE",
-                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "Kalite incelemesinde kişisel çalışma oturumu açmaya ve duruş bildirmeye izin verir.",
-                            IsActive = true,
-                            IsDeleted = false,
-                            Name = "GKK incelemesini başlat, durdur ve devam ettir"
-                        },
-                        new
-                        {
-                            Id = 10522L,
-                            AvailableOnMobile = false,
-                            AvailableOnWeb = true,
-                            BranchCode = "0",
-                            Code = "WMS.QUALITY.INSPECTIONS.SUPERVISE",
-                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
-                            Description = "Başka bir kullanıcının açık GKK oturumunu durdurmaya ve vardiya devrini yönetmeye izin verir.",
-                            IsActive = true,
-                            IsDeleted = false,
-                            Name = "GKK çalışma oturumlarını yönet"
                         },
                         new
                         {
@@ -2777,33 +2754,6 @@ namespace verii_wms_api_v2.Migrations
                             CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
                             IsDeleted = false,
                             PermissionDefinitionId = 1052L,
-                            PermissionGroupId = 1001L
-                        },
-                        new
-                        {
-                            Id = 10520L,
-                            BranchCode = "0",
-                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
-                            IsDeleted = false,
-                            PermissionDefinitionId = 10520L,
-                            PermissionGroupId = 1001L
-                        },
-                        new
-                        {
-                            Id = 10521L,
-                            BranchCode = "0",
-                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
-                            IsDeleted = false,
-                            PermissionDefinitionId = 10521L,
-                            PermissionGroupId = 1001L
-                        },
-                        new
-                        {
-                            Id = 10522L,
-                            BranchCode = "0",
-                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
-                            IsDeleted = false,
-                            PermissionDefinitionId = 10522L,
                             PermissionGroupId = 1001L
                         },
                         new
@@ -18177,118 +18127,6 @@ namespace verii_wms_api_v2.Migrations
                     b.ToTable("RII_QUALITY_INSPECTION_LINES", (string)null);
                 });
 
-            modelBuilder.Entity("verii_wms_api_v2.Modules.Quality.Domain.QualityInspectionWorkSession", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
-
-                    b.Property<string>("BranchCode")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(10)
-                        .HasColumnType("nvarchar(10)")
-                        .HasDefaultValue("0");
-
-                    b.Property<long?>("CreatedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("CreatedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long?>("DeletedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("DeletedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long>("DurationSeconds")
-                        .HasColumnType("bigint");
-
-                    b.Property<Guid?>("EndIdempotencyKey")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTimeOffset?>("EndedAtUtc")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<long?>("EndedByUserId")
-                        .HasColumnType("bigint");
-
-                    b.Property<bool>("IsDeleted")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bit")
-                        .HasDefaultValue(false);
-
-                    b.Property<long>("QualityInspectionId")
-                        .HasColumnType("bigint");
-
-                    b.Property<byte[]>("RowVersion")
-                        .IsConcurrencyToken()
-                        .IsRequired()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("rowversion");
-
-                    b.Property<int>("SequenceNo")
-                        .HasColumnType("int");
-
-                    b.Property<Guid>("StartIdempotencyKey")
-                        .HasColumnType("uniqueidentifier");
-
-                    b.Property<DateTimeOffset>("StartedAtUtc")
-                        .HasColumnType("datetimeoffset");
-
-                    b.Property<string>("StopNote")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
-                    b.Property<string>("StopReason")
-                        .HasMaxLength(40)
-                        .HasColumnType("nvarchar(40)");
-
-                    b.Property<long?>("UpdatedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("UpdatedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<string>("WorkerNameSnapshot")
-                        .IsRequired()
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)");
-
-                    b.Property<long>("WorkerUserId")
-                        .HasColumnType("bigint");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("EndIdempotencyKey")
-                        .IsUnique()
-                        .HasFilter("[EndIdempotencyKey] IS NOT NULL AND [IsDeleted] = 0");
-
-                    b.HasIndex("IsDeleted");
-
-                    b.HasIndex("QualityInspectionId")
-                        .IsUnique()
-                        .HasFilter("[EndedAtUtc] IS NULL AND [IsDeleted] = 0");
-
-                    b.HasIndex("QualityInspectionId", "SequenceNo")
-                        .IsUnique();
-
-                    b.HasIndex("QualityInspectionId", "StartIdempotencyKey")
-                        .IsUnique();
-
-                    b.HasIndex("WorkerUserId", "StartedAtUtc");
-
-                    b.ToTable("RII_QUALITY_INSPECTION_WORK_SESSIONS", null, t =>
-                        {
-                            t.HasCheckConstraint("CK_RII_QUALITY_WORK_SESSION_DURATION", "[DurationSeconds] >= 0");
-
-                            t.HasCheckConstraint("CK_RII_QUALITY_WORK_SESSION_END", "[EndedAtUtc] IS NULL OR [EndedAtUtc] >= [StartedAtUtc]");
-                        });
-                });
-
             modelBuilder.Entity("verii_wms_api_v2.Modules.Quality.Domain.QualityParameter", b =>
                 {
                     b.Property<long>("Id")
@@ -28749,17 +28587,6 @@ namespace verii_wms_api_v2.Migrations
                     b.Navigation("Inspection");
                 });
 
-            modelBuilder.Entity("verii_wms_api_v2.Modules.Quality.Domain.QualityInspectionWorkSession", b =>
-                {
-                    b.HasOne("verii_wms_api_v2.Modules.Quality.Domain.QualityInspection", "QualityInspection")
-                        .WithMany("WorkSessions")
-                        .HasForeignKey("QualityInspectionId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("QualityInspection");
-                });
-
             modelBuilder.Entity("verii_wms_api_v2.Modules.Quality.Domain.QualityParameter", b =>
                 {
                     b.HasOne("verii_wms_api_v2.Modules.Location.Domain.WarehouseLocation", null)
@@ -30160,8 +29987,6 @@ namespace verii_wms_api_v2.Migrations
                     b.Navigation("Dispositions");
 
                     b.Navigation("Lines");
-
-                    b.Navigation("WorkSessions");
                 });
 
             modelBuilder.Entity("verii_wms_api_v2.Modules.Quality.Domain.QualityInspectionLine", b =>

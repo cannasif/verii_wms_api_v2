@@ -9,4 +9,17 @@
   <data name="DatDocumentSeriesInvalid" xml:space="preserve"><value>La serie documental seleccionada está inactiva, pertenece a otra sucursal o no puede utilizarse para traslados entre almacenes.</value></data>
   <data name="InspectionNotFound" xml:space="preserve"><value>No se encontró la inspección de calidad.</value></data>
   <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>Solo se pueden priorizar las inspecciones de calidad abiertas pendientes de decisión.</value></data>
+  <data name="ControlQuantityRequired" xml:space="preserve"><value>Introduzca la cantidad inspeccionada físicamente en esta operación para cada línea GKK que se vaya a decidir.</value></data>
+  <data name="ControlQuantityMustBePositive" xml:space="preserve"><value>La cantidad inspeccionada GKK para '{0}' no puede ser negativa.</value></data>
+  <data name="ControlQuantityExceedsLot" xml:space="preserve"><value>La cantidad inspeccionada {1:0.######} para '{0}' no puede superar la cantidad pendiente de decisión, {2:0.######}.</value></data>
+  <data name="ControlQuantityBelowMinimum" xml:space="preserve"><value>La cantidad inspeccionada {1:0.######} para '{0}' es insuficiente. Deben inspeccionarse físicamente al menos {2:0.######} según la regla de calidad.</value></data>
+  <data name="WorkIdempotencyKeyRequired" xml:space="preserve"><value>Se requiere una clave de operación única para la solicitud de trabajo GKK.</value></data>
+  <data name="WorkCannotStartForClosedInspection" xml:space="preserve"><value>Una inspección GKK finalizada o cancelada no puede reiniciarse.</value></data>
+  <data name="ReceiptMustBeCompletedBeforeWork" xml:space="preserve"><value>La recepción física relacionada debe finalizar antes de iniciar el trabajo GKK.</value></data>
+  <data name="WorkAlreadyActiveByAnotherUser" xml:space="preserve"><value>{0} está trabajando en esta inspección GKK. La sesión activa debe detenerse antes del relevo.</value></data>
+  <data name="WorkStopReasonRequired" xml:space="preserve"><value>Seleccione un motivo de parada.</value></data>
+  <data name="WorkOtherStopNoteRequired" xml:space="preserve"><value>Se requiere una explicación cuando el motivo es Otro.</value></data>
+  <data name="WorkHasNoActiveSession" xml:space="preserve"><value>No hay una sesión de trabajo GKK activa para detener.</value></data>
+  <data name="WorkPauseRequiresOwnerOrSupervisor" xml:space="preserve"><value>Solo el operador activo o un supervisor de calidad puede detener esta sesión.</value></data>
+  <data name="WorkMustBeActiveForCurrentUser" xml:space="preserve"><value>Inicie la inspección GKK con su usuario antes de aplicar la decisión. Primero debe detenerse o transferirse la sesión de otro usuario.</value></data>
 </root>

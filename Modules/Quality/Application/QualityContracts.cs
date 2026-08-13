@@ -113,7 +113,15 @@ public sealed class QualityInspectionGridRow
     public string? SourceWaybillNo { get; init; } public string? CreatedByName { get; init; }
     public bool IsPriority { get; init; }
     public string Status { get; init; } = string.Empty; public int LineCount { get; init; } public decimal TotalQuantity { get; init; }
+    public decimal RequiredInspectionQuantity { get; init; } public decimal InspectedQuantity { get; init; }
     public DateTimeOffset CreatedAtUtc { get; init; } public DateTimeOffset? QueuedAtUtc { get; init; } public DateTimeOffset? DecidedAtUtc { get; init; } public long? InspectorUserId { get; init; }
+    public string WorkState { get; init; } = QualityInspectionWorkState.NotStarted.ToString();
+    public long RecordedWorkSeconds { get; init; }
+    public int WorkSessionCount { get; init; }
+    public int ParticipantCount { get; init; }
+    public long? ActiveWorkerUserId { get; init; }
+    public string? ActiveWorkerName { get; init; }
+    public DateTimeOffset? ActiveWorkStartedAtUtc { get; init; }
     public long? CreatedBy { get; init; } public DateTime? CreatedDate { get; init; } public long? UpdatedBy { get; init; } public DateTime? UpdatedDate { get; init; }
 }
 
@@ -137,12 +145,17 @@ public sealed record QualityInspectionDispositionRequest(
     string? ReasonCode = null,
     string? Note = null);
 
+public sealed record QualityInspectionControlQuantityRequest(
+    long LineId,
+    decimal InspectedQuantity);
+
 public sealed record DecideQualityInspectionRequest(Guid IdempotencyKey, QualityDecision Decision,
     string? ReasonCode, string? Note, IReadOnlyList<long>? LineIds, string? RowVersion,
     IReadOnlyList<QualityInspectionQuantityDecisionRequest>? QuantityDecisions = null,
     long? QuarantineLocationId = null,
     IReadOnlyList<QualityInspectionDispositionRequest>? Dispositions = null,
-    long? WarehouseTransferDocumentSeriesId = null);
+    long? WarehouseTransferDocumentSeriesId = null,
+    IReadOnlyList<QualityInspectionControlQuantityRequest>? ControlQuantities = null);
 
 public sealed record QualityDecisionResult(
     long GoodsReceiptId,
@@ -156,10 +169,22 @@ public sealed record QualityDecisionResult(
 
 public sealed record QualityInspectionLineDto(long Id, long? GoodsReceiptLineId, long StockId,
     string StockCode, string? StockName, string? YapCode, string? LotNo, string? SerialNo,
-    DateOnly? ExpiryDate, decimal Quantity, decimal SampleQuantity, decimal AcceptedQuantity,
+    DateOnly? ExpiryDate, decimal Quantity, decimal SampleQuantity, decimal InspectedQuantity, decimal AcceptedQuantity,
     decimal RejectedQuantity, decimal QuarantineQuantity, long? QuarantineLocationId, QualityDecision Decision,
     string? ReasonCode, string? ReasonNote, long? DecisionBy, DateTimeOffset? DecisionAtUtc,
     QualityDecisionDestinationDto? DefaultAcceptedDestination);
+
+public sealed record QualityInspectionControlDto(
+    long Id,
+    long LineId,
+    Guid IdempotencyKey,
+    decimal LotQuantity,
+    decimal RequiredQuantity,
+    decimal InspectedQuantity,
+    string OutcomeSummary,
+    string? Note,
+    long InspectedBy,
+    DateTimeOffset InspectedAtUtc);
 
 public sealed record QualityInspectionDispositionDto(
     long Id,
@@ -185,6 +210,40 @@ public sealed record QualityInspectionDispositionDto(
     long DecisionBy,
     DateTimeOffset DecisionAtUtc);
 
+public sealed record StartQualityInspectionWorkRequest(Guid IdempotencyKey, string? RowVersion);
+
+public sealed record PauseQualityInspectionWorkRequest(
+    Guid IdempotencyKey,
+    QualityInspectionWorkStopReason Reason,
+    string? Note,
+    string? RowVersion);
+
+public sealed record QualityInspectionWorkSessionDto(
+    long Id,
+    int SequenceNo,
+    long WorkerUserId,
+    string WorkerName,
+    DateTimeOffset StartedAtUtc,
+    DateTimeOffset? EndedAtUtc,
+    long DurationSeconds,
+    QualityInspectionWorkStopReason? StopReason,
+    string? StopNote,
+    long? EndedByUserId);
+
+public sealed record QualityInspectionWorkSummaryDto(
+    QualityInspectionWorkState State,
+    DateTimeOffset ServerNowUtc,
+    long TotalWorkedSeconds,
+    long CurrentUserWorkedSeconds,
+    int SessionCount,
+    int ParticipantCount,
+    long? ActiveWorkerUserId,
+    string? ActiveWorkerName,
+    DateTimeOffset? ActiveStartedAtUtc,
+    bool CanStart,
+    bool CanPause,
+    bool CanApplyDecision);
+
 public sealed record QualityInspectionDetail(QualityInspectionGridRow Header,
     IReadOnlyList<QualityInspectionLineDto> Lines, string? Note, byte[] RowVersion,
     bool AllowPartialDecision, bool RequireManagerApprovalForRelease,
@@ -194,7 +253,10 @@ public sealed record QualityInspectionDetail(QualityInspectionGridRow Header,
     QualityDecisionDestinationDto? DefaultAcceptedDestination,
     QualityDecisionDestinationDto? DefaultRejectedDestination,
     IReadOnlyList<QualityDatDocumentSeriesDto> WarehouseTransferDocumentSeries,
-    IReadOnlyList<QualityInspectionDispositionDto> Dispositions);
+    IReadOnlyList<QualityInspectionDispositionDto> Dispositions,
+    IReadOnlyList<QualityInspectionControlDto> Controls,
+    QualityInspectionWorkSummaryDto Work,
+    IReadOnlyList<QualityInspectionWorkSessionDto> WorkSessions);
 
 public sealed record QualityInspectionPriorityResult(long InspectionId, bool IsPriority);
 
@@ -208,7 +270,12 @@ public interface IQualityService
     Task UpdateRuleAsync(long id, QualityRuleUpsertRequest request, long actor, CancellationToken ct = default);
     Task DeleteRuleAsync(long id, long actor, CancellationToken ct = default);
     Task<PagedResponse<QualityInspectionGridRow>> GetInspectionsPagedAsync(PagedRequest request, CancellationToken ct = default);
-    Task<QualityInspectionDetail> GetInspectionAsync(long id, CancellationToken ct = default);
+    Task<QualityInspectionDetail> GetInspectionAsync(long id, long actor, bool canExecute, bool canSupervise,
+        bool canDecide, CancellationToken ct = default);
+    Task<QualityInspectionWorkSummaryDto> StartInspectionWorkAsync(long id, StartQualityInspectionWorkRequest request,
+        long actor, bool canExecute, bool canSupervise, bool canDecide, CancellationToken ct = default);
+    Task<QualityInspectionWorkSummaryDto> PauseInspectionWorkAsync(long id, PauseQualityInspectionWorkRequest request,
+        long actor, bool canExecute, bool canSupervise, bool canDecide, CancellationToken ct = default);
     Task<QualityInspectionPriorityResult> ToggleInspectionPriorityAsync(long id, long actor, CancellationToken ct = default);
     Task<QualityDecisionResult> DecideInspectionAsync(long id, DecideQualityInspectionRequest request, long actor,
         bool canReleaseQuarantine, CancellationToken ct = default);

@@ -154,6 +154,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<QualityInspection> QualityInspections => Set<QualityInspection>();
     public DbSet<QualityInspectionLine> QualityInspectionLines => Set<QualityInspectionLine>();
     public DbSet<QualityInspectionDisposition> QualityInspectionDispositions => Set<QualityInspectionDisposition>();
+    public DbSet<QualityInspectionControl> QualityInspectionControls => Set<QualityInspectionControl>();
+    public DbSet<QualityInspectionWorkSession> QualityInspectionWorkSessions => Set<QualityInspectionWorkSession>();
     public DbSet<SerialNumberRule> SerialNumberRules => Set<SerialNumberRule>();
     public DbSet<StockSerialRegistry> StockSerialRegistry => Set<StockSerialRegistry>();
     public DbSet<StockTrackingPolicy> StockTrackingPolicies => Set<StockTrackingPolicy>();
@@ -393,6 +395,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new QualityInspectionConfiguration());
         modelBuilder.ApplyConfiguration(new QualityInspectionLineConfiguration());
         modelBuilder.ApplyConfiguration(new QualityInspectionDispositionConfiguration());
+        modelBuilder.ApplyConfiguration(new QualityInspectionControlConfiguration());
+        modelBuilder.ApplyConfiguration(new QualityInspectionWorkSessionConfiguration());
         modelBuilder.ApplyConfiguration(new SerialNumberRuleConfiguration());
         modelBuilder.ApplyConfiguration(new StockSerialRegistryConfiguration());
         modelBuilder.ApplyConfiguration(new StockTrackingPolicyConfiguration());
@@ -602,6 +606,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             new PermissionDefinition { Id=1051, BranchCode="0", Code="WMS.QUALITY.INSPECTIONS.DECIDE", Name="Kalite kararı ver", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=1052, BranchCode="0", Code="WMS.QUALITY.INSPECTIONS.RELEASE", Name="Karantinadaki ürünü serbest bırak", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=10520, BranchCode="0", Code="WMS.QUALITY.INSPECTIONS.PRIORITIZE", Name="GKK kayıtlarına öncelik ver ve önceliği kaldır", Description="Açık kalite inceleme kayıtlarının operasyon sırasını önceliklendirmeye izin verir.", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=10521, BranchCode="0", Code="WMS.QUALITY.INSPECTIONS.EXECUTE", Name="GKK incelemesini başlat, durdur ve devam ettir", Description="Kalite incelemesinde kişisel çalışma oturumu açmaya ve duruş bildirmeye izin verir.", IsActive=true, AvailableOnWeb=true, AvailableOnMobile=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=10522, BranchCode="0", Code="WMS.QUALITY.INSPECTIONS.SUPERVISE", Name="GKK çalışma oturumlarını yönet", Description="Başka bir kullanıcının açık GKK oturumunu durdurmaya ve vardiya devrini yönetmeye izin verir.", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=1053, BranchCode="0", Code="WMS.SERIAL_RULES.VIEW", Name="Seri maske kurallarını görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=1054, BranchCode="0", Code="WMS.SERIAL_RULES.MANAGE", Name="Seri maske kurallarını yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionDefinition>().HasData(
@@ -748,6 +754,10 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(33,11).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(44,8).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(new PermissionGroupPermission { Id=1052, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1052, CreatedDate=seedDate });
+        modelBuilder.Entity<PermissionGroupPermission>().HasData(
+            new PermissionGroupPermission { Id=10520, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=10520, CreatedDate=seedDate },
+            new PermissionGroupPermission { Id=10521, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=10521, CreatedDate=seedDate },
+            new PermissionGroupPermission { Id=10522, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=10522, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(55,5).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(60,2).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(62,4).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
@@ -791,6 +801,12 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
 
         if (ChangeTracker.Entries<GoodsReceiptStatusHistory>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Mal kabul durum geçmişi immutable yapıdadır; kayıtlar güncellenemez veya silinemez.");
+
+        if (ChangeTracker.Entries<QualityInspectionWorkSession>().Any(entry =>
+                entry.State == EntityState.Deleted
+                || entry.State == EntityState.Modified
+                    && entry.Property(x => x.EndedAtUtc).OriginalValue.HasValue))
+            throw new InvalidOperationException("Kapatılmış GKK çalışma oturumu değiştirilemez veya silinemez; yeni bir çalışma oturumu açın.");
 
         if (ChangeTracker.Entries<WarehouseInboundStatusHistory>().Any(x => x.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Ambar giriş durum geçmişi değiştirilemez veya silinemez.");

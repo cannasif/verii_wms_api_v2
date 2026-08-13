@@ -7,6 +7,20 @@ public enum QualityFailAction { Quarantine = 1, Reject = 2, ReturnToSupplier = 3
 public enum QualitySamplingMode { All = 1, Percentage = 2, FixedQuantity = 3, EveryNthHandlingUnit = 4 }
 public enum QualityInspectionStatus { Pending = 1, InProgress = 2, PartiallyDecided = 3, Passed = 4, Failed = 5, Quarantined = 6, Released = 7, Cancelled = 8 }
 public enum QualityDecision { Pending = 1, Accepted = 2, Rejected = 3, Quarantined = 4, Returned = 5, Hold = 6 }
+public enum QualityInspectionWorkStopReason
+{
+    Break = 1,
+    MaterialWait = 2,
+    EquipmentIssue = 3,
+    DocumentationWait = 4,
+    SupervisorWait = 5,
+    ShiftEnd = 6,
+    Handover = 7,
+    Other = 8,
+    DecisionApplied = 9,
+    InspectionCancelled = 10
+}
+public enum QualityInspectionWorkState { NotStarted = 1, Running = 2, Paused = 3, Completed = 4 }
 
 public sealed class QualityParameter : BaseEntity
 {
@@ -106,6 +120,30 @@ public sealed class QualityInspection : BaseEntity
     public byte[] RowVersion { get; set; } = [];
     public ICollection<QualityInspectionLine> Lines { get; set; } = [];
     public ICollection<QualityInspectionDisposition> Dispositions { get; set; } = [];
+    public ICollection<QualityInspectionControl> Controls { get; set; } = [];
+    public ICollection<QualityInspectionWorkSession> WorkSessions { get; set; } = [];
+}
+
+/// <summary>
+/// One uninterrupted GKK work interval. Closed sessions are operational evidence and are never
+/// reused; another operator continues the same inspection by opening a new session.
+/// </summary>
+public sealed class QualityInspectionWorkSession : BaseEntity
+{
+    public long QualityInspectionId { get; set; }
+    public QualityInspection QualityInspection { get; set; } = null!;
+    public int SequenceNo { get; set; }
+    public long WorkerUserId { get; set; }
+    public string WorkerNameSnapshot { get; set; } = string.Empty;
+    public DateTimeOffset StartedAtUtc { get; set; }
+    public DateTimeOffset? EndedAtUtc { get; set; }
+    public long DurationSeconds { get; set; }
+    public QualityInspectionWorkStopReason? StopReason { get; set; }
+    public string? StopNote { get; set; }
+    public Guid StartIdempotencyKey { get; set; }
+    public Guid? EndIdempotencyKey { get; set; }
+    public long? EndedByUserId { get; set; }
+    public byte[] RowVersion { get; set; } = [];
 }
 
 public sealed class QualityInspectionLine : BaseEntity
@@ -124,6 +162,12 @@ public sealed class QualityInspectionLine : BaseEntity
     public DateOnly? ExpiryDate { get; set; }
     public decimal Quantity { get; set; }
     public decimal SampleQuantity { get; set; }
+    /// <summary>
+    /// Cumulative quantity physically checked by GKK operators. This is deliberately kept
+    /// separate from accepted/rejected quantities: a 100-unit lot can be accepted after a
+    /// 10-unit sample has actually been inspected.
+    /// </summary>
+    public decimal InspectedQuantity { get; set; }
     public decimal AcceptedQuantity { get; set; }
     public decimal RejectedQuantity { get; set; }
     public decimal QuarantineQuantity { get; set; }
@@ -135,6 +179,27 @@ public sealed class QualityInspectionLine : BaseEntity
     public DateTimeOffset? DecisionAtUtc { get; set; }
     public byte[] RowVersion { get; set; } = [];
     public ICollection<QualityInspectionDisposition> Dispositions { get; set; } = [];
+    public ICollection<QualityInspectionControl> Controls { get; set; } = [];
+}
+
+/// <summary>
+/// Immutable evidence of how much material was physically inspected for one GKK decision.
+/// The line keeps the cumulative projection; this table preserves each decision-time fact.
+/// </summary>
+public sealed class QualityInspectionControl : BaseEntity
+{
+    public long QualityInspectionId { get; set; }
+    public QualityInspection QualityInspection { get; set; } = null!;
+    public long QualityInspectionLineId { get; set; }
+    public QualityInspectionLine QualityInspectionLine { get; set; } = null!;
+    public Guid IdempotencyKey { get; set; }
+    public decimal LotQuantitySnapshot { get; set; }
+    public decimal RequiredQuantitySnapshot { get; set; }
+    public decimal InspectedQuantity { get; set; }
+    public string OutcomeSummary { get; set; } = string.Empty;
+    public string? Note { get; set; }
+    public long InspectedBy { get; set; }
+    public DateTimeOffset InspectedAtUtc { get; set; }
 }
 
 /// <summary>

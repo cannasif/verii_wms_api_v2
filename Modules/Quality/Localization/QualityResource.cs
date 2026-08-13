@@ -9,4 +9,17 @@ public static class QualityMessageKeys
     public const string DatDocumentSeriesInvalid = nameof(DatDocumentSeriesInvalid);
     public const string InspectionNotFound = nameof(InspectionNotFound);
     public const string PriorityOnlyForOpenInspection = nameof(PriorityOnlyForOpenInspection);
+    public const string ControlQuantityRequired = nameof(ControlQuantityRequired);
+    public const string ControlQuantityMustBePositive = nameof(ControlQuantityMustBePositive);
+    public const string ControlQuantityExceedsLot = nameof(ControlQuantityExceedsLot);
+    public const string ControlQuantityBelowMinimum = nameof(ControlQuantityBelowMinimum);
+    public const string WorkIdempotencyKeyRequired = nameof(WorkIdempotencyKeyRequired);
+    public const string WorkCannotStartForClosedInspection = nameof(WorkCannotStartForClosedInspection);
+    public const string ReceiptMustBeCompletedBeforeWork = nameof(ReceiptMustBeCompletedBeforeWork);
+    public const string WorkAlreadyActiveByAnotherUser = nameof(WorkAlreadyActiveByAnotherUser);
+    public const string WorkStopReasonRequired = nameof(WorkStopReasonRequired);
+    public const string WorkOtherStopNoteRequired = nameof(WorkOtherStopNoteRequired);
+    public const string WorkHasNoActiveSession = nameof(WorkHasNoActiveSession);
+    public const string WorkPauseRequiresOwnerOrSupervisor = nameof(WorkPauseRequiresOwnerOrSupervisor);
+    public const string WorkMustBeActiveForCurrentUser = nameof(WorkMustBeActiveForCurrentUser);
 }

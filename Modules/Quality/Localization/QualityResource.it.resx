@@ -9,4 +9,17 @@
   <data name="DatDocumentSeriesInvalid" xml:space="preserve"><value>La serie documento selezionata non è attiva, appartiene a un'altra filiale o non può essere usata per trasferimenti tra magazzini.</value></data>
   <data name="InspectionNotFound" xml:space="preserve"><value>Il controllo qualità non è stato trovato.</value></data>
   <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>È possibile dare priorità solo ai controlli qualità aperti in attesa di decisione.</value></data>
+  <data name="ControlQuantityRequired" xml:space="preserve"><value>Inserire la quantità fisicamente controllata in questa operazione per ogni riga GKK da decidere.</value></data>
+  <data name="ControlQuantityMustBePositive" xml:space="preserve"><value>La quantità controllata GKK per '{0}' non può essere negativa.</value></data>
+  <data name="ControlQuantityExceedsLot" xml:space="preserve"><value>La quantità controllata {1:0.######} per '{0}' non può superare la quantità in attesa di decisione, {2:0.######}.</value></data>
+  <data name="ControlQuantityBelowMinimum" xml:space="preserve"><value>La quantità controllata {1:0.######} per '{0}' è insufficiente. In base alla regola qualità devono essere controllati fisicamente almeno {2:0.######}.</value></data>
+  <data name="WorkIdempotencyKeyRequired" xml:space="preserve"><value>È richiesta una chiave operazione univoca per la richiesta di lavoro GKK.</value></data>
+  <data name="WorkCannotStartForClosedInspection" xml:space="preserve"><value>Un controllo GKK completato o annullato non può essere riavviato.</value></data>
+  <data name="ReceiptMustBeCompletedBeforeWork" xml:space="preserve"><value>Il ricevimento fisico collegato deve essere completato prima di avviare il lavoro GKK.</value></data>
+  <data name="WorkAlreadyActiveByAnotherUser" xml:space="preserve"><value>{0} sta lavorando su questo controllo GKK. La sessione attiva deve essere arrestata prima del passaggio.</value></data>
+  <data name="WorkStopReasonRequired" xml:space="preserve"><value>Selezionare un motivo di arresto.</value></data>
+  <data name="WorkOtherStopNoteRequired" xml:space="preserve"><value>Quando il motivo è Altro è necessaria una spiegazione.</value></data>
+  <data name="WorkHasNoActiveSession" xml:space="preserve"><value>Non esiste una sessione di lavoro GKK attiva da arrestare.</value></data>
+  <data name="WorkPauseRequiresOwnerOrSupervisor" xml:space="preserve"><value>Solo l’operatore attivo o un responsabile qualità può arrestare questa sessione.</value></data>
+  <data name="WorkMustBeActiveForCurrentUser" xml:space="preserve"><value>Avviare il controllo GKK con il proprio utente prima di applicare la decisione. La sessione di un altro utente deve prima essere arrestata o trasferita.</value></data>
 </root>

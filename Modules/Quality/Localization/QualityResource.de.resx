@@ -9,4 +9,17 @@
   <data name="DatDocumentSeriesInvalid" xml:space="preserve"><value>Die gewählte Belegserie ist inaktiv, gehört zu einer anderen Niederlassung oder ist für Lagertransfers nicht zulässig.</value></data>
   <data name="InspectionNotFound" xml:space="preserve"><value>Die Qualitätsprüfung wurde nicht gefunden.</value></data>
   <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>Nur offene Qualitätsprüfungen, die auf eine Entscheidung warten, können priorisiert werden.</value></data>
+  <data name="ControlQuantityRequired" xml:space="preserve"><value>Geben Sie für jede zu entscheidende GKK-Zeile die in diesem Vorgang physisch geprüfte Menge ein.</value></data>
+  <data name="ControlQuantityMustBePositive" xml:space="preserve"><value>Die GKK-Prüfmenge für '{0}' darf nicht negativ sein.</value></data>
+  <data name="ControlQuantityExceedsLot" xml:space="preserve"><value>Die geprüfte Menge {1:0.######} für '{0}' darf die zur Entscheidung anstehende Menge {2:0.######} nicht überschreiten.</value></data>
+  <data name="ControlQuantityBelowMinimum" xml:space="preserve"><value>Die geprüfte Menge {1:0.######} für '{0}' ist unzureichend. Gemäß Qualitätsregel müssen mindestens {2:0.######} physisch geprüft werden.</value></data>
+  <data name="WorkIdempotencyKeyRequired" xml:space="preserve"><value>Für die GKK-Arbeitsanforderung ist ein eindeutiger Vorgangsschlüssel erforderlich.</value></data>
+  <data name="WorkCannotStartForClosedInspection" xml:space="preserve"><value>Eine abgeschlossene oder stornierte GKK-Prüfung kann nicht erneut gestartet werden.</value></data>
+  <data name="ReceiptMustBeCompletedBeforeWork" xml:space="preserve"><value>Der zugehörige physische Wareneingang muss vor Beginn der GKK-Arbeit abgeschlossen sein.</value></data>
+  <data name="WorkAlreadyActiveByAnotherUser" xml:space="preserve"><value>{0} arbeitet an dieser GKK-Prüfung. Vor der Übergabe muss die aktive Sitzung beendet werden.</value></data>
+  <data name="WorkStopReasonRequired" xml:space="preserve"><value>Wählen Sie einen Unterbrechungsgrund.</value></data>
+  <data name="WorkOtherStopNoteRequired" xml:space="preserve"><value>Beim Grund Sonstiges ist eine Erklärung erforderlich.</value></data>
+  <data name="WorkHasNoActiveSession" xml:space="preserve"><value>Es gibt keine aktive GKK-Arbeitssitzung zum Beenden.</value></data>
+  <data name="WorkPauseRequiresOwnerOrSupervisor" xml:space="preserve"><value>Nur der aktive Bearbeiter oder ein Qualitätsverantwortlicher darf diese Sitzung beenden.</value></data>
+  <data name="WorkMustBeActiveForCurrentUser" xml:space="preserve"><value>Starten Sie die GKK-Prüfung mit Ihrem Benutzer, bevor Sie die Entscheidung anwenden. Eine fremde Sitzung muss zuerst beendet oder übergeben werden.</value></data>
 </root>

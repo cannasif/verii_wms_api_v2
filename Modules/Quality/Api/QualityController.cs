@@ -42,7 +42,31 @@ public sealed class QualityController(
             $"{result.CreatedCount} kalite kuralı oluşturuldu; {result.SkippedCount} satır atlandı, {result.FailedCount} satır başarısız."));
     }
     [HttpPost("inspections/paged")] public async Task<IActionResult> InspectionsPaged(PagedRequest request,CancellationToken ct){await Require("WMS.QUALITY.INSPECTIONS.VIEW",ct);return Ok(ApiResponse<PagedResponse<QualityInspectionGridRow>>.Ok(await service.GetInspectionsPagedAsync(request,ct)));}
-    [HttpGet("inspections/{id:long}")] public async Task<IActionResult> Inspection(long id,CancellationToken ct){await Require("WMS.QUALITY.INSPECTIONS.VIEW",ct);return Ok(ApiResponse<QualityInspectionDetail>.Ok(await service.GetInspectionAsync(id,ct)));}
+    [HttpGet("inspections/{id:long}")] public async Task<IActionResult> Inspection(long id,CancellationToken ct)
+    {
+        await Require("WMS.QUALITY.INSPECTIONS.VIEW",ct);
+        var actor=UserId();
+        var canExecute=await permissions.HasPermissionAsync(User,"WMS.QUALITY.INSPECTIONS.EXECUTE",ct);
+        var canSupervise=await permissions.HasPermissionAsync(User,"WMS.QUALITY.INSPECTIONS.SUPERVISE",ct);
+        var canDecide=await permissions.HasPermissionAsync(User,"WMS.QUALITY.INSPECTIONS.DECIDE",ct);
+        return Ok(ApiResponse<QualityInspectionDetail>.Ok(await service.GetInspectionAsync(id,actor,canExecute,canSupervise,canDecide,ct)));
+    }
+    [HttpPost("inspections/{id:long}/work/start")] public async Task<IActionResult> StartWork(long id,StartQualityInspectionWorkRequest request,CancellationToken ct)
+    {
+        await Require("WMS.QUALITY.INSPECTIONS.EXECUTE",ct);
+        var actor=UserId();
+        var canSupervise=await permissions.HasPermissionAsync(User,"WMS.QUALITY.INSPECTIONS.SUPERVISE",ct);
+        var canDecide=await permissions.HasPermissionAsync(User,"WMS.QUALITY.INSPECTIONS.DECIDE",ct);
+        return Ok(ApiResponse<QualityInspectionWorkSummaryDto>.Ok(await service.StartInspectionWorkAsync(id,request,actor,true,canSupervise,canDecide,ct)));
+    }
+    [HttpPost("inspections/{id:long}/work/pause")] public async Task<IActionResult> PauseWork(long id,PauseQualityInspectionWorkRequest request,CancellationToken ct)
+    {
+        await Require("WMS.QUALITY.INSPECTIONS.EXECUTE",ct);
+        var actor=UserId();
+        var canSupervise=await permissions.HasPermissionAsync(User,"WMS.QUALITY.INSPECTIONS.SUPERVISE",ct);
+        var canDecide=await permissions.HasPermissionAsync(User,"WMS.QUALITY.INSPECTIONS.DECIDE",ct);
+        return Ok(ApiResponse<QualityInspectionWorkSummaryDto>.Ok(await service.PauseInspectionWorkAsync(id,request,actor,true,canSupervise,canDecide,ct)));
+    }
     [HttpPost("inspections/{id:long}/priority/toggle")] public async Task<IActionResult> TogglePriority(long id,CancellationToken ct){await Require("WMS.QUALITY.INSPECTIONS.PRIORITIZE",ct);var result=await service.ToggleInspectionPriorityAsync(id,UserId(),ct);return Ok(ApiResponse<QualityInspectionPriorityResult>.Ok(result));}
     [HttpPost("inspections/{id:long}/decision")] public async Task<IActionResult> Decide(long id,DecideQualityInspectionRequest request,CancellationToken ct){await Require("WMS.QUALITY.INSPECTIONS.DECIDE",ct);var canRelease=await permissions.HasPermissionAsync(User,"WMS.QUALITY.INSPECTIONS.RELEASE",ct);var result=await service.DecideInspectionAsync(id,request,UserId(),canRelease,ct);return Ok(ApiResponse<QualityDecisionResult>.Ok(result,result.Message));}
     private long UserId()=>long.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier),out var id)?id:throw AppException.Unauthorized("Geçersiz kullanıcı oturumu."); private async Task Require(string code,CancellationToken ct){if(!await permissions.HasPermissionAsync(User,code,ct))throw AppException.Forbidden();}

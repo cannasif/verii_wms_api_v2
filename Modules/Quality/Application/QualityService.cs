@@ -50,6 +50,10 @@ public sealed class QualityService(
     private IGenericRepository<QualityInspection> Inspections => uow.Repository<QualityInspection>();
     private IGenericRepository<QualityInspectionDisposition> Dispositions =>
         uow.Repository<QualityInspectionDisposition>();
+    private IGenericRepository<QualityInspectionControl> Controls =>
+        uow.Repository<QualityInspectionControl>();
+    private IGenericRepository<QualityInspectionWorkSession> WorkSessions =>
+        uow.Repository<QualityInspectionWorkSession>();
 
     public async Task<QualityParameterDto> GetParametersAsync(string branchCode, CancellationToken ct = default)
     {
@@ -162,9 +166,11 @@ public sealed class QualityService(
             .Where(x => x.BranchCode == branch && x.GroupCode != null && x.GroupCode != "")
             .GroupBy(x => x.GroupCode!.Trim().ToUpper())
             .Select(x => new QualityStockGroupOption(x.Key, x.Count()));
-        var search = request.EffectiveSearch?.Trim();
-        if (!string.IsNullOrWhiteSpace(search))
-            groups = groups.Where(x => x.Code.Contains(search));
+        groups = groups.ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["code"] = nameof(QualityStockGroupOption.Code),
+            ["stockCount"] = nameof(QualityStockGroupOption.StockCount)
+        }, ["code"]);
         groups = request.SortDirection.Equals("desc", StringComparison.OrdinalIgnoreCase)
             ? groups.OrderByDescending(x => x.Code)
             : groups.OrderBy(x => x.Code);
@@ -210,7 +216,22 @@ public sealed class QualityService(
             CreatedByName=x.User==null?null:(x.Detail==null?x.User.Username:(x.Detail.FirstName+" "+x.Detail.LastName)),
             IsPriority=x.Inspection.IsPriority,
             Status=x.Inspection.Status.ToString(),LineCount=x.Inspection.Lines.Count,TotalQuantity=x.Inspection.Lines.Sum(line=>line.Quantity),
+            RequiredInspectionQuantity=x.Inspection.Lines.Sum(line=>line.SampleQuantity),InspectedQuantity=x.Inspection.Lines.Sum(line=>line.InspectedQuantity),
             CreatedAtUtc=x.Inspection.CreatedAtUtc,QueuedAtUtc=x.Inspection.QueuedAtUtc,DecidedAtUtc=x.Inspection.DecidedAtUtc,InspectorUserId=x.Inspection.InspectorUserId,
+            WorkState=x.Inspection.Status==QualityInspectionStatus.Passed||x.Inspection.Status==QualityInspectionStatus.Failed
+                ||x.Inspection.Status==QualityInspectionStatus.Released||x.Inspection.Status==QualityInspectionStatus.Cancelled
+                ? QualityInspectionWorkState.Completed.ToString()
+                : x.Inspection.WorkSessions.Any(session=>session.EndedAtUtc==null)
+                    ? QualityInspectionWorkState.Running.ToString()
+                    : x.Inspection.WorkSessions.Any()
+                        ? QualityInspectionWorkState.Paused.ToString()
+                        : QualityInspectionWorkState.NotStarted.ToString(),
+            RecordedWorkSeconds=x.Inspection.WorkSessions.Sum(session=>(long?)session.DurationSeconds)??0,
+            WorkSessionCount=x.Inspection.WorkSessions.Count,
+            ParticipantCount=x.Inspection.WorkSessions.Select(session=>session.WorkerUserId).Distinct().Count(),
+            ActiveWorkerUserId=x.Inspection.WorkSessions.Where(session=>session.EndedAtUtc==null).Select(session=>(long?)session.WorkerUserId).FirstOrDefault(),
+            ActiveWorkerName=x.Inspection.WorkSessions.Where(session=>session.EndedAtUtc==null).Select(session=>session.WorkerNameSnapshot).FirstOrDefault(),
+            ActiveWorkStartedAtUtc=x.Inspection.WorkSessions.Where(session=>session.EndedAtUtc==null).Select(session=>(DateTimeOffset?)session.StartedAtUtc).FirstOrDefault(),
             CreatedBy=x.Inspection.CreatedBy,CreatedDate=x.Inspection.CreatedDate,UpdatedBy=x.Inspection.UpdatedBy,UpdatedDate=x.Inspection.UpdatedDate });
         var search=request.Search?.Trim(); q=q.Where(x=>string.IsNullOrWhiteSpace(search)||x.InspectionNo.Contains(search)||x.SourceDocumentNo.Contains(search)
             ||(x.SourceWaybillNo!=null&&x.SourceWaybillNo.Contains(search))||(x.CreatedByName!=null&&x.CreatedByName.Contains(search))
@@ -224,9 +245,11 @@ public sealed class QualityService(
         return await filtered.ApplySort(request,nameof(QualityInspectionGridRow.QueuedAtUtc)).ToPagedResponseAsync(request,ct);
     }
 
-    public async Task<QualityInspectionDetail> GetInspectionAsync(long id, CancellationToken ct = default)
+    public async Task<QualityInspectionDetail> GetInspectionAsync(long id, long actor, bool canExecute,
+        bool canSupervise, bool canDecide, CancellationToken ct = default)
     {
-        var inspection = await Inspections.Query().Include(x => x.Lines).FirstOrDefaultAsync(x => x.Id == id, ct)
+        var inspection = await Inspections.Query().Include(x => x.Lines).Include(x => x.WorkSessions)
+            .FirstOrDefaultAsync(x => x.Id == id, ct)
             ?? throw AppException.NotFound("Kalite kontrolü bulunamadı.");
         var warehouse = await uow.Repository<WarehouseEntity>().Query().Where(x => x.Id == inspection.WarehouseId)
             .Select(x => new { x.WarehouseCode, x.WarehouseName }).FirstOrDefaultAsync(ct);
@@ -247,8 +270,17 @@ public sealed class QualityService(
             WarehouseId = inspection.WarehouseId, WarehouseCode = warehouse?.WarehouseCode, WarehouseName = warehouse?.WarehouseName,
             SupplierId = inspection.SupplierId, SourceWaybillNo = receipt == null ? null : receipt.ElectronicWaybillNo ?? receipt.WaybillNo,
             CreatedByName = creator, IsPriority = inspection.IsPriority, Status = inspection.Status.ToString(), LineCount = inspection.Lines.Count,
-            TotalQuantity = inspection.Lines.Sum(x => x.Quantity), CreatedAtUtc = inspection.CreatedAtUtc,
+            TotalQuantity = inspection.Lines.Sum(x => x.Quantity),
+            RequiredInspectionQuantity = inspection.Lines.Sum(x => x.SampleQuantity),
+            InspectedQuantity = inspection.Lines.Sum(x => x.InspectedQuantity), CreatedAtUtc = inspection.CreatedAtUtc,
             QueuedAtUtc = inspection.QueuedAtUtc, DecidedAtUtc = inspection.DecidedAtUtc, InspectorUserId = inspection.InspectorUserId,
+            WorkState = ResolveWorkState(inspection).ToString(),
+            RecordedWorkSeconds = inspection.WorkSessions.Sum(x => x.DurationSeconds),
+            WorkSessionCount = inspection.WorkSessions.Count,
+            ParticipantCount = inspection.WorkSessions.Select(x => x.WorkerUserId).Distinct().Count(),
+            ActiveWorkerUserId = inspection.WorkSessions.FirstOrDefault(x => x.EndedAtUtc == null)?.WorkerUserId,
+            ActiveWorkerName = inspection.WorkSessions.FirstOrDefault(x => x.EndedAtUtc == null)?.WorkerNameSnapshot,
+            ActiveWorkStartedAtUtc = inspection.WorkSessions.FirstOrDefault(x => x.EndedAtUtc == null)?.StartedAtUtc,
             CreatedBy = inspection.CreatedBy, CreatedDate = inspection.CreatedDate, UpdatedBy = inspection.UpdatedBy, UpdatedDate = inspection.UpdatedDate };
         var parameter = await Parameters.FirstOrDefaultAsync(x => x.BranchCode == inspection.BranchCode && x.ParameterKey == "DEFAULT", false, ct)
             ?? Default(inspection.BranchCode);
@@ -310,7 +342,7 @@ public sealed class QualityService(
             .ToDictionary(pair => pair.Key, pair => acceptedDestinationByLocationId[pair.Value!.Value]);
         var lines = inspection.Lines.OrderBy(x => x.Id).Select(x => new QualityInspectionLineDto(x.Id, x.GoodsReceiptLineId,
             x.StockId, x.StockCodeSnapshot, x.StockNameSnapshot, x.YapCodeSnapshot, x.LotNo, x.SerialNo, x.ExpiryDate,
-            x.Quantity, x.SampleQuantity, x.AcceptedQuantity, x.RejectedQuantity, x.QuarantineQuantity,
+            x.Quantity, x.SampleQuantity, x.InspectedQuantity, x.AcceptedQuantity, x.RejectedQuantity, x.QuarantineQuantity,
             x.QuarantineLocationId, x.Decision,
             x.ReasonCode, x.ReasonNote, x.DecisionBy, x.DecisionAtUtc,
             defaultAcceptedDestinationByInspectionLineId.GetValueOrDefault(x.Id))).ToList();
@@ -370,12 +402,166 @@ public sealed class QualityService(
                 x.DecisionBy,
                 x.DecisionAtUtc))
             .ToListAsync(ct);
+        var controlHistory = await Controls.Query()
+            .Where(x => x.QualityInspectionId == inspection.Id)
+            .OrderBy(x => x.InspectedAtUtc)
+            .ThenBy(x => x.Id)
+            .Select(x => new QualityInspectionControlDto(
+                x.Id,
+                x.QualityInspectionLineId,
+                x.IdempotencyKey,
+                x.LotQuantitySnapshot,
+                x.RequiredQuantitySnapshot,
+                x.InspectedQuantity,
+                x.OutcomeSummary,
+                x.Note,
+                x.InspectedBy,
+                x.InspectedAtUtc))
+            .ToListAsync(ct);
+        var workNow = DateTimeOffset.UtcNow;
+        var workSummary = BuildWorkSummary(
+            inspection,
+            actor,
+            canExecute,
+            canSupervise,
+            canDecide,
+            receipt is not null && IsReceiptReadyForQualityDisposition(receipt.Status),
+            workNow);
+        var workHistory = inspection.WorkSessions
+            .OrderByDescending(x => x.SequenceNo)
+            .Select(MapWorkSession)
+            .ToArray();
         return new QualityInspectionDetail(header, lines, inspection.Note, inspection.RowVersion,
             parameter.AllowPartialDecision, parameter.RequireManagerApprovalForRelease,
             receipt?.Status,
             receipt is not null && IsReceiptReadyForQualityDisposition(receipt.Status),
             quarantineDestinations, defaultAcceptedDestination, defaultRejectedDestination,
-            warehouseTransferDocumentSeries, dispositionHistory);
+            warehouseTransferDocumentSeries, dispositionHistory, controlHistory, workSummary, workHistory);
+    }
+
+    public Task<QualityInspectionWorkSummaryDto> StartInspectionWorkAsync(
+        long id,
+        StartQualityInspectionWorkRequest request,
+        long actor,
+        bool canExecute,
+        bool canSupervise,
+        bool canDecide,
+        CancellationToken ct = default)
+    {
+        if (!canExecute) throw AppException.Forbidden();
+        if (request.IdempotencyKey == Guid.Empty)
+            throw AppException.BadRequest(Message(QualityMessageKeys.WorkIdempotencyKeyRequired));
+
+        return uow.ExecuteInTransactionAsync(async token =>
+        {
+            var inspection = await Inspections.Query(true).Include(x => x.WorkSessions)
+                .FirstOrDefaultAsync(x => x.Id == id, token)
+                ?? throw AppException.NotFound(Message(QualityMessageKeys.InspectionNotFound));
+            var now = DateTimeOffset.UtcNow;
+            var receiptReady = await IsSourceReceiptReadyAsync(inspection, token);
+            var repeated = inspection.WorkSessions.FirstOrDefault(x => x.StartIdempotencyKey == request.IdempotencyKey);
+            if (repeated is not null)
+                return BuildWorkSummary(inspection, actor, canExecute, canSupervise, canDecide, receiptReady, now);
+
+            ApplyVersion(inspection, request.RowVersion);
+            if (IsTerminalStatus(inspection.Status))
+                throw AppException.Conflict(Message(QualityMessageKeys.WorkCannotStartForClosedInspection));
+            if (!receiptReady)
+                throw AppException.Conflict(Message(QualityMessageKeys.ReceiptMustBeCompletedBeforeWork));
+
+            var active = inspection.WorkSessions.FirstOrDefault(x => x.EndedAtUtc == null);
+            if (active is not null)
+            {
+                if (active.WorkerUserId == actor)
+                    return BuildWorkSummary(inspection, actor, canExecute, canSupervise, canDecide, receiptReady, now);
+                throw AppException.Conflict(Message(
+                    QualityMessageKeys.WorkAlreadyActiveByAnotherUser,
+                    active.WorkerNameSnapshot));
+            }
+
+            var session = new QualityInspectionWorkSession
+            {
+                BranchCode = inspection.BranchCode,
+                QualityInspectionId = inspection.Id,
+                QualityInspection = inspection,
+                SequenceNo = inspection.WorkSessions.Select(x => x.SequenceNo).DefaultIfEmpty().Max() + 1,
+                WorkerUserId = actor,
+                WorkerNameSnapshot = await GetActorDisplayNameAsync(actor, token),
+                StartedAtUtc = now,
+                StartIdempotencyKey = request.IdempotencyKey,
+                CreatedBy = actor,
+                CreatedDate = DateTime.UtcNow
+            };
+            await WorkSessions.AddAsync(session, token);
+            inspection.StartedAtUtc ??= now;
+            if (inspection.Status == QualityInspectionStatus.Pending)
+                inspection.Status = QualityInspectionStatus.InProgress;
+            inspection.InspectorUserId = actor;
+            inspection.UpdatedBy = actor;
+            inspection.UpdatedDate = DateTime.UtcNow;
+            await uow.SaveChangesAsync(token);
+            await audit.WriteAsync(new(
+                "quality.inspection.work.start",
+                nameof(QualityInspection),
+                id.ToString(),
+                "Succeeded",
+                "quality",
+                NewValues: new { session.Id, session.SequenceNo, session.WorkerUserId, session.StartedAtUtc },
+                ChangedFields: ["WorkSession", nameof(QualityInspection.Status)]), token);
+            return BuildWorkSummary(inspection, actor, canExecute, canSupervise, canDecide, receiptReady, now);
+        }, ct, IsolationLevel.Serializable);
+    }
+
+    public Task<QualityInspectionWorkSummaryDto> PauseInspectionWorkAsync(
+        long id,
+        PauseQualityInspectionWorkRequest request,
+        long actor,
+        bool canExecute,
+        bool canSupervise,
+        bool canDecide,
+        CancellationToken ct = default)
+    {
+        if (!canExecute) throw AppException.Forbidden();
+        if (request.IdempotencyKey == Guid.Empty)
+            throw AppException.BadRequest(Message(QualityMessageKeys.WorkIdempotencyKeyRequired));
+        if (!Enum.IsDefined(request.Reason)
+            || request.Reason is QualityInspectionWorkStopReason.DecisionApplied
+                or QualityInspectionWorkStopReason.InspectionCancelled)
+            throw AppException.BadRequest(Message(QualityMessageKeys.WorkStopReasonRequired));
+        var note = Clean(request.Note, 1000);
+        if (request.Reason == QualityInspectionWorkStopReason.Other && string.IsNullOrWhiteSpace(note))
+            throw AppException.BadRequest(Message(QualityMessageKeys.WorkOtherStopNoteRequired));
+
+        return uow.ExecuteInTransactionAsync(async token =>
+        {
+            var inspection = await Inspections.Query(true).Include(x => x.WorkSessions)
+                .FirstOrDefaultAsync(x => x.Id == id, token)
+                ?? throw AppException.NotFound(Message(QualityMessageKeys.InspectionNotFound));
+            var now = DateTimeOffset.UtcNow;
+            var receiptReady = await IsSourceReceiptReadyAsync(inspection, token);
+            if (inspection.WorkSessions.Any(x => x.EndIdempotencyKey == request.IdempotencyKey))
+                return BuildWorkSummary(inspection, actor, canExecute, canSupervise, canDecide, receiptReady, now);
+
+            ApplyVersion(inspection, request.RowVersion);
+            var active = inspection.WorkSessions.FirstOrDefault(x => x.EndedAtUtc == null)
+                ?? throw AppException.Conflict(Message(QualityMessageKeys.WorkHasNoActiveSession));
+            if (active.WorkerUserId != actor && !canSupervise)
+                throw AppException.Forbidden(Message(QualityMessageKeys.WorkPauseRequiresOwnerOrSupervisor));
+
+            CloseWorkSession(active, now, request.Reason, note, request.IdempotencyKey, actor);
+            inspection.UpdatedBy = actor;
+            inspection.UpdatedDate = DateTime.UtcNow;
+            await uow.SaveChangesAsync(token);
+            await audit.WriteAsync(new(
+                "quality.inspection.work.pause",
+                nameof(QualityInspection),
+                id.ToString(),
+                "Succeeded",
+                "quality",
+                NewValues: new { active.Id, active.SequenceNo, active.WorkerUserId, active.EndedAtUtc, active.DurationSeconds, active.StopReason, active.StopNote, active.EndedByUserId },
+                ChangedFields: ["WorkSession"]), token);
+            return BuildWorkSummary(inspection, actor, canExecute, canSupervise, canDecide, receiptReady, now);
+        }, ct, IsolationLevel.Serializable);
     }
 
     public Task<QualityInspectionPriorityResult> ToggleInspectionPriorityAsync(
@@ -419,11 +605,17 @@ public sealed class QualityService(
                 throw AppException.BadRequest("Nihai karar kabul, ret, karantina veya tedarikçiye iade olmalıdır.");
             goodsReceiptId = await uow.ExecuteInTransactionAsync(async token =>
             {
-            var inspection = await Inspections.Query(true).Include(x => x.Lines).FirstOrDefaultAsync(x => x.Id == id, token)
+            var inspection = await Inspections.Query(true).Include(x => x.Lines).Include(x => x.WorkSessions)
+                .FirstOrDefaultAsync(x => x.Id == id, token)
                 ?? throw AppException.NotFound("Kalite kontrolü bulunamadı.");
             if (await Dispositions.AnyAsync(x => x.QualityInspectionId == id
+                    && x.IdempotencyKey == request.IdempotencyKey, token)
+                || await Controls.AnyAsync(x => x.QualityInspectionId == id
                     && x.IdempotencyKey == request.IdempotencyKey, token))
                 return inspection.SourceDocumentId;
+            var activeWorkSession = inspection.WorkSessions.FirstOrDefault(x => x.EndedAtUtc == null);
+            if (activeWorkSession is null || activeWorkSession.WorkerUserId != actor)
+                throw AppException.Conflict(Message(QualityMessageKeys.WorkMustBeActiveForCurrentUser));
             ApplyVersion(inspection, request.RowVersion);
             if (inspection.Status == QualityInspectionStatus.Cancelled) throw AppException.Conflict("İptal edilmiş kalite kontrolü sonuçlandırılamaz.");
             if (!string.Equals(inspection.SourceDocumentType, "GoodsReceipt", StringComparison.OrdinalIgnoreCase))
@@ -464,6 +656,7 @@ public sealed class QualityService(
                 quantityDecisions,
                 request.Decision,
                 request.QuarantineLocationId);
+            var controlQuantities = ValidateControlQuantities(selected, request.ControlQuantities);
             var releasesQuarantine = decisionParts.Any(x =>
                 x.Decision == QualityDecision.Accepted
                 && x.Line.Decision == QualityDecision.Quarantined);
@@ -809,6 +1002,7 @@ public sealed class QualityService(
             {
                 var receiptLine = grLines[line.GoodsReceiptLineId!.Value];
                 var parts = decisionParts.Where(x => x.Line.Id == line.Id).ToList();
+                var control = controlQuantities[line.Id];
                 var quarantineLocationIds = dispositions
                     .Where(x => x.InspectionLine.Id == line.Id && x.Decision == QualityDecision.Quarantined)
                     .Select(x => x.TargetLocationId)
@@ -826,6 +1020,27 @@ public sealed class QualityService(
                     request.ReasonCode,
                     request.Note,
                     quarantineLocationId);
+                line.InspectedQuantity += control.InspectedQuantity;
+                if (control.InspectedQuantity > 0)
+                {
+                    await Controls.AddAsync(new QualityInspectionControl
+                    {
+                        BranchCode = inspection.BranchCode,
+                        QualityInspectionId = inspection.Id,
+                        QualityInspectionLineId = line.Id,
+                        IdempotencyKey = request.IdempotencyKey,
+                        LotQuantitySnapshot = control.LotQuantity,
+                        RequiredQuantitySnapshot = control.RequiredQuantity,
+                        InspectedQuantity = control.InspectedQuantity,
+                        OutcomeSummary = string.Join(" | ", parts.Select(part =>
+                            $"{part.Decision}:{part.Quantity:0.######}")),
+                        Note = Clean(request.Note, 1000),
+                        InspectedBy = actor,
+                        InspectedAtUtc = now,
+                        CreatedBy = actor,
+                        CreatedDate = DateTime.UtcNow
+                    }, token);
+                }
                 var acceptedIntoPutaway = dispositions
                     .Where(x => x.InspectionLine.Id == line.Id
                         && x.Decision == QualityDecision.Accepted
@@ -884,7 +1099,17 @@ public sealed class QualityService(
                 releasesQuarantine);
             inspection.Status = decisionState.InspectionStatus;
             inspection.DecidedAtUtc = decisionState.IsTerminal ? now : null;
-            if (decisionState.IsTerminal) inspection.IsPriority = false;
+            if (decisionState.IsTerminal)
+            {
+                inspection.IsPriority = false;
+                CloseWorkSession(
+                    activeWorkSession,
+                    now,
+                    QualityInspectionWorkStopReason.DecisionApplied,
+                    request.Note,
+                    request.IdempotencyKey,
+                    actor);
+            }
             inspection.InspectorUserId = actor; inspection.Note = Clean(request.Note, 1000);
             inspection.UpdatedBy = actor; inspection.UpdatedDate = DateTime.UtcNow;
             gr.QualityStatus = decisionState.ReceiptStatus;
@@ -892,7 +1117,7 @@ public sealed class QualityService(
             await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("quality.inspection.decide", nameof(QualityInspection), id.ToString(), "Succeeded", "quality",
                 NewValues: new { request.IdempotencyKey, request.Decision, request.LineIds, request.ReasonCode,
-                    request.QuantityDecisions, request.Dispositions, request.QuarantineLocationId,
+                    request.QuantityDecisions, request.Dispositions, request.ControlQuantities, request.QuarantineLocationId,
                     request.WarehouseTransferDocumentSeriesId,
                     MovementId = movement?.OperationId, WarehouseTransferIds = datIds },
                 ChangedFields: ["Status", "Lines", "InventoryStatus"]), token);
@@ -916,6 +1141,7 @@ public sealed class QualityService(
                     request.ReasonCode,
                     request.QuantityDecisions,
                     request.Dispositions,
+                    request.ControlQuantities,
                     request.QuarantineLocationId,
                     request.WarehouseTransferDocumentSeriesId
                 }), ct);
@@ -1585,10 +1811,50 @@ public sealed class QualityService(
         line.ReasonCode = Clean(reasonCode, 100);
         line.ReasonNote = Clean(note, 1000);
     }
+    private IReadOnlyDictionary<long, QualityInspectionControlSnapshot> ValidateControlQuantities(
+        IReadOnlyCollection<QualityInspectionLine> selected,
+        IReadOnlyList<QualityInspectionControlQuantityRequest>? requests)
+    {
+        var groups = requests?.GroupBy(request => request.LineId).ToArray() ?? [];
+        if (groups.Length != selected.Count
+            || groups.Any(group => group.Count() != 1)
+            || groups.Any(group => selected.All(line => line.Id != group.Key)))
+            throw AppException.BadRequest(Message(QualityMessageKeys.ControlQuantityRequired));
+
+        var result = new Dictionary<long, QualityInspectionControlSnapshot>(selected.Count);
+        foreach (var line in selected)
+        {
+            var inspected = groups.Single(group => group.Key == line.Id).Single().InspectedQuantity;
+            var lotQuantity = ActionableQuantity(line);
+            var required = RequiredControlQuantityForDecision(line);
+            if (inspected < 0)
+                throw AppException.BadRequest(Message(
+                    QualityMessageKeys.ControlQuantityMustBePositive,
+                    line.StockCodeSnapshot));
+            if (inspected - lotQuantity > 0.000001m)
+                throw AppException.BadRequest(Message(
+                    QualityMessageKeys.ControlQuantityExceedsLot,
+                    line.StockCodeSnapshot,
+                    inspected,
+                    lotQuantity));
+            if (required - inspected > 0.000001m)
+                throw AppException.Conflict(Message(
+                    QualityMessageKeys.ControlQuantityBelowMinimum,
+                    line.StockCodeSnapshot,
+                    inspected,
+                    required));
+            result[line.Id] = new QualityInspectionControlSnapshot(lotQuantity, required, inspected);
+        }
+        return result;
+    }
     private static decimal ActionableQuantity(QualityInspectionLine line) =>
         line.Decision == QualityDecision.Quarantined
             ? line.QuarantineQuantity
             : Math.Max(0, line.Quantity - DecidedQuantity(line));
+    internal static decimal RequiredControlQuantityForDecision(QualityInspectionLine line) =>
+        Math.Min(
+            Math.Max(0, line.SampleQuantity - line.InspectedQuantity),
+            ActionableQuantity(line));
     private static decimal DecidedQuantity(QualityInspectionLine line) =>
         line.AcceptedQuantity + line.RejectedQuantity + line.QuarantineQuantity;
     private static QualityDecision ResolveLineDecision(QualityInspectionLine line) =>
@@ -1652,7 +1918,122 @@ public sealed class QualityService(
 
         return result;
     }
-    private string Message(string key) => localizer[key].Value;
+    private string Message(string key, params object[] arguments) =>
+        arguments.Length == 0 ? localizer[key].Value : localizer[key, arguments].Value;
+
+    private async Task<bool> IsSourceReceiptReadyAsync(QualityInspection inspection, CancellationToken ct)
+    {
+        if (!string.Equals(inspection.SourceDocumentType, "GoodsReceipt", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var status = await uow.Repository<GoodsReceiptHeader>().Query()
+            .Where(x => x.Id == inspection.SourceDocumentId)
+            .Select(x => (WarehouseOperationStatus?)x.Status)
+            .FirstOrDefaultAsync(ct);
+        return status.HasValue && IsReceiptReadyForQualityDisposition(status.Value);
+    }
+
+    private async Task<string> GetActorDisplayNameAsync(long actor, CancellationToken ct)
+    {
+        var value = await (from user in uow.Repository<User>().Query()
+                           join detail in uow.Repository<UserDetail>().Query() on user.Id equals detail.UserId into details
+                           from detail in details.DefaultIfEmpty()
+                           where user.Id == actor
+                           select new
+                           {
+                               user.Username,
+                               FirstName = detail == null ? null : detail.FirstName,
+                               LastName = detail == null ? null : detail.LastName
+                           }).FirstOrDefaultAsync(ct);
+        if (value is null) return $"#{actor}";
+        var fullName = $"{value.FirstName} {value.LastName}".Trim();
+        return Clean(string.IsNullOrWhiteSpace(fullName) ? value.Username : fullName, 200) ?? $"#{actor}";
+    }
+
+    internal static QualityInspectionWorkState ResolveWorkState(QualityInspection inspection)
+    {
+        if (IsTerminalStatus(inspection.Status)) return QualityInspectionWorkState.Completed;
+        if (inspection.WorkSessions.Any(x => x.EndedAtUtc == null)) return QualityInspectionWorkState.Running;
+        return inspection.WorkSessions.Count > 0
+            ? QualityInspectionWorkState.Paused
+            : QualityInspectionWorkState.NotStarted;
+    }
+
+    internal static QualityInspectionWorkSummaryDto BuildWorkSummary(
+        QualityInspection inspection,
+        long actor,
+        bool canExecute,
+        bool canSupervise,
+        bool canDecide,
+        bool receiptReady,
+        DateTimeOffset now)
+    {
+        var sessions = inspection.WorkSessions.Where(x => !x.IsDeleted).ToArray();
+        var active = sessions.FirstOrDefault(x => x.EndedAtUtc == null);
+        var total = sessions.Sum(x => EffectiveWorkSeconds(x, now));
+        var currentUserTotal = sessions.Where(x => x.WorkerUserId == actor).Sum(x => EffectiveWorkSeconds(x, now));
+        var terminal = IsTerminalStatus(inspection.Status);
+        return new QualityInspectionWorkSummaryDto(
+            terminal
+                ? QualityInspectionWorkState.Completed
+                : active is not null
+                    ? QualityInspectionWorkState.Running
+                    : sessions.Length > 0
+                        ? QualityInspectionWorkState.Paused
+                        : QualityInspectionWorkState.NotStarted,
+            now,
+            total,
+            currentUserTotal,
+            sessions.Length,
+            sessions.Select(x => x.WorkerUserId).Distinct().Count(),
+            active?.WorkerUserId,
+            active?.WorkerNameSnapshot,
+            active?.StartedAtUtc,
+            canExecute && receiptReady && !terminal && active is null,
+            canExecute && active is not null && (active.WorkerUserId == actor || canSupervise),
+            canDecide && receiptReady && active?.WorkerUserId == actor);
+    }
+
+    internal static QualityInspectionWorkSessionDto MapWorkSession(QualityInspectionWorkSession session) => new(
+        session.Id,
+        session.SequenceNo,
+        session.WorkerUserId,
+        session.WorkerNameSnapshot,
+        session.StartedAtUtc,
+        session.EndedAtUtc,
+        session.DurationSeconds,
+        session.StopReason,
+        session.StopNote,
+        session.EndedByUserId);
+
+    internal static void CloseWorkSession(
+        QualityInspectionWorkSession session,
+        DateTimeOffset endedAtUtc,
+        QualityInspectionWorkStopReason reason,
+        string? note,
+        Guid idempotencyKey,
+        long actor)
+    {
+        if (session.EndedAtUtc.HasValue) return;
+        session.EndedAtUtc = endedAtUtc < session.StartedAtUtc ? session.StartedAtUtc : endedAtUtc;
+        session.DurationSeconds = Math.Max(0, (long)Math.Floor((session.EndedAtUtc.Value - session.StartedAtUtc).TotalSeconds));
+        session.StopReason = reason;
+        session.StopNote = Clean(note, 1000);
+        session.EndIdempotencyKey = idempotencyKey;
+        session.EndedByUserId = actor;
+        session.UpdatedBy = actor;
+        session.UpdatedDate = DateTime.UtcNow;
+    }
+
+    internal static long EffectiveWorkSeconds(QualityInspectionWorkSession session, DateTimeOffset now) =>
+        session.EndedAtUtc.HasValue
+            ? session.DurationSeconds
+            : Math.Max(0, (long)Math.Floor((now - session.StartedAtUtc).TotalSeconds));
+
+    internal static bool IsTerminalStatus(QualityInspectionStatus status) => status is
+        QualityInspectionStatus.Passed or
+        QualityInspectionStatus.Failed or
+        QualityInspectionStatus.Released or
+        QualityInspectionStatus.Cancelled;
 
     internal static bool CanPrioritize(QualityInspectionStatus status) => status is
         QualityInspectionStatus.Pending or
@@ -1870,6 +2251,10 @@ public sealed class QualityService(
         QualityInspectionStatus InspectionStatus,
         OperationQualityStatus ReceiptStatus,
         bool IsTerminal);
+    private sealed record QualityInspectionControlSnapshot(
+        decimal LotQuantity,
+        decimal RequiredQuantity,
+        decimal InspectedQuantity);
     internal sealed record QualityWarehouseRouteDefaults(
         long? QualityLocationId,
         long? AcceptedLocationId,
