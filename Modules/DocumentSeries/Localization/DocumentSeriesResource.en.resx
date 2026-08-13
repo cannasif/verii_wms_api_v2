@@ -8,7 +8,7 @@
   <data name="InvalidCode" xml:space="preserve"><value>Series code must be 2-20 characters and contain only letters, numbers, hyphens and underscores.</value></data>
   <data name="InvalidName" xml:space="preserve"><value>Series name must be 2-150 characters.</value></data>
   <data name="InvalidPrefix" xml:space="preserve"><value>Prefix must be 1-10 alphanumeric characters.</value></data>
-  <data name="InvalidNumberSettings" xml:space="preserve"><value>Number length must be 3-15, and prefix, year and number must not exceed 15 characters in total. Start and next numbers must be positive and increment must be 1-1000.</value></data>
+  <data name="InvalidNumberSettings" xml:space="preserve"><value>The document number must be exactly 15 characters. Prefix and year must leave at least 3 counter digits; start and next numbers must fit that space and increment must be 1-1000.</value></data>
   <data name="DuplicateCode" xml:space="preserve"><value>This series code is already used for the same branch and document type.</value></data>
   <data name="DuplicateDefault" xml:space="preserve"><value>Only one active default series is allowed for the same branch and operation type.</value></data>
   <data name="IssuedSeriesImmutable" xml:space="preserve"><value>The code, operation type and numbering fields of a series that issued numbers cannot be changed. Create a new series.</value></data>

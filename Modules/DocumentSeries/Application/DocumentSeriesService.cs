@@ -178,18 +178,12 @@ public sealed partial class DocumentSeriesService(
         if (!CodePattern().IsMatch(code)) throw AppException.BadRequest(Message(DocumentSeriesMessageKeys.InvalidCode));
         if (name.Length is < 2 or > 150) throw AppException.BadRequest(Message(DocumentSeriesMessageKeys.InvalidName));
         if (!PrefixPattern().IsMatch(prefix)) throw AppException.BadRequest(Message(DocumentSeriesMessageKeys.InvalidPrefix));
-        var yearLength = request.YearFormat switch
-        {
-            DocumentYearFormat.TwoDigit => 2,
-            DocumentYearFormat.FourDigit => 4,
-            _ => 0
-        };
-        if (request.NumberLength is < 3 or > 15
-            || prefix.Length + yearLength + request.NumberLength > 15
+        var numberLength = DocumentNumberRules.GetRequiredCounterLength(prefix, request.YearFormat);
+        if (numberLength is < DocumentNumberRules.MinimumCounterLength or > DocumentNumberRules.TotalLength
             || request.StartNumber < 1
             || request.NextNumber < request.StartNumber
-            || DigitCount(request.StartNumber) > request.NumberLength
-            || DigitCount(request.NextNumber) > request.NumberLength
+            || DigitCount(request.StartNumber) > numberLength
+            || DigitCount(request.NextNumber) > numberLength
             || request.IncrementBy is < 1 or > 1000)
             throw AppException.BadRequest(Message(DocumentSeriesMessageKeys.InvalidNumberSettings));
         if (request.Description?.Length > 500) throw AppException.BadRequest(Message(DocumentSeriesMessageKeys.InvalidName));
@@ -200,7 +194,7 @@ public sealed partial class DocumentSeriesService(
                 && x.DocumentType == request.DocumentType && x.IsDefault && x.IsActive, cancellationToken))
             throw AppException.Conflict(Message(DocumentSeriesMessageKeys.DuplicateDefault));
 
-        return new NormalizedRequest(branchCode, code, name, prefix);
+        return new NormalizedRequest(branchCode, code, name, prefix, numberLength);
     }
 
     private static void Apply(SeriesEntity entity, DocumentSeriesUpsertRequest request, NormalizedRequest value, bool allowNumberingChanges)
@@ -215,7 +209,7 @@ public sealed partial class DocumentSeriesService(
         entity.DocumentType = request.DocumentType;
         entity.Prefix = value.Prefix;
         entity.YearFormat = request.YearFormat;
-        entity.NumberLength = request.NumberLength;
+        entity.NumberLength = value.NumberLength;
         entity.StartNumber = request.StartNumber;
         entity.NextNumber = request.NextNumber;
         entity.IncrementBy = request.IncrementBy;
@@ -224,7 +218,7 @@ public sealed partial class DocumentSeriesService(
     private static bool NumberingIdentityChanged(SeriesEntity entity, DocumentSeriesUpsertRequest request, NormalizedRequest value) =>
         entity.BranchCode != value.BranchCode || entity.Code != value.Code
         || entity.DocumentType != request.DocumentType || entity.Prefix != value.Prefix
-        || entity.YearFormat != request.YearFormat || entity.NumberLength != request.NumberLength || entity.StartNumber != request.StartNumber
+        || entity.YearFormat != request.YearFormat || entity.NumberLength != value.NumberLength || entity.StartNumber != request.StartNumber
         || entity.NextNumber != request.NextNumber || entity.IncrementBy != request.IncrementBy;
 
     private async Task SaveAsync(CancellationToken cancellationToken)
@@ -235,20 +229,15 @@ public sealed partial class DocumentSeriesService(
 
     internal static string FormatNumber(string prefix, DocumentYearFormat yearFormat, int numberLength, long number, DateTime issuedAt)
     {
-        var year = yearFormat switch
-        {
-            DocumentYearFormat.TwoDigit => issuedAt.ToString("yy", System.Globalization.CultureInfo.InvariantCulture),
-            DocumentYearFormat.FourDigit => issuedAt.ToString("yyyy", System.Globalization.CultureInfo.InvariantCulture),
-            _ => string.Empty
-        };
-        return $"{prefix}{year}{number.ToString(System.Globalization.CultureInfo.InvariantCulture).PadLeft(numberLength, '0')}";
+        _ = numberLength; // Kept for API compatibility; the counter width is a domain-derived value.
+        return DocumentNumberRules.Format(prefix, yearFormat, number, issuedAt);
     }
 
     private static int DigitCount(long value) => value.ToString(System.Globalization.CultureInfo.InvariantCulture).Length;
     private static object Snapshot(SeriesEntity x) => new { x.Id, x.BranchCode, x.Code, x.Name, x.DocumentType, x.Prefix, x.YearFormat, x.NumberLength, x.StartNumber, x.NextNumber, x.IncrementBy, x.IsDefault, x.IsActive, x.HasIssuedNumbers, x.LastIssuedAt, x.Description };
     private string Message(string key) => localizer[key].Value;
     private static readonly string[] Fields = ["BranchCode", "Code", "Name", "DocumentType", "Prefix", "YearFormat", "NumberLength", "StartNumber", "NextNumber", "IncrementBy", "IsDefault", "IsActive", "Description"];
-    private sealed record NormalizedRequest(string BranchCode, string Code, string Name, string Prefix);
+    private sealed record NormalizedRequest(string BranchCode, string Code, string Name, string Prefix, int NumberLength);
     [GeneratedRegex("^[A-Z0-9_-]{2,20}$", RegexOptions.CultureInvariant)] private static partial Regex CodePattern();
     [GeneratedRegex("^[A-Z0-9]{1,10}$", RegexOptions.CultureInvariant)] private static partial Regex PrefixPattern();
 }

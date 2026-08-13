@@ -8,7 +8,7 @@
   <data name="InvalidCode" xml:space="preserve"><value>Seri kodu 2-20 karakter olmalı; yalnızca harf, rakam, tire ve alt çizgi içermelidir.</value></data>
   <data name="InvalidName" xml:space="preserve"><value>Seri adı 2-150 karakter olmalıdır.</value></data>
   <data name="InvalidPrefix" xml:space="preserve"><value>Ön ek 1-10 karakter olmalı; yalnızca harf ve rakam içermelidir.</value></data>
-  <data name="InvalidNumberSettings" xml:space="preserve"><value>Numara uzunluğu 3-15 olmalı; ön ek, yıl ve numara toplamı 15 karakteri aşmamalıdır. Başlangıç ve sıradaki numara pozitif, artış değeri 1-1000 aralığında olmalıdır.</value></data>
+  <data name="InvalidNumberSettings" xml:space="preserve"><value>Belge numarası tam 15 karakter olmalıdır. Ön ek ve yıl alanlarından sonra sayaç için en az 3 hane kalmalı; başlangıç ve sıradaki numara bu alana sığmalı, artış değeri 1-1000 aralığında olmalıdır.</value></data>
   <data name="DuplicateCode" xml:space="preserve"><value>Aynı şube ve belge türünde bu seri kodu zaten kullanılıyor.</value></data>
   <data name="DuplicateDefault" xml:space="preserve"><value>Aynı şube ve işlem türü için yalnızca bir aktif varsayılan seri olabilir.</value></data>
   <data name="IssuedSeriesImmutable" xml:space="preserve"><value>Numara üretmiş bir serinin kodu, işlem türü veya numaralandırma alanları değiştirilemez. Yeni seri tanımlayın.</value></data>

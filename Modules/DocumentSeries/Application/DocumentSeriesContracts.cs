@@ -34,17 +34,11 @@ public sealed class DocumentSeriesGridRow
     public int IncrementBy { get; init; }
     public string PreviewDocumentNumber
     {
-        get
-        {
-            var year = YearFormat switch
-            {
-                "TwoDigit" => DateTime.UtcNow.ToString("yy", System.Globalization.CultureInfo.InvariantCulture),
-                "FourDigit" => DateTime.UtcNow.ToString("yyyy", System.Globalization.CultureInfo.InvariantCulture),
-                _ => string.Empty
-            };
-            var number = NextNumber.ToString(System.Globalization.CultureInfo.InvariantCulture).PadLeft(NumberLength, '0');
-            return $"{Prefix}{year}{number}";
-        }
+        get => DocumentNumberRules.Format(
+            Prefix,
+            Enum.TryParse<DocumentYearFormat>(YearFormat, out var yearFormat) ? yearFormat : DocumentYearFormat.None,
+            NextNumber,
+            DateTime.UtcNow);
     }
     public bool IsDefault { get; init; }
     public bool IsActive { get; init; }

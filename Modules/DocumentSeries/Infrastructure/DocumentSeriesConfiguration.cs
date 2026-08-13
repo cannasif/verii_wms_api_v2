@@ -15,7 +15,7 @@ public sealed class DocumentSeriesConfiguration : BaseEntityConfiguration<Series
             table.HasCheckConstraint("CK_RII_DOCUMENT_SERIES_NUMBER_LENGTH", "[NumberLength] BETWEEN 3 AND 15");
             table.HasCheckConstraint(
                 "CK_RII_DOCUMENT_SERIES_DOCUMENT_NO_LENGTH",
-                "LEN([Prefix]) + [NumberLength] + CASE [YearFormat] WHEN N'TwoDigit' THEN 2 WHEN N'FourDigit' THEN 4 ELSE 0 END <= 15");
+                "LEN([Prefix]) + [NumberLength] + CASE [YearFormat] WHEN N'TwoDigit' THEN 2 WHEN N'FourDigit' THEN 4 ELSE 0 END = 15");
             table.HasCheckConstraint(
                 "CK_RII_DOCUMENT_SERIES_COUNTER_LENGTH",
                 "LEN(CONVERT(varchar(20), [StartNumber])) <= [NumberLength] AND LEN(CONVERT(varchar(20), [NextNumber])) <= [NumberLength]");
