@@ -89,6 +89,7 @@ public sealed class ProductionSourceWorkOrder : BaseEntity
     public DateTime? WorkOrderDate { get; set; }
     public DateTime? DeliveryDate { get; set; }
     public string? ProjectCode { get; set; }
+    public string? Description { get; set; }
     public DateTimeOffset SourceUpdatedAtUtc { get; set; }
     public string? PayloadHash { get; set; }
     public byte[] RowVersion { get; set; } = [];

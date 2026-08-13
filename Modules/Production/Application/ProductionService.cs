@@ -50,7 +50,7 @@ public sealed partial class ProductionService(
             result.AddRange(rows.Select(x=>new ProductionSourceWorkOrderRow(
                 ProductionOrderSourceType.NetsisErpFunctions,"NETSIS",1,x.WorkOrderNumber,x.BranchCode??branchNumber,x.StockCode,x.StockName,
                 x.ConfigurationCode,x.WorkOrderQuantity,x.UnitCode,x.RecipeTotal,x.WorkOrderDate,x.DeliveryDate,
-                x.ProjectCode,x.WarehouseCode,x.IssueWarehouseCode,x.IsClosed)));
+                x.ProjectCode,x.WarehouseCode,x.IssueWarehouseCode,x.IsClosed,Description:x.Description)));
         }
 
         if(setting.Source is ProductionOrderSourceType.WmsIntegrationTables or ProductionOrderSourceType.ErpAndWms)
@@ -62,7 +62,8 @@ public sealed partial class ProductionService(
             {
                 var term=search.Trim();
                 query=query.Where(x=>x.WorkOrderNumber.Contains(term)||x.ProductCode.Contains(term)||
-                    (x.ProductName!=null&&x.ProductName.Contains(term))||(x.ProjectCode!=null&&x.ProjectCode.Contains(term)));
+                    (x.ProductName!=null&&x.ProductName.Contains(term))||(x.ProjectCode!=null&&x.ProjectCode.Contains(term))||
+                    (x.Description!=null&&x.Description.Contains(term)));
             }
             var candidates=await query.AsNoTracking()
                 .OrderByDescending(x=>x.SourceUpdatedAtUtc).ThenByDescending(x=>x.RevisionNumber)
@@ -81,6 +82,7 @@ public sealed partial class ProductionService(
                     x.WorkOrderDate,
                     x.DeliveryDate,
                     x.ProjectCode,
+                    x.Description,
                     x.TargetWarehouseCode,
                     x.SourceWarehouseCode,
                     x.SourceUpdatedAtUtc
@@ -94,7 +96,8 @@ public sealed partial class ProductionService(
                     branchNumber,x.ProductCode,x.ProductName??x.ProductCode,x.ConfigurationCode,x.PlannedQuantity,
                     x.UnitCode,x.RecipeLineCount,x.WorkOrderDate,x.DeliveryDate,x.ProjectCode,
                     x.TargetWarehouseCode,x.SourceWarehouseCode,false,
-                    RecipeLineCount: x.RecipeLineCount)));
+                    RecipeLineCount: x.RecipeLineCount,
+                    Description: x.Description)));
         }
 
         var ordered=result.OrderByDescending(x=>x.WorkOrderDate).ThenBy(x=>x.WorkOrderNumber)
@@ -284,7 +287,8 @@ public sealed partial class ProductionService(
                         netsisTemplate.IsClosed,
                         ProductionSourceWorkOrderListingKind.CancellationReturnRemainder,
                         header.Id,
-                        task.Id));
+                        task.Id,
+                        Description: netsisTemplate.Description));
                     continue;
                 }
 
@@ -1104,7 +1108,8 @@ public sealed partial class ProductionService(
             targetWarehouse?.Id,workOrder.WarehouseCode,targetWarehouse?.WarehouseName,
             workOrder.WorkOrderDate,workOrder.DeliveryDate,workOrder.ProjectCode,workOrder.IsClosed,
             existing?.ProductionHeaderId,existing?.Id,existing?.DocumentNo,
-            errors.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),remaining,reclassified.Assigned);
+            errors.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),remaining,reclassified.Assigned,
+            Description:workOrder.Description);
     }
 
     private async Task<PreparedNetsisProductionWorkOrder> PrepareWmsSourceWorkOrderAsync(
@@ -1178,7 +1183,8 @@ public sealed partial class ProductionService(
             sourceWarehouse?.Id,source.SourceWarehouseCode,sourceWarehouse?.WarehouseName,
             targetWarehouse?.Id,source.TargetWarehouseCode,targetWarehouse?.WarehouseName,
             source.WorkOrderDate,source.DeliveryDate,source.ProjectCode,false,existing?.ProductionHeaderId,
-            existing?.Id,existing?.DocumentNo,errors.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),remaining,reclassified.Assigned);
+            existing?.Id,existing?.DocumentNo,errors.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),remaining,reclassified.Assigned,
+            Description:source.Description);
     }
 
     private async Task<(ProductionOrderSourceType Source,string SourceSystemCode)> GetSourceSettingAsync(
@@ -1463,7 +1469,7 @@ public sealed partial class ProductionService(
                 return new ProductionAssignmentDto(x.Id,x.UserId,user.Username,
                     string.IsNullOrWhiteSpace(display)?user.Username:display,x.IsPrimary,x.AssignedAtUtc,
                     x.AcceptedAtUtc,x.CompletedAtUtc,x.Note);
-            }).ToArray())).ToArray();
+            }).ToArray(),order.Description)).ToArray();
         var row=new ProductionPlanGridRow(
             header.Id,header.BranchCode,header.DocumentNo,header.DocumentDate,header.PlanType,
             header.ExecutionMode,header.Status,header.Priority,header.CustomerCodeSnapshot,

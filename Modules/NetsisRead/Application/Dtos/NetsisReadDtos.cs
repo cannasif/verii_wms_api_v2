@@ -130,7 +130,8 @@ public sealed record ProductionWorkOrderDto(
     string? ProjectCode,
     int WarehouseCode,
     int IssueWarehouseCode,
-    bool IsClosed);
+    bool IsClosed,
+    string? Description = null);
 
 /// <summary>One material component of a Netsis stock recipe.</summary>
 public sealed record StockRecipeComponentDto(

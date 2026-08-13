@@ -797,7 +797,61 @@ public sealed partial class ProductionService
                 netsis.ProjectCode,
                 netsis.WarehouseCode,
                 netsis.IssueWarehouseCode,
-                netsis.IsClosed);
+                netsis.IsClosed,
+                Description: netsis.Description);
+        }
+
+        if (setting.Source == ProductionOrderSourceType.WmsIntegrationTables)
+        {
+            var source = await uow.Repository<ProductionSourceWorkOrder>().Query()
+                .AsNoTracking()
+                .Where(x => x.BranchCode == branch
+                    && x.SourceSystemCode == setting.SourceSystemCode
+                    && x.WorkOrderNumber == workOrderNumber
+                    && (x.Status == ProductionSourceOrderStatus.Ready || x.Status == ProductionSourceOrderStatus.Released))
+                .OrderByDescending(x => x.RevisionNumber)
+                .ThenByDescending(x => x.SourceUpdatedAtUtc)
+                .Select(x => new
+                {
+                    x.SourceSystemCode,
+                    x.RevisionNumber,
+                    x.WorkOrderNumber,
+                    x.ProductCode,
+                    x.ProductName,
+                    x.ConfigurationCode,
+                    x.PlannedQuantity,
+                    x.UnitCode,
+                    RecipeLineCount = x.RecipeLines.Count,
+                    x.WorkOrderDate,
+                    x.DeliveryDate,
+                    x.ProjectCode,
+                    x.TargetWarehouseCode,
+                    x.SourceWarehouseCode,
+                    x.Description,
+                })
+                .FirstOrDefaultAsync(ct);
+            if (source is null) return null;
+
+            return new ProductionSourceWorkOrderRow(
+                ProductionOrderSourceType.WmsIntegrationTables,
+                source.SourceSystemCode,
+                source.RevisionNumber,
+                source.WorkOrderNumber,
+                branchNumber,
+                source.ProductCode,
+                source.ProductName ?? source.ProductCode,
+                source.ConfigurationCode,
+                source.PlannedQuantity,
+                source.UnitCode,
+                source.RecipeLineCount,
+                source.WorkOrderDate,
+                source.DeliveryDate,
+                source.ProjectCode,
+                source.TargetWarehouseCode,
+                source.SourceWarehouseCode,
+                false,
+                RecipeLineCount: source.RecipeLineCount,
+                Description: source.Description);
         }
 
         return null;

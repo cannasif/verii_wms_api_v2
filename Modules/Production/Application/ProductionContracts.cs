@@ -117,7 +117,8 @@ public sealed record PreparedNetsisProductionWorkOrder(
     IReadOnlyList<PreparedNetsisProductionMaterial> AssignedMaterials,
     ProductionSourceWorkOrderListingKind ListingKind = ProductionSourceWorkOrderListingKind.Standard,
     long? TransferId = null,
-    long? KalanTaskId = null);
+    long? KalanTaskId = null,
+    string? Description = null);
 
 public enum ProductionSourceWorkOrderListingKind
 {
@@ -150,7 +151,8 @@ public sealed record ProductionSourceWorkOrderRow(
     long? KalanTaskId = null,
     long? CancellationId = null,
     int AssignedRecipeLineCount = 0,
-    int RecipeLineCount = 0);
+    int RecipeLineCount = 0,
+    string? Description = null);
 
 public sealed record CancelProductionWorkOrderAssignmentRequest(
     Guid IdempotencyKey,
@@ -302,7 +304,8 @@ public sealed record ProductionOrderDto(
     DateTimeOffset? PlannedEndAtUtc,
     IReadOnlyList<ProductionMaterialDto> Materials,
     IReadOnlyList<ProductionOutputDto> Outputs,
-    IReadOnlyList<ProductionAssignmentDto> Assignments);
+    IReadOnlyList<ProductionAssignmentDto> Assignments,
+    string? Description = null);
 
 public sealed record ProductionDependencyDto(
     long Id,

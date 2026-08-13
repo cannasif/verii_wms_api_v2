@@ -19,6 +19,7 @@ public sealed class ProductionSourceWorkOrderConfiguration : BaseEntityConfigura
         b.Property(x=>x.ConfigurationCode).HasMaxLength(100);
         b.Property(x=>x.UnitCode).HasMaxLength(20).IsRequired();
         b.Property(x=>x.ProjectCode).HasMaxLength(100);
+        b.Property(x=>x.Description).HasMaxLength(1000);
         b.Property(x=>x.PayloadHash).HasMaxLength(128);
         b.Property(x=>x.PlannedQuantity).HasPrecision(20,6);
         b.Property(x=>x.RowVersion).IsRowVersion();

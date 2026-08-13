@@ -70,6 +70,37 @@ public sealed class NetsisProductionReadContractTests
     }
 
     [Fact]
+    public void Production_work_order_description_migration_adds_source_column_and_projects_netsis_description()
+    {
+        var migration = new AddProductionWorkOrderDescription();
+        var addColumn = Assert.Single(migration.UpOperations.OfType<AddColumnOperation>());
+        var sql = Assert.Single(migration.UpOperations.OfType<SqlOperation>()).Sql;
+
+        Assert.Equal("RII_PR_SOURCE_ORDER", addColumn.Table);
+        Assert.Equal("Description", addColumn.Name);
+        Assert.Equal(1000, addColumn.MaxLength);
+        Assert.True(addColumn.IsNullable);
+        Assert.Contains("I.ACIKLAMA", sql, StringComparison.Ordinal);
+        Assert.Contains("AS Aciklama", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("INSERT ", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("UPDATE ", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DELETE ", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Production_work_order_contract_serializes_description()
+    {
+        var row = new ProductionWorkOrderDto(
+            "IE-1", 1, "MAMUL", "Mamul", null, 10m, 1, "ADET", 1m,
+            DateTime.UtcNow, null, null, 0, null, 1, 2, false, "Üretim notu");
+
+        var json = JsonSerializer.Serialize(row, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+
+        using var document = JsonDocument.Parse(json);
+        Assert.Equal("Üretim notu", document.RootElement.GetProperty("description").GetString());
+    }
+
+    [Fact]
     public void Warehouse_return_location_bridge_removes_the_second_set_null_path()
     {
         var foreignKey = new PrepareWarehouseTransferReturnLocation().UpOperations
