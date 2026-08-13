@@ -23,7 +23,21 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
 {
     private IGenericRepository<WarehouseTransferHeader> Headers=>uow.Repository<WarehouseTransferHeader>();
 
-    public Task<CreateWarehouseTransferDraftResult> CreateDraftAsync(CreateWarehouseTransferDraftRequest request,long actor,CancellationToken ct=default)
+    public Task<CreateWarehouseTransferDraftResult> CreateDraftAsync(CreateWarehouseTransferDraftRequest request,long actor,CancellationToken ct=default) =>
+        CreateDraftCoreAsync(request, null, actor, ct);
+
+    public Task<CreateWarehouseTransferDraftResult> CreateDraftWithPolicyContextAsync(
+        CreateWarehouseTransferDraftRequest request,
+        WarehouseTransferDraftPolicyContext policyContext,
+        long actor,
+        CancellationToken ct=default) =>
+        CreateDraftCoreAsync(request, policyContext ?? throw new ArgumentNullException(nameof(policyContext)), actor, ct);
+
+    private Task<CreateWarehouseTransferDraftResult> CreateDraftCoreAsync(
+        CreateWarehouseTransferDraftRequest request,
+        WarehouseTransferDraftPolicyContext? suppliedPolicyContext,
+        long actor,
+        CancellationToken ct)
     {
         ValidateEnvelope(request);
         return uow.ExecuteInTransactionAsync(async token=>{
@@ -33,9 +47,10 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
             var branch=request.BranchCode.Trim();
             await UserWarehouseAccessService.EnsureAsync(
                 uow, actor, branch, [request.SourceWarehouseId, request.TargetWarehouseId], token);
-            var policy=await policyService.GetAsync(branch,token);
+            var policy=suppliedPolicyContext??WarehouseTransferDraftPolicyContext.FromWarehousePolicy(
+                await policyService.GetAsync(branch,token));
             var qualityDisposition=request.BusinessContext==WarehouseTransferBusinessContext.QualityDisposition;
-            if(!qualityDisposition)ValidateMode(request,policy);
+            if(!qualityDisposition)WarehouseTransferDraftPolicyGuard.Validate(request,policy);
             var taskBased=request.InitiationMode is WarehouseTransferInitiationMode.OrderBasedTask or WarehouseTransferInitiationMode.StockBasedTask;
             var orderBased=request.InitiationMode is WarehouseTransferInitiationMode.OrderBasedTask or WarehouseTransferInitiationMode.OrderBasedDirectTransfer;
             var assigneeIds=(request.AssignedUserIds??[]).Distinct().ToArray();
@@ -367,25 +382,6 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
         if(r.Lines.Count==0)throw AppException.BadRequest("En az bir transfer satırı zorunludur.");
         if(r.Lines.Any(x=>x.StockId<=0||x.Quantity<=0))throw AppException.BadRequest("Stok ve pozitif miktar zorunludur.");
         if(r.PlannedDispatchAtUtc.HasValue&&r.PlannedArrivalAtUtc.HasValue&&r.PlannedArrivalAtUtc<r.PlannedDispatchAtUtc)throw AppException.BadRequest("Planlanan varış sevk zamanından önce olamaz.");
-    }
-    private static void ValidateMode(CreateWarehouseTransferDraftRequest r,WarehouseTransferPolicyDto p){
-        var allowed=r.InitiationMode switch{
-            WarehouseTransferInitiationMode.OrderBasedTask=>p.AllowOrderBasedTask,
-            WarehouseTransferInitiationMode.StockBasedTask=>p.AllowStockBasedTask,
-            WarehouseTransferInitiationMode.DirectTransfer=>p.AllowStockBasedDirect,
-            WarehouseTransferInitiationMode.OrderBasedDirectTransfer=>p.AllowOrderBasedDirect,
-            _=>false};
-        if(!allowed)throw AppException.BadRequest("Seçilen sipariş/emir kombinasyonu transfer politikasında kapalıdır.");
-        if(p.RequireSourceLocation&&!r.AutoAssignSources&&r.Lines.Any(x=>!x.DefaultSourceLocationId.HasValue))
-            throw AppException.BadRequest("Transfer politikası kaynak rafı kalem bazında zorunlu tutuyor.");
-        if(p.RequireTargetLocation&&r.Lines.Any(x=>!x.DefaultTargetLocationId.HasValue))
-            throw AppException.BadRequest("Transfer politikası hedef rafı kalem bazında zorunlu tutuyor.");
-        foreach(var line in r.Lines.Where(x=>x.Source is not null)){
-            var source=line.Source!;
-            if(string.IsNullOrWhiteSpace(source.OrderNumber)||string.IsNullOrWhiteSpace(source.ExternalLineId)||string.IsNullOrWhiteSpace(source.ExternalStockCode))
-                throw AppException.BadRequest("Sipariş kaynak belge, satır ve stok bilgisi zorunludur.");
-            if(line.Quantity>source.AvailableQuantity)throw AppException.BadRequest($"{source.OrderNumber}/{source.ExternalLineId} için miktar açık miktarı aşamaz.");
-        }
     }
     private static void ValidateLocations(CreateWarehouseTransferDraftRequest r,IReadOnlyDictionary<long,WarehouseLocation> locations){
         bool Belongs(long? id,long warehouse)=>!id.HasValue||locations[id.Value].WarehouseId==warehouse;

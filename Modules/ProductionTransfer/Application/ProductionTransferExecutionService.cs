@@ -1090,14 +1090,18 @@ public sealed class ProductionTransferExecutionService(
             .ToArray();
         var autoAssignSources = ProductionTransferResidualDraftSupport.NeedsAutoAssignSources(original, draftLines);
 
-        var result = await transfers.CreateDraftAsync(new(
-            Guid.NewGuid(), original.BranchCode, original.DocumentSeriesId, DateOnly.FromDateTime(DateTime.UtcNow),
-            original.InitiationMode, original.ProcessType, original.SourceWarehouseId, original.TargetWarehouseId,
-            original.SourceStagingLocationId, original.TargetReceivingLocationId, original.TargetPutawayLocationId,
-            original.PlannedDispatchAtUtc, original.PlannedArrivalAtUtc, original.Priority,
-            $"KALAN:{original.DocumentNo}",
-            $"{original.DocumentNo} eksik tesliminden otomatik oluşturulan kalan iş emri. {Clean(handover.ShortageReason, 500)}",
-            draftLines, null, original.BusinessContext, original.ProjectCode, autoAssignSources), actor, ct);
+        var result = await transfers.CreateDraftWithPolicyContextAsync(
+            new(
+                Guid.NewGuid(), original.BranchCode, original.DocumentSeriesId, DateOnly.FromDateTime(DateTime.UtcNow),
+                original.InitiationMode, original.ProcessType, original.SourceWarehouseId, original.TargetWarehouseId,
+                original.SourceStagingLocationId, original.TargetReceivingLocationId, original.TargetPutawayLocationId,
+                original.PlannedDispatchAtUtc, original.PlannedArrivalAtUtc, original.Priority,
+                $"KALAN:{original.DocumentNo}",
+                $"{original.DocumentNo} eksik tesliminden otomatik oluşturulan kalan iş emri. {Clean(handover.ShortageReason, 500)}",
+                draftLines, null, original.BusinessContext, original.ProjectCode, autoAssignSources),
+            ProductionTransferWarehousePolicyAdapter.FromProductionSnapshot(original),
+            actor,
+            ct);
 
         var residualHeader = await uow.Repository<WarehouseTransferHeader>().Query(true)
             .Include(x => x.Lines).SingleAsync(x => x.Id == result.Id, ct);

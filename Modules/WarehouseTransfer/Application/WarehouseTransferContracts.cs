@@ -65,6 +65,64 @@ public sealed record CreateWarehouseTransferDraftRequest(
     bool AutoAssignSources = false);
 
 public sealed record CreateWarehouseTransferDraftResult(long Id,string DocumentNo,int LineCount,decimal RequestedQuantity,bool Replayed,long? TaskId,string? TaskNo);
+
+/// <summary>
+/// Server-side policy snapshot used when another bounded context creates a warehouse transfer.
+/// This type is never accepted by an HTTP controller; callers cannot bypass transfer rules.
+/// Physical warehouse, location, stock, tracking, serial and balance validations remain in the
+/// warehouse-transfer engine while the owning module supplies its own workflow policy.
+/// </summary>
+public sealed record WarehouseTransferDraftPolicyContext(
+    bool ValidateInitiationMode,
+    bool AllowOrderBasedTask,
+    bool AllowStockBasedTask,
+    bool AllowOrderBasedDirect,
+    bool AllowStockBasedDirect,
+    bool RequireApproval,
+    bool RequireAssigneeForTask,
+    bool AllowMultipleAssignees,
+    bool AutoReleaseTaskBased,
+    WarehouseTransferReservationPolicy ReservationPolicy,
+    decimal MinimumFulfillmentPercent,
+    bool AllowPartialPicking,
+    bool AllowPartialShipment,
+    bool AllowPartialReceipt,
+    bool RequireDestinationAcceptance,
+    bool CreateTransitInventory,
+    bool RequirePutaway,
+    bool RequireSourceLocation,
+    bool RequireTargetLocation,
+    bool RequireShipmentInformation,
+    WarehouseTransferDirectPostingPolicy DirectPostingPolicy,
+    WarehouseTransferDiscrepancyPolicy DiscrepancyPolicy,
+    WarehouseTransferCancellationReturnPolicy CancellationReturnPolicy)
+{
+    public static WarehouseTransferDraftPolicyContext FromWarehousePolicy(WarehouseTransferPolicyDto policy) => new(
+        true,
+        policy.AllowOrderBasedTask,
+        policy.AllowStockBasedTask,
+        policy.AllowOrderBasedDirect,
+        policy.AllowStockBasedDirect,
+        policy.RequireApproval,
+        policy.RequireAssigneeForTask,
+        policy.AllowMultipleAssignees,
+        policy.AutoReleaseTaskBased,
+        policy.ReservationPolicy,
+        policy.MinimumFulfillmentPercent,
+        policy.AllowPartialPicking,
+        policy.AllowPartialShipment,
+        policy.AllowPartialReceipt,
+        policy.RequireDestinationAcceptance,
+        policy.CreateTransitInventory,
+        policy.RequirePutaway,
+        policy.RequireSourceLocation,
+        policy.RequireTargetLocation,
+        policy.RequireShipmentInformation,
+        policy.DirectPostingPolicy,
+        policy.DiscrepancyPolicy,
+        policy.CancellationReturnPolicy);
+}
+
 public sealed record UpdateWarehouseTransferDraftRequest(string RowVersion,DateOnly DocumentDate,long? SourceStagingLocationId,
     long? TargetReceivingLocationId,long? TargetPutawayLocationId,DateTimeOffset? PlannedDispatchAtUtc,
     DateTimeOffset? PlannedArrivalAtUtc,byte Priority,string? ExternalReferenceNo,string? Description,string? ProjectCode = null);
@@ -109,6 +167,11 @@ public sealed record WarehouseTransferDetail(WarehouseTransferGridRow Header,IRe
 public interface IWarehouseTransferService
 {
     Task<CreateWarehouseTransferDraftResult> CreateDraftAsync(CreateWarehouseTransferDraftRequest request,long actorUserId,CancellationToken cancellationToken=default);
+    Task<CreateWarehouseTransferDraftResult> CreateDraftWithPolicyContextAsync(
+        CreateWarehouseTransferDraftRequest request,
+        WarehouseTransferDraftPolicyContext policyContext,
+        long actorUserId,
+        CancellationToken cancellationToken=default);
     Task<PagedResponse<WarehouseTransferGridRow>> GetPagedAsync(PagedRequest request,CancellationToken cancellationToken=default);
     Task<PagedResponse<WarehouseTransferGridRow>> GetPagedByContextAsync(PagedRequest request,IReadOnlyCollection<WarehouseTransferBusinessContext> contexts,CancellationToken cancellationToken=default);
     Task<WarehouseTransferDetail> GetDetailAsync(long id,CancellationToken cancellationToken=default);

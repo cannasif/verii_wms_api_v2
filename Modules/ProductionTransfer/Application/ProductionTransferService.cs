@@ -74,9 +74,13 @@ public sealed class ProductionTransferService(
             if(policy.BlockOnShortage&&!IsAutoAssignSources(request)&&availability==ProductionMaterialAvailabilityStatus.Shortage)
                 throw AppException.Conflict("Üretim besleme transferi için kaynak rafta yeterli kullanılabilir stok yok.");
 
-            var result=await transfers.CreateDraftAsync(request.Transfer with{
-                BusinessContext=context,
-                AutoAssignSources=IsAutoAssignSources(request)},actor,token);
+            var result=await transfers.CreateDraftWithPolicyContextAsync(
+                request.Transfer with{
+                    BusinessContext=context,
+                    AutoAssignSources=IsAutoAssignSources(request)},
+                ProductionTransferWarehousePolicyAdapter.FromProductionPolicy(policy),
+                actor,
+                token);
             var header=await uow.Repository<WarehouseTransferHeader>().Query(true)
                 .Include(x=>x.Lines).SingleAsync(x=>x.Id==result.Id,token);
             header.RequireApproval|=policy.RequireApproval;
