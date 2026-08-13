@@ -397,6 +397,16 @@ public sealed class KkdRequestService(
             line.StockCodeSnapshot = stock.ErpStockCode;
             line.StockNameSnapshot = stock.StockName;
             line.UnitCode = stock.BaseUnitCode;
+            // Stoğu bilinmeyen (StockId=null) kalemler ClaimAsync/AssignAsync'teki kota kontrolünden hiç
+            // geçmemişti; stok burada ilk kez bağlandığında da aynı kontrol yapılmalı, yoksa aşım sessizce kaçar.
+            if (line.QuotaDecision == KkdRequestLineQuotaDecision.None)
+            {
+                var remaining = Math.Max(0, line.RequestedQuantity - line.CancelledQuantity);
+                var quotaCheck = await entitlements.CheckAsync(
+                    new(entity.EmployeeId, stock.Id, remaining, DateOnly.FromDateTime(now.UtcDateTime)), token);
+                if (!quotaCheck.IsAllowed)
+                    line.QuotaDecision = KkdRequestLineQuotaDecision.Pending;
+            }
             line.ResolvedByUserId = actor;
             line.ResolvedAtUtc = now;
             line.ResolutionReason = request.Reason.Trim();
@@ -558,7 +568,7 @@ public sealed class KkdRequestService(
                     && (x.Status == KkdPreparationTaskStatus.Assigned || x.Status == KkdPreparationTaskStatus.InPreparation))
                 .ToListAsync(token);
             // Canlı toplama (gerçek stok hareketi) zaten yapılmış bir görev varsa iptal engellenir —
-            // ReturnAsync'teki TaskHasProgress kuralıyla tutarlı; önce geri alma (Unpick) gerekir.
+            // önce geri alma (Unpick) gerekir.
             if (openTasks.Any(x => x.Lines.Any(l => l.PreparedQuantity > 0)))
                 throw AppException.Conflict(Message(KkdRequestMessageKeys.TaskHasProgress));
 

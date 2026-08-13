@@ -209,11 +209,6 @@ public sealed record KkdPreparationHandoffRequest(
     string Reason,
     string? ExpectedRowVersion);
 
-public sealed record KkdPreparationReturnRequest(
-    Guid IdempotencyKey,
-    string Reason,
-    string? ExpectedRowVersion);
-
 /// <summary>"Bu işi yapıyorum": havuz görevinde önce üzerine alır, sonra stoğu bilinen satırlara
 /// raf ataması + gerçek rezervasyon yapar. Stoğu henüz bilinmeyen satırlar atlanır.</summary>
 public sealed record KkdPreparationStartRequest(
@@ -368,7 +363,6 @@ public interface IKkdPreparationTaskService
     Task<KkdPreparationTaskRow> ClaimAsync(long requestId, KkdPreparationClaimRequest request, long actor, CancellationToken ct = default);
     Task<KkdPreparationTaskRow> ClaimTaskAsync(long taskId, KkdPreparationClaimTaskRequest request, long actor, CancellationToken ct = default);
     Task<KkdPreparationTaskRow> HandoffAsync(long taskId, KkdPreparationHandoffRequest request, long actor, CancellationToken ct = default);
-    Task ReturnAsync(long taskId, KkdPreparationReturnRequest request, long actor, CancellationToken ct = default);
     Task<KkdPreparationTaskRow> StartAsync(long taskId, KkdPreparationStartRequest request, long actor, CancellationToken ct = default);
     Task<KkdRouteCandidatesResult> GetRouteCandidatesAsync(long taskLineId, long actor, CancellationToken ct = default);
     Task<KkdPreparationTaskRow> ApplyRouteSplitAsync(long taskLineId, KkdRouteSplitRequest request, long actor, CancellationToken ct = default);

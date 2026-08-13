@@ -42,7 +42,6 @@
   <data name="TasksAssigned" xml:space="preserve"><value>KKD hazırlama görevleri oluşturuldu.</value></data>
   <data name="TaskClaimed" xml:space="preserve"><value>KKD talebi üzerinize alındı.</value></data>
   <data name="TaskHandedOver" xml:space="preserve"><value>Kalan iş devredildi.</value></data>
-  <data name="TaskReturned" xml:space="preserve"><value>Görev havuza iade edildi.</value></data>
   <data name="DuplicatePoolGroup" xml:space="preserve"><value>Bir atamada yalnızca bir depo havuzu grubu oluşturulabilir.</value></data>
   <data name="TaskAlreadyClaimed" xml:space="preserve"><value>Bu görev başka bir kullanıcı tarafından zaten üzerine alınmış.</value></data>
   <data name="TaskNotPooled" xml:space="preserve"><value>Bu görevin zaten bir sahibi var; havuz işlemleri kullanılamaz.</value></data>

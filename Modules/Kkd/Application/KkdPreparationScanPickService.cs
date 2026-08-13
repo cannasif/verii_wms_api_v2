@@ -140,6 +140,10 @@ public sealed class KkdPreparationScanPickService(
             var requestLine = line.RequestLine;
             if (!requestLine.StockId.HasValue || requestLine.StockId.Value != prep.Resolved.StockId)
                 throw AppException.Conflict("Okutulan stok görev kalemiyle eşleşmiyor.");
+            // ResolveLineAsync stoğu az önce bağlamış olabilir ve kota aşımı bulmuş olabilir (QuotaDecision=Pending);
+            // bu durumda barkod okutarak sessizce toplamaya devam edilmemeli, müdür kararına kadar durmalı.
+            if (requestLine.QuotaDecision is KkdRequestLineQuotaDecision.Pending or KkdRequestLineQuotaDecision.Rejected)
+                throw AppException.Conflict("Bu kalem için kota kararı bekleniyor; müdür onaylayana/reddedene kadar toplama yapılamaz.");
 
             var remaining = Remaining(line);
             if (remaining <= 0)

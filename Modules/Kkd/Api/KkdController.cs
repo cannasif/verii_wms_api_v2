@@ -223,14 +223,6 @@ public sealed class KkdController(
             await preparationTasks.HandoffAsync(id, request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.TaskHandedOver)));
     }
 
-    [HttpPost("preparation-tasks/{id:long}/return")]
-    public async Task<IActionResult> ReturnPreparationTask(long id, KkdPreparationReturnRequest request, CancellationToken ct)
-    {
-        await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
-        await preparationTasks.ReturnAsync(id, request, UserId(), ct);
-        return Ok(ApiResponse<object?>.Ok(null, RequestMessage(KkdRequestMessageKeys.TaskReturned)));
-    }
-
     [HttpPost("preparation-tasks/{id:long}/resolve-scan")]
     public async Task<IActionResult> ResolvePreparationScan(long id, KkdPreparationResolveScanRequest request, CancellationToken ct)
     {

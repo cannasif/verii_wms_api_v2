@@ -42,7 +42,6 @@
   <data name="TasksAssigned" xml:space="preserve"><value>PPE preparation tasks were created.</value></data>
   <data name="TaskClaimed" xml:space="preserve"><value>The PPE request was claimed for you.</value></data>
   <data name="TaskHandedOver" xml:space="preserve"><value>Remaining work was handed over.</value></data>
-  <data name="TaskReturned" xml:space="preserve"><value>The task was returned to the pool.</value></data>
   <data name="DuplicatePoolGroup" xml:space="preserve"><value>Only one warehouse-pool group can be created per assignment.</value></data>
   <data name="TaskAlreadyClaimed" xml:space="preserve"><value>This task has already been claimed by another user.</value></data>
   <data name="TaskNotPooled" xml:space="preserve"><value>This task already has an owner; pool actions are not available.</value></data>

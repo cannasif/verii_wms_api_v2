@@ -83,6 +83,12 @@ public sealed class KkdPreparationTaskService(
                 throw AppException.BadRequest(Message(KkdRequestMessageKeys.DuplicateAssignee));
             if (request.Groups.Count(x => !x.AssignedUserId.HasValue) > 1)
                 throw AppException.BadRequest(Message(KkdRequestMessageKeys.DuplicatePoolGroup));
+            // Tek bir çağrı içindeki kontrol yeterli değil: talebe ayrı ayrı çağrılarla art arda "havuza ata"
+            // dendiğinde de en fazla bir aktif (sahipsiz) havuz görevi olmalı.
+            if (request.Groups.Any(x => !x.AssignedUserId.HasValue) && await Tasks.AnyAsync(x =>
+                x.RequestId == requestId && x.AssignedUserId == null
+                && (x.Status == KkdPreparationTaskStatus.Assigned || x.Status == KkdPreparationTaskStatus.InPreparation), token))
+                throw AppException.BadRequest(Message(KkdRequestMessageKeys.DuplicatePoolGroup));
             var activeUserCount = await Users.CountAsync(x => namedUserIds.Contains(x.Id) && x.IsActive, token);
             if (activeUserCount != namedUserIds.Length)
                 throw AppException.NotFound(Message(KkdRequestMessageKeys.UserNotFound));
@@ -354,49 +360,6 @@ public sealed class KkdPreparationTaskService(
         }, ct, IsolationLevel.Serializable);
     }
 
-    public async Task ReturnAsync(long taskId, KkdPreparationReturnRequest request, long actor, CancellationToken ct = default)
-    {
-        ValidateKey(request.IdempotencyKey);
-        ValidateReason(request.Reason);
-        await uow.ExecuteInTransactionAsync<object?>(async token =>
-        {
-            var task = await Tasks.Query(true)
-                .Include(x => x.Request)
-                .Include(x => x.Lines).ThenInclude(x => x.RequestLine)
-                .Include(x => x.Lines).ThenInclude(x => x.Locations)
-                .SingleOrDefaultAsync(x => x.Id == taskId, token)
-                ?? throw AppException.NotFound(Message(KkdRequestMessageKeys.TaskNotFound));
-            if (task.Status == KkdPreparationTaskStatus.Returned) return null;
-            EnsureActive(task);
-            if (!task.AssignedUserId.HasValue) throw AppException.Conflict(Message(KkdRequestMessageKeys.TaskNotPooled));
-            CheckVersion(task.RowVersion, request.ExpectedRowVersion);
-            if (task.Lines.Any(x => x.PreparedQuantity > 0 || x.DeliveredQuantity > 0))
-                throw AppException.Conflict(Message(KkdRequestMessageKeys.TaskHasProgress));
-
-            var now = DateTimeOffset.UtcNow;
-            // Henüz toplanmamış (yukarıdaki kontrol nedeniyle PreparedQuantity=0) ama "Bu işi yapıyorum"
-            // ile rezerve edilmiş raflar varsa, havuza iade ederken serbest bırakılmalı.
-            foreach (var line in task.Lines.Where(x => x.RequestLine.StockId.HasValue && x.Locations.Any(l => l.ReservedQuantity > 0)))
-            {
-                await ReleaseLineReservationsAsync(
-                    task, line, line.RequestLine.StockId!.Value, line.RequestLine.UnitCode,
-                    $"{request.IdempotencyKey}:release", actor, now, token);
-            }
-            task.Status = KkdPreparationTaskStatus.Returned;
-            task.ClosedAtUtc = now;
-            task.ClosureReason = request.Reason.Trim();
-            task.UpdatedBy = actor;
-            task.UpdatedDate = now.UtcDateTime;
-            await SaveAsync(token);
-            await audit.WriteAsync(new AuditLogWriteEntry(
-                "kkd.preparation-task.return", nameof(KkdPreparationTask), task.Id.ToString(), "Succeeded", "kkd-request",
-                Reason: request.Reason.Trim(),
-                NewValues: new { task.Status },
-                ChangedFields: ["Status", "ClosedAtUtc", "ClosureReason"]), token);
-            return null;
-        }, ct, IsolationLevel.Serializable);
-    }
-
     /// <summary>
     /// "Bu işi yapıyorum": havuz görevinde ilk basan üzerine alır (atomik), sonra stoğu bilinen
     /// satırlara raf ataması + gerçek rezervasyon yapılır. Stoğu henüz bilinmeyen satırlar
@@ -406,6 +369,11 @@ public sealed class KkdPreparationTaskService(
     public async Task<KkdPreparationTaskRow> StartAsync(long taskId, KkdPreparationStartRequest request, long actor, CancellationToken ct = default)
     {
         ValidateKey(request.IdempotencyKey);
+        // Claim/Assign anında kota uygundu, ama aradan geçen sürede personelin hakkı BAŞKA bir talepte
+        // tükenmiş olabilir. Bunu, stok fiziksel olarak raftan çıkmadan (rezervasyondan) önce yakalamak için
+        // ayrı bir ön-işlemde kontrol edip kalıcı olarak Pending işaretliyoruz — aşağıdaki mevcut
+        // "Pending/Rejected kalemi varsa başlatma" kontrolü bunu doğal olarak yakalar.
+        await RefreshQuotaDecisionsBeforeStartAsync(taskId, actor, ct);
         return await uow.ExecuteInTransactionAsync(async token =>
         {
             var task = await Tasks.Query(true)
@@ -457,6 +425,46 @@ public sealed class KkdPreparationTaskService(
                 NewValues: new { task.StartedAtUtc, task.AssignedUserId },
                 ChangedFields: ["StartedAtUtc", "AssignedUserId"]), token);
             return (await MapRowsAsync([task], token))[0];
+        }, ct, IsolationLevel.Serializable);
+    }
+
+    /// <summary>StartAsync'in asıl rezervasyon işleminden önce çalışır: kota kararı henüz verilmemiş (None)
+    /// ve stoğu bilinen satırların hakkını canlı olarak tekrar kontrol eder, aşımı varsa Pending işaretleyip
+    /// kalıcı olarak kaydeder (kendi ayrı işlemi — StartAsync'in ana işlemi içinde yapılsaydı, o işlem
+    /// Pending bulununca hata fırlatıp geri alındığında bu işaretleme de kaybolurdu).</summary>
+    private async Task RefreshQuotaDecisionsBeforeStartAsync(long taskId, long actor, CancellationToken ct)
+    {
+        await uow.ExecuteInTransactionAsync<object?>(async token =>
+        {
+            var task = await Tasks.Query(true)
+                .Include(x => x.Request)
+                .Include(x => x.Lines).ThenInclude(x => x.RequestLine)
+                .SingleOrDefaultAsync(x => x.Id == taskId, token);
+            // Görev zaten başlamışsa (StartAsync'e idempotent bir yeniden çağrı) stok çoktan rezerve
+            // edilmiş olur; bu noktada satırı sonradan Pending işaretlemek hiçbir şeyi geri almaz,
+            // sadece daha önce sorunsuz tamamlanmış bir işi görünüşte bloklar. Bu yüzden kontrol sadece
+            // henüz hiç başlamamış görevlerde, gerçek rezervasyondan önce çalışmalı.
+            if (task is null || task.StartedAtUtc.HasValue) return null;
+
+            var today = DateOnly.FromDateTime(DateTime.UtcNow);
+            var now = DateTimeOffset.UtcNow;
+            var changed = false;
+            foreach (var line in task.Lines)
+            {
+                var requestLine = line.RequestLine;
+                if (requestLine.StockId is not { } stockId || requestLine.QuotaDecision != KkdRequestLineQuotaDecision.None)
+                    continue;
+                var remaining = line.Quantity - line.PreparedQuantity;
+                if (remaining <= 0) continue;
+                var check = await entitlements.CheckAsync(new(task.Request.EmployeeId, stockId, remaining, today), token);
+                if (check.IsAllowed) continue;
+                requestLine.QuotaDecision = KkdRequestLineQuotaDecision.Pending;
+                requestLine.UpdatedBy = actor;
+                requestLine.UpdatedDate = now.UtcDateTime;
+                changed = true;
+            }
+            if (changed) await SaveAsync(token);
+            return null;
         }, ct, IsolationLevel.Serializable);
     }
 

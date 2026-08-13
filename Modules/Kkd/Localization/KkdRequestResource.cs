@@ -42,7 +42,6 @@ public static class KkdRequestMessageKeys
     public const string TasksAssigned = nameof(TasksAssigned);
     public const string TaskClaimed = nameof(TaskClaimed);
     public const string TaskHandedOver = nameof(TaskHandedOver);
-    public const string TaskReturned = nameof(TaskReturned);
     public const string DuplicatePoolGroup = nameof(DuplicatePoolGroup);
     public const string TaskAlreadyClaimed = nameof(TaskAlreadyClaimed);
     public const string TaskNotPooled = nameof(TaskNotPooled);
