@@ -258,7 +258,7 @@ public sealed class SteelReceiptImportLocationResolutionTests
                 Name = "Location receipt",
                 DocumentType = WmsDocumentType.GoodsReceipt,
                 Prefix = "LC",
-                NumberLength = 8,
+                NumberLength = 9,
                 StartNumber = 1,
                 NextNumber = 1,
                 IsActive = true

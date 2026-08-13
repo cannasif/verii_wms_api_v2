@@ -205,7 +205,7 @@ public sealed class SteelVehicleAcceptedPlateMigrationIntegrationTests
                 Name = "Migration test receipt",
                 DocumentType = WmsDocumentType.GoodsReceipt,
                 Prefix = "MG",
-                NumberLength = 8,
+                NumberLength = 9,
                 StartNumber = 1,
                 NextNumber = 1,
                 IsActive = true

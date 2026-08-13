@@ -79,7 +79,7 @@ public sealed class SteelVehicleUnknownPlateIntegrationTests
             Name = "Idempotency receipt",
             DocumentType = WmsDocumentType.GoodsReceipt,
             Prefix = "ID",
-            NumberLength = 8,
+            NumberLength = 9,
             StartNumber = 1,
             NextNumber = 1,
             IsActive = true
@@ -757,7 +757,7 @@ public sealed class SteelVehicleUnknownPlateIntegrationTests
                 Name = "Unknown plate test receipt",
                 DocumentType = WmsDocumentType.GoodsReceipt,
                 Prefix = "UP",
-                NumberLength = 8,
+                NumberLength = 9,
                 StartNumber = 1,
                 NextNumber = 1,
                 IsActive = true
