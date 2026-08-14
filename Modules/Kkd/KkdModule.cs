@@ -7,6 +7,7 @@ public static class KkdModule
 {
     public static IServiceCollection AddKkdModule(this IServiceCollection services) => services
         .AddScoped<IKkdDefinitionService, KkdDefinitionService>()
+        .AddScoped<IKkdDefinitionWorkbookService, KkdDefinitionWorkbookService>()
         .AddScoped<IKkdPolicyService, KkdPolicyService>()
         .AddScoped<IKkdEntitlementService, KkdEntitlementService>()
         .AddScoped<IKkdRequestService, KkdRequestService>()

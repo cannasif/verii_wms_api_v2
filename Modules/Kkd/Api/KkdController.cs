@@ -15,6 +15,7 @@ namespace verii_wms_api_v2.Modules.Kkd.Api;
 [Authorize, ApiController, Route("api/kkd")]
 public sealed class KkdController(
     IKkdDefinitionService definitions,
+    IKkdDefinitionWorkbookService definitionWorkbook,
     IKkdEntitlementService entitlements,
     IKkdDistributionService distributions,
     IKkdRequestService requests,
@@ -45,6 +46,44 @@ public sealed class KkdController(
         return Ok(ApiResponse<KkdWarehousePickingStagingLocationDto>.Ok(
             await definitions.UpdatePickingStagingLocationAsync(warehouseId, request.LocationId, UserId(), ct),
             "KKD toplama sanal rafı kaydedildi."));
+    }
+
+    [HttpGet("definitions/import-template")]
+    public async Task<IActionResult> DownloadDefinitionsImportTemplate(CancellationToken ct)
+    {
+        await Require("WMS.KKD.DEFINITIONS.VIEW", ct);
+        await Require("WMS.KKD.EMPLOYEES.VIEW", ct);
+        await Require("WMS.KKD.MATRICES.VIEW", ct);
+
+        var workbook = await definitionWorkbook.CreateTemplateAsync(BranchCode(), ct);
+        return File(
+            workbook,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            $"WMS_KKD_Tanimlari_{DateTime.UtcNow:yyyyMMdd_HHmm}.xlsx");
+    }
+
+    [HttpPost("definitions/import")]
+    [RequestSizeLimit(KkdDefinitionWorkbookService.MaxImportFileSize)]
+    public async Task<IActionResult> ImportDefinitions([FromForm] IFormFile? file, CancellationToken ct)
+    {
+        await Require("WMS.KKD.DEFINITIONS.MANAGE", ct);
+        await Require("WMS.KKD.EMPLOYEES.MANAGE", ct);
+        await Require("WMS.KKD.MATRICES.MANAGE", ct);
+
+        if (file is null || file.Length == 0)
+            throw AppException.BadRequest("KKD tanım dosyası seçilmelidir.");
+
+        if (!string.Equals(Path.GetExtension(file.FileName), ".xlsx", StringComparison.OrdinalIgnoreCase))
+            throw AppException.BadRequest("Yalnızca XLSX biçimindeki KKD tanım dosyaları yüklenebilir.");
+
+        if (file.Length > KkdDefinitionWorkbookService.MaxImportFileSize)
+            throw AppException.BadRequest("KKD tanım dosyası 15 MB sınırını aşamaz.");
+
+        await using var stream = file.OpenReadStream();
+        var result = await definitionWorkbook.ImportAsync(stream, BranchCode(), UserId(), ct);
+        return Ok(ApiResponse<KkdDefinitionWorkbookImportResult>.Ok(
+            result,
+            $"KKD tanımları uygulandı. {result.Created} yeni kayıt, {result.Updated} güncelleme, {result.Unchanged} değişmeyen kayıt."));
     }
 
     [HttpGet("departments")]
