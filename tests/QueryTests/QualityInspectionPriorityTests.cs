@@ -34,4 +34,18 @@ public sealed class QualityInspectionPriorityTests
     {
         Assert.Equal(expected, QualityService.CanPrioritize(status));
     }
+
+    [Fact]
+    public void Status_catalog_is_derived_from_domain_enum_and_defaults_to_pending()
+    {
+        var catalog = QualityService.BuildInspectionStatusCatalog();
+
+        Assert.Equal(QualityInspectionStatus.Pending.ToString(), catalog.DefaultValue);
+        Assert.Equal(Enum.GetValues<QualityInspectionStatus>().Length, catalog.Items.Count);
+        Assert.DoesNotContain(catalog.Items, item => item.Value == "Queued");
+        Assert.True(catalog.Items.Single(item => item.Value == "Pending").IsDefault);
+        Assert.True(catalog.Items.Single(item => item.Value == "Pending").CanPrioritize);
+        Assert.False(catalog.Items.Single(item => item.Value == "Passed").CanPrioritize);
+        Assert.True(catalog.Items.Single(item => item.Value == "Passed").IsTerminal);
+    }
 }

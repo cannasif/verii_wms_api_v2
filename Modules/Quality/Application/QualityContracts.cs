@@ -260,6 +260,16 @@ public sealed record QualityInspectionDetail(QualityInspectionGridRow Header,
 
 public sealed record QualityInspectionPriorityResult(long InspectionId, bool IsPriority);
 
+public sealed record QualityInspectionStatusOptionDto(
+    string Value,
+    bool IsDefault,
+    bool IsTerminal,
+    bool CanPrioritize);
+
+public sealed record QualityInspectionStatusCatalogDto(
+    string DefaultValue,
+    IReadOnlyList<QualityInspectionStatusOptionDto> Items);
+
 public interface IQualityService
 {
     Task<QualityParameterDto> GetParametersAsync(string branchCode, CancellationToken ct = default);
@@ -269,6 +279,7 @@ public interface IQualityService
     Task<long> CreateRuleAsync(QualityRuleUpsertRequest request, long actor, CancellationToken ct = default);
     Task UpdateRuleAsync(long id, QualityRuleUpsertRequest request, long actor, CancellationToken ct = default);
     Task DeleteRuleAsync(long id, long actor, CancellationToken ct = default);
+    QualityInspectionStatusCatalogDto GetInspectionStatusCatalog();
     Task<PagedResponse<QualityInspectionGridRow>> GetInspectionsPagedAsync(PagedRequest request, CancellationToken ct = default);
     Task<QualityInspectionDetail> GetInspectionAsync(long id, long actor, bool canExecute, bool canSupervise,
         bool canDecide, CancellationToken ct = default);

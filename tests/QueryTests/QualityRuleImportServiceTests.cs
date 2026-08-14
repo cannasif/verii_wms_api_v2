@@ -133,6 +133,7 @@ public sealed class QualityRuleImportServiceTests
         public Task<PagedResponse<QualityStockGroupOption>> GetStockGroupsPagedAsync(string branchCode, PagedRequest request, CancellationToken ct = default) => throw new NotSupportedException();
         public Task UpdateRuleAsync(long id, QualityRuleUpsertRequest request, long actor, CancellationToken ct = default) => throw new NotSupportedException();
         public Task DeleteRuleAsync(long id, long actor, CancellationToken ct = default) => throw new NotSupportedException();
+        public QualityInspectionStatusCatalogDto GetInspectionStatusCatalog() => throw new NotSupportedException();
         public Task<PagedResponse<QualityInspectionGridRow>> GetInspectionsPagedAsync(PagedRequest request, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<QualityInspectionDetail> GetInspectionAsync(long id, long actor, bool canExecute, bool canSupervise, bool canDecide, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<QualityInspectionWorkSummaryDto> StartInspectionWorkAsync(long id, StartQualityInspectionWorkRequest request, long actor, bool canExecute, bool canSupervise, bool canDecide, CancellationToken ct = default) => throw new NotSupportedException();

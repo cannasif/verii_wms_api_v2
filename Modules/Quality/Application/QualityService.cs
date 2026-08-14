@@ -177,6 +177,21 @@ public sealed class QualityService(
         return await groups.ToPagedResponseAsync(request, ct);
     }
 
+    public QualityInspectionStatusCatalogDto GetInspectionStatusCatalog() => BuildInspectionStatusCatalog();
+
+    internal static QualityInspectionStatusCatalogDto BuildInspectionStatusCatalog()
+    {
+        const QualityInspectionStatus defaultStatus = QualityInspectionStatus.Pending;
+        var items = Enum.GetValues<QualityInspectionStatus>()
+            .Select(status => new QualityInspectionStatusOptionDto(
+                status.ToString(),
+                status == defaultStatus,
+                IsTerminalStatus(status),
+                CanPrioritize(status)))
+            .ToArray();
+        return new(defaultStatus.ToString(), items);
+    }
+
     public async Task<long> CreateRuleAsync(QualityRuleUpsertRequest request, long actor, CancellationToken ct = default)
     {
         var entity=new QualityRule(); await ApplyRule(entity,request,null,ct); entity.CreatedBy=actor; entity.CreatedDate=DateTime.UtcNow; await Rules.AddAsync(entity,ct); await uow.SaveChangesAsync(ct);

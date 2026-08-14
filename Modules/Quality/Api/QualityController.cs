@@ -41,6 +41,7 @@ public sealed class QualityController(
         return Ok(ApiResponse<QualityRuleImportResult>.Ok(result,
             $"{result.CreatedCount} kalite kuralı oluşturuldu; {result.SkippedCount} satır atlandı, {result.FailedCount} satır başarısız."));
     }
+    [HttpGet("inspections/status-options")] public async Task<IActionResult> InspectionStatusOptions(CancellationToken ct){await Require("WMS.QUALITY.INSPECTIONS.VIEW",ct);return Ok(ApiResponse<QualityInspectionStatusCatalogDto>.Ok(service.GetInspectionStatusCatalog()));}
     [HttpPost("inspections/paged")] public async Task<IActionResult> InspectionsPaged(PagedRequest request,CancellationToken ct){await Require("WMS.QUALITY.INSPECTIONS.VIEW",ct);return Ok(ApiResponse<PagedResponse<QualityInspectionGridRow>>.Ok(await service.GetInspectionsPagedAsync(request,ct)));}
     [HttpGet("inspections/{id:long}")] public async Task<IActionResult> Inspection(long id,CancellationToken ct)
     {
