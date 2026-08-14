@@ -83,6 +83,7 @@ public sealed class ErpIntegrationAttempt : BaseEntity
     public string HttpMethod { get; set; } = "POST";
     public string Endpoint { get; set; } = string.Empty;
     public string RequestHash { get; set; } = string.Empty;
+    public string RequestPayload { get; set; } = string.Empty;
     public int? HttpStatusCode { get; set; }
     public bool IsSuccessful { get; set; }
     public bool CommitUncertain { get; set; }

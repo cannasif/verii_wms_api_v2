@@ -12,6 +12,7 @@ using verii_wms_api_v2.Modules.ErpIntegration.Infrastructure;
 using verii_wms_api_v2.Modules.GoodsReceipt.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.ProjectSettings.Domain;
+using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.Quality.Domain;
 using verii_wms_api_v2.Modules.Shipping.Domain;
 using verii_wms_api_v2.Modules.NetsisRead.Application;
@@ -372,7 +373,9 @@ public sealed class ErpPostingService(
         long userId,
         CancellationToken cancellationToken) where TEntity : class
     {
-        var hash = ComputeHash(request);
+        NetsisItemSlipDefaults.Apply(request, timeProvider.GetLocalNow().DateTime);
+        var requestPayload = JsonSerializer.Serialize(request, HashJsonOptions);
+        var hash = ComputeHash(requestPayload);
         var posting = await Postings.FirstOrDefaultAsync(
             x => x.SourceType == sourceType && x.SourceEntityId == sourceEntityId,
             tracking: true,
@@ -486,6 +489,7 @@ public sealed class ErpPostingService(
             Operation = sourceType.ToString(),
             Endpoint = optionsAccessor.Value.Rest.ItemSlipsPath,
             RequestHash = hash,
+            RequestPayload = requestPayload,
             HttpStatusCode = call.HttpStatusCode,
             IsSuccessful = succeeded,
             CommitUncertain = call.CommitUncertain,
@@ -696,7 +700,19 @@ public sealed class ErpPostingService(
     {
         var options = optionsAccessor.Value.Rest;
         var orderContext = await BuildTransferOrderContextAsync(header, cancellationToken);
+        var productionReference = header.BusinessContext is
+            WarehouseTransferBusinessContext.ProductionMaterialSupply or
+            WarehouseTransferBusinessContext.ProductionWipMove or
+            WarehouseTransferBusinessContext.ProductionOutputMove
+                ? await GetProductionErpReferenceAsync(header.Id, cancellationToken)
+                : null;
         var orderDocumentIds = orderContext.DocumentIds;
+        var erpTrackingRules = (await netsisReadService.GetStockTrackingRulesAsync(
+                header.Lines.Where(x => x.ShippedQuantity > 0).Select(x => x.StockCodeSnapshot).ToArray(),
+                ParseBranchCode(sourceWarehouse.BranchCode),
+                cancellationToken))
+            .GroupBy(x => x.StokKodu.Trim(), StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
         var lines = new List<NetsisItemSlipLine>();
         var usedOrderRows = new List<ErpOrderRow>();
         foreach (var line in header.Lines.OrderBy(x => x.LineNo))
@@ -714,11 +730,27 @@ public sealed class ErpPostingService(
                 orderContext);
             usedOrderRows.AddRange(allocations.Select(x => x.OrderRow));
             var serials = line.Trackings.Where(x => !string.IsNullOrWhiteSpace(x.SerialNo) && x.ShippedQuantity > 0).ToList();
-            if (sendSerials && line.RequireSerial)
+            if (!erpTrackingRules.TryGetValue(line.StockCodeSnapshot.Trim(), out var erpTrackingRule))
+                throw AppException.Conflict(
+                    $"{line.StockCodeSnapshot} Netsis stok kartında bulunamadı. ERP transfer JSON'u oluşturulmadı.");
+            var erpRequiresSerial = erpTrackingRule?.RequiresWarehouseTransferSerial == true;
+            if (erpRequiresSerial && !sendSerials)
+                throw AppException.Conflict(
+                    $"{line.StockCodeSnapshot} Netsis stok kartında seri takipli, ancak 'Serileri ERP'ye aktar' ayarı kapalıdır. " +
+                    "Bu stok için seri gönderimi kapatılamaz; proje ayarını açıp işlemi yeniden deneyin.");
+            var requiresSerialPayload = line.RequireSerial
+                || line.TrackingType is StockTrackingType.Serial or StockTrackingType.LotAndSerial
+                || erpRequiresSerial;
+            if (sendSerials && requiresSerialPayload)
             {
                 if (serials.Count == 0 || serials.Sum(x => x.ShippedQuantity) != quantity)
                     throw AppException.Conflict(
-                        $"{line.StockCodeSnapshot} için sevk miktarıyla eşleşen seri kayıtları tamamlanmadan ERP transferi oluşturulamaz.");
+                        BuildWarehouseTransferSerialMismatchMessage(
+                            line.StockCodeSnapshot,
+                            quantity,
+                            serials.Sum(x => x.ShippedQuantity),
+                            line.RequireSerial,
+                            erpRequiresSerial));
                 AddSerialOrderLines(
                     lines,
                     line.StockCodeSnapshot,
@@ -741,7 +773,7 @@ public sealed class ErpPostingService(
 
         return NewRequest(options.WarehouseTransferDocumentType, options.WarehouseTransferSeries,
             header.DocumentNo, header.WaybillNo ?? header.DocumentNo, header.DocumentDate, header.ShippedAtUtc,
-            null, sourceWarehouse, header.Description, lines,
+            null, sourceWarehouse, BuildProductionTransferErpDescription(header.Description, productionReference), lines,
             usedOrderRows.Count > 0
                 ? ResolveErpHeaderProjectCode(usedOrderRows)
                 : NetsisItemSlipDefaults.NormalizeProjectCode(header.ProjectCode),
@@ -1387,7 +1419,8 @@ public sealed class ErpPostingService(
         CancellationToken cancellationToken)
     {
         var documents = header.SourceDocuments
-            .Where(x => x.SourceSystem == WarehouseOperationSourceSystem.Netsis)
+            .Where(x => x.SourceSystem == WarehouseOperationSourceSystem.Netsis
+                        && string.Equals(x.SourceDocumentType, "TransferOrder", StringComparison.OrdinalIgnoreCase))
             .Select(x => new ErpSourceDocumentRef(x.Id, x.ExternalDocumentNo))
             .Where(x => !string.IsNullOrWhiteSpace(x.ExternalDocumentNo))
             .ToDictionary(x => x.Id);
@@ -1411,6 +1444,34 @@ public sealed class ErpPostingService(
                 x.NetUnitPrice ?? 0,
                 x.GrossUnitPrice ?? 0,
                 x.RemainingQuantity ?? 0)));
+    }
+
+    private async Task<ProductionErpReference?> GetProductionErpReferenceAsync(
+        long warehouseTransferHeaderId,
+        CancellationToken cancellationToken) =>
+        await unitOfWork.Repository<ProductionTransferHeaderLink>().Query()
+            .Where(x => x.WarehouseTransferHeaderId == warehouseTransferHeaderId)
+            .Select(x => new ProductionErpReference(
+                x.ProductionPlanNo,
+                x.ProductionOrderNo,
+                x.ProductionOperationCode,
+                x.Purpose))
+            .SingleOrDefaultAsync(cancellationToken);
+
+    internal static string? BuildProductionTransferErpDescription(
+        string? description,
+        ProductionErpReference? reference)
+    {
+        if (reference is null) return Clean(description);
+        var parts = new List<string>();
+        if (Clean(description) is { } cleanDescription) parts.Add(cleanDescription);
+        parts.Add("Üretim transferi");
+        if (Clean(reference.ProductionOrderNo) is { } orderNo) parts.Add($"İş emri: {orderNo}");
+        if (Clean(reference.ProductionPlanNo) is { } planNo) parts.Add($"Plan: {planNo}");
+        if (Clean(reference.ProductionOperationCode) is { } operationCode) parts.Add($"Operasyon: {operationCode}");
+        parts.Add($"Amaç: {reference.Purpose}");
+        var value = string.Join(" | ", parts.Distinct(StringComparer.OrdinalIgnoreCase));
+        return value.Length <= 255 ? value : value[..255];
     }
 
     private async Task<ErpOrderContext> BuildShipmentOrderContextAsync(
@@ -1601,6 +1662,11 @@ public sealed class ErpPostingService(
         string? ExternalYapCode,
         decimal AllocatedQuantity);
     private sealed record ErpSerialPart(decimal Quantity, string SerialNo);
+    internal sealed record ProductionErpReference(
+        string? ProductionPlanNo,
+        string? ProductionOrderNo,
+        string? ProductionOperationCode,
+        ProductionTransferPurpose Purpose);
     private sealed record ErpOrderAllocation(ErpOrderRow OrderRow, decimal Quantity);
     private sealed record ErpAllocationCandidate(ErpOrderRow Row, decimal AllocatedQuantity);
     private sealed record ErpOrderRow(
@@ -1656,10 +1722,29 @@ public sealed class ErpPostingService(
     private static int ParseBranchCode(string value) =>
         int.TryParse(value, out var result) ? result : 0;
 
-    private static string ComputeHash(NetsisItemSlipRequest request)
+    private static string ComputeHash(NetsisItemSlipRequest request) =>
+        ComputeHash(JsonSerializer.Serialize(request, HashJsonOptions));
+
+    private static string ComputeHash(string json) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
+
+    internal static string BuildWarehouseTransferSerialMismatchMessage(
+        string stockCode,
+        decimal shippedQuantity,
+        decimal serialQuantity,
+        bool wmsRequiresSerial,
+        bool erpRequiresSerial)
     {
-        var json = JsonSerializer.Serialize(request, HashJsonOptions);
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
+        var source = (wmsRequiresSerial, erpRequiresSerial) switch
+        {
+            (true, true) => "WMS takip politikası ve Netsis stok kartı",
+            (true, false) => "WMS takip politikası",
+            (false, true) => "Netsis stok kartı",
+            _ => "transfer satırı"
+        };
+        return $"{stockCode} seri takibi {source} tarafından zorunlu tutuluyor. " +
+               $"ERP'ye gidecek miktar {shippedQuantity}, seriyle doğrulanan miktar {serialQuantity}. " +
+               "Eksik seri/lotları barkodla toplayın; takip politikası Netsis stok kartıyla uyuşmuyorsa stok kartından düzeltin.";
     }
 
     private static void EnsureIdempotencyKey(Guid value)

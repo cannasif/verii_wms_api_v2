@@ -38,6 +38,7 @@ public sealed class ErpIntegrationAttemptConfiguration : BaseEntityConfiguration
         builder.Property(x => x.HttpMethod).HasMaxLength(10).IsRequired();
         builder.Property(x => x.Endpoint).HasMaxLength(500).IsRequired();
         builder.Property(x => x.RequestHash).HasMaxLength(64).IsRequired();
+        builder.Property(x => x.RequestPayload).HasColumnType("nvarchar(max)").IsRequired();
         builder.Property(x => x.ErrorCode).HasMaxLength(100);
         builder.Property(x => x.ErrorMessage).HasMaxLength(4000);
         builder.Property(x => x.ProviderResponse).HasMaxLength(8000);

@@ -7,6 +7,7 @@ namespace verii_wms_api_v2.Modules.NetsisRead.Application;
 public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INetsisReadService
 {
     private const int ProductionRecipeBatchSize = 500;
+    private const int StockTrackingBatchSize = 500;
 
     public async Task<IReadOnlyList<BranchDto>> GetBranchesAsync(int? branchNo, CancellationToken ct) =>
         await queryExecutor.QueryAsync<BranchDto>("RII_FN_BRANCHES", "SELECT * FROM dbo.RII_FN_BRANCHES(@branchNo)", r => new BranchDto(Get<short>(r, "SUBE_KODU"), NullableString(r, "UNVAN")), ct, Parameter("@branchNo", branchNo));
@@ -21,6 +22,48 @@ public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INet
     {
         var rows = await queryExecutor.QueryAsync<StockDto>("RII_FN_STOK", "SELECT * FROM dbo.RII_FN_STOK(@stokKodu, @branchCode)", r => new StockDto(Get<short>(r,"SUBE_KODU"), Get<short>(r,"ISLETME_KODU"), String(r,"STOK_KODU"), String(r,"URETICI_KODU"), String(r,"STOK_ADI"), String(r,"GRUP_KODU"), String(r,"KOD_1"), String(r,"KOD_2"), String(r,"KOD_3"), String(r,"KOD_4"), String(r,"KOD_5"), NullableString(r,"OLCU_BR1")), ct, Parameter("@stokKodu", stockCode), Parameter("@branchCode", branchCode));
         return rows;
+    }
+
+    public async Task<IReadOnlyList<NetsisStockTrackingDto>> GetStockTrackingRulesAsync(
+        IReadOnlyCollection<string> stockCodes,
+        int branchCode,
+        CancellationToken ct)
+    {
+        var codes = stockCodes
+            .Select(Normalize)
+            .Where(x => x is not null)
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (codes.Length == 0) return [];
+
+        var result = new List<NetsisStockTrackingDto>(codes.Length);
+        foreach (var batch in codes.Chunk(StockTrackingBatchSize))
+        {
+            var rows = await queryExecutor.QueryAsync<NetsisStockTrackingDto>(
+                "RII_FN_STOK.TRACKING",
+                """
+                SELECT SUBE_KODU, STOK_KODU,
+                       GIRIS_SERI, CIKIS_SERI, SERI_BAK, SERI_MIK,
+                       SERI_GIR_OT, SERI_CIK_OT
+                FROM dbo.RII_FN_STOK(@stockCodes, @branchCode)
+                """,
+                r => new NetsisStockTrackingDto(
+                    Get<short>(r, "SUBE_KODU"),
+                    String(r, "STOK_KODU"),
+                    NullableString(r, "GIRIS_SERI") ?? "H",
+                    NullableString(r, "CIKIS_SERI") ?? "H",
+                    NullableString(r, "SERI_BAK") ?? "H",
+                    NullableString(r, "SERI_MIK") ?? "H",
+                    NullableString(r, "SERI_GIR_OT") ?? "H",
+                    NullableString(r, "SERI_CIK_OT") ?? "H"),
+                ct,
+                Parameter("@stockCodes", string.Join(',', batch)),
+                Parameter("@branchCode", branchCode));
+            result.AddRange(rows);
+        }
+
+        return result;
     }
 
     public async Task<IReadOnlyList<NetsisStockBalanceDto>> GetStockBalancesAsync(

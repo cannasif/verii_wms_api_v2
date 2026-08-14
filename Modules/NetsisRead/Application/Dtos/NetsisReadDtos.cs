@@ -17,6 +17,30 @@ public sealed record StockDto(
     string? OlcuBr1);
 
 /// <summary>
+/// Netsis stok kartındaki seri izleme davranışının ERP kaynaklı özetidir.
+/// WMS takip politikası operasyonu yönetir; bu sözleşme ERP'ye gönderilecek
+/// belgenin Netsis stok kartıyla çelişmesini gönderimden önce engeller.
+/// </summary>
+public sealed record NetsisStockTrackingDto(
+    short SubeKodu,
+    string StokKodu,
+    string GirisSeri,
+    string CikisSeri,
+    string SeriBakiye,
+    string SeriMiktar,
+    string SeriGirisOtomatik,
+    string SeriCikisOtomatik)
+{
+    public bool RequiresWarehouseTransferSerial =>
+        Enabled(GirisSeri) || Enabled(CikisSeri) || Enabled(SeriBakiye);
+
+    public bool RequiresSerialQuantity => Enabled(SeriMiktar);
+
+    private static bool Enabled(string? value) =>
+        value?.Trim().ToUpperInvariant() is "E" or "Y" or "1" or "TRUE";
+}
+
+/// <summary>
 /// Read-only projection returned by dbo.RII_FN_STOCK_BALANCE.
 /// This is ERP data and is intentionally not tracked as an EF entity.
 /// </summary>
