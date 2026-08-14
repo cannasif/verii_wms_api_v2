@@ -7,6 +7,23 @@ public enum QualityFailAction { Quarantine = 1, Reject = 2, ReturnToSupplier = 3
 public enum QualitySamplingMode { All = 1, Percentage = 2, FixedQuantity = 3, EveryNthHandlingUnit = 4 }
 public enum QualityInspectionStatus { Pending = 1, InProgress = 2, PartiallyDecided = 3, Passed = 4, Failed = 5, Quarantined = 6, Released = 7, Cancelled = 8 }
 public enum QualityDecision { Pending = 1, Accepted = 2, Rejected = 3, Quarantined = 4, Returned = 5, Hold = 6 }
+
+/// <summary>
+/// Branch-scoped, reusable reason catalogue used while applying a quality decision.
+/// The selected code is also copied to the decision evidence as a snapshot so historical
+/// records remain readable when a definition is renamed or deactivated later.
+/// </summary>
+public sealed class QualityDecisionCode : BaseEntity
+{
+    public string Code { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string? Description { get; set; }
+    public QualityDecision? ApplicableDecision { get; set; }
+    public bool RequiresNote { get; set; }
+    public int SortOrder { get; set; }
+    public bool IsActive { get; set; } = true;
+    public byte[] RowVersion { get; set; } = [];
+}
 public enum QualityInspectionWorkStopReason
 {
     Break = 1,
@@ -173,6 +190,8 @@ public sealed class QualityInspectionLine : BaseEntity
     public decimal QuarantineQuantity { get; set; }
     public long? QuarantineLocationId { get; set; }
     public QualityDecision Decision { get; set; } = QualityDecision.Pending;
+    public long? DecisionCodeId { get; set; }
+    public QualityDecisionCode? DecisionCode { get; set; }
     public string? ReasonCode { get; set; }
     public string? ReasonNote { get; set; }
     public long? DecisionBy { get; set; }
@@ -228,6 +247,8 @@ public sealed class QualityInspectionDisposition : BaseEntity
     public string TargetStockStatus { get; set; } = string.Empty;
     public long? StockMovementOperationId { get; set; }
     public long? WarehouseTransferId { get; set; }
+    public long? DecisionCodeId { get; set; }
+    public QualityDecisionCode? DecisionCode { get; set; }
     public string? ReasonCode { get; set; }
     public string? ReasonNote { get; set; }
     public long DecisionBy { get; set; }

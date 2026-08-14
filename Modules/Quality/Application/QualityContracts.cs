@@ -87,6 +87,42 @@ public sealed record QualityRuleUpsertRequest(string BranchCode, string ScopeTyp
 
 public sealed record QualityStockGroupOption(string Code, int StockCount);
 
+public sealed class QualityDecisionCodeGridRow
+{
+    public long Id { get; init; }
+    public string BranchCode { get; init; } = "0";
+    public string Code { get; init; } = string.Empty;
+    public string Name { get; init; } = string.Empty;
+    public QualityDecision? ApplicableDecision { get; init; }
+    public string? Description { get; init; }
+    public bool RequiresNote { get; init; }
+    public int SortOrder { get; init; }
+    public bool IsActive { get; init; }
+    public long? CreatedBy { get; init; }
+    public DateTime? CreatedDate { get; init; }
+    public long? UpdatedBy { get; init; }
+    public DateTime? UpdatedDate { get; init; }
+    public byte[] RowVersion { get; init; } = [];
+}
+
+public sealed record QualityDecisionCodeOption(
+    long Id,
+    string Code,
+    string Name,
+    QualityDecision? ApplicableDecision,
+    bool RequiresNote);
+
+public sealed record QualityDecisionCodeUpsertRequest(
+    string BranchCode,
+    string Code,
+    string Name,
+    QualityDecision? ApplicableDecision,
+    string? Description,
+    bool RequiresNote,
+    int SortOrder,
+    bool IsActive,
+    string? RowVersion = null);
+
 public sealed record QualityRuleImportRowResult(
     int RowNumber, string Status, string ScopeType, string? ScopeCode, string Message);
 
@@ -143,7 +179,8 @@ public sealed record QualityInspectionDispositionRequest(
     decimal Quantity,
     long? TargetLocationId = null,
     string? ReasonCode = null,
-    string? Note = null);
+    string? Note = null,
+    long? DecisionCodeId = null);
 
 public sealed record QualityInspectionControlQuantityRequest(
     long LineId,
@@ -155,7 +192,8 @@ public sealed record DecideQualityInspectionRequest(Guid IdempotencyKey, Quality
     long? QuarantineLocationId = null,
     IReadOnlyList<QualityInspectionDispositionRequest>? Dispositions = null,
     long? WarehouseTransferDocumentSeriesId = null,
-    IReadOnlyList<QualityInspectionControlQuantityRequest>? ControlQuantities = null);
+    IReadOnlyList<QualityInspectionControlQuantityRequest>? ControlQuantities = null,
+    long? DecisionCodeId = null);
 
 public sealed record QualityDecisionResult(
     long GoodsReceiptId,
@@ -171,7 +209,7 @@ public sealed record QualityInspectionLineDto(long Id, long? GoodsReceiptLineId,
     string StockCode, string? StockName, string? YapCode, string? LotNo, string? SerialNo,
     DateOnly? ExpiryDate, decimal Quantity, decimal SampleQuantity, decimal InspectedQuantity, decimal AcceptedQuantity,
     decimal RejectedQuantity, decimal QuarantineQuantity, long? QuarantineLocationId, QualityDecision Decision,
-    string? ReasonCode, string? ReasonNote, long? DecisionBy, DateTimeOffset? DecisionAtUtc,
+    long? DecisionCodeId, string? ReasonCode, string? ReasonNote, long? DecisionBy, DateTimeOffset? DecisionAtUtc,
     QualityDecisionDestinationDto? DefaultAcceptedDestination);
 
 public sealed record QualityInspectionControlDto(
@@ -205,6 +243,7 @@ public sealed record QualityInspectionDispositionDto(
     string TargetStockStatus,
     long? StockMovementOperationId,
     long? WarehouseTransferId,
+    long? DecisionCodeId,
     string? ReasonCode,
     string? ReasonNote,
     long DecisionBy,
@@ -276,6 +315,11 @@ public interface IQualityService
     Task<QualityParameterDto> UpdateParametersAsync(UpdateQualityParameterRequest request, long actor, CancellationToken ct = default);
     Task<PagedResponse<QualityRuleGridRow>> GetRulesPagedAsync(PagedRequest request, CancellationToken ct = default);
     Task<PagedResponse<QualityStockGroupOption>> GetStockGroupsPagedAsync(string branchCode, PagedRequest request, CancellationToken ct = default);
+    Task<PagedResponse<QualityDecisionCodeGridRow>> GetDecisionCodesPagedAsync(PagedRequest request, CancellationToken ct = default);
+    Task<PagedResponse<QualityDecisionCodeOption>> GetDecisionCodeOptionsPagedAsync(string branchCode, QualityDecision decision, PagedRequest request, CancellationToken ct = default);
+    Task<long> CreateDecisionCodeAsync(QualityDecisionCodeUpsertRequest request, long actor, CancellationToken ct = default);
+    Task UpdateDecisionCodeAsync(long id, QualityDecisionCodeUpsertRequest request, long actor, CancellationToken ct = default);
+    Task DeleteDecisionCodeAsync(long id, long actor, CancellationToken ct = default);
     Task<long> CreateRuleAsync(QualityRuleUpsertRequest request, long actor, CancellationToken ct = default);
     Task UpdateRuleAsync(long id, QualityRuleUpsertRequest request, long actor, CancellationToken ct = default);
     Task DeleteRuleAsync(long id, long actor, CancellationToken ct = default);

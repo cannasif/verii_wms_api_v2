@@ -93,7 +93,7 @@ public sealed class QualityQuantityDecisionTests
 
         var parts = QualityService.BuildDecisionParts([line], allocations, QualityDecision.Pending);
         QualityService.ApplyDecisionParts(
-            line, receiptLine, parts, 42, DateTimeOffset.UtcNow, "PARTIAL", "5 kabul, 5 karantina");
+            line, receiptLine, parts, 42, DateTimeOffset.UtcNow, "5 kabul, 5 karantina");
         var state = QualityService.ResolveDecisionState([line], releasesQuarantine: false);
 
         Assert.Equal(5, line.AcceptedQuantity);
@@ -127,7 +127,7 @@ public sealed class QualityQuantityDecisionTests
 
         var parts = QualityService.BuildDecisionParts([line], allocations, QualityDecision.Pending);
         QualityService.ApplyDecisionParts(
-            line, receiptLine, parts, 42, DateTimeOffset.UtcNow, null, "Karantina serbest bırakıldı");
+            line, receiptLine, parts, 42, DateTimeOffset.UtcNow, "Karantina serbest bırakıldı");
         var state = QualityService.ResolveDecisionState([line], releasesQuarantine: true);
 
         Assert.Equal(10, line.AcceptedQuantity);

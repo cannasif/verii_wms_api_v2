@@ -131,6 +131,11 @@ public sealed class QualityRuleImportServiceTests
         public Task<QualityParameterDto> UpdateParametersAsync(UpdateQualityParameterRequest request, long actor, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<PagedResponse<QualityRuleGridRow>> GetRulesPagedAsync(PagedRequest request, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<PagedResponse<QualityStockGroupOption>> GetStockGroupsPagedAsync(string branchCode, PagedRequest request, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<PagedResponse<QualityDecisionCodeGridRow>> GetDecisionCodesPagedAsync(PagedRequest request, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<PagedResponse<QualityDecisionCodeOption>> GetDecisionCodeOptionsPagedAsync(string branchCode, QualityDecision decision, PagedRequest request, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<long> CreateDecisionCodeAsync(QualityDecisionCodeUpsertRequest request, long actor, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task UpdateDecisionCodeAsync(long id, QualityDecisionCodeUpsertRequest request, long actor, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task DeleteDecisionCodeAsync(long id, long actor, CancellationToken ct = default) => throw new NotSupportedException();
         public Task UpdateRuleAsync(long id, QualityRuleUpsertRequest request, long actor, CancellationToken ct = default) => throw new NotSupportedException();
         public Task DeleteRuleAsync(long id, long actor, CancellationToken ct = default) => throw new NotSupportedException();
         public QualityInspectionStatusCatalogDto GetInspectionStatusCatalog() => throw new NotSupportedException();

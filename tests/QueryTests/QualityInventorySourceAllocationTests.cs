@@ -240,7 +240,13 @@ public sealed class QualityInventorySourceAllocationTests
         {
             new QualityInspectionDispositionRequest(line.Id, QualityDecision.Accepted, 1, 11),
             new QualityInspectionDispositionRequest(line.Id, QualityDecision.Accepted, 1, 22),
-            new QualityInspectionDispositionRequest(line.Id, QualityDecision.Rejected, 1, 33, "HASAR")
+            new QualityInspectionDispositionRequest(
+                line.Id,
+                QualityDecision.Rejected,
+                1,
+                33,
+                "HASAR",
+                DecisionCodeId: 901)
         };
 
         var parts = QualityService.BuildDecisionParts(
@@ -265,6 +271,7 @@ public sealed class QualityInventorySourceAllocationTests
                 Assert.Equal(1, third.Quantity);
                 Assert.Equal(33, third.TargetLocationId);
                 Assert.Equal("HASAR", third.ReasonCode);
+                Assert.Equal(901, third.DecisionCodeId);
             });
     }
 

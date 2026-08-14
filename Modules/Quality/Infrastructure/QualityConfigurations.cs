@@ -7,6 +7,21 @@ using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 
 namespace verii_wms_api_v2.Modules.Quality.Infrastructure;
 
+public sealed class QualityDecisionCodeConfiguration : BaseEntityConfiguration<QualityDecisionCode>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<QualityDecisionCode> b)
+    {
+        b.ToTable("RII_QUALITY_DECISION_CODES");
+        b.Property(x => x.Code).HasMaxLength(50).IsRequired();
+        b.Property(x => x.Name).HasMaxLength(150).IsRequired();
+        b.Property(x => x.Description).HasMaxLength(500);
+        b.Property(x => x.ApplicableDecision).HasConversion<string>().HasMaxLength(30);
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasIndex(x => new { x.BranchCode, x.Code }).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x => new { x.BranchCode, x.IsActive, x.ApplicableDecision, x.SortOrder });
+    }
+}
+
 public sealed class QualityParameterConfiguration : BaseEntityConfiguration<QualityParameter>
 {
     protected override void ConfigureEntity(EntityTypeBuilder<QualityParameter> b)
@@ -130,6 +145,8 @@ public sealed class QualityInspectionLineConfiguration : BaseEntityConfiguration
         b.HasIndex(x => x.GoodsReceiptLineId); b.HasIndex(x => x.WarehouseInboundLineId); b.HasIndex(x => new { x.StockId, x.LotNo, x.SerialNo });
         b.HasOne<WarehouseLocation>().WithMany().HasForeignKey(x => x.QuarantineLocationId)
             .OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.DecisionCode).WithMany().HasForeignKey(x => x.DecisionCodeId)
+            .OnDelete(DeleteBehavior.Restrict);
         b.HasMany(x => x.Dispositions).WithOne(x => x.QualityInspectionLine).HasForeignKey(x => x.QualityInspectionLineId).OnDelete(DeleteBehavior.Restrict);
         b.HasMany(x => x.Controls).WithOne(x => x.QualityInspectionLine).HasForeignKey(x => x.QualityInspectionLineId).OnDelete(DeleteBehavior.Restrict);
     }
@@ -179,6 +196,8 @@ public sealed class QualityInspectionDispositionConfiguration : BaseEntityConfig
             .IsUnique().HasFilter("[IsDeleted] = 0");
         b.HasIndex(x => new { x.QualityInspectionLineId, x.Decision, x.DecisionAtUtc });
         b.HasIndex(x => x.WarehouseTransferId);
+        b.HasOne(x => x.DecisionCode).WithMany().HasForeignKey(x => x.DecisionCodeId)
+            .OnDelete(DeleteBehavior.Restrict);
         b.HasOne<WarehouseEntity>().WithMany().HasForeignKey(x => x.SourceWarehouseId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne<WarehouseEntity>().WithMany().HasForeignKey(x => x.TargetWarehouseId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne<WarehouseLocation>().WithMany().HasForeignKey(x => x.SourceLocationId).OnDelete(DeleteBehavior.Restrict);

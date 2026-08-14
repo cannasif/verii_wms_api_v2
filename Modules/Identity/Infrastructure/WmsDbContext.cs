@@ -151,6 +151,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<QualityQuarantineDestination> QualityQuarantineDestinations => Set<QualityQuarantineDestination>();
     public DbSet<QualityWarehouseRoute> QualityWarehouseRoutes => Set<QualityWarehouseRoute>();
     public DbSet<QualityRule> QualityRules => Set<QualityRule>();
+    public DbSet<QualityDecisionCode> QualityDecisionCodes => Set<QualityDecisionCode>();
     public DbSet<QualityInspection> QualityInspections => Set<QualityInspection>();
     public DbSet<QualityInspectionLine> QualityInspectionLines => Set<QualityInspectionLine>();
     public DbSet<QualityInspectionDisposition> QualityInspectionDispositions => Set<QualityInspectionDisposition>();
@@ -388,6 +389,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new SteelVehicleAcceptedPlateConfiguration());
         modelBuilder.ApplyConfiguration(new VehicleCheckInHeaderConfiguration());
         modelBuilder.ApplyConfiguration(new VehicleCheckInImageConfiguration());
+        modelBuilder.ApplyConfiguration(new QualityDecisionCodeConfiguration());
         modelBuilder.ApplyConfiguration(new QualityParameterConfiguration());
         modelBuilder.ApplyConfiguration(new QualityQuarantineDestinationConfiguration());
         modelBuilder.ApplyConfiguration(new QualityWarehouseRouteConfiguration());
@@ -608,6 +610,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             new PermissionDefinition { Id=10520, BranchCode="0", Code="WMS.QUALITY.INSPECTIONS.PRIORITIZE", Name="GKK kayıtlarına öncelik ver ve önceliği kaldır", Description="Açık kalite inceleme kayıtlarının operasyon sırasını önceliklendirmeye izin verir.", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=10521, BranchCode="0", Code="WMS.QUALITY.INSPECTIONS.EXECUTE", Name="GKK incelemesini başlat, durdur ve devam ettir", Description="Kalite incelemesinde kişisel çalışma oturumu açmaya ve duruş bildirmeye izin verir.", IsActive=true, AvailableOnWeb=true, AvailableOnMobile=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=10522, BranchCode="0", Code="WMS.QUALITY.INSPECTIONS.SUPERVISE", Name="GKK çalışma oturumlarını yönet", Description="Başka bir kullanıcının açık GKK oturumunu durdurmaya ve vardiya devrini yönetmeye izin verir.", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=10523, BranchCode="0", Code="WMS.QUALITY.DECISION_CODES.VIEW", Name="Kalite karar kodlarını görüntüle", Description="Kalite kararında kullanılacak tanımlı karar kodlarını görüntülemeye izin verir.", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=10524, BranchCode="0", Code="WMS.QUALITY.DECISION_CODES.MANAGE", Name="Kalite karar kodlarını yönet", Description="Kalite karar kodu oluşturma, güncelleme ve pasife alma işlemlerine izin verir.", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=1053, BranchCode="0", Code="WMS.SERIAL_RULES.VIEW", Name="Seri maske kurallarını görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=1054, BranchCode="0", Code="WMS.SERIAL_RULES.MANAGE", Name="Seri maske kurallarını yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionDefinition>().HasData(
@@ -757,7 +761,9 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.Entity<PermissionGroupPermission>().HasData(
             new PermissionGroupPermission { Id=10520, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=10520, CreatedDate=seedDate },
             new PermissionGroupPermission { Id=10521, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=10521, CreatedDate=seedDate },
-            new PermissionGroupPermission { Id=10522, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=10522, CreatedDate=seedDate });
+            new PermissionGroupPermission { Id=10522, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=10522, CreatedDate=seedDate },
+            new PermissionGroupPermission { Id=10523, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=10523, CreatedDate=seedDate },
+            new PermissionGroupPermission { Id=10524, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=10524, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(55,5).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(60,2).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(62,4).Select(i=>new PermissionGroupPermission { Id=1000+i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=1000+i, CreatedDate=seedDate }));

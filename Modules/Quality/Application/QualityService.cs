@@ -47,6 +47,7 @@ public sealed class QualityService(
     private IGenericRepository<QualityWarehouseRoute> WarehouseRoutes =>
         uow.Repository<QualityWarehouseRoute>();
     private IGenericRepository<QualityRule> Rules => uow.Repository<QualityRule>();
+    private IGenericRepository<QualityDecisionCode> DecisionCodes => uow.Repository<QualityDecisionCode>();
     private IGenericRepository<QualityInspection> Inspections => uow.Repository<QualityInspection>();
     private IGenericRepository<QualityInspectionDisposition> Dispositions =>
         uow.Repository<QualityInspectionDisposition>();
@@ -175,6 +176,107 @@ public sealed class QualityService(
             ? groups.OrderByDescending(x => x.Code)
             : groups.OrderBy(x => x.Code);
         return await groups.ToPagedResponseAsync(request, ct);
+    }
+
+    public async Task<PagedResponse<QualityDecisionCodeGridRow>> GetDecisionCodesPagedAsync(
+        PagedRequest request, CancellationToken ct = default)
+    {
+        var query = DecisionCodes.Query().Select(entity => new QualityDecisionCodeGridRow
+        {
+            Id = entity.Id,
+            BranchCode = entity.BranchCode,
+            Code = entity.Code,
+            Name = entity.Name,
+            ApplicableDecision = entity.ApplicableDecision,
+            Description = entity.Description,
+            RequiresNote = entity.RequiresNote,
+            SortOrder = entity.SortOrder,
+            IsActive = entity.IsActive,
+            CreatedBy = entity.CreatedBy,
+            CreatedDate = entity.CreatedDate,
+            UpdatedBy = entity.UpdatedBy,
+            UpdatedDate = entity.UpdatedDate,
+            RowVersion = entity.RowVersion
+        });
+        query = query.ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["code"] = nameof(QualityDecisionCodeGridRow.Code),
+            ["name"] = nameof(QualityDecisionCodeGridRow.Name),
+            ["description"] = nameof(QualityDecisionCodeGridRow.Description)
+        }, ["code", "name"]);
+        return await query.ApplyAdvancedFilters(request)
+            .ApplySort(request, nameof(QualityDecisionCodeGridRow.SortOrder))
+            .ToPagedResponseAsync(request, ct);
+    }
+
+    public async Task<PagedResponse<QualityDecisionCodeOption>> GetDecisionCodeOptionsPagedAsync(
+        string branchCode, QualityDecision decision, PagedRequest request, CancellationToken ct = default)
+    {
+        var branch = NormalizeBranch(branchCode);
+        var query = DecisionCodes.Query()
+            .Where(entity => entity.BranchCode == branch
+                && entity.IsActive
+                && (!entity.ApplicableDecision.HasValue || entity.ApplicableDecision == decision))
+            .OrderBy(entity => entity.SortOrder)
+            .ThenBy(entity => entity.Code)
+            .Select(entity => new QualityDecisionCodeOption(
+                entity.Id,
+                entity.Code,
+                entity.Name,
+                entity.ApplicableDecision,
+                entity.RequiresNote));
+        query = query.ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["code"] = nameof(QualityDecisionCodeOption.Code),
+            ["name"] = nameof(QualityDecisionCodeOption.Name)
+        }, ["code", "name"]);
+        return await query.ToPagedResponseAsync(request, ct);
+    }
+
+    public async Task<long> CreateDecisionCodeAsync(
+        QualityDecisionCodeUpsertRequest request, long actor, CancellationToken ct = default)
+    {
+        var entity = new QualityDecisionCode();
+        await ApplyDecisionCodeAsync(entity, request, null, ct);
+        entity.CreatedBy = actor;
+        entity.CreatedDate = DateTime.UtcNow;
+        await DecisionCodes.AddAsync(entity, ct);
+        await uow.SaveChangesAsync(ct);
+        await audit.WriteAsync(new("quality.decision-code.create", nameof(QualityDecisionCode),
+            entity.Id.ToString(), "Succeeded", "quality", NewValues: DecisionCodeSnapshot(entity),
+            ChangedFields: ["DecisionCode"]), ct);
+        return entity.Id;
+    }
+
+    public async Task UpdateDecisionCodeAsync(
+        long id, QualityDecisionCodeUpsertRequest request, long actor, CancellationToken ct = default)
+    {
+        var entity = await DecisionCodes.FindByIdAsync(id, true, ct)
+            ?? throw AppException.NotFound("Kalite karar kodu tanımı bulunamadı.");
+        var before = DecisionCodeSnapshot(entity);
+        ApplyDecisionCodeVersion(entity, request.RowVersion);
+        await ApplyDecisionCodeAsync(entity, request, id, ct);
+        entity.UpdatedBy = actor;
+        entity.UpdatedDate = DateTime.UtcNow;
+        await uow.SaveChangesAsync(ct);
+        await audit.WriteAsync(new("quality.decision-code.update", nameof(QualityDecisionCode),
+            entity.Id.ToString(), "Succeeded", "quality", OldValues: before,
+            NewValues: DecisionCodeSnapshot(entity), ChangedFields: ["DecisionCode"]), ct);
+    }
+
+    public async Task DeleteDecisionCodeAsync(long id, long actor, CancellationToken ct = default)
+    {
+        var entity = await DecisionCodes.FindByIdAsync(id, true, ct)
+            ?? throw AppException.NotFound("Kalite karar kodu tanımı bulunamadı.");
+        var before = DecisionCodeSnapshot(entity);
+        entity.IsActive = false;
+        entity.DeletedBy = actor;
+        entity.DeletedDate = DateTime.UtcNow;
+        entity.IsDeleted = true;
+        await uow.SaveChangesAsync(ct);
+        await audit.WriteAsync(new("quality.decision-code.delete", nameof(QualityDecisionCode),
+            entity.Id.ToString(), "Succeeded", "quality", OldValues: before,
+            NewValues: new { entity.Id, entity.IsDeleted }, ChangedFields: ["IsDeleted", "IsActive"]), ct);
     }
 
     public QualityInspectionStatusCatalogDto GetInspectionStatusCatalog() => BuildInspectionStatusCatalog();
@@ -359,7 +461,7 @@ public sealed class QualityService(
             x.StockId, x.StockCodeSnapshot, x.StockNameSnapshot, x.YapCodeSnapshot, x.LotNo, x.SerialNo, x.ExpiryDate,
             x.Quantity, x.SampleQuantity, x.InspectedQuantity, x.AcceptedQuantity, x.RejectedQuantity, x.QuarantineQuantity,
             x.QuarantineLocationId, x.Decision,
-            x.ReasonCode, x.ReasonNote, x.DecisionBy, x.DecisionAtUtc,
+            x.DecisionCodeId, x.ReasonCode, x.ReasonNote, x.DecisionBy, x.DecisionAtUtc,
             defaultAcceptedDestinationByInspectionLineId.GetValueOrDefault(x.Id))).ToList();
         var quarantineDestinations = await MergeRouteQuarantineDestinationsAsync(
             await GetQuarantineDestinationsAsync(parameter, ct), warehouseRoutes, ct);
@@ -412,6 +514,7 @@ public sealed class QualityService(
                 x.TargetStockStatus,
                 x.StockMovementOperationId,
                 x.WarehouseTransferId,
+                x.DecisionCodeId,
                 x.ReasonCode,
                 x.ReasonNote,
                 x.DecisionBy,
@@ -670,7 +773,14 @@ public sealed class QualityService(
                 request.Dispositions,
                 quantityDecisions,
                 request.Decision,
-                request.QuarantineLocationId);
+                request.QuarantineLocationId,
+                request.DecisionCodeId);
+            decisionParts = await ResolveDecisionCodesAsync(
+                inspection.BranchCode,
+                decisionParts,
+                request.DecisionCodeId,
+                request.Note,
+                token);
             var controlQuantities = ValidateControlQuantities(selected, request.ControlQuantities);
             var releasesQuarantine = decisionParts.Any(x =>
                 x.Decision == QualityDecision.Accepted
@@ -923,6 +1033,7 @@ public sealed class QualityService(
                         destinationStatus,
                         part.Decision,
                         allocation.Quantity,
+                        part.DecisionCodeId,
                         part.ReasonCode,
                         part.Note));
                 }
@@ -1032,7 +1143,6 @@ public sealed class QualityService(
                     parts,
                     actor,
                     now,
-                    request.ReasonCode,
                     request.Note,
                     quarantineLocationId);
                 line.InspectedQuantity += control.InspectedQuantity;
@@ -1101,7 +1211,8 @@ public sealed class QualityService(
                     TargetStockStatus = disposition.TargetStockStatus,
                     StockMovementOperationId = isDat ? null : movement?.OperationId,
                     WarehouseTransferId = isDat && warehouseTransferId > 0 ? warehouseTransferId : null,
-                    ReasonCode = disposition.ReasonCode ?? Clean(request.ReasonCode, 100),
+                    DecisionCodeId = disposition.DecisionCodeId,
+                    ReasonCode = disposition.ReasonCode,
                     ReasonNote = disposition.Note ?? Clean(request.Note, 1000),
                     DecisionBy = actor,
                     DecisionAtUtc = now,
@@ -1131,7 +1242,7 @@ public sealed class QualityService(
             SynchronizeGoodsReceiptStatus(gr, actor);
             await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("quality.inspection.decide", nameof(QualityInspection), id.ToString(), "Succeeded", "quality",
-                NewValues: new { request.IdempotencyKey, request.Decision, request.LineIds, request.ReasonCode,
+                NewValues: new { request.IdempotencyKey, request.Decision, request.LineIds, request.DecisionCodeId,
                     request.QuantityDecisions, request.Dispositions, request.ControlQuantities, request.QuarantineLocationId,
                     request.WarehouseTransferDocumentSeriesId,
                     MovementId = movement?.OperationId, WarehouseTransferIds = datIds },
@@ -1702,14 +1813,16 @@ public sealed class QualityService(
         IReadOnlyList<QualityInspectionDispositionRequest>? dispositions,
         IReadOnlyDictionary<long, QualityInspectionQuantityDecisionRequest>? quantityDecisions,
         QualityDecision fallbackDecision,
-        long? fallbackQuarantineLocationId = null)
+        long? fallbackQuarantineLocationId = null,
+        long? fallbackDecisionCodeId = null)
     {
         if (dispositions is not { Count: > 0 })
             return BuildDecisionParts(
                 selected,
                 quantityDecisions,
                 fallbackDecision,
-                fallbackQuarantineLocationId);
+                fallbackQuarantineLocationId,
+                fallbackDecisionCodeId);
 
         var selectedIds = selected.Select(line => line.Id).ToHashSet();
         if (dispositions.Any(part => !selectedIds.Contains(part.LineId)))
@@ -1747,6 +1860,7 @@ public sealed class QualityService(
                     part.Decision,
                     part.Quantity,
                     part.TargetLocationId,
+                    part.DecisionCodeId,
                     Clean(part.ReasonCode, 100),
                     Clean(part.Note, 1000),
                     ++sequence));
@@ -1759,7 +1873,8 @@ public sealed class QualityService(
         IReadOnlyList<QualityInspectionLine> selected,
         IReadOnlyDictionary<long, QualityInspectionQuantityDecisionRequest>? quantityDecisions,
         QualityDecision fallbackDecision,
-        long? fallbackQuarantineLocationId = null)
+        long? fallbackQuarantineLocationId = null,
+        long? fallbackDecisionCodeId = null)
     {
         var result = new List<QualityDecisionPart>();
         foreach (var line in selected)
@@ -1773,7 +1888,8 @@ public sealed class QualityService(
                     line,
                     fallbackDecision,
                     actionable,
-                    fallbackDecision == QualityDecision.Quarantined ? fallbackQuarantineLocationId : null));
+                    fallbackDecision == QualityDecision.Quarantined ? fallbackQuarantineLocationId : null,
+                    fallbackDecisionCodeId));
                 continue;
             }
 
@@ -1784,13 +1900,14 @@ public sealed class QualityService(
             if (Math.Abs(allocated - actionable) > 0.000001m)
                 throw AppException.BadRequest(
                     $"'{line.StockCodeSnapshot}' için onay, ret ve karantina toplamı karar bekleyen {actionable:0.######} miktara eşit olmalıdır.");
-            if (allocation.AcceptedQuantity > 0) result.Add(new(line, QualityDecision.Accepted, allocation.AcceptedQuantity, null));
-            if (allocation.RejectedQuantity > 0) result.Add(new(line, QualityDecision.Rejected, allocation.RejectedQuantity, null));
+            if (allocation.AcceptedQuantity > 0) result.Add(new(line, QualityDecision.Accepted, allocation.AcceptedQuantity, null, fallbackDecisionCodeId));
+            if (allocation.RejectedQuantity > 0) result.Add(new(line, QualityDecision.Rejected, allocation.RejectedQuantity, null, fallbackDecisionCodeId));
             if (allocation.QuarantineQuantity > 0) result.Add(new(
                 line,
                 QualityDecision.Quarantined,
                 allocation.QuarantineQuantity,
-                allocation.QuarantineLocationId ?? fallbackQuarantineLocationId));
+                allocation.QuarantineLocationId ?? fallbackQuarantineLocationId,
+                fallbackDecisionCodeId));
         }
         return result;
     }
@@ -1800,7 +1917,6 @@ public sealed class QualityService(
         IReadOnlyList<QualityDecisionPart> parts,
         long actor,
         DateTimeOffset decidedAt,
-        string? reasonCode,
         string? note,
         long? quarantineLocationId = null)
     {
@@ -1823,9 +1939,69 @@ public sealed class QualityService(
         line.Decision = ResolveLineDecision(line);
         line.DecisionBy = actor;
         line.DecisionAtUtc = decidedAt;
-        line.ReasonCode = Clean(reasonCode, 100);
+        var decisionCodeIds = parts.Where(part => part.DecisionCodeId.HasValue)
+            .Select(part => part.DecisionCodeId!.Value).Distinct().Take(2).ToArray();
+        var reasonCodes = parts.Where(part => !string.IsNullOrWhiteSpace(part.ReasonCode))
+            .Select(part => part.ReasonCode!).Distinct(StringComparer.OrdinalIgnoreCase).Take(2).ToArray();
+        line.DecisionCodeId = decisionCodeIds.Length == 1 ? decisionCodeIds[0] : null;
+        line.ReasonCode = reasonCodes.Length == 1 ? Clean(reasonCodes[0], 100) : null;
         line.ReasonNote = Clean(note, 1000);
     }
+
+    private async Task<IReadOnlyList<QualityDecisionPart>> ResolveDecisionCodesAsync(
+        string branchCode,
+        IReadOnlyList<QualityDecisionPart> parts,
+        long? fallbackDecisionCodeId,
+        string? fallbackNote,
+        CancellationToken ct)
+    {
+        var requestedIds = parts
+            .Select(part => part.DecisionCodeId ?? fallbackDecisionCodeId)
+            .Where(id => id.HasValue && id.Value > 0)
+            .Select(id => id!.Value)
+            .Distinct()
+            .ToArray();
+        var definitions = requestedIds.Length == 0
+            ? new Dictionary<long, QualityDecisionCode>()
+            : await DecisionCodes.Query()
+                .Where(code => requestedIds.Contains(code.Id)
+                    && code.BranchCode == branchCode
+                    && code.IsActive)
+                .ToDictionaryAsync(code => code.Id, ct);
+        if (definitions.Count != requestedIds.Length)
+            throw AppException.BadRequest("Seçilen kalite karar kodu aktif değil veya bu şubeye ait değil.");
+
+        var result = new List<QualityDecisionPart>(parts.Count);
+        foreach (var part in parts)
+        {
+            var decisionCodeId = part.DecisionCodeId ?? fallbackDecisionCodeId;
+            if (!decisionCodeId.HasValue || decisionCodeId.Value <= 0)
+            {
+                if (RequiresDecisionCode(part.Decision))
+                    throw AppException.BadRequest("Ret, karantina ve tedarikçiye iade kararlarında tanımlı karar kodu seçilmelidir.");
+                result.Add(part with { DecisionCodeId = null, ReasonCode = null, Note = part.Note ?? Clean(fallbackNote, 1000) });
+                continue;
+            }
+
+            var definition = definitions[decisionCodeId.Value];
+            if (definition.ApplicableDecision.HasValue && definition.ApplicableDecision != part.Decision)
+                throw AppException.BadRequest(
+                    $"'{definition.Code}' karar kodu {part.Decision} kararı için kullanılamaz.");
+            var note = Clean(part.Note ?? fallbackNote, 1000);
+            if (definition.RequiresNote && string.IsNullOrWhiteSpace(note))
+                throw AppException.BadRequest($"'{definition.Code}' karar kodu için açıklama zorunludur.");
+            result.Add(part with
+            {
+                DecisionCodeId = definition.Id,
+                ReasonCode = definition.Code,
+                Note = note
+            });
+        }
+        return result;
+    }
+
+    private static bool RequiresDecisionCode(QualityDecision decision) =>
+        decision is QualityDecision.Rejected or QualityDecision.Quarantined or QualityDecision.Returned;
     private IReadOnlyDictionary<long, QualityInspectionControlSnapshot> ValidateControlQuantities(
         IReadOnlyCollection<QualityInspectionLine> selected,
         IReadOnlyList<QualityInspectionControlQuantityRequest>? requests)
@@ -2228,6 +2404,7 @@ public sealed class QualityService(
         string TargetStockStatus,
         QualityDecision Decision,
         decimal Quantity,
+        long? DecisionCodeId,
         string? ReasonCode,
         string? Note);
     private sealed record QualityReceiptExecutionSource(
@@ -2260,6 +2437,7 @@ public sealed class QualityService(
         QualityDecision Decision,
         decimal Quantity,
         long? TargetLocationId = null,
+        long? DecisionCodeId = null,
         string? ReasonCode = null,
         string? Note = null,
         int SequenceNo = 0);
@@ -2277,5 +2455,48 @@ public sealed class QualityService(
         long? QuarantineLocationId,
         long? RejectLocationId);
     private static string NormalizeBranch(string? x)=>string.IsNullOrWhiteSpace(x)?"0":x.Trim(); private static string? Clean(string? x,int max){var v=string.IsNullOrWhiteSpace(x)?null:x.Trim();return v?.Length>max?v[..max]:v;}
+    private async Task ApplyDecisionCodeAsync(
+        QualityDecisionCode entity,
+        QualityDecisionCodeUpsertRequest request,
+        long? currentId,
+        CancellationToken ct)
+    {
+        var branch = NormalizeBranch(request.BranchCode);
+        var code = NormalizeDecisionCode(request.Code);
+        var name = Clean(request.Name, 150)
+            ?? throw AppException.BadRequest("Kalite karar kodu adı zorunludur.");
+        if (code.Length == 0)
+            throw AppException.BadRequest("Kalite karar kodu zorunludur.");
+        if (request.ApplicableDecision is QualityDecision.Pending)
+            throw AppException.BadRequest("Bekliyor durumu için karar kodu tanımlanamaz.");
+        if (request.SortOrder < 0)
+            throw AppException.BadRequest("Karar kodu sırası negatif olamaz.");
+        if (await DecisionCodes.AnyAsync(value => value.BranchCode == branch
+                && value.Code == code
+                && (!currentId.HasValue || value.Id != currentId.Value), ct))
+            throw AppException.Conflict($"'{code}' kalite karar kodu bu şubede zaten tanımlı.");
+
+        entity.BranchCode = branch;
+        entity.Code = code;
+        entity.Name = name;
+        entity.Description = Clean(request.Description, 500);
+        entity.ApplicableDecision = request.ApplicableDecision;
+        entity.RequiresNote = request.RequiresNote;
+        entity.SortOrder = request.SortOrder;
+        entity.IsActive = request.IsActive;
+    }
+    private static string NormalizeDecisionCode(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? string.Empty : value.Trim().ToUpperInvariant();
+    private static object DecisionCodeSnapshot(QualityDecisionCode entity) => new
+    {
+        entity.Id, entity.BranchCode, entity.Code, entity.Name, entity.ApplicableDecision,
+        entity.Description, entity.RequiresNote, entity.SortOrder, entity.IsActive
+    };
+    private static void ApplyDecisionCodeVersion(QualityDecisionCode entity, string? supplied)
+    {
+        if (string.IsNullOrWhiteSpace(supplied)) return;
+        try { entity.RowVersion = Convert.FromBase64String(supplied); }
+        catch { throw AppException.Conflict("Kalite karar kodu güncellik bilgisi geçersiz. Sayfayı yenileyin."); }
+    }
     private static void ApplyVersion(QualityInspection entity,string? supplied){if(string.IsNullOrWhiteSpace(supplied))return;try{entity.RowVersion=Convert.FromBase64String(supplied);}catch{throw AppException.Conflict("Kalite kaydı güncellik bilgisi geçersiz. Sayfayı yenileyin.");}}
 }
