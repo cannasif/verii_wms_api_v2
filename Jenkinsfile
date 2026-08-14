@@ -61,6 +61,21 @@ pipeline {
             }
         }
 
+        stage('Configure Persistent Upload Storage') {
+            steps {
+                powershell '''
+                $uploadRoot = Join-Path $env:PUBLIC_DIR 'wwwroot\\uploads\\stock-images'
+                $appPoolIdentity = "IIS AppPool\\$env:APPPOOL"
+
+                New-Item -ItemType Directory -Path $uploadRoot -Force | Out-Null
+                & icacls.exe $uploadRoot /grant:r "${appPoolIdentity}:(OI)(CI)M" /T /C | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Stok görseli klasör yetkisi ayarlanamadı: $uploadRoot"
+                }
+                '''
+            }
+        }
+
         stage('Start AppPool') {
             steps {
                 bat '%windir%\\system32\\inetsrv\\appcmd start apppool /apppool.name:"%APPPOOL%"'
