@@ -139,11 +139,19 @@ public static class AdvancedQueryExtensions
                     Expression.Property(null, typeof(EF), nameof(EF.Functions)),
                     member,
                     Expression.Constant(stringCollation));
-            var contains = Expression.Call(
-                searchTarget,
-                typeof(string).GetMethod(nameof(string.Contains), [typeof(string)])!,
-                Expression.Constant(term));
-            return Expression.AndAlso(notNull, contains);
+            Expression? containsAnyVariant = null;
+            foreach (var variant in BuildStringSearchVariants(term, stringCollation))
+            {
+                var contains = Expression.Call(
+                    searchTarget,
+                    typeof(string).GetMethod(nameof(string.Contains), [typeof(string)])!,
+                    Expression.Constant(variant));
+                containsAnyVariant = containsAnyVariant is null
+                    ? contains
+                    : Expression.OrElse(containsAnyVariant, contains);
+            }
+
+            return Expression.AndAlso(notNull, containsAnyVariant ?? Expression.Constant(false));
         }
 
         if (!TryParseGeneralSearchValue(term, underlying, out var parsed)) return null;
@@ -159,6 +167,27 @@ public static class AdvancedQueryExtensions
         var equals = Expression.Equal(valueMember, Expression.Constant(parsed, underlying));
         return hasValue is null ? equals : Expression.AndAlso(hasValue, equals);
     }
+
+    private static IReadOnlyCollection<string> BuildStringSearchVariants(string term, string? stringCollation)
+    {
+        var trimmed = term.Trim();
+        if (string.IsNullOrWhiteSpace(stringCollation)
+            || !string.Equals(stringCollation, TurkishCaseInsensitiveSearchCollation, StringComparison.OrdinalIgnoreCase)
+            || !trimmed.Any(IsTurkishIVariant))
+            return [trimmed];
+
+        // Turkish collation doğru olarak i/İ ile ı/I çiftlerini birbirinden ayırır.
+        // WMS kullanıcıları ERP kodlarında Türkçe ve ASCII klavyeyi karışık kullandığı
+        // için iki meşru yazımı da aratırız; tek bir yazıma zorlayıp veri kaçırmayız.
+        var dotted = string.Concat(trimmed.Select(character => IsTurkishIVariant(character) ? 'i' : character));
+        var dotless = string.Concat(trimmed.Select(character => IsTurkishIVariant(character) ? 'ı' : character));
+        return new[] { trimmed, dotted, dotless }
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static bool IsTurkishIVariant(char character) =>
+        character is 'i' or 'İ' or 'ı' or 'I';
 
     private static bool TryParseGeneralSearchValue(string term, Type targetType, out object? parsed)
     {

@@ -195,6 +195,37 @@ public sealed class AdvancedQueryExtensionsTests
         Assert.DoesNotContain("CustomerCode] COLLATE", sql, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("sabit")]
+    [InlineData("SABİT")]
+    [InlineData("SABIT")]
+    public void Turkish_search_emits_dotted_and_dotless_i_variants(string search)
+    {
+        using var db = SqlServerContext();
+        var query = db.Customers.Select(x => new CustomerSearchRow(x.Id, x.CustomerCode, x.CustomerName));
+        var request = new PagedRequest
+        {
+            Search = search,
+            SearchFields = ["name"]
+        };
+        var columns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["code"] = nameof(CustomerSearchRow.Code),
+            ["name"] = nameof(CustomerSearchRow.Name)
+        };
+
+        var sql = query.ApplySearch(
+                request,
+                columns,
+                ["code", "name"],
+                AdvancedQueryExtensions.TurkishCaseInsensitiveSearchCollation)
+            .ToQueryString();
+
+        Assert.Contains("sabit", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("sabıt", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(" OR ", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Search_rejects_a_field_outside_the_allow_list()
     {
