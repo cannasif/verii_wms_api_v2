@@ -124,4 +124,28 @@ public sealed class ProductionTransferReturnMovementTests
         Assert.Equal(stagingLocationId, staging);
         Assert.Equal(sourceLocationId, target);
     }
+
+    [Fact]
+    public void ResolveReturnTaskLineLocations_uses_production_default_return_location_when_configured()
+    {
+        const long stagingLocationId = 100;
+        const long originalSourceLocationId = 200;
+        const long productionReturnLocationId = 300;
+        var header = new WarehouseTransferHeader { SourceStagingLocationId = stagingLocationId };
+        var line = new WarehouseTransferLine
+        {
+            StockCodeSnapshot = "STK-1",
+            DefaultSourceLocationId = originalSourceLocationId,
+        };
+        var pickTaskLine = new WarehouseTransferTaskLine { SourceLocationId = originalSourceLocationId };
+
+        var (staging, target) = ProductionTransferReturnMovement.ResolveReturnTaskLineLocations(
+            header,
+            line,
+            pickTaskLine,
+            productionReturnLocationId);
+
+        Assert.Equal(stagingLocationId, staging);
+        Assert.Equal(productionReturnLocationId, target);
+    }
 }

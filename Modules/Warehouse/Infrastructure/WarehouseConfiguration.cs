@@ -33,6 +33,12 @@ public sealed class WarehouseConfiguration : BaseEntityConfiguration<Domain.Ware
             .HasDatabaseName("IX_RII_WAREHOUSE_DEFAULT_PRODUCTION_TRANSFER_LOCATION");
         builder.HasOne<WarehouseLocation>()
             .WithMany()
+            .HasForeignKey(x => x.DefaultProductionTransferReturnLocationId)
+            .OnDelete(DeleteBehavior.SetNull);
+        builder.HasIndex(x => x.DefaultProductionTransferReturnLocationId)
+            .HasDatabaseName("IX_RII_WAREHOUSE_DEFAULT_PRODUCTION_TRANSFER_RETURN_LOCATION");
+        builder.HasOne<WarehouseLocation>()
+            .WithMany()
             .HasForeignKey(x => x.ProductionPickingStagingLocationId)
             .OnDelete(DeleteBehavior.NoAction);
         builder.HasIndex(x => x.ProductionPickingStagingLocationId)

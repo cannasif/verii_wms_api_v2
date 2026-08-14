@@ -102,6 +102,21 @@ public sealed class ProductionAndSubcontractingTransferModelTests
     }
 
     [Fact]
+    public void Warehouse_production_return_location_is_separate_from_normal_transfer_return_location()
+    {
+        using var context = CreateContext();
+        var warehouse = AssertEntity<WarehouseEntity>(context.GetService<IDesignTimeModel>().Model);
+        var productionReturnForeignKey = Assert.Single(warehouse.GetForeignKeys(), x =>
+            x.Properties.Single().Name == nameof(WarehouseEntity.DefaultProductionTransferReturnLocationId));
+
+        Assert.False(productionReturnForeignKey.IsRequired);
+        Assert.Equal(DeleteBehavior.SetNull, productionReturnForeignKey.DeleteBehavior);
+        Assert.NotEqual(
+            nameof(WarehouseEntity.DefaultTransferReturnLocationId),
+            productionReturnForeignKey.Properties.Single().Name);
+    }
+
+    [Fact]
     public void Subcontracting_chain_has_supplier_parent_issue_and_source_line_foreign_keys()
     {
         using var context = CreateContext();

@@ -62,17 +62,29 @@ public sealed record ProductionTaskStockShortageDto(
 public sealed record ProductionTaskStartCheckDto(bool CanStartFully, IReadOnlyList<ProductionTaskStockShortageDto> Shortages);
 public sealed record WarehouseTransferReturnSettingDto(
     long WarehouseId,
-    long? DefaultTransferReturnLocationId,
+    long? DefaultProductionTransferReturnLocationId,
     long? DefaultProductionTransferLocationId,
     long? ProductionPickingStagingLocationId,
     decimal? AutoPickWithoutConfirmMaxQuantity,
-    bool IsRackless = false);
+    bool IsRackless = false)
+{
+    // Eski web paketi API'den önce/sonra kısa süre çalışırsa ayar ekranı kırılmasın.
+    // Değer artık genel DAT kolonundan değil üretime özel kolondan gelir.
+    [Obsolete("Use DefaultProductionTransferReturnLocationId.")]
+    public long? DefaultTransferReturnLocationId => DefaultProductionTransferReturnLocationId;
+}
 public sealed record UpdateWarehouseTransferReturnSettingRequest(
     long WarehouseId,
-    long? DefaultTransferReturnLocationId,
+    long? DefaultProductionTransferReturnLocationId,
     long? DefaultProductionTransferLocationId,
     long? ProductionPickingStagingLocationId,
-    decimal? AutoPickWithoutConfirmMaxQuantity);
+    decimal? AutoPickWithoutConfirmMaxQuantity,
+    long? DefaultTransferReturnLocationId = null)
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public long? ResolvedProductionTransferReturnLocationId =>
+        DefaultProductionTransferReturnLocationId ?? DefaultTransferReturnLocationId;
+}
 
 public sealed record ProductionWorkOrderTransferTaskRowDto(
     long TaskId,

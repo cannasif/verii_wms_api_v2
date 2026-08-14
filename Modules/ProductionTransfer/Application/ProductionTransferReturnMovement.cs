@@ -42,11 +42,16 @@ internal static class ProductionTransferReturnMovement
     internal static (long StagingLocationId, long TargetLocationId) ResolveReturnTaskLineLocations(
         WarehouseTransferHeader header,
         WarehouseTransferLine line,
-        WarehouseTransferTaskLine pickTaskLine)
+        WarehouseTransferTaskLine pickTaskLine,
+        long? defaultProductionReturnLocationId = null)
     {
         var stagingLocationId = ResolveStagingLocationId(header, line, pickTaskLine)
             ?? throw AppException.Conflict("Kaynak depo için üretim transfer bekleme rafı tanımlanmamış.");
-        var targetLocationId = ResolveReturnTargetLocationId(line, pickTaskLine)
+        // Üretim iade ayarı varsa görev bu rafla başlar; kullanıcı görev ekranında satır
+        // bazında farklı bir raf seçebilir. Ayar yoksa eski davranış korunur ve ürün
+        // toplandığı asıl rafa döner.
+        var targetLocationId = defaultProductionReturnLocationId
+            ?? ResolveReturnTargetLocationId(line, pickTaskLine)
             ?? throw AppException.Conflict($"{line.StockCodeSnapshot} için iade hedef rafı bulunamadı.");
         return (stagingLocationId, targetLocationId);
     }
@@ -109,9 +114,9 @@ internal static class ProductionTransferReturnMovement
             .AnyAsync(x => x.Id == targetLocationId
                 && x.WarehouseId == task.Header.SourceWarehouseId
                 && x.IsActive
-                && x.IsPickable, ct);
+                && x.IsPutaway, ct);
         if (!location)
-            throw AppException.BadRequest($"{taskLine.Line.StockCodeSnapshot} için seçilen raf bulunamadı, aktif değil veya toplanabilir değil.");
+            throw AppException.BadRequest($"{taskLine.Line.StockCodeSnapshot} için seçilen raf bulunamadı, aktif değil veya yerleştirmeye uygun değil.");
 
         var stagingLocationId = taskLine.SourceLocationId
             ?? ResolveStagingLocationId(task.Header, taskLine.Line)

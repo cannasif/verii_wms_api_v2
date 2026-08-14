@@ -510,6 +510,22 @@ public sealed class ProductionTransferTaskService(
             if (warehouseId == 0)
                 warehouseId = header.SourceWarehouseId;
 
+            var defaultProductionReturnLocationId = await uow.Repository<WarehouseEntity>().Query()
+                .Where(x => x.Id == warehouseId)
+                .Select(x => x.DefaultProductionTransferReturnLocationId)
+                .SingleOrDefaultAsync(token);
+            if (defaultProductionReturnLocationId.HasValue)
+            {
+                var isUsableReturnLocation = await uow.Repository<WarehouseLocation>().Query()
+                    .AnyAsync(x => x.Id == defaultProductionReturnLocationId.Value
+                        && x.WarehouseId == header.SourceWarehouseId
+                        && x.IsActive
+                        && x.IsPutaway, token);
+                if (!isUsableReturnLocation)
+                    throw AppException.Conflict(
+                        "Kaynak depo için seçilen varsayılan üretim iptal/iade rafı bulunamadı, aktif değil veya yerleştirmeye uygun değil.");
+            }
+
             var (lastPickTask, assigneeUserId) = ResolveLastPickWorkerForCancellationReturn(header);
             var now = DateTime.UtcNow;
             var returnTask = new WarehouseTransferTask
@@ -533,7 +549,7 @@ public sealed class ProductionTransferTaskService(
                 var line = representative.Line;
                 var totalProcessed = group.Sum(x => x.ProcessedQuantity);
                 var (stagingLocationId, targetLocationId) = ProductionTransferReturnMovement.ResolveReturnTaskLineLocations(
-                    header, line, representative);
+                    header, line, representative, defaultProductionReturnLocationId);
                 returnTask.Lines.Add(new WarehouseTransferTaskLine
                 {
                     BranchCode = header.BranchCode,
@@ -1136,7 +1152,7 @@ public sealed class ProductionTransferTaskService(
             .Select(x => new
             {
                 x.Id,
-                x.DefaultTransferReturnLocationId,
+                x.DefaultProductionTransferReturnLocationId,
                 x.DefaultProductionTransferLocationId,
                 x.ProductionPickingStagingLocationId,
                 x.AutoPickWithoutConfirmMaxQuantity,
@@ -1146,7 +1162,7 @@ public sealed class ProductionTransferTaskService(
         var isRackless = await ProductionTransferWarehouseRacklessSupport.IsRacklessAsync(uow, warehouseId, ct);
         return new WarehouseTransferReturnSettingDto(
             row.Id,
-            row.DefaultTransferReturnLocationId,
+            row.DefaultProductionTransferReturnLocationId,
             row.DefaultProductionTransferLocationId,
             row.ProductionPickingStagingLocationId,
             row.AutoPickWithoutConfirmMaxQuantity,
@@ -1158,11 +1174,12 @@ public sealed class ProductionTransferTaskService(
         {
             var warehouse = await uow.Repository<WarehouseEntity>().FindByIdAsync(request.WarehouseId, tracking: true, cancellationToken: token)
                 ?? throw AppException.NotFound("Depo bulunamadı.");
-            if (request.DefaultTransferReturnLocationId.HasValue)
+            var productionReturnLocationId = request.ResolvedProductionTransferReturnLocationId;
+            if (productionReturnLocationId.HasValue)
             {
                 var valid = await uow.Repository<WarehouseLocation>().Query().AnyAsync(x =>
-                    x.Id == request.DefaultTransferReturnLocationId && x.WarehouseId == warehouse.Id && x.IsActive && x.IsPutaway, token);
-                if (!valid) throw AppException.BadRequest("Varsayılan iade rafı depoya ait, aktif ve yerleştirmeye uygun olmalıdır.");
+                    x.Id == productionReturnLocationId && x.WarehouseId == warehouse.Id && x.IsActive && x.IsPutaway, token);
+                if (!valid) throw AppException.BadRequest("Varsayılan üretim iptal/iade rafı depoya ait, aktif ve yerleştirmeye uygun olmalıdır.");
             }
             if (request.DefaultProductionTransferLocationId.HasValue)
             {
@@ -1186,7 +1203,10 @@ public sealed class ProductionTransferTaskService(
             }
             if (request.AutoPickWithoutConfirmMaxQuantity is < 0)
                 throw AppException.BadRequest("Onaysız toplama eşiği sıfırdan küçük olamaz.");
-            warehouse.DefaultTransferReturnLocationId = request.DefaultTransferReturnLocationId;
+            if (productionReturnLocationId.HasValue
+                && productionReturnLocationId == request.ProductionPickingStagingLocationId)
+                throw AppException.BadRequest("Üretim iptal/iade rafı ile üretim toplama sanal rafı aynı olamaz.");
+            warehouse.DefaultProductionTransferReturnLocationId = productionReturnLocationId;
             warehouse.DefaultProductionTransferLocationId = request.DefaultProductionTransferLocationId;
             warehouse.ProductionPickingStagingLocationId = request.ProductionPickingStagingLocationId;
             warehouse.AutoPickWithoutConfirmMaxQuantity = request.AutoPickWithoutConfirmMaxQuantity is > 0
@@ -1197,16 +1217,16 @@ public sealed class ProductionTransferTaskService(
             await audit.WriteAsync(new("production-transfer.return-location.update", nameof(WarehouseEntity), warehouse.Id.ToString(), "Succeeded", "production-transfer",
                 NewValues: new
                 {
-                    warehouse.DefaultTransferReturnLocationId,
+                    warehouse.DefaultProductionTransferReturnLocationId,
                     warehouse.DefaultProductionTransferLocationId,
                     warehouse.ProductionPickingStagingLocationId,
                     warehouse.AutoPickWithoutConfirmMaxQuantity,
                 },
-                ChangedFields: ["DefaultTransferReturnLocationId", "DefaultProductionTransferLocationId", "ProductionPickingStagingLocationId", "AutoPickWithoutConfirmMaxQuantity"]), token);
+                ChangedFields: ["DefaultProductionTransferReturnLocationId", "DefaultProductionTransferLocationId", "ProductionPickingStagingLocationId", "AutoPickWithoutConfirmMaxQuantity"]), token);
             var isRackless = await ProductionTransferWarehouseRacklessSupport.IsRacklessAsync(uow, warehouse.Id, token);
             return new WarehouseTransferReturnSettingDto(
                 warehouse.Id,
-                warehouse.DefaultTransferReturnLocationId,
+                warehouse.DefaultProductionTransferReturnLocationId,
                 warehouse.DefaultProductionTransferLocationId,
                 warehouse.ProductionPickingStagingLocationId,
                 warehouse.AutoPickWithoutConfirmMaxQuantity,
