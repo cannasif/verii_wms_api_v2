@@ -93,6 +93,43 @@ public sealed class ProductionTransferNetsisPayloadContractTests
     }
 
     [Fact]
+    public void Global_serial_export_policy_removes_serials_from_every_erp_line_when_disabled()
+    {
+        var request = new NetsisItemSlipRequest
+        {
+            Kalems =
+            [
+                new NetsisItemSlipLine { StokKodu = "STK-001", Miktar = 1, SeriNo = "SR-001" },
+                new NetsisItemSlipLine { StokKodu = "STK-002", Miktar = 2, SeriNo = "SR-002" }
+            ]
+        };
+
+        ErpPostingService.ApplySerialExportPolicy(request, sendSerialsToErp: false);
+
+        Assert.All(request.Kalems, line => Assert.Null(line.SeriNo));
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(request));
+        Assert.All(
+            json.RootElement.GetProperty("Kalems").EnumerateArray(),
+            line => Assert.False(line.TryGetProperty("SeriNo", out _)));
+    }
+
+    [Fact]
+    public void Global_serial_export_policy_preserves_serials_when_enabled()
+    {
+        var request = new NetsisItemSlipRequest
+        {
+            Kalems =
+            [
+                new NetsisItemSlipLine { StokKodu = "STK-001", Miktar = 1, SeriNo = "SR-001" }
+            ]
+        };
+
+        ErpPostingService.ApplySerialExportPolicy(request, sendSerialsToErp: true);
+
+        Assert.Equal("SR-001", Assert.Single(request.Kalems).SeriNo);
+    }
+
+    [Fact]
     public void Production_reference_is_kept_in_erp_header_description_not_order_link_fields()
     {
         var description = ErpPostingService.BuildProductionTransferErpDescription(

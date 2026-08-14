@@ -411,6 +411,7 @@ public sealed class NetsisItemSlipLine
     public string? ConfigurationCode { get; set; }
 
     [JsonPropertyName("SeriNo")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? SeriNo { get; set; }
 
     [JsonPropertyName("Aciklama")]

@@ -58,7 +58,8 @@ public sealed class ErpPostingService(
         ValidateGoodsReceiptGate(header);
 
         var targetWarehouse = await GetWarehouseAsync(header.TargetWarehouseId, cancellationToken);
-        var request = await MapGoodsReceiptAsync(header, targetWarehouse, cancellationToken);
+        var sendSerialsToErp = await SendSerialsToErpAsync(cancellationToken);
+        var request = await MapGoodsReceiptAsync(header, targetWarehouse, sendSerialsToErp, cancellationToken);
         var externalDocumentNo = ResolveGoodsReceiptErpDocumentNo(header);
         var result = await PostAsync(
             ErpPostingSourceType.GoodsReceipt,
@@ -72,6 +73,7 @@ public sealed class ErpPostingService(
             unitOfWork.Repository<GoodsReceiptHeader>(),
             header,
             userId,
+            sendSerialsToErp,
             cancellationToken);
         if (result.Status == ErpPostingStatus.Succeeded)
             EnqueueGoodsReceiptSuccessFollowUp(header.Id, userId);
@@ -99,8 +101,9 @@ public sealed class ErpPostingService(
 
         var sourceWarehouse = await GetWarehouseAsync(header.SourceWarehouseId, cancellationToken);
         var targetWarehouse = await GetWarehouseAsync(header.TargetWarehouseId, cancellationToken);
+        var sendSerialsToErp = await SendSerialsToErpAsync(cancellationToken);
         var request = await MapWarehouseTransferAsync(
-            header, sourceWarehouse, targetWarehouse, await SendSerialsToErpAsync(cancellationToken), cancellationToken);
+            header, sourceWarehouse, targetWarehouse, sendSerialsToErp, cancellationToken);
         return await PostAsync(
             ErpPostingSourceType.WarehouseTransfer,
             header.Id,
@@ -113,6 +116,7 @@ public sealed class ErpPostingService(
             unitOfWork.Repository<WarehouseTransferHeader>(),
             header,
             userId,
+            sendSerialsToErp,
             cancellationToken);
     }
 
@@ -190,8 +194,9 @@ public sealed class ErpPostingService(
             throw AppException.Conflict("Sevk onay süreci tamamlanmadan ERP kaydı oluşturulamaz.");
 
         var sourceWarehouse = await GetWarehouseAsync(header.SourceWarehouseId, cancellationToken);
+        var sendSerialsToErp = await SendSerialsToErpAsync(cancellationToken);
         var request = await MapShipmentAsync(
-            header, sourceWarehouse, await SendSerialsToErpAsync(cancellationToken), cancellationToken);
+            header, sourceWarehouse, sendSerialsToErp, cancellationToken);
         return await PostAsync(
             ErpPostingSourceType.Shipment,
             header.Id,
@@ -204,6 +209,7 @@ public sealed class ErpPostingService(
             unitOfWork.Repository<ShipmentHeader>(),
             header,
             userId,
+            sendSerialsToErp,
             cancellationToken);
     }
 
@@ -225,7 +231,8 @@ public sealed class ErpPostingService(
             throw AppException.Conflict("Ambar giriş onayı tamamlanmadan ERP kaydı oluşturulamaz.");
 
         var warehouse = await GetWarehouseAsync(header.TargetWarehouseId, cancellationToken);
-        var request = await MapWarehouseInboundAsync(header, warehouse, cancellationToken);
+        var sendSerialsToErp = await SendSerialsToErpAsync(cancellationToken);
+        var request = await MapWarehouseInboundAsync(header, warehouse, sendSerialsToErp, cancellationToken);
         var externalDocumentNo = ResolveWarehouseInboundErpDocumentNo(header);
         return await PostAsync(
             ErpPostingSourceType.WarehouseInbound,
@@ -239,6 +246,7 @@ public sealed class ErpPostingService(
             unitOfWork.Repository<WarehouseInboundHeader>(),
             header,
             userId,
+            sendSerialsToErp,
             cancellationToken);
     }
 
@@ -261,8 +269,9 @@ public sealed class ErpPostingService(
             throw AppException.Conflict("Ambar çıkış onayı tamamlanmadan ERP kaydı oluşturulamaz.");
 
         var warehouse = await GetWarehouseAsync(header.SourceWarehouseId, cancellationToken);
+        var sendSerialsToErp = await SendSerialsToErpAsync(cancellationToken);
         var request = await MapWarehouseOutboundAsync(
-            header, warehouse, await SendSerialsToErpAsync(cancellationToken), cancellationToken);
+            header, warehouse, sendSerialsToErp, cancellationToken);
         return await PostAsync(
             ErpPostingSourceType.WarehouseOutbound,
             header.Id,
@@ -275,6 +284,7 @@ public sealed class ErpPostingService(
             unitOfWork.Repository<WarehouseOutboundHeader>(),
             header,
             userId,
+            sendSerialsToErp,
             cancellationToken);
     }
 
@@ -371,8 +381,10 @@ public sealed class ErpPostingService(
         IGenericRepository<TEntity> headerRepository,
         TEntity header,
         long userId,
+        bool sendSerialsToErp,
         CancellationToken cancellationToken) where TEntity : class
     {
+        ApplySerialExportPolicy(request, sendSerialsToErp);
         NetsisItemSlipDefaults.Apply(request, timeProvider.GetLocalNow().DateTime);
         var requestPayload = JsonSerializer.Serialize(request, HashJsonOptions);
         var hash = ComputeHash(requestPayload);
@@ -555,13 +567,13 @@ public sealed class ErpPostingService(
     private async Task<NetsisItemSlipRequest> MapGoodsReceiptAsync(
         GoodsReceiptHeader header,
         WarehouseEntity warehouse,
+        bool sendSerials,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(header.SupplierCodeSnapshot))
             throw AppException.Conflict("Mal kabul ERP irsaliyesi için tedarikçi kodu zorunludur.");
 
         var options = optionsAccessor.Value.Rest;
-        var sendSerials = await SendSerialsToErpAsync(cancellationToken);
         var serials = sendSerials
             ? await unitOfWork.Repository<GoodsReceiptExecutionLine>().Query()
                 .Where(x => x.Execution.GrHeaderId == header.Id
@@ -707,12 +719,14 @@ public sealed class ErpPostingService(
                 ? await GetProductionErpReferenceAsync(header.Id, cancellationToken)
                 : null;
         var orderDocumentIds = orderContext.DocumentIds;
-        var erpTrackingRules = (await netsisReadService.GetStockTrackingRulesAsync(
-                header.Lines.Where(x => x.ShippedQuantity > 0).Select(x => x.StockCodeSnapshot).ToArray(),
-                ParseBranchCode(sourceWarehouse.BranchCode),
-                cancellationToken))
-            .GroupBy(x => x.StokKodu.Trim(), StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase);
+        var erpTrackingRules = sendSerials
+            ? (await netsisReadService.GetStockTrackingRulesAsync(
+                    header.Lines.Where(x => x.ShippedQuantity > 0).Select(x => x.StockCodeSnapshot).ToArray(),
+                    ParseBranchCode(sourceWarehouse.BranchCode),
+                    cancellationToken))
+                .GroupBy(x => x.StokKodu.Trim(), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(x => x.Key, x => x.First(), StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, NetsisStockTrackingDto>(StringComparer.OrdinalIgnoreCase);
         var lines = new List<NetsisItemSlipLine>();
         var usedOrderRows = new List<ErpOrderRow>();
         foreach (var line in header.Lines.OrderBy(x => x.LineNo))
@@ -730,14 +744,12 @@ public sealed class ErpPostingService(
                 orderContext);
             usedOrderRows.AddRange(allocations.Select(x => x.OrderRow));
             var serials = line.Trackings.Where(x => !string.IsNullOrWhiteSpace(x.SerialNo) && x.ShippedQuantity > 0).ToList();
-            if (!erpTrackingRules.TryGetValue(line.StockCodeSnapshot.Trim(), out var erpTrackingRule))
+            var hasErpTrackingRule = erpTrackingRules.TryGetValue(
+                line.StockCodeSnapshot.Trim(), out var erpTrackingRule);
+            if (sendSerials && !hasErpTrackingRule)
                 throw AppException.Conflict(
                     $"{line.StockCodeSnapshot} Netsis stok kartında bulunamadı. ERP transfer JSON'u oluşturulmadı.");
-            var erpRequiresSerial = erpTrackingRule?.RequiresWarehouseTransferSerial == true;
-            if (erpRequiresSerial && !sendSerials)
-                throw AppException.Conflict(
-                    $"{line.StockCodeSnapshot} Netsis stok kartında seri takipli, ancak 'Serileri ERP'ye aktar' ayarı kapalıdır. " +
-                    "Bu stok için seri gönderimi kapatılamaz; proje ayarını açıp işlemi yeniden deneyin.");
+            var erpRequiresSerial = sendSerials && erpTrackingRule?.RequiresWarehouseTransferSerial == true;
             var requiresSerialPayload = line.RequireSerial
                 || line.TrackingType is StockTrackingType.Serial or StockTrackingType.LotAndSerial
                 || erpRequiresSerial;
@@ -852,6 +864,7 @@ public sealed class ErpPostingService(
     private async Task<NetsisItemSlipRequest> MapWarehouseInboundAsync(
         WarehouseInboundHeader header,
         WarehouseEntity warehouse,
+        bool sendSerials,
         CancellationToken cancellationToken)
     {
         if (string.IsNullOrWhiteSpace(header.SupplierCodeSnapshot))
@@ -865,7 +878,6 @@ public sealed class ErpPostingService(
         var context = await BuildPurchaseOrderContextAsync(
             purchaseOrderDocuments, header.SupplierCodeSnapshot, header.BranchCode, cancellationToken);
         var orderDocumentIds = context.DocumentIds;
-        var sendSerials = await SendSerialsToErpAsync(cancellationToken);
         var serials = sendSerials
             ? await unitOfWork.Repository<WarehouseInboundExecutionLine>().Query()
                 .Where(x => x.Execution.GrHeaderId == header.Id
@@ -1114,6 +1126,20 @@ public sealed class ErpPostingService(
             x => x.SettingKey == "GLOBAL",
             cancellationToken: cancellationToken);
         return setting?.SendSerialsToErp ?? optionsAccessor.Value.Rest.SendSerialsToErp;
+    }
+
+    /// <summary>
+    /// Project setting is the final ERP integration boundary. WMS serial tracking keeps running,
+    /// but when export is disabled no operation may leak a serial into a Netsis payload even if
+    /// a mapper or a future module populated it earlier.
+    /// </summary>
+    internal static void ApplySerialExportPolicy(NetsisItemSlipRequest request, bool sendSerialsToErp)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+        if (sendSerialsToErp) return;
+
+        foreach (var line in request.Kalems)
+            line.SeriNo = null;
     }
 
     private async Task SetSourceHeaderStatusAsync(
