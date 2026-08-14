@@ -1,11 +1,15 @@
 using System.Security.Claims;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Diagnostics;
+using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging.Abstractions;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Modules.Stock.Application;
 using verii_wms_api_v2.Modules.Stock.Domain;
+using verii_wms_api_v2.Modules.Stock.Infrastructure;
+using verii_wms_api_v2.Shared.Application.Exceptions;
 using verii_wms_api_v2.Shared.Infrastructure.Persistence;
 using Xunit;
 
@@ -61,6 +65,54 @@ public sealed class StockImageLibraryTests
         Assert.Single(storage.Deleted);
     }
 
+    [Fact]
+    public async Task Physical_storage_writes_valid_image_to_managed_directory()
+    {
+        var root=Path.Combine(Path.GetTempPath(),"wms-stock-image-tests",Guid.NewGuid().ToString("N"));
+        try
+        {
+            var storage=new StockImageStorage(new TestEnvironment(root),NullLogger<StockImageStorage>.Instance);
+            var bytes=new byte[]{0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A,0x00};
+            await using var stream=new MemoryStream(bytes);
+
+            var result=await storage.SaveAsync("100",42,new StockImageUpload(
+                stream,"stock.png","image/png",bytes.Length,null));
+
+            Assert.StartsWith("/uploads/stock-images/100/42/",result.Url,StringComparison.Ordinal);
+            var relative=result.Url["/uploads/stock-images/".Length..].Replace('/',Path.DirectorySeparatorChar);
+            Assert.True(File.Exists(Path.Combine(root,"wwwroot","uploads","stock-images",relative)));
+        }
+        finally
+        {
+            if(Directory.Exists(root))Directory.Delete(root,true);
+        }
+    }
+
+    [Fact]
+    public async Task Physical_storage_maps_unwritable_path_to_service_unavailable()
+    {
+        var parent=Path.Combine(Path.GetTempPath(),"wms-stock-image-tests",Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(parent);
+        var blockingFile=Path.Combine(parent,"not-a-directory");
+        await File.WriteAllTextAsync(blockingFile,"blocked");
+        try
+        {
+            var storage=new StockImageStorage(new TestEnvironment(blockingFile),NullLogger<StockImageStorage>.Instance);
+            var bytes=new byte[]{0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A,0x00};
+            await using var stream=new MemoryStream(bytes);
+
+            var exception=await Assert.ThrowsAsync<AppException>(()=>storage.SaveAsync("100",42,
+                new StockImageUpload(stream,"stock.png","image/png",bytes.Length,null)));
+
+            Assert.Equal(StatusCodes.Status503ServiceUnavailable,exception.StatusCode);
+            Assert.Contains("klasör yetkisini",exception.Message,StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            if(Directory.Exists(parent))Directory.Delete(parent,true);
+        }
+    }
+
     private static WmsDbContext CreateSqlModelContext()=>new(new DbContextOptionsBuilder<WmsDbContext>()
         .UseSqlServer("Server=invalid;Database=invalid;User Id=invalid;Password=invalid;TrustServerCertificate=True").Options);
     private static HttpContextAccessor Accessor(string branch)=>new(){HttpContext=new DefaultHttpContext
@@ -78,5 +130,15 @@ public sealed class StockImageLibraryTests
             return Task.FromResult(new StoredStockImage(url,upload.FileName,"image/png",upload.Length));
         }
         public Task DeleteIfManagedAsync(string? relativeUrl,CancellationToken ct=default){if(relativeUrl is not null)Deleted.Add(relativeUrl);return Task.CompletedTask;}
+    }
+
+    private sealed class TestEnvironment(string contentRoot):IWebHostEnvironment
+    {
+        public string ApplicationName { get; set; }="verii_wms_api_v2.QueryTests";
+        public IFileProvider WebRootFileProvider { get; set; }=new NullFileProvider();
+        public string WebRootPath { get; set; }=Path.Combine(contentRoot,"wwwroot");
+        public string EnvironmentName { get; set; }="Test";
+        public string ContentRootPath { get; set; }=contentRoot;
+        public IFileProvider ContentRootFileProvider { get; set; }=new NullFileProvider();
     }
 }
