@@ -915,7 +915,8 @@ public sealed partial class ProductionService
         var filtered = new List<ProductionSourceWorkOrderRow>();
         foreach (var row in combined)
         {
-            if (row.ListingKind == ProductionSourceWorkOrderListingKind.CancellationReturnRemainder)
+            if (row.ListingKind is ProductionSourceWorkOrderListingKind.CancellationReturnRemainder
+                    or ProductionSourceWorkOrderListingKind.PartialTransferRemainder)
             {
                 filtered.Add(row);
                 continue;

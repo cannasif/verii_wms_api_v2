@@ -134,7 +134,8 @@ public sealed partial class ProductionService(
             .Select(row => ApplyRestoredCancelledListingKind(row, restoredWorkOrderNumbers))
             .Select(row =>
             {
-                if (row.ListingKind == ProductionSourceWorkOrderListingKind.CancellationReturnRemainder
+                if (row.ListingKind is ProductionSourceWorkOrderListingKind.CancellationReturnRemainder
+                        or ProductionSourceWorkOrderListingKind.PartialTransferRemainder
                     && row.TransferId is long transferId
                     && row.KalanTaskId is long kalanTaskId)
                 {
@@ -238,9 +239,11 @@ public sealed partial class ProductionService(
             var tasks = header.Tasks.Where(x => !x.IsDeleted).ToArray();
             foreach (var task in tasks)
             {
-                if (ProductionWorkOrderTransferGrouping.IsPostShortageHandoverUnassignedPickTask(task, link))
+                if (ProductionWorkOrderTransferGrouping.IsPostShortageHandoverUnassignedPickTask(task, link)
+                    && !ProductionWorkOrderTransferGrouping.IsUnlinkedProductionTransfer(link))
                     continue;
-                if (!ProductionWorkOrderTransferGrouping.IsAtanmayanlarUnassignedPickTask(task, link, tasks))
+                if (!ProductionWorkOrderTransferGrouping.IsAtanmayanlarUnassignedPickTask(task, link, tasks)
+                    && !ProductionWorkOrderTransferGrouping.IsPostShortageHandoverUnassignedPickTask(task, link))
                     continue;
 
                 var workOrderNumber = ProductionWorkOrderTransferGrouping.ResolveAtanmayanlarListingKey(link, header);
@@ -252,13 +255,17 @@ public sealed partial class ProductionService(
                 if (IsCancellationReturnRemainderFullyAssigned(link, task, assignmentLinks, candidateWorkOrderSet))
                     continue;
 
+                var listingKind = ProductionWorkOrderTransferGrouping.IsPostShortageHandoverUnassignedPickTask(task, link)
+                    ? ProductionSourceWorkOrderListingKind.PartialTransferRemainder
+                    : ProductionSourceWorkOrderListingKind.CancellationReturnRemainder;
+
                 var sourceWarehouseCode = warehouses.GetValueOrDefault(header.SourceWarehouseId);
                 var targetWarehouseCode = warehouses.GetValueOrDefault(header.TargetWarehouseId);
                 if (templatesByWorkOrder.TryGetValue(workOrderNumber, out var template))
                 {
                     rows.Add(template with
                     {
-                        ListingKind = ProductionSourceWorkOrderListingKind.CancellationReturnRemainder,
+                        ListingKind = listingKind,
                         TransferId = header.Id,
                         KalanTaskId = task.Id,
                         ProjectCode = template.ProjectCode ?? header.ProjectCode,
@@ -269,7 +276,9 @@ public sealed partial class ProductionService(
                     continue;
                 }
 
-                var netsisTemplate = setting.Source is ProductionOrderSourceType.NetsisErpFunctions or ProductionOrderSourceType.ErpAndWms
+                var netsisTemplate = listingKind == ProductionSourceWorkOrderListingKind.PartialTransferRemainder
+                    ? null
+                    : setting.Source is ProductionOrderSourceType.NetsisErpFunctions or ProductionOrderSourceType.ErpAndWms
                     ? (await netsisRead.GetProductionWorkOrdersAsync(workOrderNumber, branchNumber, true, 1, ct)).FirstOrDefault()
                     : null;
                 if (netsisTemplate is not null)
@@ -292,7 +301,7 @@ public sealed partial class ProductionService(
                         targetWarehouseCode > 0 ? targetWarehouseCode : netsisTemplate.WarehouseCode,
                         sourceWarehouseCode > 0 ? sourceWarehouseCode : netsisTemplate.IssueWarehouseCode,
                         netsisTemplate.IsClosed,
-                        ProductionSourceWorkOrderListingKind.CancellationReturnRemainder,
+                        listingKind,
                         header.Id,
                         task.Id,
                         Description: netsisTemplate.Description));
@@ -321,7 +330,7 @@ public sealed partial class ProductionService(
                     targetWarehouseCode,
                     sourceWarehouseCode,
                     false,
-                    ProductionSourceWorkOrderListingKind.CancellationReturnRemainder,
+                    listingKind,
                     header.Id,
                     task.Id));
             }

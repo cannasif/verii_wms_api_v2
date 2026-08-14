@@ -201,13 +201,24 @@ public sealed class StockBalanceService(
 
     public async Task<IReadOnlyList<StockLocationBalanceDto>> ResolveStockLocationsAsync(
         string branchCode, long warehouseId, long stockId, long? yapCodeId,
-        IReadOnlyCollection<long>? excludeLocationIds = null, CancellationToken cancellationToken = default)
+        IReadOnlyCollection<long>? excludeLocationIds = null, bool includeOnHand = false,
+        CancellationToken cancellationToken = default)
     {
-        var candidates = await Locations.Query(true)
+        var balances = Locations.Query(true)
             .Where(x => x.BranchCode == branchCode && x.WarehouseId == warehouseId
-                && x.StockId == stockId && x.YapCodeId == yapCodeId && x.AvailableQuantity > 0)
+                && x.StockId == stockId && x.YapCodeId == yapCodeId);
+        var filtered = includeOnHand
+            ? balances.Where(x => x.StockStatus == "Available" && x.Quantity > 0)
+            : balances.Where(x => x.AvailableQuantity > 0);
+        var candidates = await filtered
             .GroupBy(x => x.LocationId)
-            .Select(g => new { LocationId = g.Key, AvailableQuantity = g.Sum(x => x.AvailableQuantity) })
+            .Select(g => new
+            {
+                LocationId = g.Key,
+                AvailableQuantity = g.Sum(x => x.AvailableQuantity),
+                Quantity = g.Sum(x => x.Quantity),
+                ReservedQuantity = g.Sum(x => x.ReservedQuantity),
+            })
             .ToListAsync(cancellationToken);
         if (excludeLocationIds is { Count: > 0 })
             candidates = candidates.Where(x => !excludeLocationIds.Contains(x.LocationId)).ToList();
@@ -217,8 +228,8 @@ public sealed class StockBalanceService(
         var locations = await LocationDefinitions.Query().Where(x => locationIds.Contains(x.Id))
             .ToDictionaryAsync(x => x.Id, cancellationToken);
         return candidates.Select(x => locations.TryGetValue(x.LocationId, out var location)
-            ? new StockLocationBalanceDto(x.LocationId, location.Code, location.Name, x.AvailableQuantity)
-            : new StockLocationBalanceDto(x.LocationId, "?", "?", x.AvailableQuantity)).ToList();
+            ? new StockLocationBalanceDto(x.LocationId, location.Code, location.Name, x.AvailableQuantity, x.Quantity, x.ReservedQuantity)
+            : new StockLocationBalanceDto(x.LocationId, "?", "?", x.AvailableQuantity, x.Quantity, x.ReservedQuantity)).ToList();
     }
 
     public async Task<PagedResponse<LocationBalanceRow>> GetLocationBalancesAsync(PagedRequest request, CancellationToken cancellationToken = default)

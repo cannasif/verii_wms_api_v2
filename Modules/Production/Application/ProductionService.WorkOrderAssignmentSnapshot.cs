@@ -283,7 +283,12 @@ public sealed partial class ProductionService
                 && x.WorkflowStatus != ProductionTransferWorkflowStatus.Cancelled
                 && ((x.ProductionOrderNo != null && normalized.Contains(x.ProductionOrderNo))
                     || (x.WarehouseTransferHeader.ExternalReferenceNo != null
-                        && normalized.Contains(x.WarehouseTransferHeader.ExternalReferenceNo))))
+                        && normalized.Contains(x.WarehouseTransferHeader.ExternalReferenceNo))
+                    || (!x.ProductionOrderId.HasValue
+                        && !x.ProductionHeaderId.HasValue
+                        && (x.ProductionOrderNo == null || x.ProductionOrderNo == string.Empty)
+                        && x.WarehouseTransferHeader.DocumentNo != null
+                        && normalized.Contains(x.WarehouseTransferHeader.DocumentNo))))
             .Include(x => x.Lines.Where(line => !line.IsDeleted))
                 .ThenInclude(line => line.WarehouseTransferLine)
                     .ThenInclude(line => line!.Trackings.Where(tracking => !tracking.IsDeleted))

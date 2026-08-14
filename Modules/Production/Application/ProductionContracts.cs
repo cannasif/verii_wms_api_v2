@@ -125,7 +125,8 @@ public enum ProductionSourceWorkOrderListingKind
     Standard = 0,
     CancellationReturnRemainder = 1,
     ManagerCancelledAssignment = 2,
-    RestoredCancelledAssignment = 3
+    RestoredCancelledAssignment = 3,
+    PartialTransferRemainder = 4
 }
 
 public sealed record ProductionSourceWorkOrderRow(

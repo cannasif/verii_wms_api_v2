@@ -71,16 +71,20 @@ internal static class ProductionTransferReturnMovement
         if (openLines.Length == 0)
             throw AppException.BadRequest("İade edilecek açık satır bulunmuyor.");
 
+        var isRackless = await ProductionTransferWarehouseRacklessSupport.IsRacklessAsync(
+            uow, task.Header.SourceWarehouseId, ct);
+
         var selectionByTaskLine = selections
             .GroupBy(x => x.TaskLineId)
             .ToDictionary(x => x.Key, x => x.Last().TargetLocationId);
 
-        if (selectionByTaskLine.Count != openLines.Length)
+        if (!isRackless && selectionByTaskLine.Count != openLines.Length)
             throw AppException.BadRequest("Her açık iade satırı için hedef raf seçilmelidir.");
 
         foreach (var taskLine in openLines)
         {
-            if (!selectionByTaskLine.TryGetValue(taskLine.Id, out var targetLocationId))
+            selectionByTaskLine.TryGetValue(taskLine.Id, out var targetLocationId);
+            if (!isRackless && !selectionByTaskLine.ContainsKey(taskLine.Id))
                 throw AppException.BadRequest($"{taskLine.Line.StockCodeSnapshot} için hedef raf seçilmedi.");
             await ApplyLineTargetLocationAsync(uow, task, taskLine, targetLocationId, actor, ct);
         }
@@ -95,7 +99,11 @@ internal static class ProductionTransferReturnMovement
         CancellationToken ct)
     {
         if (targetLocationId <= 0)
-            throw AppException.BadRequest($"{taskLine.Line.StockCodeSnapshot} için hedef raf seçilmedi.");
+        {
+            targetLocationId = await ProductionTransferWarehouseRacklessSupport.GetRacklessTargetLocationIdAsync(
+                    uow, task.Header.SourceWarehouseId, ct)
+                ?? throw AppException.BadRequest($"{taskLine.Line.StockCodeSnapshot} için hedef raf seçilmedi.");
+        }
 
         var location = await uow.Repository<WarehouseLocation>().Query()
             .AnyAsync(x => x.Id == targetLocationId

@@ -2,6 +2,7 @@ using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.ErpMirror.Application;
 using verii_wms_api_v2.Modules.NetsisRead.Application;
+using verii_wms_api_v2.Modules.ProductionTransfer.Application;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using CustomerEntity = verii_wms_api_v2.Modules.Customer.Domain.Customer;
@@ -170,7 +171,7 @@ public sealed class ErpMirrorService(IUnitOfWork unitOfWork, INetsisReadService 
         await SyncCustomersAsync(cancellationToken), await SyncConfigurationCodesAsync(cancellationToken)
     };
 
-    public Task<PagedResponse<WarehouseMirrorDto>> GetWarehousesPagedAsync(PagedRequest request, CancellationToken ct = default)
+    public async Task<PagedResponse<WarehouseMirrorDto>> GetWarehousesPagedAsync(PagedRequest request, CancellationToken ct = default)
     {
         var search = request.Search?.Trim();
         var query = Warehouses.Query()
@@ -178,7 +179,18 @@ public sealed class ErpMirrorService(IUnitOfWork unitOfWork, INetsisReadService 
             .Select(x => new WarehouseMirrorDto(x.Id, x.BranchCode, x.WarehouseCode, x.WarehouseName,
                 x.DefaultGoodsReceiptLocationId, x.LastSyncDate, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate))
             .ApplyAdvancedFilters(request).ApplySort(request, nameof(WarehouseMirrorDto.WarehouseCode));
-        return PageAsync(query, request, ct);
+        var page = await PageAsync(query, request, ct);
+        var flags = await ProductionTransferWarehouseRacklessSupport.GetRacklessFlagsAsync(
+            unitOfWork, page.Items.Select(x => x.Id).ToArray(), ct);
+        return new PagedResponse<WarehouseMirrorDto>
+        {
+            Items = page.Items
+                .Select(x => x with { IsRackless = flags.GetValueOrDefault(x.Id) })
+                .ToArray(),
+            TotalCount = page.TotalCount,
+            PageNumber = page.PageNumber,
+            PageSize = page.PageSize,
+        };
     }
     public Task<PagedResponse<StockMirrorDto>> GetStocksPagedAsync(PagedRequest request, CancellationToken ct = default)
     {

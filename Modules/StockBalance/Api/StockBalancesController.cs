@@ -43,12 +43,13 @@ public sealed class StockBalancesController(IStockBalanceService service, IOpeni
 
     [HttpGet("stocks/{stockId:long}/locations")]
     public async Task<IActionResult> ResolveStockLocations(long stockId, [FromQuery] long warehouseId,
-        [FromQuery] string branchCode, [FromQuery] long? yapCodeId, [FromQuery] string? excludeLocationIds, CancellationToken ct)
+        [FromQuery] string branchCode, [FromQuery] long? yapCodeId, [FromQuery] string? excludeLocationIds,
+        [FromQuery] bool includeOnHand = false, CancellationToken ct = default)
     {
         await RequireAsync("WMS.LOCATIONS.VIEW", ct);
         var excluded = ParseLocationIds(excludeLocationIds);
         return Ok(ApiResponse<IReadOnlyList<StockLocationBalanceDto>>.Ok(
-            await service.ResolveStockLocationsAsync(branchCode, warehouseId, stockId, yapCodeId, excluded, ct)));
+            await service.ResolveStockLocationsAsync(branchCode, warehouseId, stockId, yapCodeId, excluded, includeOnHand, ct)));
     }
 
     [HttpPost("locations/paged")]

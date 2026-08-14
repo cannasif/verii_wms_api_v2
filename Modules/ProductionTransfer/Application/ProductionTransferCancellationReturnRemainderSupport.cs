@@ -8,6 +8,25 @@ namespace verii_wms_api_v2.Modules.ProductionTransfer.Application;
 
 internal static class ProductionTransferCancellationReturnRemainderSupport
 {
+    public static Task ReleaseUnlinkedShortageRemainderToAtanmayanlarAsync(
+        IUnitOfWork uow,
+        IWarehouseTransferReservationService reservations,
+        WarehouseTransferHeader header,
+        ProductionTransferHeaderLink link,
+        Guid idempotencyKey,
+        long actor,
+        CancellationToken ct) =>
+        ReleaseUnlinkedDraftToAtanmayanlarAsync(
+            uow,
+            reservations,
+            header,
+            link,
+            "Eksik teslim kalanı Atanmayanlar kuyruğuna bırakıldı.",
+            idempotencyKey,
+            actor,
+            ct,
+            "Eksik teslim kalanı Atanmayanlar kuyruğuna bırakıldı.");
+
     public static async Task ReleaseUnlinkedDraftToAtanmayanlarAsync(
         IUnitOfWork uow,
         IWarehouseTransferReservationService reservations,
@@ -16,7 +35,8 @@ internal static class ProductionTransferCancellationReturnRemainderSupport
         string reason,
         Guid idempotencyKey,
         long actor,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? statusHistoryDescription = null)
     {
         var utcNow = DateTime.UtcNow;
         var now = DateTimeOffset.UtcNow;
@@ -109,7 +129,8 @@ internal static class ProductionTransferCancellationReturnRemainderSupport
             ToStatus = header.Status.ToString(),
             ChangedAtUtc = now,
             ChangedBy = actor,
-            Description = "İş emrisiz taslak transfer iptal edildi; belge Atanmayanlar kuyruğuna bırakıldı.",
+            Description = statusHistoryDescription
+                ?? "İş emrisiz taslak transfer iptal edildi; belge Atanmayanlar kuyruğuna bırakıldı.",
             CorrelationId = idempotencyKey,
         });
     }

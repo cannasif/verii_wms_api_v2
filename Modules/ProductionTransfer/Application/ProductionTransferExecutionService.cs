@@ -671,13 +671,20 @@ public sealed class ProductionTransferExecutionService(
         {
             if (request.IdempotencyKey == Guid.Empty) throw AppException.BadRequest("İşlem anahtarı zorunludur.");
             if (request.TaskLineId <= 0) throw AppException.BadRequest("Toplama satırı zorunludur.");
-            if (request.TargetLocationId <= 0) throw AppException.BadRequest("Hedef raf zorunludur.");
 
             var movementKey = $"PT:{transferId}:UNPICK:{request.IdempotencyKey:N}";
             if (await uow.Repository<StockMovementOperation>().AnyAsync(x => x.IdempotencyKey == movementKey, token))
                 return await GetPickingTableAsync(transferId, actor, token);
 
             var aggregate = await LoadAsync(transferId, true, token);
+            var targetLocationId = request.TargetLocationId;
+            if (targetLocationId <= 0)
+            {
+                targetLocationId = await ProductionTransferWarehouseRacklessSupport.GetRacklessTargetLocationIdAsync(
+                        uow, aggregate.Header.SourceWarehouseId, token)
+                    ?? throw AppException.BadRequest("Hedef raf zorunludur.");
+            }
+
             EnsurePickingAllowed(aggregate.Link);
             var actionContext = ProductionTransferPickingSupport.ResolveAssignedPickActionForLine(
                 aggregate.Header, request.TaskLineId, actor);
@@ -713,10 +720,10 @@ public sealed class ProductionTransferExecutionService(
                 throw AppException.BadRequest("Geri alınacak miktar geçersiz.");
 
             var targetLocation = await ProductionTransferUnpickMovement.ValidateTargetLocationAsync(
-                uow, aggregate.Header, request.TargetLocationId, token);
+                uow, aggregate.Header, targetLocationId, token);
             var stagingLocationId = ProductionTransferUnpickMovement.ResolveStagingLocationId(
                 aggregate.Header, line, taskLine, serialTracking);
-            if (stagingLocationId == request.TargetLocationId)
+            if (stagingLocationId == targetLocationId)
                 throw AppException.BadRequest("Stok zaten seçilen rafta; bekleme rafından farklı bir raf seçin.");
 
             var reservationPrefix = $"WT:{transferId}:UNPICK:{request.TaskLineId}:{request.IdempotencyKey:N}";
@@ -734,7 +741,7 @@ public sealed class ProductionTransferExecutionService(
                 aggregate.Header,
                 line,
                 stagingLocationId,
-                request.TargetLocationId,
+                targetLocationId,
                 quantity,
                 lotNo,
                 serialNo);
@@ -781,7 +788,7 @@ public sealed class ProductionTransferExecutionService(
                     line,
                     lineLink,
                     quantity,
-                    request.TargetLocationId,
+                    targetLocationId,
                     ref nextLineNo,
                     actor,
                     utcNow);
@@ -793,7 +800,7 @@ public sealed class ProductionTransferExecutionService(
             else
             {
                 ProductionTransferUnpickMovement.ApplyUnpickedRouteLocations(
-                    line, taskLine, request.TargetLocationId, serialNo, actor, utcNow);
+                    line, taskLine, targetLocationId, serialNo, actor, utcNow);
             }
 
             ProductionTransferUnpickMovement.UpdateHeaderStatusAfterUnpick(aggregate.Header, actor);
@@ -805,7 +812,7 @@ public sealed class ProductionTransferExecutionService(
                 lineLink,
                 line,
                 stagingLocationId,
-                request.TargetLocationId,
+                targetLocationId,
                 quantity,
                 lotNo,
                 serialNo,
@@ -833,7 +840,7 @@ public sealed class ProductionTransferExecutionService(
                 {
                     aggregate.Header.DocumentNo,
                     request.TaskLineId,
-                    request.TargetLocationId,
+                    TargetLocationId = targetLocationId,
                     TargetLocationCode = targetLocation.Code,
                     Quantity = quantity,
                     SerialNo = serialNo,
@@ -1026,6 +1033,9 @@ public sealed class ProductionTransferExecutionService(
                 shortage > 0 ? "Eksik üretim teslimi sonrası kalan rezervasyonlar çözüldü." : "Üretim teslimi tamamlandı.",
                 actor, token);
 
+            if (shortage > 0)
+                aggregate.Link.ResidualWarehouseTransferHeaderId = await CreateResidualTransferAsync(aggregate.Header, aggregate.Link, request, actor, token);
+
             foreach (var task in aggregate.Header.Tasks.Where(x => x.TaskType == WarehouseTransferTaskType.Pick
                          && x.Status is not (WarehouseTransferTaskStatus.Completed or WarehouseTransferTaskStatus.Cancelled)))
             {
@@ -1050,9 +1060,6 @@ public sealed class ProductionTransferExecutionService(
                 task.UpdatedBy = actor;
                 task.UpdatedDate = taskUtcNow;
             }
-
-            if (shortage > 0)
-                aggregate.Link.ResidualWarehouseTransferHeaderId = await CreateResidualTransferAsync(aggregate.Header, aggregate.Link, request, actor, token);
 
             aggregate.Link.WorkflowStatus = shortage > 0
                 ? ProductionTransferWorkflowStatus.CompletedWithShortage
@@ -1173,6 +1180,31 @@ public sealed class ProductionTransferExecutionService(
         }
         await uow.Repository<ProductionTransferHeaderLink>().AddAsync(childLink, ct);
         await uow.SaveChangesAsync(ct);
+
+        if (ProductionWorkOrderTransferGrouping.IsUnlinkedProductionTransfer(originalLink))
+        {
+            var trackedHeader = await uow.Repository<WarehouseTransferHeader>().Query(true)
+                .Include(x => x.Lines.Where(line => !line.IsDeleted))
+                .Include(x => x.Tasks.Where(task => !task.IsDeleted))
+                    .ThenInclude(task => task.Lines.Where(line => !line.IsDeleted))
+                .Include(x => x.Tasks.Where(task => !task.IsDeleted))
+                    .ThenInclude(task => task.Assignments)
+                .Include(x => x.StatusHistory)
+                .SingleAsync(x => x.Id == residualHeader.Id, ct);
+            var trackedLink = await uow.Repository<ProductionTransferHeaderLink>().Query(true)
+                .SingleAsync(x => x.WarehouseTransferHeaderId == residualHeader.Id, ct);
+
+            await ProductionTransferCancellationReturnRemainderSupport.ReleaseUnlinkedShortageRemainderToAtanmayanlarAsync(
+                uow,
+                reservations,
+                trackedHeader,
+                trackedLink,
+                handover.IdempotencyKey,
+                actor,
+                ct);
+            await uow.SaveChangesAsync(ct);
+        }
+
         return residualHeader.Id;
     }
 
@@ -1259,6 +1291,7 @@ public sealed class ProductionTransferExecutionService(
             .Select(x => new { x.Id, x.WarehouseCode, x.WarehouseName }).ToListAsync(ct);
         var source = warehouses.Single(x => x.Id == header.SourceWarehouseId);
         var target = warehouses.Single(x => x.Id == header.TargetWarehouseId);
+        var racklessFlags = await ProductionTransferWarehouseRacklessSupport.GetRacklessFlagsAsync(uow, warehouseIds, ct);
         var waiting = header.SourceStagingLocationId.HasValue
             ? await uow.Repository<WarehouseLocation>().Query()
                 .Where(x => x.Id == header.SourceStagingLocationId.Value)
@@ -1330,7 +1363,9 @@ public sealed class ProductionTransferExecutionService(
             link.WorkflowStatus == ProductionTransferWorkflowStatus.AwaitingHandover,
             overIssueLines,
             excludedSourceLocationIds.ToArray(),
-            lines);
+            lines,
+            racklessFlags.GetValueOrDefault(header.SourceWarehouseId),
+            racklessFlags.GetValueOrDefault(header.TargetWarehouseId));
     }
 
     private static void EnsurePickingAllowed(ProductionTransferHeaderLink link)
