@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Application;
+using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -156,6 +157,56 @@ internal static class ProductionTransferUnpickMovement
         taskLine.TargetLocationId = null;
         taskLine.UpdatedBy = actor;
         taskLine.UpdatedDate = utcNow;
+    }
+
+    internal static WarehouseTransferTaskLine ReopenTransferredQuantityInActiveTask(
+        WarehouseTransferTask activeTask,
+        WarehouseTransferTaskLine sourceTaskLine,
+        WarehouseTransferLine line,
+        decimal quantity,
+        long sourceLocationId,
+        long actor,
+        DateTime utcNow)
+    {
+        if (quantity <= 0)
+            throw AppException.BadRequest("Aktif göreve aktarılacak miktar geçersiz.");
+
+        var hasSerialTrackings = line.TrackingType is StockTrackingType.Serial or StockTrackingType.LotAndSerial;
+        var targetTaskLine = activeTask.Lines
+            .Where(x => !x.IsDeleted && x.WtLineId == sourceTaskLine.WtLineId)
+            .Where(x => hasSerialTrackings
+                || (x.SourceLocationId ?? line.DefaultSourceLocationId) == sourceLocationId)
+            .OrderBy(x => x.Id)
+            .FirstOrDefault();
+
+        if (targetTaskLine is null)
+        {
+            targetTaskLine = new WarehouseTransferTaskLine
+            {
+                BranchCode = activeTask.BranchCode,
+                Line = line,
+                WtLineId = line.Id,
+                PlannedQuantity = quantity,
+                ProcessedQuantity = 0,
+                SourceLocationId = sourceLocationId,
+                TargetLocationId = null,
+                CreatedBy = actor,
+                CreatedDate = utcNow
+            };
+            activeTask.Lines.Add(targetTaskLine);
+        }
+        else
+        {
+            targetTaskLine.PlannedQuantity += quantity;
+            if (!hasSerialTrackings)
+                targetTaskLine.SourceLocationId = sourceLocationId;
+            targetTaskLine.UpdatedBy = actor;
+            targetTaskLine.UpdatedDate = utcNow;
+        }
+
+        activeTask.UpdatedBy = actor;
+        activeTask.UpdatedDate = utcNow;
+        return targetTaskLine;
     }
 
     internal static void RefreshOpenSerialSourceLocations(

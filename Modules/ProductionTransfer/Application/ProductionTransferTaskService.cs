@@ -1422,7 +1422,7 @@ public sealed class ProductionTransferTaskService(
                 var targetLocation = x.TargetLocationId.HasValue && locations.TryGetValue(x.TargetLocationId.Value, out var targetLoc)
                     ? targetLoc
                     : default;
-                var serialNos = ProductionTransferPickingSupport.ResolveTaskScopedPickedSerialNos(x.Line, x);
+                var serialNos = ProductionTransferPickingSupport.ResolveTaskScopedPickedSerialNos(header, task, x.Line, x);
                 return new ProductionTransferTaskLineDto(x.Id, x.WtLineId, x.Line.StockCodeSnapshot, x.Line.StockNameSnapshot,
                     x.PlannedQuantity, covered, Math.Max(0, x.PlannedQuantity - covered), x.ProcessedQuantity,
                     x.SourceLocationId,

@@ -14,6 +14,13 @@ internal sealed record PickBalanceContext(
     Dictionary<long, WarehouseLocation> Locations,
     List<LocationStockBalance> Balances);
 
+internal sealed record AssignedPickActionContext(
+    WarehouseTransferTask SourceTask,
+    WarehouseTransferTask ActiveTask)
+{
+    internal bool IsTransferred => SourceTask.Id != ActiveTask.Id;
+}
+
 internal static class ProductionTransferPickingSupport
 {
     internal static WarehouseTransferTask ResolveWorkerPickTask(WarehouseTransferHeader header, long actor)
@@ -57,6 +64,26 @@ internal static class ProductionTransferPickingSupport
         if (task.Status is not (WarehouseTransferTaskStatus.InProgress or WarehouseTransferTaskStatus.PartiallyCompleted))
             throw AppException.Conflict("Toplama yalnızca başlatılmış görevinizde yapılabilir.");
         return task;
+    }
+
+    internal static AssignedPickActionContext ResolveAssignedPickActionForLine(
+        WarehouseTransferHeader header,
+        long taskLineId,
+        long actor)
+    {
+        var sourceTask = header.Tasks.SingleOrDefault(x =>
+            x.TaskType == WarehouseTransferTaskType.Pick
+            && x.Lines.Any(line => line.Id == taskLineId && !line.IsDeleted))
+            ?? throw AppException.BadRequest("Toplama satırı bu üretim transferine ait değil.");
+        var activeTask = ResolveWorkerPickTask(header, actor);
+        if (activeTask.Status is not (WarehouseTransferTaskStatus.InProgress or WarehouseTransferTaskStatus.PartiallyCompleted))
+            throw AppException.Conflict("Toplanan stok işlemleri yalnızca başlatılmış görevinizde yapılabilir.");
+
+        var lineage = ResolveTaskLineage(header, activeTask);
+        if (!lineage.Any(x => x.Id == sourceTask.Id))
+            throw AppException.Forbidden("Bu toplama satırı aktif görevinize ait değil veya başka bir görev zincirinde bulunuyor.");
+
+        return new(sourceTask, activeTask);
     }
 
     internal static async Task<PickBalanceContext> LoadBalanceContextAsync(
@@ -163,7 +190,9 @@ internal static class ProductionTransferPickingSupport
                 decimal shortageRemaining = 0;
                 decimal shortageProcessed = 0;
 
-                foreach (var (tracking, trackingProcessed, trackingRemaining) in EnumerateTaskScopedSerialTrackings(line, taskLine))
+                var pickedSerialOffset = GetTaskLinePickedSerialOffset(header, task, taskLine);
+                foreach (var (tracking, trackingProcessed, trackingRemaining) in EnumerateTaskScopedSerialTrackings(
+                             line, taskLine, pickedSerialOffset))
                 {
                     if (ProductionTransferLineSplitHelper.IsSerialShortageTracking(tracking))
                     {
@@ -223,8 +252,68 @@ internal static class ProductionTransferPickingSupport
         return rows;
     }
 
-    // Serili satırlar transfer satırında paylaşıldığından, devredilen görevde yalnızca bu görevin
-    // plan/processed miktarına denk gelen seriler gösterilir; önceki görevde toplanan seriler gizlenir.
+    internal static IReadOnlyList<ProductionTransferPickingRowDto> BuildHistoricalPickedRows(
+        WarehouseTransferHeader header,
+        WarehouseTransferTask currentTask,
+        Dictionary<long, string> locationCodes)
+    {
+        var lineage = ResolveTaskLineage(header, currentTask);
+        if (lineage.Count <= 1) return [];
+
+        return lineage
+            .Take(lineage.Count - 1)
+            .Where(x => x.TaskType == WarehouseTransferTaskType.Pick)
+            .SelectMany(task => BuildPersistedRows(header, task, locationCodes))
+            .Where(row => row.ProcessedQuantity > 0)
+            .Select(row => row with
+            {
+                RequestedQuantity = row.ProcessedQuantity,
+                RemainingQuantity = 0,
+                CanPick = false,
+                IsHistorical = true
+            })
+            .ToArray();
+    }
+
+    internal static IReadOnlyList<WarehouseTransferTask> ResolveTaskLineage(
+        WarehouseTransferHeader header,
+        WarehouseTransferTask currentTask)
+    {
+        var tasksById = header.Tasks
+            .Where(x => !x.IsDeleted && x.Id > 0)
+            .GroupBy(x => x.Id)
+            .ToDictionary(group => group.Key, group => group.First());
+        var lineage = new List<WarehouseTransferTask>();
+        var visited = new HashSet<long>();
+        var cursor = currentTask;
+
+        while (true)
+        {
+            if (cursor.Id > 0 && !visited.Add(cursor.Id))
+                throw AppException.Conflict("Görev devir zincirinde döngü tespit edildi.");
+
+            lineage.Add(cursor);
+            if (!cursor.PreviousTaskId.HasValue) break;
+            if (!tasksById.TryGetValue(cursor.PreviousTaskId.Value, out var previous)) break;
+            cursor = previous;
+        }
+
+        lineage.Reverse();
+        return lineage;
+    }
+
+    internal static IEnumerable<long?> CollectTaskLineageLocationIds(
+        WarehouseTransferHeader header,
+        WarehouseTransferTask currentTask) =>
+        ResolveTaskLineage(header, currentTask)
+            .SelectMany(task => task.Lines.Where(x => !x.IsDeleted))
+            .SelectMany(taskLine =>
+            {
+                var line = ResolveTaskLine(header, taskLine);
+                return new long?[] { taskLine.SourceLocationId, line.DefaultSourceLocationId }
+                    .Concat(line.Trackings.Select(tracking => tracking.SourceLocationId));
+            });
+
     internal static decimal GetSerialShortageRemaining(
         WarehouseTransferLine line,
         WarehouseTransferTaskLine taskLine)
@@ -237,6 +326,13 @@ internal static class ProductionTransferPickingSupport
 
     internal static IEnumerable<(WarehouseTransferTracking Tracking, decimal Processed, decimal Remaining)>
         EnumerateTaskScopedSerialTrackings(WarehouseTransferLine line, WarehouseTransferTaskLine taskLine)
+        => EnumerateTaskScopedSerialTrackings(line, taskLine, 0);
+
+    private static IEnumerable<(WarehouseTransferTracking Tracking, decimal Processed, decimal Remaining)>
+        EnumerateTaskScopedSerialTrackings(
+            WarehouseTransferLine line,
+            WarehouseTransferTaskLine taskLine,
+            int pickedOffset)
     {
         var pickedBudget = (int)Math.Floor(taskLine.ProcessedQuantity);
         var openBudget = (int)Math.Ceiling(Math.Max(0, taskLine.PlannedQuantity - taskLine.ProcessedQuantity));
@@ -245,6 +341,11 @@ internal static class ProductionTransferPickingSupport
         {
             if (tracking.PickedQuantity > 0)
             {
+                if (pickedOffset > 0)
+                {
+                    pickedOffset--;
+                    continue;
+                }
                 if (pickedBudget <= 0) continue;
                 pickedBudget--;
                 yield return (tracking, tracking.PickedQuantity, 0m);
@@ -260,19 +361,48 @@ internal static class ProductionTransferPickingSupport
     }
 
     internal static IReadOnlyList<string> ResolveTaskScopedPickedSerialNos(
+        WarehouseTransferHeader header,
+        WarehouseTransferTask task,
         WarehouseTransferLine line,
         WarehouseTransferTaskLine taskLine)
     {
         var pickedBudget = (int)Math.Floor(taskLine.ProcessedQuantity);
         if (pickedBudget <= 0) return [];
+        var pickedOffset = GetTaskLinePickedSerialOffset(header, task, taskLine);
 
         return line.Trackings
             .Where(t => t.PickedQuantity > 0 && !string.IsNullOrWhiteSpace(t.SerialNo))
             .OrderBy(t => t.Id)
+            .Skip(pickedOffset)
             .Take(pickedBudget)
             .Select(t => t.SerialNo!.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    private static int GetTaskLinePickedSerialOffset(
+        WarehouseTransferHeader header,
+        WarehouseTransferTask task,
+        WarehouseTransferTaskLine taskLine)
+    {
+        var lineage = ResolveTaskLineage(header, task);
+        decimal processedBefore = 0;
+        foreach (var lineageTask in lineage)
+        {
+            if (lineageTask.Id == task.Id)
+            {
+                processedBefore += lineageTask.Lines
+                    .Where(x => !x.IsDeleted && x.WtLineId == taskLine.WtLineId && x.Id < taskLine.Id)
+                    .Sum(x => x.ProcessedQuantity);
+                break;
+            }
+
+            processedBefore += lineageTask.Lines
+                .Where(x => !x.IsDeleted && x.WtLineId == taskLine.WtLineId)
+                .Sum(x => x.ProcessedQuantity);
+        }
+
+        return Math.Max(0, (int)Math.Floor(processedBefore));
     }
 
     internal static async Task<PickBalanceContext> LoadSerialRouteRefreshBalanceContextAsync(
@@ -375,20 +505,14 @@ internal static class ProductionTransferPickingSupport
         var policy = await ProductionTransferOverIssueSupport.LoadPolicyAsync(uow, header.BranchCode, ct);
         var isLocked = task.Status is not WarehouseTransferTaskStatus.InProgress
             and not WarehouseTransferTaskStatus.PartiallyCompleted;
-        IReadOnlyList<ProductionTransferPickingRowDto> rows;
-        if (isLocked)
-            rows = BuildRecipeRows(header, task);
-        else
-        {
-            var locationIds = task.Lines.SelectMany(x =>
-            {
-                var line = ResolveTaskLine(header, x);
-                return new long?[] { x.SourceLocationId, line.DefaultSourceLocationId }
-                    .Concat(line.Trackings.Select(t => t.SourceLocationId));
-            });
-            var locationCodes = await LoadLocationCodesAsync(uow, locationIds, ct);
-            rows = BuildPersistedRows(header, task, locationCodes);
-        }
+        var locationCodes = await LoadLocationCodesAsync(
+            uow, CollectTaskLineageLocationIds(header, task), ct);
+        var currentRows = isLocked
+            ? BuildRecipeRows(header, task)
+            : BuildPersistedRows(header, task, locationCodes);
+        var rows = currentRows
+            .Concat(BuildHistoricalPickedRows(header, task, locationCodes))
+            .ToArray();
 
         return MapTable(
             header, link, task, isLocked, policy,

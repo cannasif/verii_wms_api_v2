@@ -135,6 +135,70 @@ public sealed class ProductionTransferPickingSupportTests
     }
 
     [Fact]
+    public void ResolveAssignedPickActionForLine_transfers_control_of_ancestor_pick_to_current_assignee()
+    {
+        const long currentWorkerId = 20;
+        const long taskLineId = 501;
+        var parent = new WarehouseTransferTask
+        {
+            Id = 1,
+            TaskType = WarehouseTransferTaskType.Pick,
+            Status = WarehouseTransferTaskStatus.Completed,
+            Lines = [new WarehouseTransferTaskLine { Id = taskLineId, IsDeleted = false }],
+        };
+        var child = new WarehouseTransferTask
+        {
+            Id = 2,
+            PreviousTaskId = parent.Id,
+            TaskType = WarehouseTransferTaskType.Pick,
+            Status = WarehouseTransferTaskStatus.InProgress,
+            Assignments =
+            [
+                new WarehouseTransferTaskAssignment { UserId = currentWorkerId, IsDeleted = false },
+            ],
+        };
+        var header = new WarehouseTransferHeader { Tasks = [parent, child] };
+
+        var context = ProductionTransferPickingSupport.ResolveAssignedPickActionForLine(
+            header, taskLineId, currentWorkerId);
+
+        Assert.Equal(parent.Id, context.SourceTask.Id);
+        Assert.Equal(child.Id, context.ActiveTask.Id);
+        Assert.True(context.IsTransferred);
+    }
+
+    [Fact]
+    public void ResolveAssignedPickActionForLine_rejects_task_outside_current_lineage()
+    {
+        const long currentWorkerId = 20;
+        const long unrelatedLineId = 901;
+        var unrelated = new WarehouseTransferTask
+        {
+            Id = 9,
+            TaskType = WarehouseTransferTaskType.Pick,
+            Status = WarehouseTransferTaskStatus.Completed,
+            Lines = [new WarehouseTransferTaskLine { Id = unrelatedLineId, IsDeleted = false }],
+        };
+        var active = new WarehouseTransferTask
+        {
+            Id = 2,
+            TaskType = WarehouseTransferTaskType.Pick,
+            Status = WarehouseTransferTaskStatus.InProgress,
+            Assignments =
+            [
+                new WarehouseTransferTaskAssignment { UserId = currentWorkerId, IsDeleted = false },
+            ],
+        };
+        var header = new WarehouseTransferHeader { Tasks = [unrelated, active] };
+
+        var exception = Assert.Throws<AppException>(() =>
+            ProductionTransferPickingSupport.ResolveAssignedPickActionForLine(
+                header, unrelatedLineId, currentWorkerId));
+
+        Assert.Equal(StatusCodes.Status403Forbidden, exception.StatusCode);
+    }
+
+    [Fact]
     public void BuildRecipeRows_returns_one_row_per_recipe_line_without_location()
     {
         var lineA = new WarehouseTransferLine
@@ -248,6 +312,169 @@ public sealed class ProductionTransferPickingSupportTests
         Assert.All(rows, row => Assert.Equal(0, row.ProcessedQuantity));
         Assert.DoesNotContain(rows, row => row.SerialNo == "SN-1");
         Assert.Equal(["SN-2", "SN-3", "SN-4", "SN-5"], rows.Select(x => x.SerialNo).OrderBy(x => x).ToArray());
+    }
+
+    [Fact]
+    public void BuildHistoricalPickedRows_keeps_previous_picks_visible_after_multiple_handoffs()
+    {
+        const long locationId = 9001;
+        var line = new WarehouseTransferLine
+        {
+            Id = 102,
+            LineNo = 1,
+            StockId = 11,
+            StockCodeSnapshot = "ASD",
+            StockNameSnapshot = "Ürün ASD",
+            TrackingType = StockTrackingType.Serial,
+            PickedQuantity = 2,
+            DefaultSourceLocationId = locationId,
+            Trackings =
+            [
+                new WarehouseTransferTracking { Id = 1, SerialNo = "SN-1", PlannedQuantity = 1, PickedQuantity = 1, SourceLocationId = locationId },
+                new WarehouseTransferTracking { Id = 2, SerialNo = "SN-2", PlannedQuantity = 1, PickedQuantity = 1, SourceLocationId = locationId },
+                new WarehouseTransferTracking { Id = 3, SerialNo = "SN-3", PlannedQuantity = 1, PickedQuantity = 0, SourceLocationId = locationId },
+            ],
+        };
+        var parent = new WarehouseTransferTask
+        {
+            Id = 1,
+            TaskType = WarehouseTransferTaskType.Pick,
+            Lines =
+            [
+                new WarehouseTransferTaskLine
+                {
+                    Id = 501, WtLineId = line.Id, PlannedQuantity = 1, ProcessedQuantity = 1, Line = line,
+                },
+            ],
+        };
+        var child = new WarehouseTransferTask
+        {
+            Id = 2,
+            PreviousTaskId = parent.Id,
+            TaskType = WarehouseTransferTaskType.Pick,
+            Lines =
+            [
+                new WarehouseTransferTaskLine
+                {
+                    Id = 502, WtLineId = line.Id, PlannedQuantity = 1, ProcessedQuantity = 1, Line = line,
+                },
+            ],
+        };
+        var grandchild = new WarehouseTransferTask
+        {
+            Id = 3,
+            PreviousTaskId = child.Id,
+            TaskType = WarehouseTransferTaskType.Pick,
+            Lines =
+            [
+                new WarehouseTransferTaskLine
+                {
+                    Id = 503, WtLineId = line.Id, PlannedQuantity = 1, ProcessedQuantity = 0, Line = line,
+                },
+            ],
+        };
+        var header = new WarehouseTransferHeader
+        {
+            Lines = [line],
+            Tasks = [parent, child, grandchild],
+        };
+        var locationCodes = new Dictionary<long, string> { [locationId] = "A1" };
+
+        var currentRows = ProductionTransferPickingSupport.BuildPersistedRows(header, grandchild, locationCodes);
+        var historicalRows = ProductionTransferPickingSupport.BuildHistoricalPickedRows(header, grandchild, locationCodes);
+
+        var current = Assert.Single(currentRows);
+        Assert.Equal("SN-3", current.SerialNo);
+        Assert.Equal(1, current.RemainingQuantity);
+        Assert.False(current.IsHistorical);
+
+        Assert.Equal(2, historicalRows.Count);
+        Assert.Equal(["SN-1", "SN-2"], historicalRows.Select(x => x.SerialNo!).OrderBy(x => x).ToArray());
+        Assert.All(historicalRows, row =>
+        {
+            Assert.True(row.IsHistorical);
+            Assert.False(row.CanPick);
+            Assert.Equal(0, row.RemainingQuantity);
+            Assert.Equal(1, row.ProcessedQuantity);
+        });
+    }
+
+    [Fact]
+    public void Transferred_unpick_removes_ancestor_serial_and_reopens_it_for_current_assignee()
+    {
+        const long originalLocationId = 9001;
+        const long returnedLocationId = 9002;
+        var line = new WarehouseTransferLine
+        {
+            Id = 102,
+            LineNo = 1,
+            StockId = 11,
+            StockCodeSnapshot = "ASD",
+            TrackingType = StockTrackingType.Serial,
+            PickedQuantity = 2,
+            DefaultSourceLocationId = originalLocationId,
+            Trackings =
+            [
+                new WarehouseTransferTracking { Id = 1, SerialNo = "SN-1", PlannedQuantity = 1, PickedQuantity = 1, SourceLocationId = originalLocationId, TargetLocationId = 9999 },
+                new WarehouseTransferTracking { Id = 2, SerialNo = "SN-2", PlannedQuantity = 1, PickedQuantity = 1, SourceLocationId = originalLocationId, TargetLocationId = 9999 },
+                new WarehouseTransferTracking { Id = 3, SerialNo = "SN-3", PlannedQuantity = 1, PickedQuantity = 0, SourceLocationId = originalLocationId },
+            ],
+        };
+        var parentLine = new WarehouseTransferTaskLine
+        {
+            Id = 501, WtLineId = line.Id, PlannedQuantity = 1, ProcessedQuantity = 1, Line = line,
+        };
+        var childLine = new WarehouseTransferTaskLine
+        {
+            Id = 502, WtLineId = line.Id, PlannedQuantity = 1, ProcessedQuantity = 1, Line = line,
+        };
+        var currentLine = new WarehouseTransferTaskLine
+        {
+            Id = 503, WtLineId = line.Id, PlannedQuantity = 1, ProcessedQuantity = 0, Line = line,
+        };
+        var parent = new WarehouseTransferTask
+        {
+            Id = 1, TaskType = WarehouseTransferTaskType.Pick, Lines = [parentLine],
+        };
+        var child = new WarehouseTransferTask
+        {
+            Id = 2, PreviousTaskId = parent.Id, TaskType = WarehouseTransferTaskType.Pick, Lines = [childLine],
+        };
+        var current = new WarehouseTransferTask
+        {
+            Id = 3, PreviousTaskId = child.Id, TaskType = WarehouseTransferTaskType.Pick,
+            BranchCode = "01", Lines = [currentLine],
+        };
+        var header = new WarehouseTransferHeader
+        {
+            Lines = [line],
+            Tasks = [parent, child, current],
+        };
+
+        ProductionTransferUnpickMovement.ApplyUnpickedQuantities(
+            line, parentLine, 1, "SN-1", actor: 30, utcNow: DateTime.UtcNow);
+        ProductionTransferUnpickMovement.ApplyUnpickedRouteLocations(
+            line, parentLine, returnedLocationId, "SN-1", actor: 30, utcNow: DateTime.UtcNow);
+        ProductionTransferUnpickMovement.ReopenTransferredQuantityInActiveTask(
+            current, parentLine, line, 1, returnedLocationId, actor: 30, utcNow: DateTime.UtcNow);
+
+        var locationCodes = new Dictionary<long, string>
+        {
+            [originalLocationId] = "A1",
+            [returnedLocationId] = "B1",
+        };
+        var historicalRows = ProductionTransferPickingSupport.BuildHistoricalPickedRows(
+            header, current, locationCodes);
+        var currentRows = ProductionTransferPickingSupport.BuildPersistedRows(
+            header, current, locationCodes);
+
+        var remainingHistorical = Assert.Single(historicalRows);
+        Assert.Equal("SN-2", remainingHistorical.SerialNo);
+        Assert.Equal(1, line.PickedQuantity);
+        Assert.Equal(2, currentLine.PlannedQuantity);
+        Assert.Equal(["SN-1", "SN-3"], currentRows.Select(x => x.SerialNo!).OrderBy(x => x).ToArray());
+        Assert.All(currentRows, row => Assert.Equal(1, row.RemainingQuantity));
+        Assert.Equal(returnedLocationId, currentRows.Single(x => x.SerialNo == "SN-1").SourceLocationId);
     }
 
     [Fact]

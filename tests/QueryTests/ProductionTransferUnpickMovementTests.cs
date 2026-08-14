@@ -185,4 +185,84 @@ public sealed class ProductionTransferUnpickMovementTests
         Assert.Equal(targetLocationId, line.Trackings.Single().SourceLocationId);
         Assert.Null(line.Trackings.Single().TargetLocationId);
     }
+
+    [Fact]
+    public void ReopenTransferredQuantity_adds_serial_pick_back_to_current_task()
+    {
+        var line = new WarehouseTransferLine
+        {
+            Id = 10,
+            TrackingType = StockTrackingType.Serial,
+        };
+        var sourceTaskLine = new WarehouseTransferTaskLine
+        {
+            Id = 501,
+            WtLineId = line.Id,
+            Line = line,
+            PlannedQuantity = 1,
+            ProcessedQuantity = 0,
+        };
+        var currentLine = new WarehouseTransferTaskLine
+        {
+            Id = 503,
+            WtLineId = line.Id,
+            Line = line,
+            PlannedQuantity = 1,
+            ProcessedQuantity = 0,
+        };
+        var activeTask = new WarehouseTransferTask
+        {
+            Id = 3,
+            BranchCode = "01",
+            Lines = [currentLine],
+        };
+
+        var reopened = ProductionTransferUnpickMovement.ReopenTransferredQuantityInActiveTask(
+            activeTask, sourceTaskLine, line, 1, sourceLocationId: 300, actor: 7, utcNow: DateTime.UtcNow);
+
+        Assert.Same(currentLine, reopened);
+        Assert.Equal(2, currentLine.PlannedQuantity);
+        Assert.Single(activeTask.Lines);
+    }
+
+    [Fact]
+    public void ReopenTransferredQuantity_keeps_non_serial_source_shelves_separate()
+    {
+        var line = new WarehouseTransferLine
+        {
+            Id = 10,
+            TrackingType = StockTrackingType.None,
+            DefaultSourceLocationId = 200,
+        };
+        var sourceTaskLine = new WarehouseTransferTaskLine
+        {
+            Id = 501,
+            WtLineId = line.Id,
+            Line = line,
+        };
+        var currentLine = new WarehouseTransferTaskLine
+        {
+            Id = 503,
+            WtLineId = line.Id,
+            Line = line,
+            PlannedQuantity = 1,
+            SourceLocationId = 200,
+        };
+        var activeTask = new WarehouseTransferTask
+        {
+            Id = 3,
+            BranchCode = "01",
+            Lines = [currentLine],
+        };
+
+        var reopened = ProductionTransferUnpickMovement.ReopenTransferredQuantityInActiveTask(
+            activeTask, sourceTaskLine, line, 2, sourceLocationId: 300, actor: 7, utcNow: DateTime.UtcNow);
+
+        Assert.NotSame(currentLine, reopened);
+        Assert.Equal(2, activeTask.Lines.Count);
+        Assert.Equal(2, reopened.PlannedQuantity);
+        Assert.Equal(300, reopened.SourceLocationId);
+        Assert.Equal(1, currentLine.PlannedQuantity);
+        Assert.Equal(200, currentLine.SourceLocationId);
+    }
 }

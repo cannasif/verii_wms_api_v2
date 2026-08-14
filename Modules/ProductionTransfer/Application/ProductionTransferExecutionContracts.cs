@@ -66,7 +66,8 @@ public sealed record ProductionTransferPickingRowDto(
     decimal RequestedQuantity,
     decimal RemainingQuantity,
     decimal ProcessedQuantity,
-    bool CanPick);
+    bool CanPick,
+    bool IsHistorical = false);
 
 public sealed record ProductionTransferPickingTableDto(
     long TransferId,

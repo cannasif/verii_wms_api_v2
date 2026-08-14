@@ -71,20 +71,17 @@ public sealed class ProductionTransferExecutionService(
 
         var isLocked = task.Status is not WarehouseTransferTaskStatus.InProgress
             and not WarehouseTransferTaskStatus.PartiallyCompleted;
-        IReadOnlyList<ProductionTransferPickingRowDto> rows;
-        if (isLocked)
-            rows = ProductionTransferPickingSupport.BuildRecipeRows(aggregate.Header, task);
-        else
-        {
-            var locationIds = task.Lines.SelectMany(x =>
-            {
-                var line = ProductionTransferPickingSupport.ResolveTaskLine(aggregate.Header, x);
-                return new long?[] { x.SourceLocationId, line.DefaultSourceLocationId }
-                    .Concat(line.Trackings.Select(t => t.SourceLocationId));
-            });
-            var locationCodes = await ProductionTransferPickingSupport.LoadLocationCodesAsync(uow, locationIds, ct);
-            rows = ProductionTransferPickingSupport.BuildPersistedRows(aggregate.Header, task, locationCodes);
-        }
+        var locationCodes = await ProductionTransferPickingSupport.LoadLocationCodesAsync(
+            uow,
+            ProductionTransferPickingSupport.CollectTaskLineageLocationIds(aggregate.Header, task),
+            ct);
+        var currentRows = isLocked
+            ? ProductionTransferPickingSupport.BuildRecipeRows(aggregate.Header, task)
+            : ProductionTransferPickingSupport.BuildPersistedRows(aggregate.Header, task, locationCodes);
+        var rows = currentRows
+            .Concat(ProductionTransferPickingSupport.BuildHistoricalPickedRows(
+                aggregate.Header, task, locationCodes))
+            .ToArray();
 
         return ProductionTransferPickingSupport.MapTable(
             aggregate.Header, aggregate.Link, task, isLocked,
@@ -682,10 +679,10 @@ public sealed class ProductionTransferExecutionService(
 
             var aggregate = await LoadAsync(transferId, true, token);
             EnsurePickingAllowed(aggregate.Link);
-            var task = ProductionTransferPickingSupport.ResolveAssignedPickTaskForLine(
+            var actionContext = ProductionTransferPickingSupport.ResolveAssignedPickActionForLine(
                 aggregate.Header, request.TaskLineId, actor);
-            if (task.Status is not (WarehouseTransferTaskStatus.InProgress or WarehouseTransferTaskStatus.PartiallyCompleted))
-                throw AppException.Conflict("Rafa bırakma yalnızca başlatılmış toplama görevlerinde yapılabilir.");
+            var task = actionContext.SourceTask;
+            var activeTask = actionContext.ActiveTask;
 
             var taskLine = task.Lines.SingleOrDefault(x => x.Id == request.TaskLineId && !x.IsDeleted)
                 ?? throw AppException.NotFound("Toplama satırı bulunamadı.");
@@ -700,6 +697,10 @@ public sealed class ProductionTransferExecutionService(
             {
                 if (string.IsNullOrWhiteSpace(request.SerialNo))
                     throw AppException.BadRequest("Serili satır için seri numarası zorunludur.");
+                var taskSerials = ProductionTransferPickingSupport.ResolveTaskScopedPickedSerialNos(
+                    aggregate.Header, task, line, taskLine);
+                if (!taskSerials.Contains(request.SerialNo.Trim(), StringComparer.OrdinalIgnoreCase))
+                    throw AppException.Conflict("Seçilen seri bu toplama satırında toplanmış değildir.");
                 serialTracking = line.Trackings.SingleOrDefault(x =>
                         SameTrackingValue(x.SerialNo, request.SerialNo) && x.PickedQuantity > 0)
                     ?? throw AppException.NotFound("Seçilen seri toplanmış durumda bulunamadı.");
@@ -752,7 +753,24 @@ public sealed class ProductionTransferExecutionService(
             ProductionTransferUnpickMovement.ApplyUnpickedQuantities(
                 line, taskLine, quantity, serialNo, actor, utcNow);
 
-            if (!hasSerialTrackings && taskLine.ProcessedQuantity > 0)
+            if (actionContext.IsTransferred)
+            {
+                if (hasSerialTrackings)
+                {
+                    ProductionTransferUnpickMovement.ApplyUnpickedRouteLocations(
+                        line, taskLine, request.TargetLocationId, serialNo, actor, utcNow);
+                }
+
+                ProductionTransferUnpickMovement.ReopenTransferredQuantityInActiveTask(
+                    activeTask,
+                    taskLine,
+                    line,
+                    quantity,
+                    request.TargetLocationId,
+                    actor,
+                    utcNow);
+            }
+            else if (!hasSerialTrackings && taskLine.ProcessedQuantity > 0)
             {
                 var nextLineNo = aggregate.Header.Lines.Max(x => x.LineNo);
                 ProductionTransferLineSplitHelper.ApplyPartialUnpickSplit(
@@ -779,7 +797,7 @@ public sealed class ProductionTransferExecutionService(
             }
 
             ProductionTransferUnpickMovement.UpdateHeaderStatusAfterUnpick(aggregate.Header, actor);
-            ProductionTransferUnpickMovement.UpdateTaskStatusAfterUnpick(task, actor);
+            ProductionTransferUnpickMovement.UpdateTaskStatusAfterUnpick(activeTask, actor);
 
             await ProductionTransferUnpickMovement.AppendBarcodeUnpickJournalAsync(
                 uow,
@@ -819,6 +837,9 @@ public sealed class ProductionTransferExecutionService(
                     TargetLocationCode = targetLocation.Code,
                     Quantity = quantity,
                     SerialNo = serialNo,
+                    SourceTaskId = task.Id,
+                    ActiveTaskId = activeTask.Id,
+                    IsTransferredPick = actionContext.IsTransferred,
                     movement.OperationId
                 },
                 ChangedFields: ["ProcessedQuantity", "PickedQuantity", "SourceLocationId", "StockMovement"]), token);
