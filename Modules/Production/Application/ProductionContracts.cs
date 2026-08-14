@@ -85,7 +85,10 @@ public sealed record PreparedNetsisProductionMaterial(
     decimal RecipeQuantity,
     decimal WasteQuantity,
     decimal RequiredQuantity,
-    string? MappingError);
+    string? MappingError,
+    decimal? SourceWarehouseQuantity = null,
+    decimal? SourceWarehouseReservedQuantity = null,
+    decimal? SourceWarehouseAvailableQuantity = null);
 
 public sealed record PreparedNetsisProductionWorkOrder(
     ProductionOrderSourceType SourceType,

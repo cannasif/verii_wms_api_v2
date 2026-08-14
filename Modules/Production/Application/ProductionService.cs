@@ -21,6 +21,7 @@ using StockEntity=verii_wms_api_v2.Modules.Stock.Domain.Stock;
 using CustomerEntity=verii_wms_api_v2.Modules.Customer.Domain.Customer;
 using WarehouseEntity=verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 using YapCodeEntity=verii_wms_api_v2.Modules.YapCode.Domain.YapCode;
+using WarehouseStockBalanceEntity=verii_wms_api_v2.Modules.StockBalance.Domain.WarehouseStockBalance;
 
 namespace verii_wms_api_v2.Modules.Production.Application;
 
@@ -692,9 +693,10 @@ public sealed partial class ProductionService(
             && !string.Equals(sourceSystemCode.Trim(), setting.SourceSystemCode, StringComparison.OrdinalIgnoreCase))
             throw AppException.Conflict("İstenen WMS kaynak sistem kodu şube politikasıyla uyuşmuyor.");
 
+        PreparedNetsisProductionWorkOrder prepared;
         if (transferId is long scopedTransferId && kalanTaskId is long scopedKalanTaskId)
         {
-            return await PrepareCancellationReturnRemainderWorkOrderAsync(
+            prepared = await PrepareCancellationReturnRemainderWorkOrderAsync(
                 workOrderNumber,
                 selectedSource,
                 selectedSource == ProductionOrderSourceType.WmsIntegrationTables
@@ -705,10 +707,124 @@ public sealed partial class ProductionService(
                 scopedKalanTaskId,
                 ct);
         }
+        else
+        {
+            prepared = selectedSource == ProductionOrderSourceType.NetsisErpFunctions
+                ? await PrepareNetsisWorkOrderCoreAsync(workOrderNumber, branch, ct)
+                : await PrepareWmsSourceWorkOrderAsync(workOrderNumber, branch, setting.SourceSystemCode, ct);
+        }
 
-        return selectedSource == ProductionOrderSourceType.NetsisErpFunctions
-            ? await PrepareNetsisWorkOrderAsync(workOrderNumber, branch, ct)
-            : await PrepareWmsSourceWorkOrderAsync(workOrderNumber, branch, setting.SourceSystemCode, ct);
+        return await AttachSourceWarehouseBalancesAsync(prepared, ct);
+    }
+
+    private async Task<PreparedNetsisProductionWorkOrder> AttachSourceWarehouseBalancesAsync(
+        PreparedNetsisProductionWorkOrder prepared,
+        CancellationToken ct)
+    {
+        if (prepared.SourceWarehouseId is not long sourceWarehouseId)
+            return prepared;
+
+        var stockIds = prepared.Materials
+            .Concat(prepared.AssignedMaterials)
+            .Where(material => material.StockId.HasValue)
+            .Select(material => material.StockId!.Value)
+            .Distinct()
+            .ToArray();
+        if (stockIds.Length == 0)
+            return prepared;
+
+        // Reçete satırı başına sorgu çalıştırılmaz. Kaynak depo ve tüm bileşen stokları
+        // mevcut projection indeksinden tek sorguda, yapılandırma + birim boyutuyla alınır.
+        var balances = await uow.Repository<WarehouseStockBalanceEntity>().Query()
+            .AsNoTracking()
+            .Where(balance => balance.WarehouseId == sourceWarehouseId
+                && stockIds.Contains(balance.StockId)
+                && balance.StockStatus == "Available")
+            .GroupBy(balance => new { balance.StockId, balance.YapCodeId, balance.UnitCode })
+            .Select(group => new ProductionSourceWarehouseBalance(
+                group.Key.StockId,
+                group.Key.YapCodeId,
+                group.Key.UnitCode,
+                group.Sum(balance => balance.Quantity),
+                group.Sum(balance => balance.ReservedQuantity),
+                group.Sum(balance => balance.AvailableQuantity)))
+            .ToListAsync(ct);
+
+        return ApplySourceWarehouseBalances(prepared, balances);
+    }
+
+    internal sealed record ProductionSourceWarehouseBalance(
+        long StockId,
+        long? YapCodeId,
+        string UnitCode,
+        decimal Quantity,
+        decimal ReservedQuantity,
+        decimal AvailableQuantity);
+
+    internal static PreparedNetsisProductionWorkOrder ApplySourceWarehouseBalances(
+        PreparedNetsisProductionWorkOrder prepared,
+        IReadOnlyCollection<ProductionSourceWarehouseBalance> balances)
+    {
+        static string NormalizeUnit(string? unitCode) =>
+            string.IsNullOrWhiteSpace(unitCode) ? "ADET" : unitCode.Trim().ToUpperInvariant();
+
+        var exactBalanceMap = balances
+            .GroupBy(balance => (balance.StockId, balance.YapCodeId, UnitCode: NormalizeUnit(balance.UnitCode)))
+            .ToDictionary(
+                group => group.Key,
+                group => new
+                {
+                    Quantity = group.Sum(row => row.Quantity),
+                    ReservedQuantity = group.Sum(row => row.ReservedQuantity),
+                    AvailableQuantity = group.Sum(row => row.AvailableQuantity)
+                });
+        var stockBalanceMap = balances
+            .GroupBy(balance => (balance.StockId, UnitCode: NormalizeUnit(balance.UnitCode)))
+            .ToDictionary(
+                group => group.Key,
+                group => new
+                {
+                    Quantity = group.Sum(row => row.Quantity),
+                    ReservedQuantity = group.Sum(row => row.ReservedQuantity),
+                    AvailableQuantity = group.Sum(row => row.AvailableQuantity)
+                });
+
+        PreparedNetsisProductionMaterial Enrich(PreparedNetsisProductionMaterial material)
+        {
+            if (material.StockId is not long stockId)
+                return material;
+
+            var unitCode = NormalizeUnit(material.UnitCode);
+            if (material.YapCodeId is long yapCodeId
+                && exactBalanceMap.TryGetValue((stockId, yapCodeId, unitCode), out var exactBalance))
+                return material with
+                {
+                    SourceWarehouseQuantity = exactBalance.Quantity,
+                    SourceWarehouseReservedQuantity = exactBalance.ReservedQuantity,
+                    SourceWarehouseAvailableQuantity = exactBalance.AvailableQuantity
+                };
+            if (!material.YapCodeId.HasValue
+                && stockBalanceMap.TryGetValue((stockId, unitCode), out var stockBalance))
+                return material with
+                {
+                    SourceWarehouseQuantity = stockBalance.Quantity,
+                    SourceWarehouseReservedQuantity = stockBalance.ReservedQuantity,
+                    SourceWarehouseAvailableQuantity = stockBalance.AvailableQuantity
+                };
+
+            return material with
+            {
+                SourceWarehouseQuantity = 0,
+                SourceWarehouseReservedQuantity = 0,
+                SourceWarehouseAvailableQuantity = 0
+            };
+        }
+
+        return prepared with
+        {
+            Materials = prepared.Materials.Select(Enrich).ToArray(),
+            AssignedMaterials = prepared.AssignedMaterials.Select(Enrich).ToArray()
+        };
     }
 
     private sealed record CancellationReturnRemainderMaterialSplit(
@@ -747,7 +863,7 @@ public sealed partial class ProductionService(
         }
 
         var basePrepared = sourceType == ProductionOrderSourceType.NetsisErpFunctions
-            ? await PrepareNetsisWorkOrderAsync(normalizedWorkOrder, branch, ct)
+            ? await PrepareNetsisWorkOrderCoreAsync(normalizedWorkOrder, branch, ct)
             : await PrepareWmsSourceWorkOrderAsync(
                 normalizedWorkOrder,
                 branch,
@@ -1041,6 +1157,14 @@ public sealed partial class ProductionService(
     }
 
     public async Task<PreparedNetsisProductionWorkOrder> PrepareNetsisWorkOrderAsync(
+        string workOrderNumber,
+        string branchCode,
+        CancellationToken ct=default) =>
+        await AttachSourceWarehouseBalancesAsync(
+            await PrepareNetsisWorkOrderCoreAsync(workOrderNumber, branchCode, ct),
+            ct);
+
+    private async Task<PreparedNetsisProductionWorkOrder> PrepareNetsisWorkOrderCoreAsync(
         string workOrderNumber,
         string branchCode,
         CancellationToken ct=default)
