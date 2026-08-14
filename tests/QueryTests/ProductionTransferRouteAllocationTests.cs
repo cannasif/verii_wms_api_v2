@@ -8,6 +8,33 @@ namespace verii_wms_api_v2.tests.QueryTests;
 public sealed class ProductionTransferRouteAllocationTests
 {
     [Fact]
+    public void AllocateGreedyNonSerial_splits_full_order_across_three_shelves()
+    {
+        const long stockId = 13;
+        var locations = new Dictionary<long, verii_wms_api_v2.Modules.Location.Domain.WarehouseLocation>
+        {
+            [1] = new() { Id = 1, Code = "A-01" },
+            [2] = new() { Id = 2, Code = "A-02" },
+            [3] = new() { Id = 3, Code = "A-03" },
+        };
+        var balances = new[]
+        {
+            Balance(1, stockId, 15),
+            Balance(2, stockId, 10),
+            Balance(3, stockId, 12),
+        };
+
+        var chunks = ProductionTransferRouteAllocation.AllocateGreedyNonSerial(
+            37, stockId, null, "ADET", balances, locations);
+
+        Assert.Equal(3, chunks.Count);
+        Assert.Equal(new decimal[] { 15, 10, 12 }, chunks.Select(x => x.Quantity));
+        Assert.Equal(new long?[] { 1, 2, 3 }, chunks.Select(x => x.LocationId));
+        Assert.Equal(37, chunks.Sum(x => x.Quantity));
+        Assert.DoesNotContain(chunks, x => x.LocationId is null);
+    }
+
+    [Fact]
     public void BuildRouteRefreshSplitChunks_prepends_remainder_on_current_source()
     {
         const long a1 = 1;
