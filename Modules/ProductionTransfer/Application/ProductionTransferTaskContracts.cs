@@ -36,7 +36,9 @@ public sealed record ProductionTransferTaskBoardDto(
     long TransferId, string DocumentNo, WarehouseTransferStatus TransferStatus, long SourceWarehouseId,
     IReadOnlyList<ProductionTransferTaskDto> Tasks,
     IReadOnlyList<ProductionTransferWorkloadDto> Workloads,
-    IReadOnlyList<ProductionTransferAssigneeOptionDto> EligibleAssignees);
+    IReadOnlyList<ProductionTransferAssigneeOptionDto> EligibleAssignees,
+    bool SourceIsRackless = false,
+    bool TargetIsRackless = false);
 public sealed record AssignProductionTransferTaskRequest(long UserId, bool IsPrimary = false);
 public sealed record ReleaseProductionTransferTaskToPoolRequest(long WarehouseId);
 public sealed record ClaimProductionTransferTaskRequest(Guid IdempotencyKey);
@@ -63,7 +65,8 @@ public sealed record WarehouseTransferReturnSettingDto(
     long? DefaultTransferReturnLocationId,
     long? DefaultProductionTransferLocationId,
     long? ProductionPickingStagingLocationId,
-    decimal? AutoPickWithoutConfirmMaxQuantity);
+    decimal? AutoPickWithoutConfirmMaxQuantity,
+    bool IsRackless = false);
 public sealed record UpdateWarehouseTransferReturnSettingRequest(
     long WarehouseId,
     long? DefaultTransferReturnLocationId,
@@ -125,7 +128,9 @@ public sealed record ProductionWorkOrderTransferHeaderRowDto(
     string? ErpDocumentNo,
     string? ErpErrorCode,
     string? ErpErrorMessage,
-    IReadOnlyList<ProductionWorkOrderTransferTaskRowDto> Tasks);
+    IReadOnlyList<ProductionWorkOrderTransferTaskRowDto> Tasks,
+    bool SourceIsRackless = false,
+    bool TargetIsRackless = false);
 
 public interface IProductionTransferTaskService
 {

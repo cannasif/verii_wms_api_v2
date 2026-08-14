@@ -183,7 +183,9 @@ public sealed record ProductionTransferExecutionDto(
     bool CanConfirmHandover,
     IReadOnlyList<ProductionTransferOverIssueLineDto> OverIssueLines,
     IReadOnlyList<long> ExcludedSourceLocationIds,
-    IReadOnlyList<ProductionTransferExecutionLineDto> Lines);
+    IReadOnlyList<ProductionTransferExecutionLineDto> Lines,
+    bool SourceIsRackless = false,
+    bool TargetIsRackless = false);
 
 public sealed record ProductionTransferScanPickResult(
     ProductionTransferPickingRowDto Row,

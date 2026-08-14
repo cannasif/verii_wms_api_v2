@@ -118,6 +118,7 @@ public sealed class ProductionTransferTaskService(
         var warehouses = await uow.Repository<WarehouseEntity>().Query(ignoreQueryFilters: true)
             .Where(x => warehouseIds.Contains(x.Id))
             .ToDictionaryAsync(x => x.Id, x => new { x.WarehouseCode, x.WarehouseName }, ct);
+        var racklessFlags = await ProductionTransferWarehouseRacklessSupport.GetRacklessFlagsAsync(uow, warehouseIds, ct);
 
         var transferIds = links.Select(x => x.WarehouseTransferHeaderId).Distinct().ToArray();
         var erpPostingsByTransferId = transferIds.Length == 0
@@ -179,7 +180,9 @@ public sealed class ProductionTransferTaskService(
                 erpPosting?.ErpDocumentNo,
                 erpPosting?.LastErrorCode,
                 erpPosting?.LastErrorMessage,
-                []));
+                [],
+                racklessFlags.GetValueOrDefault(header.SourceWarehouseId),
+                racklessFlags.GetValueOrDefault(header.TargetWarehouseId)));
         }
 
         return rows;
@@ -587,7 +590,6 @@ public sealed class ProductionTransferTaskService(
         uow.ExecuteInTransactionAsync(async token =>
         {
             if (request.IdempotencyKey == Guid.Empty) throw AppException.BadRequest("İdempotency anahtarı zorunludur.");
-            if (request.TargetLocationId <= 0) throw AppException.BadRequest("Hedef raf seçimi zorunludur.");
             var task = await LoadTaskAsync(transferId, taskId, token);
             if (task.TaskType != WarehouseTransferTaskType.CancellationReturn)
                 throw AppException.BadRequest("Seçilen görev bir iptal iade görevi değildir.");
@@ -754,6 +756,8 @@ public sealed class ProductionTransferTaskService(
         uow.ExecuteInTransactionAsync(async token =>
         {
             var task = await LoadTaskAsync(transferId, taskId, token);
+            if (await ProductionTransferWarehouseRacklessSupport.IsRacklessAsync(uow, task.WarehouseId, token))
+                throw AppException.Conflict("Bu depo rafsız, rota güncellemesi gerekmiyor.");
             if (task.TaskType is WarehouseTransferTaskType.CancellationReturn or WarehouseTransferTaskType.AssignmentReturn)
                 throw AppException.BadRequest("İade görevinin kaynak rotası değiştirilemez.");
             if (task.Status is WarehouseTransferTaskStatus.Completed or WarehouseTransferTaskStatus.Cancelled)
@@ -1129,10 +1133,24 @@ public sealed class ProductionTransferTaskService(
     public async Task<WarehouseTransferReturnSettingDto> GetReturnSettingAsync(long warehouseId, CancellationToken ct = default)
     {
         var row = await uow.Repository<WarehouseEntity>().Query().Where(x => x.Id == warehouseId)
-            .Select(x => new WarehouseTransferReturnSettingDto(
-                x.Id, x.DefaultTransferReturnLocationId, x.DefaultProductionTransferLocationId, x.ProductionPickingStagingLocationId, x.AutoPickWithoutConfirmMaxQuantity))
-            .SingleOrDefaultAsync(ct);
-        return row ?? throw AppException.NotFound("Depo bulunamadı.");
+            .Select(x => new
+            {
+                x.Id,
+                x.DefaultTransferReturnLocationId,
+                x.DefaultProductionTransferLocationId,
+                x.ProductionPickingStagingLocationId,
+                x.AutoPickWithoutConfirmMaxQuantity,
+            })
+            .SingleOrDefaultAsync(ct)
+            ?? throw AppException.NotFound("Depo bulunamadı.");
+        var isRackless = await ProductionTransferWarehouseRacklessSupport.IsRacklessAsync(uow, warehouseId, ct);
+        return new WarehouseTransferReturnSettingDto(
+            row.Id,
+            row.DefaultTransferReturnLocationId,
+            row.DefaultProductionTransferLocationId,
+            row.ProductionPickingStagingLocationId,
+            row.AutoPickWithoutConfirmMaxQuantity,
+            isRackless);
     }
 
     public Task<WarehouseTransferReturnSettingDto> UpdateReturnSettingAsync(UpdateWarehouseTransferReturnSettingRequest request, long actor, CancellationToken ct = default) =>
@@ -1185,12 +1203,14 @@ public sealed class ProductionTransferTaskService(
                     warehouse.AutoPickWithoutConfirmMaxQuantity,
                 },
                 ChangedFields: ["DefaultTransferReturnLocationId", "DefaultProductionTransferLocationId", "ProductionPickingStagingLocationId", "AutoPickWithoutConfirmMaxQuantity"]), token);
+            var isRackless = await ProductionTransferWarehouseRacklessSupport.IsRacklessAsync(uow, warehouse.Id, token);
             return new WarehouseTransferReturnSettingDto(
                 warehouse.Id,
                 warehouse.DefaultTransferReturnLocationId,
                 warehouse.DefaultProductionTransferLocationId,
                 warehouse.ProductionPickingStagingLocationId,
-                warehouse.AutoPickWithoutConfirmMaxQuantity);
+                warehouse.AutoPickWithoutConfirmMaxQuantity,
+                isRackless);
         }, ct, IsolationLevel.Serializable);
 
     private async Task ApplyPermanentRouteSplitCoreAsync(
@@ -1204,6 +1224,11 @@ public sealed class ProductionTransferTaskService(
             return;
 
         var header = task.Header;
+        // Rafsız kaynak: Faz 2 DefaultSourceLocationId sabitlemesi korunur.
+        // Rota bölme sanal rafı exclusion ile göremez ve atamayı null'a çekerdi.
+        if (await ProductionTransferWarehouseRacklessSupport.IsRacklessAsync(uow, header.SourceWarehouseId, ct))
+            return;
+
         var link = await uow.Repository<ProductionTransferHeaderLink>().Query(true)
             .Include(x => x.Lines)
             .SingleAsync(x => x.WarehouseTransferHeaderId == header.Id, ct);
@@ -1462,7 +1487,18 @@ public sealed class ProductionTransferTaskService(
                 plannedQuantity, processedQuantity, plannedQuantity <= 0 ? 0 : decimal.Round(processedQuantity * 100m / plannedQuantity, 2));
         }).OrderBy(x => x.Username).ToList();
         var eligibleAssignees = await LoadEligibleAssigneesAsync(ct);
-        return new(header.Id, header.DocumentNo, header.Status, header.SourceWarehouseId, tasks, workloads, eligibleAssignees);
+        var racklessFlags = await ProductionTransferWarehouseRacklessSupport.GetRacklessFlagsAsync(
+            uow, [header.SourceWarehouseId, header.TargetWarehouseId], ct);
+        return new(
+            header.Id,
+            header.DocumentNo,
+            header.Status,
+            header.SourceWarehouseId,
+            tasks,
+            workloads,
+            eligibleAssignees,
+            racklessFlags.GetValueOrDefault(header.SourceWarehouseId),
+            racklessFlags.GetValueOrDefault(header.TargetWarehouseId));
     }
 
     private async Task<IReadOnlyList<ProductionTransferAssigneeOptionDto>> LoadEligibleAssigneesAsync(CancellationToken ct)

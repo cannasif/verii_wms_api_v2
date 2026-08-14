@@ -59,7 +59,7 @@ public sealed record ResolveSerialLocationsRequest(string BranchCode, long Wareh
 public sealed record SerialLocationMatchDto(string SerialNo, long? LocationId, string? LocationCode,
     string? LocationName, decimal AvailableQuantity);
 public sealed record StockLocationBalanceDto(long LocationId, string LocationCode, string LocationName,
-    decimal AvailableQuantity);
+    decimal AvailableQuantity, decimal Quantity = 0, decimal ReservedQuantity = 0);
 
 public interface IStockBalanceService
 {
@@ -74,7 +74,7 @@ public interface IStockBalanceService
     Task<ReconciliationSummary> GetReconciliationSummaryAsync(CancellationToken cancellationToken = default);
     Task<PagedResponse<ReconciliationIssue>> GetReconciliationIssuesAsync(PagedRequest request, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<SerialLocationMatchDto>> ResolveSerialLocationsAsync(ResolveSerialLocationsRequest request, CancellationToken cancellationToken = default);
-    Task<IReadOnlyList<StockLocationBalanceDto>> ResolveStockLocationsAsync(string branchCode, long warehouseId, long stockId, long? yapCodeId, IReadOnlyCollection<long>? excludeLocationIds = null, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<StockLocationBalanceDto>> ResolveStockLocationsAsync(string branchCode, long warehouseId, long stockId, long? yapCodeId, IReadOnlyCollection<long>? excludeLocationIds = null, bool includeOnHand = false, CancellationToken cancellationToken = default);
 }
 
 public interface IStockBalanceJobRunner

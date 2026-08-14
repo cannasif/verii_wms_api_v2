@@ -132,6 +132,13 @@ public sealed class ProductionTransferService(
     public async Task<ProductionTransferDetail> GetDetailAsync(long id,CancellationToken ct=default)
     {
         var transfer=await transfers.GetDetailForContextAsync(id,Contexts,ct);
+        var racklessFlags=await ProductionTransferWarehouseRacklessSupport.GetRacklessFlagsAsync(
+            uow,[transfer.Header.SourceWarehouseId,transfer.Header.TargetWarehouseId],ct);
+        transfer=transfer with
+        {
+            SourceIsRackless=racklessFlags.GetValueOrDefault(transfer.Header.SourceWarehouseId),
+            TargetIsRackless=racklessFlags.GetValueOrDefault(transfer.Header.TargetWarehouseId),
+        };
         var context=await Links.Query().Where(x=>x.WarehouseTransferHeaderId==id)
             .Select(x=>new ProductionTransferContextDto(x.Id,x.Purpose,x.ProductionHeaderId,x.ProductionOrderId,
                 x.ProductionOperationId,x.ProductionPlanNo,x.ProductionOrderNo,x.ProductionOperationCode,
@@ -596,7 +603,7 @@ public sealed class ProductionTransferService(
         var branch=Branch(request.Transfer.BranchCode);
         var sourceSetting=await uow.Repository<WarehouseEntity>().Query()
             .Where(x=>x.Id==request.Transfer.SourceWarehouseId&&x.BranchCode==branch)
-            .Select(x=>new{x.Id,x.WarehouseCode,x.ProductionPickingStagingLocationId})
+            .Select(x=>new{x.Id,x.WarehouseCode,x.ProductionPickingStagingLocationId,x.DefaultProductionTransferLocationId})
             .SingleOrDefaultAsync(ct)
             ??throw AppException.BadRequest("Üretime transfer kaynak deposu bulunamadı.");
         if(!sourceSetting.ProductionPickingStagingLocationId.HasValue)
@@ -607,6 +614,21 @@ public sealed class ProductionTransferService(
         if(!validSourceStaging)
             throw AppException.Conflict("Kaynak deponun toplama sanal rafı aktif ve yerleştirmeye uygun değil.");
 
+        // Rafsız kaynak: tüm satırların DefaultSourceLocationId'si kaynak deponun
+        // DefaultProductionTransferLocationId'sine sabitlenir (arama/rota yok).
+        long? racklessSourceLocationId=null;
+        if(await ProductionTransferWarehouseRacklessSupport.IsRacklessAsync(uow,sourceSetting.Id,ct))
+        {
+            if(!sourceSetting.DefaultProductionTransferLocationId.HasValue)
+                throw AppException.Conflict($"{sourceSetting.WarehouseCode} kaynak deposu rafsız; varsayılan üretim transfer rafı tanımlanmamış.");
+            var sourceDefaultLocationId=sourceSetting.DefaultProductionTransferLocationId.Value;
+            var validSourceDefault=await uow.Repository<WarehouseLocation>().Query().AnyAsync(x=>
+                x.Id==sourceDefaultLocationId&&x.WarehouseId==sourceSetting.Id&&x.IsActive&&x.IsPutaway,ct);
+            if(!validSourceDefault)
+                throw AppException.Conflict("Kaynak deponun varsayılan üretim transfer rafı aktif ve yerleştirmeye uygun değil.");
+            racklessSourceLocationId=sourceDefaultLocationId;
+        }
+
         var setting=await uow.Repository<WarehouseEntity>().Query()
             .Where(x=>x.Id==request.Transfer.TargetWarehouseId&&x.BranchCode==branch)
             .Select(x=>new{x.Id,x.WarehouseCode,x.DefaultProductionTransferLocationId})
@@ -614,7 +636,16 @@ public sealed class ProductionTransferService(
             ??throw AppException.BadRequest("Üretime transfer hedef deposu bulunamadı.");
         if(!setting.DefaultProductionTransferLocationId.HasValue)
         {
-            if(!required)return request;
+            if(!required)
+            {
+                // Hedef varsayılanı opsiyonel ve yok: hedef tarafına dokunma; kaynak tarafını (staging + rafsız kaynak) yine uygula.
+                var sourceOnly=request.Transfer with
+                {
+                    SourceStagingLocationId=request.Transfer.SourceStagingLocationId??sourceStagingLocationId,
+                    Lines=ApplySourceLineDefaults(request.Transfer.Lines,sourceStagingLocationId,racklessSourceLocationId)
+                };
+                return request with{Transfer=sourceOnly};
+            }
             throw AppException.Conflict($"{setting.WarehouseCode} hedef deposu için varsayılan üretim transfer rafı tanımlanmamış.");
         }
         var locationId=setting.DefaultProductionTransferLocationId.Value;
@@ -627,11 +658,24 @@ public sealed class ProductionTransferService(
         {
             SourceStagingLocationId=request.Transfer.SourceStagingLocationId??sourceStagingLocationId,
             TargetPutawayLocationId=request.Transfer.TargetPutawayLocationId??locationId,
-            Lines=request.Transfer.Lines.Select(x=>x.DefaultTargetLocationId.HasValue
-                ?x
-                :x with{DefaultTargetLocationId=sourceStagingLocationId}).ToArray()
+            Lines=ApplySourceLineDefaults(request.Transfer.Lines,sourceStagingLocationId,racklessSourceLocationId)
         };
         return request with{Transfer=transfer};
+    }
+
+    private static IReadOnlyList<WarehouseTransferLineDraftRequest> ApplySourceLineDefaults(
+        IReadOnlyList<WarehouseTransferLineDraftRequest> lines,
+        long sourceStagingLocationId,
+        long? racklessSourceLocationId)
+    {
+        return lines.Select(x=>{
+            var line=x.DefaultTargetLocationId.HasValue
+                ?x
+                :x with{DefaultTargetLocationId=sourceStagingLocationId};
+            if(racklessSourceLocationId.HasValue)
+                line=line with{DefaultSourceLocationId=racklessSourceLocationId};
+            return line;
+        }).ToArray();
     }
 
     public async Task<DefaultProductionTargetLocationDto> GetDefaultTargetLocationAsync(
@@ -694,6 +738,9 @@ public sealed class ProductionTransferService(
         var transfer=request.Transfer;
         var branch=transfer.BranchCode.Trim();
         var sourceWarehouseId=transfer.SourceWarehouseId;
+        // Rafsız kaynakta DefaultSourceLocationId ApplyDefault ile sabitlenir; otomatik atama ezmesin.
+        if(await ProductionTransferWarehouseRacklessSupport.IsRacklessAsync(uow,sourceWarehouseId,ct))
+            return request;
         var excludedLocationIds=await ProductionTransferSourceLocationExclusions.FromTransferAsync(uow,transfer,ct);
         var locations=await uow.Repository<WarehouseLocation>().Query()
             .Where(x=>x.WarehouseId==sourceWarehouseId&&x.IsActive&&x.IsPickable&&!x.IsQuarantine)

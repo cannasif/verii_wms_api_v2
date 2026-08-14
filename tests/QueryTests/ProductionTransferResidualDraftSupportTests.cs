@@ -1,5 +1,6 @@
 using verii_wms_api_v2.Modules.ProductionTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
+using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using Xunit;
 
@@ -48,6 +49,46 @@ public class ProductionTransferResidualDraftSupportTests
     }
 
     [Fact]
+    public void ResolveResidualSourceLocationId_uses_processed_pick_task_line_when_no_open_remainder()
+    {
+        const long wtLineId = 12;
+        const long sourceC = 303;
+        var header = new WarehouseTransferHeader
+        {
+            Tasks =
+            [
+                new WarehouseTransferTask
+                {
+                    Id = 2,
+                    TaskType = WarehouseTransferTaskType.Pick,
+                    Lines =
+                    [
+                        new WarehouseTransferTaskLine
+                        {
+                            WtLineId = wtLineId,
+                            PlannedQuantity = 6,
+                            ProcessedQuantity = 6,
+                            SourceLocationId = sourceC,
+                        },
+                    ],
+                },
+            ],
+        };
+        var line = new WarehouseTransferLine
+        {
+            Id = wtLineId,
+            DefaultSourceLocationId = null,
+        };
+
+        var resolved = ProductionTransferResidualDraftSupport.ResolveResidualSourceLocationId(
+            header,
+            line,
+            ProductionTransferResidualDraftSupport.ResolvePrimaryPickTask(header));
+
+        Assert.Equal(sourceC, resolved);
+    }
+
+    [Fact]
     public void ResolveResidualSourceLocationId_prefers_single_tracking_source()
     {
         const long wtLineId = 11;
@@ -90,6 +131,40 @@ public class ProductionTransferResidualDraftSupportTests
         };
 
         Assert.True(ProductionTransferResidualDraftSupport.NeedsAutoAssignSources(header, draftLines));
+    }
+
+    [Fact]
+    public void NeedsAutoAssignSources_is_true_when_different_warehouse_line_missing_source()
+    {
+        var header = new WarehouseTransferHeader
+        {
+            SourceWarehouseId = 1,
+            TargetWarehouseId = 2,
+        };
+        var draftLines = new[]
+        {
+            new verii_wms_api_v2.Modules.WarehouseTransfer.Application.WarehouseTransferLineDraftRequest(
+                13, null, 4, "ADET", StockTrackingType.None, false, null, 303, null, null, null, null, null),
+        };
+
+        Assert.True(ProductionTransferResidualDraftSupport.NeedsAutoAssignSources(header, draftLines));
+    }
+
+    [Fact]
+    public void NeedsAutoAssignSources_is_false_when_different_warehouse_lines_have_source()
+    {
+        var header = new WarehouseTransferHeader
+        {
+            SourceWarehouseId = 1,
+            TargetWarehouseId = 2,
+        };
+        var draftLines = new[]
+        {
+            new verii_wms_api_v2.Modules.WarehouseTransfer.Application.WarehouseTransferLineDraftRequest(
+                13, null, 4, "ADET", StockTrackingType.None, false, 101, 303, null, null, null, null, null),
+        };
+
+        Assert.False(ProductionTransferResidualDraftSupport.NeedsAutoAssignSources(header, draftLines));
     }
 
     [Fact]
@@ -197,5 +272,54 @@ public class ProductionTransferResidualDraftSupportTests
         Assert.NotNull(draft.Trackings);
         Assert.Equal(2, draft.Trackings!.Count);
         Assert.False(ProductionTransferResidualDraftSupport.RequiresDeferredTrackingCapture(draft));
+    }
+
+    [Fact]
+    public void Residual_draft_with_missing_source_passes_policy_when_auto_assign_enabled()
+    {
+        var header = new WarehouseTransferHeader
+        {
+            SourceWarehouseId = 1,
+            TargetWarehouseId = 2,
+            RequireSourceLocation = true,
+            RequireTargetLocation = false,
+        };
+        var draftLines = new[]
+        {
+            new WarehouseTransferLineDraftRequest(
+                13, null, 4, "ADET", StockTrackingType.None, false, null, 303, null, null, null, null, null),
+        };
+
+        Assert.True(ProductionTransferResidualDraftSupport.NeedsAutoAssignSources(header, draftLines));
+
+        var request = new CreateWarehouseTransferDraftRequest(
+            Guid.NewGuid(),
+            "0",
+            1,
+            DateOnly.FromDateTime(DateTime.UtcNow),
+            WarehouseTransferInitiationMode.StockBasedTask,
+            WarehouseTransferProcessType.InternalRequest,
+            1,
+            2,
+            null,
+            null,
+            null,
+            null,
+            null,
+            3,
+            "KALAN:PT-1",
+            "eksik teslim kalan",
+            draftLines,
+            null,
+            WarehouseTransferBusinessContext.ProductionMaterialSupply,
+            null,
+            true);
+
+        var exception = Record.Exception(() =>
+            WarehouseTransferDraftPolicyGuard.Validate(
+                request,
+                ProductionTransferWarehousePolicyAdapter.FromProductionSnapshot(header)));
+
+        Assert.Null(exception);
     }
 }

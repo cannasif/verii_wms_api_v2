@@ -162,7 +162,9 @@ public sealed record WarehouseTransferDetailLine(
 public sealed record WarehouseTransferDraftMetadata(long? SourceStagingLocationId,long? TargetReceivingLocationId,long? TargetPutawayLocationId,
     string? ExternalReferenceNo,string? Description,string? ProjectCode);
 public sealed record WarehouseTransferDetail(WarehouseTransferGridRow Header,IReadOnlyList<WarehouseTransferDetailLine> Lines,string RowVersion,
-    WarehouseTransferDraftMetadata Draft);
+    WarehouseTransferDraftMetadata Draft,
+    bool SourceIsRackless = false,
+    bool TargetIsRackless = false);
 
 public interface IWarehouseTransferService
 {
