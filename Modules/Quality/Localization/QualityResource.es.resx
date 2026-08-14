@@ -11,7 +11,7 @@
   <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>Solo se pueden priorizar las inspecciones de calidad abiertas pendientes de decisión.</value></data>
   <data name="ControlQuantityRequired" xml:space="preserve"><value>Introduzca la cantidad inspeccionada físicamente en esta operación para cada línea GKK que se vaya a decidir.</value></data>
   <data name="ControlQuantityMustBePositive" xml:space="preserve"><value>La cantidad inspeccionada GKK para '{0}' no puede ser negativa.</value></data>
-  <data name="ControlQuantityExceedsLot" xml:space="preserve"><value>La cantidad inspeccionada {1:0.######} para '{0}' no puede superar la cantidad pendiente de decisión, {2:0.######}.</value></data>
+  <data name="ControlQuantityExceedsLot" xml:space="preserve"><value>La cantidad inspeccionada en esta operación, {1:0.######}, para '{0}' no puede superar las {2:0.######} unidades aún no inspeccionadas físicamente del lote.</value></data>
   <data name="ControlQuantityBelowMinimum" xml:space="preserve"><value>La cantidad inspeccionada {1:0.######} para '{0}' es insuficiente. Deben inspeccionarse físicamente al menos {2:0.######} según la regla de calidad.</value></data>
   <data name="WorkIdempotencyKeyRequired" xml:space="preserve"><value>Se requiere una clave de operación única para la solicitud de trabajo GKK.</value></data>
   <data name="WorkCannotStartForClosedInspection" xml:space="preserve"><value>Una inspección GKK finalizada o cancelada no puede reiniciarse.</value></data>

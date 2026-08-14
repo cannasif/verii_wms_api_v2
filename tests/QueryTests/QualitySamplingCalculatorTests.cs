@@ -60,7 +60,7 @@ public sealed class QualitySamplingCalculatorTests
     }
 
     [Fact]
-    public void Decision_minimum_is_capped_by_the_current_actionable_quantity()
+    public void Decision_minimum_is_based_on_the_original_lot_not_current_disposition()
     {
         var line = new QualityInspectionLine
         {
@@ -70,7 +70,31 @@ public sealed class QualitySamplingCalculatorTests
             Decision = QualityDecision.Quarantined
         };
 
-        Assert.Equal(4m, QualityService.RequiredControlQuantityForDecision(line));
+        Assert.Equal(10m, QualityService.RequiredControlQuantityForDecision(line));
+    }
+
+    [Fact]
+    public void Physical_control_capacity_is_independent_from_decision_quantity()
+    {
+        var line = new QualityInspectionLine
+        {
+            Id = 41,
+            Quantity = 100m,
+            SampleQuantity = 10m,
+            InspectedQuantity = 4m
+        };
+        var decisions = new Dictionary<long, QualityInspectionQuantityDecisionRequest>
+        {
+            [line.Id] = new(line.Id, 100m, 0m, 0m)
+        };
+
+        var parts = QualityService.BuildDecisionParts([line], decisions, QualityDecision.Pending);
+
+        Assert.Equal(6m, QualityService.RequiredControlQuantityForDecision(line));
+        Assert.Equal(96m, QualityService.RemainingInspectableQuantity(line));
+        var part = Assert.Single(parts);
+        Assert.Equal(100m, part.Quantity);
+        Assert.Equal(QualityDecision.Accepted, part.Decision);
     }
 
     [Theory]

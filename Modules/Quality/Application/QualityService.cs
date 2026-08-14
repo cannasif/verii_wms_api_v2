@@ -1840,18 +1840,19 @@ public sealed class QualityService(
         foreach (var line in selected)
         {
             var inspected = groups.Single(group => group.Key == line.Id).Single().InspectedQuantity;
-            var lotQuantity = ActionableQuantity(line);
+            var lotQuantity = line.Quantity;
             var required = RequiredControlQuantityForDecision(line);
             if (inspected < 0)
                 throw AppException.BadRequest(Message(
                     QualityMessageKeys.ControlQuantityMustBePositive,
                     line.StockCodeSnapshot));
-            if (inspected - lotQuantity > 0.000001m)
+            var remainingInspectable = RemainingInspectableQuantity(line);
+            if (inspected - remainingInspectable > 0.000001m)
                 throw AppException.BadRequest(Message(
                     QualityMessageKeys.ControlQuantityExceedsLot,
                     line.StockCodeSnapshot,
                     inspected,
-                    lotQuantity));
+                    remainingInspectable));
             if (required - inspected > 0.000001m)
                 throw AppException.Conflict(Message(
                     QualityMessageKeys.ControlQuantityBelowMinimum,
@@ -1867,9 +1868,9 @@ public sealed class QualityService(
             ? line.QuarantineQuantity
             : Math.Max(0, line.Quantity - DecidedQuantity(line));
     internal static decimal RequiredControlQuantityForDecision(QualityInspectionLine line) =>
-        Math.Min(
-            Math.Max(0, line.SampleQuantity - line.InspectedQuantity),
-            ActionableQuantity(line));
+        Math.Max(0, Math.Min(line.SampleQuantity, line.Quantity) - line.InspectedQuantity);
+    internal static decimal RemainingInspectableQuantity(QualityInspectionLine line) =>
+        Math.Max(0, line.Quantity - line.InspectedQuantity);
     private static decimal DecidedQuantity(QualityInspectionLine line) =>
         line.AcceptedQuantity + line.RejectedQuantity + line.QuarantineQuantity;
     private static QualityDecision ResolveLineDecision(QualityInspectionLine line) =>

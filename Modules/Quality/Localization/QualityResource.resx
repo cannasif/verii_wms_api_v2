@@ -11,7 +11,7 @@
   <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>Yalnızca karar bekleyen açık GKK kayıtlarına öncelik verilebilir.</value></data>
   <data name="ControlQuantityRequired" xml:space="preserve"><value>Karar verilen her GKK satırı için bu işlemde fiziksel olarak kontrol edilen miktarı girin.</value></data>
   <data name="ControlQuantityMustBePositive" xml:space="preserve"><value>'{0}' için GKK kontrol miktarı negatif olamaz.</value></data>
-  <data name="ControlQuantityExceedsLot" xml:space="preserve"><value>'{0}' için kontrol edilen {1:0.######} miktar, karar bekleyen {2:0.######} miktarı aşamaz.</value></data>
+  <data name="ControlQuantityExceedsLot" xml:space="preserve"><value>'{0}' için bu işlemde kontrol edilen {1:0.######} miktar, partide henüz fiziksel olarak kontrol edilmemiş {2:0.######} miktarı aşamaz.</value></data>
   <data name="ControlQuantityBelowMinimum" xml:space="preserve"><value>'{0}' için kontrol edilen {1:0.######} miktar yetersizdir. Kalite kuralına göre en az {2:0.######} miktar fiziksel olarak kontrol edilmelidir.</value></data>
   <data name="WorkIdempotencyKeyRequired" xml:space="preserve"><value>GKK çalışma isteği için benzersiz işlem anahtarı zorunludur.</value></data>
   <data name="WorkCannotStartForClosedInspection" xml:space="preserve"><value>Sonuçlandırılmış veya iptal edilmiş GKK incelemesi yeniden başlatılamaz.</value></data>

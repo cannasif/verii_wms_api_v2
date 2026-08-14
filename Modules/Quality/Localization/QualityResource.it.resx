@@ -11,7 +11,7 @@
   <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>È possibile dare priorità solo ai controlli qualità aperti in attesa di decisione.</value></data>
   <data name="ControlQuantityRequired" xml:space="preserve"><value>Inserire la quantità fisicamente controllata in questa operazione per ogni riga GKK da decidere.</value></data>
   <data name="ControlQuantityMustBePositive" xml:space="preserve"><value>La quantità controllata GKK per '{0}' non può essere negativa.</value></data>
-  <data name="ControlQuantityExceedsLot" xml:space="preserve"><value>La quantità controllata {1:0.######} per '{0}' non può superare la quantità in attesa di decisione, {2:0.######}.</value></data>
+  <data name="ControlQuantityExceedsLot" xml:space="preserve"><value>La quantità controllata in questa operazione, {1:0.######}, per '{0}' non può superare la quantità {2:0.######} non ancora controllata fisicamente nel lotto.</value></data>
   <data name="ControlQuantityBelowMinimum" xml:space="preserve"><value>La quantità controllata {1:0.######} per '{0}' è insufficiente. In base alla regola qualità devono essere controllati fisicamente almeno {2:0.######}.</value></data>
   <data name="WorkIdempotencyKeyRequired" xml:space="preserve"><value>È richiesta una chiave operazione univoca per la richiesta di lavoro GKK.</value></data>
   <data name="WorkCannotStartForClosedInspection" xml:space="preserve"><value>Un controllo GKK completato o annullato non può essere riavviato.</value></data>

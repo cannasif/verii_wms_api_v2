@@ -11,7 +11,7 @@
   <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>يمكن إعطاء الأولوية فقط لفحوصات الجودة المفتوحة التي تنتظر قرارًا.</value></data>
   <data name="ControlQuantityRequired" xml:space="preserve"><value>أدخل الكمية التي تم فحصها فعليًا في هذه العملية لكل سطر GKK سيتم اتخاذ قرار بشأنه.</value></data>
   <data name="ControlQuantityMustBePositive" xml:space="preserve"><value>لا يمكن أن تكون كمية فحص GKK للصنف '{0}' سالبة.</value></data>
-  <data name="ControlQuantityExceedsLot" xml:space="preserve"><value>لا يمكن أن تتجاوز الكمية المفحوصة {1:0.######} للصنف '{0}' الكمية المنتظرة للقرار وهي {2:0.######}.</value></data>
+  <data name="ControlQuantityExceedsLot" xml:space="preserve"><value>لا يمكن أن تتجاوز الكمية المفحوصة في هذه العملية {1:0.######} للصنف '{0}' الكمية غير المفحوصة فعليًا في الدفعة وهي {2:0.######}.</value></data>
   <data name="ControlQuantityBelowMinimum" xml:space="preserve"><value>الكمية المفحوصة {1:0.######} للصنف '{0}' غير كافية. يجب فحص ما لا يقل عن {2:0.######} فعليًا وفقًا لقاعدة الجودة.</value></data>
   <data name="WorkIdempotencyKeyRequired" xml:space="preserve"><value>يلزم مفتاح عملية فريد لطلب عمل فحص الجودة.</value></data>
   <data name="WorkCannotStartForClosedInspection" xml:space="preserve"><value>لا يمكن إعادة تشغيل فحص جودة مكتمل أو ملغى.</value></data>

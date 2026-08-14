@@ -11,7 +11,7 @@
   <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>Nur offene Qualitätsprüfungen, die auf eine Entscheidung warten, können priorisiert werden.</value></data>
   <data name="ControlQuantityRequired" xml:space="preserve"><value>Geben Sie für jede zu entscheidende GKK-Zeile die in diesem Vorgang physisch geprüfte Menge ein.</value></data>
   <data name="ControlQuantityMustBePositive" xml:space="preserve"><value>Die GKK-Prüfmenge für '{0}' darf nicht negativ sein.</value></data>
-  <data name="ControlQuantityExceedsLot" xml:space="preserve"><value>Die geprüfte Menge {1:0.######} für '{0}' darf die zur Entscheidung anstehende Menge {2:0.######} nicht überschreiten.</value></data>
+  <data name="ControlQuantityExceedsLot" xml:space="preserve"><value>Die in diesem Vorgang geprüfte Menge {1:0.######} für '{0}' darf die noch nicht physisch geprüfte Losmenge {2:0.######} nicht überschreiten.</value></data>
   <data name="ControlQuantityBelowMinimum" xml:space="preserve"><value>Die geprüfte Menge {1:0.######} für '{0}' ist unzureichend. Gemäß Qualitätsregel müssen mindestens {2:0.######} physisch geprüft werden.</value></data>
   <data name="WorkIdempotencyKeyRequired" xml:space="preserve"><value>Für die GKK-Arbeitsanforderung ist ein eindeutiger Vorgangsschlüssel erforderlich.</value></data>
   <data name="WorkCannotStartForClosedInspection" xml:space="preserve"><value>Eine abgeschlossene oder stornierte GKK-Prüfung kann nicht erneut gestartet werden.</value></data>
