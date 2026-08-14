@@ -22,4 +22,12 @@
   <data name="WorkHasNoActiveSession" xml:space="preserve"><value>لا توجد جلسة عمل فحص جودة نشطة لإيقافها.</value></data>
   <data name="WorkPauseRequiresOwnerOrSupervisor" xml:space="preserve"><value>يمكن للمشغل النشط أو مشرف الجودة فقط إيقاف هذه الجلسة.</value></data>
   <data name="WorkMustBeActiveForCurrentUser" xml:space="preserve"><value>ابدأ فحص الجودة باستخدام حسابك قبل تطبيق القرار. يجب أولاً إيقاف جلسة المستخدم الآخر أو تسليمها.</value></data>
+  <data name="ImageUploadBatchLimit" xml:space="preserve"><value>يمكنك تحميل من 1 إلى {0} صور جودة في المرة الواحدة.</value></data>
+  <data name="ImageCaptionLengthLimit" xml:space="preserve"><value>يجب ألا يتجاوز وصف الصورة {0} حرفًا.</value></data>
+  <data name="ImageLineLimit" xml:space="preserve"><value>يمكن أن يحتوي سطر الجودة على {0} صورة كحد أقصى.</value></data>
+  <data name="InspectionLineNotFound" xml:space="preserve"><value>لم يتم العثور على سطر فحص الجودة.</value></data>
+  <data name="InspectionImageNotFound" xml:space="preserve"><value>لم يتم العثور على صورة فحص الجودة.</value></data>
+  <data name="InspectionImageRequired" xml:space="preserve"><value>حدد صورة جودة واحدة على الأقل.</value></data>
+  <data name="InspectionImagesUploaded" xml:space="preserve"><value>تم تحميل صور قرار الجودة.</value></data>
+  <data name="InspectionImageDeleted" xml:space="preserve"><value>تم حذف صورة قرار الجودة.</value></data>
 </root>

@@ -22,4 +22,12 @@
   <data name="WorkHasNoActiveSession" xml:space="preserve"><value>There is no active GKK work session to stop.</value></data>
   <data name="WorkPauseRequiresOwnerOrSupervisor" xml:space="preserve"><value>Only the active operator or a quality supervisor can stop this GKK session.</value></data>
   <data name="WorkMustBeActiveForCurrentUser" xml:space="preserve"><value>Start the GKK inspection with your own user before applying the decision. If another user is working, stop or hand over that session first.</value></data>
+  <data name="ImageUploadBatchLimit" xml:space="preserve"><value>You can upload between 1 and {0} quality images at a time.</value></data>
+  <data name="ImageCaptionLengthLimit" xml:space="preserve"><value>The image caption can contain at most {0} characters.</value></data>
+  <data name="ImageLineLimit" xml:space="preserve"><value>A quality line can contain at most {0} images.</value></data>
+  <data name="InspectionLineNotFound" xml:space="preserve"><value>The quality inspection line was not found.</value></data>
+  <data name="InspectionImageNotFound" xml:space="preserve"><value>The quality inspection image was not found.</value></data>
+  <data name="InspectionImageRequired" xml:space="preserve"><value>Select at least one quality image.</value></data>
+  <data name="InspectionImagesUploaded" xml:space="preserve"><value>The quality decision images were uploaded.</value></data>
+  <data name="InspectionImageDeleted" xml:space="preserve"><value>The quality decision image was deleted.</value></data>
 </root>

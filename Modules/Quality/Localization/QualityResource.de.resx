@@ -22,4 +22,12 @@
   <data name="WorkHasNoActiveSession" xml:space="preserve"><value>Es gibt keine aktive GKK-Arbeitssitzung zum Beenden.</value></data>
   <data name="WorkPauseRequiresOwnerOrSupervisor" xml:space="preserve"><value>Nur der aktive Bearbeiter oder ein Qualitätsverantwortlicher darf diese Sitzung beenden.</value></data>
   <data name="WorkMustBeActiveForCurrentUser" xml:space="preserve"><value>Starten Sie die GKK-Prüfung mit Ihrem Benutzer, bevor Sie die Entscheidung anwenden. Eine fremde Sitzung muss zuerst beendet oder übergeben werden.</value></data>
+  <data name="ImageUploadBatchLimit" xml:space="preserve"><value>Sie können gleichzeitig 1 bis {0} Qualitätsbilder hochladen.</value></data>
+  <data name="ImageCaptionLengthLimit" xml:space="preserve"><value>Die Bildbeschreibung darf höchstens {0} Zeichen enthalten.</value></data>
+  <data name="ImageLineLimit" xml:space="preserve"><value>Eine Qualitätsposition darf höchstens {0} Bilder enthalten.</value></data>
+  <data name="InspectionLineNotFound" xml:space="preserve"><value>Die Qualitätsprüfposition wurde nicht gefunden.</value></data>
+  <data name="InspectionImageNotFound" xml:space="preserve"><value>Das Qualitätsprüfbild wurde nicht gefunden.</value></data>
+  <data name="InspectionImageRequired" xml:space="preserve"><value>Wählen Sie mindestens ein Qualitätsbild aus.</value></data>
+  <data name="InspectionImagesUploaded" xml:space="preserve"><value>Die Bilder zur Qualitätsentscheidung wurden hochgeladen.</value></data>
+  <data name="InspectionImageDeleted" xml:space="preserve"><value>Das Bild zur Qualitätsentscheidung wurde gelöscht.</value></data>
 </root>

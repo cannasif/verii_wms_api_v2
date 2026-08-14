@@ -22,4 +22,12 @@
   <data name="WorkHasNoActiveSession" xml:space="preserve"><value>Durdurulabilecek aktif bir GKK çalışma oturumu bulunmuyor.</value></data>
   <data name="WorkPauseRequiresOwnerOrSupervisor" xml:space="preserve"><value>Başka bir kullanıcının GKK oturumunu yalnızca kalite sorumlusu durdurabilir.</value></data>
   <data name="WorkMustBeActiveForCurrentUser" xml:space="preserve"><value>Kararı uygulamadan önce GKK incelemesini kendi kullanıcınızla başlatın. Başka bir kullanıcı çalışıyorsa önce duruş veya vardiya devri yapılmalıdır.</value></data>
+  <data name="ImageUploadBatchLimit" xml:space="preserve"><value>Tek seferde 1-{0} kalite görseli yükleyebilirsiniz.</value></data>
+  <data name="ImageCaptionLengthLimit" xml:space="preserve"><value>Görsel açıklaması en fazla {0} karakter olabilir.</value></data>
+  <data name="ImageLineLimit" xml:space="preserve"><value>Bir kalite satırında en fazla {0} görsel bulunabilir.</value></data>
+  <data name="InspectionLineNotFound" xml:space="preserve"><value>Kalite inceleme satırı bulunamadı.</value></data>
+  <data name="InspectionImageNotFound" xml:space="preserve"><value>Kalite inceleme görseli bulunamadı.</value></data>
+  <data name="InspectionImageRequired" xml:space="preserve"><value>En az bir kalite görseli seçilmelidir.</value></data>
+  <data name="InspectionImagesUploaded" xml:space="preserve"><value>Kalite karar görselleri yüklendi.</value></data>
+  <data name="InspectionImageDeleted" xml:space="preserve"><value>Kalite karar görseli silindi.</value></data>
 </root>

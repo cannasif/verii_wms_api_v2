@@ -139,6 +139,7 @@ public sealed class QualityInspection : BaseEntity
     public ICollection<QualityInspectionDisposition> Dispositions { get; set; } = [];
     public ICollection<QualityInspectionControl> Controls { get; set; } = [];
     public ICollection<QualityInspectionWorkSession> WorkSessions { get; set; } = [];
+    public ICollection<QualityInspectionImage> Images { get; set; } = [];
 }
 
 /// <summary>
@@ -199,6 +200,26 @@ public sealed class QualityInspectionLine : BaseEntity
     public byte[] RowVersion { get; set; } = [];
     public ICollection<QualityInspectionDisposition> Dispositions { get; set; } = [];
     public ICollection<QualityInspectionControl> Controls { get; set; } = [];
+    public ICollection<QualityInspectionImage> Images { get; set; } = [];
+}
+
+/// <summary>
+/// Private visual evidence attached to one GKK inspection line. The binary is stored under
+/// Upload/Kalite/{QualityInspectionLineId}; only the protected relative path is persisted.
+/// This entity is deliberately separate from stock-card images.
+/// </summary>
+public sealed class QualityInspectionImage : BaseEntity
+{
+    public long QualityInspectionId { get; set; }
+    public QualityInspection QualityInspection { get; set; } = null!;
+    public long QualityInspectionLineId { get; set; }
+    public QualityInspectionLine QualityInspectionLine { get; set; } = null!;
+    public string StoragePath { get; set; } = string.Empty;
+    public string OriginalFileName { get; set; } = string.Empty;
+    public string ContentType { get; set; } = string.Empty;
+    public long FileLength { get; set; }
+    public string? Caption { get; set; }
+    public byte[] RowVersion { get; set; } = [];
 }
 
 /// <summary>

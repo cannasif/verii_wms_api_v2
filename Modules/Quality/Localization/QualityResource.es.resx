@@ -22,4 +22,12 @@
   <data name="WorkHasNoActiveSession" xml:space="preserve"><value>No hay una sesión de trabajo GKK activa para detener.</value></data>
   <data name="WorkPauseRequiresOwnerOrSupervisor" xml:space="preserve"><value>Solo el operador activo o un supervisor de calidad puede detener esta sesión.</value></data>
   <data name="WorkMustBeActiveForCurrentUser" xml:space="preserve"><value>Inicie la inspección GKK con su usuario antes de aplicar la decisión. Primero debe detenerse o transferirse la sesión de otro usuario.</value></data>
+  <data name="ImageUploadBatchLimit" xml:space="preserve"><value>Puede cargar entre 1 y {0} imágenes de calidad a la vez.</value></data>
+  <data name="ImageCaptionLengthLimit" xml:space="preserve"><value>La descripción de la imagen puede tener como máximo {0} caracteres.</value></data>
+  <data name="ImageLineLimit" xml:space="preserve"><value>Una línea de calidad puede contener como máximo {0} imágenes.</value></data>
+  <data name="InspectionLineNotFound" xml:space="preserve"><value>No se encontró la línea de inspección de calidad.</value></data>
+  <data name="InspectionImageNotFound" xml:space="preserve"><value>No se encontró la imagen de inspección de calidad.</value></data>
+  <data name="InspectionImageRequired" xml:space="preserve"><value>Seleccione al menos una imagen de calidad.</value></data>
+  <data name="InspectionImagesUploaded" xml:space="preserve"><value>Se cargaron las imágenes de la decisión de calidad.</value></data>
+  <data name="InspectionImageDeleted" xml:space="preserve"><value>Se eliminó la imagen de la decisión de calidad.</value></data>
 </root>

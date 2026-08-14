@@ -22,4 +22,12 @@ public static class QualityMessageKeys
     public const string WorkHasNoActiveSession = nameof(WorkHasNoActiveSession);
     public const string WorkPauseRequiresOwnerOrSupervisor = nameof(WorkPauseRequiresOwnerOrSupervisor);
     public const string WorkMustBeActiveForCurrentUser = nameof(WorkMustBeActiveForCurrentUser);
+    public const string ImageUploadBatchLimit = nameof(ImageUploadBatchLimit);
+    public const string ImageCaptionLengthLimit = nameof(ImageCaptionLengthLimit);
+    public const string ImageLineLimit = nameof(ImageLineLimit);
+    public const string InspectionLineNotFound = nameof(InspectionLineNotFound);
+    public const string InspectionImageNotFound = nameof(InspectionImageNotFound);
+    public const string InspectionImageRequired = nameof(InspectionImageRequired);
+    public const string InspectionImagesUploaded = nameof(InspectionImagesUploaded);
+    public const string InspectionImageDeleted = nameof(InspectionImageDeleted);
 }

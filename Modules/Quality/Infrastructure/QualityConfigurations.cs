@@ -108,6 +108,7 @@ public sealed class QualityInspectionConfiguration : BaseEntityConfiguration<Qua
         b.HasMany(x => x.Dispositions).WithOne(x => x.QualityInspection).HasForeignKey(x => x.QualityInspectionId).OnDelete(DeleteBehavior.Restrict);
         b.HasMany(x => x.Controls).WithOne(x => x.QualityInspection).HasForeignKey(x => x.QualityInspectionId).OnDelete(DeleteBehavior.Restrict);
         b.HasMany(x => x.WorkSessions).WithOne(x => x.QualityInspection).HasForeignKey(x => x.QualityInspectionId).OnDelete(DeleteBehavior.Restrict);
+        b.HasMany(x => x.Images).WithOne(x => x.QualityInspection).HasForeignKey(x => x.QualityInspectionId).OnDelete(DeleteBehavior.Restrict);
     }
 }
 
@@ -149,6 +150,25 @@ public sealed class QualityInspectionLineConfiguration : BaseEntityConfiguration
             .OnDelete(DeleteBehavior.Restrict);
         b.HasMany(x => x.Dispositions).WithOne(x => x.QualityInspectionLine).HasForeignKey(x => x.QualityInspectionLineId).OnDelete(DeleteBehavior.Restrict);
         b.HasMany(x => x.Controls).WithOne(x => x.QualityInspectionLine).HasForeignKey(x => x.QualityInspectionLineId).OnDelete(DeleteBehavior.Restrict);
+        b.HasMany(x => x.Images).WithOne(x => x.QualityInspectionLine).HasForeignKey(x => x.QualityInspectionLineId).OnDelete(DeleteBehavior.Restrict);
+    }
+}
+
+public sealed class QualityInspectionImageConfiguration : BaseEntityConfiguration<QualityInspectionImage>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<QualityInspectionImage> b)
+    {
+        b.ToTable("RII_QUALITY_INSPECTION_IMAGES", table =>
+        {
+            table.HasCheckConstraint("CK_RII_QUALITY_IMAGE_LENGTH", "[FileLength] > 0");
+        });
+        b.Property(x => x.StoragePath).HasMaxLength(700).IsRequired();
+        b.Property(x => x.OriginalFileName).HasMaxLength(240).IsRequired();
+        b.Property(x => x.ContentType).HasMaxLength(100).IsRequired();
+        b.Property(x => x.Caption).HasMaxLength(500);
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasIndex(x => new { x.BranchCode, x.QualityInspectionLineId, x.CreatedDate });
+        b.HasIndex(x => new { x.QualityInspectionId, x.QualityInspectionLineId });
     }
 }
 
