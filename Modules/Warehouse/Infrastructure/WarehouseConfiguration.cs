@@ -34,7 +34,7 @@ public sealed class WarehouseConfiguration : BaseEntityConfiguration<Domain.Ware
         builder.HasOne<WarehouseLocation>()
             .WithMany()
             .HasForeignKey(x => x.DefaultProductionTransferReturnLocationId)
-            .OnDelete(DeleteBehavior.SetNull);
+            .OnDelete(DeleteBehavior.Restrict);
         builder.HasIndex(x => x.DefaultProductionTransferReturnLocationId)
             .HasDatabaseName("IX_RII_WAREHOUSE_DEFAULT_PRODUCTION_TRANSFER_RETURN_LOCATION");
         builder.HasOne<WarehouseLocation>()

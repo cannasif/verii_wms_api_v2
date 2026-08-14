@@ -29308,7 +29308,7 @@ namespace verii_wms_api_v2.Migrations
                     b.HasOne("verii_wms_api_v2.Modules.Location.Domain.WarehouseLocation", null)
                         .WithMany()
                         .HasForeignKey("DefaultProductionTransferReturnLocationId")
-                        .OnDelete(DeleteBehavior.SetNull);
+                        .OnDelete(DeleteBehavior.Restrict);
 
                     b.HasOne("verii_wms_api_v2.Modules.Location.Domain.WarehouseLocation", null)
                         .WithMany()

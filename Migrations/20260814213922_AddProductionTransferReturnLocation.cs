@@ -37,7 +37,7 @@ namespace verii_wms_api_v2.Migrations
                 column: "DefaultProductionTransferReturnLocationId",
                 principalTable: "RII_LOCATION",
                 principalColumn: "Id",
-                onDelete: ReferentialAction.SetNull);
+                onDelete: ReferentialAction.Restrict);
         }
 
         /// <inheritdoc />
