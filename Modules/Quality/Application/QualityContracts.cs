@@ -210,7 +210,9 @@ public sealed record QualityInspectionLineDto(long Id, long? GoodsReceiptLineId,
     DateOnly? ExpiryDate, decimal Quantity, decimal SampleQuantity, decimal InspectedQuantity, decimal AcceptedQuantity,
     decimal RejectedQuantity, decimal QuarantineQuantity, long? QuarantineLocationId, QualityDecision Decision,
     long? DecisionCodeId, string? ReasonCode, string? ReasonNote, long? DecisionBy, DateTimeOffset? DecisionAtUtc,
-    QualityDecisionDestinationDto? DefaultAcceptedDestination);
+    QualityDecisionDestinationDto? DefaultAcceptedDestination,
+    string? ProjectCodes,
+    string? OrderNumbers);
 
 public sealed record QualityInspectionControlDto(
     long Id,

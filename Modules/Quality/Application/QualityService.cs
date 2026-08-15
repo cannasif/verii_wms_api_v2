@@ -472,12 +472,22 @@ public sealed class QualityService(
         var defaultAcceptedDestinationByInspectionLineId = acceptedLocationIdByInspectionLineId
             .Where(pair => pair.Value.HasValue && acceptedDestinationByLocationId.ContainsKey(pair.Value.Value))
             .ToDictionary(pair => pair.Key, pair => acceptedDestinationByLocationId[pair.Value!.Value]);
-        var lines = inspection.Lines.OrderBy(x => x.Id).Select(x => new QualityInspectionLineDto(x.Id, x.GoodsReceiptLineId,
+        var lineSourceSummaries = await ResolveLineSourceSummariesAsync(goodsReceiptLineIds, ct);
+        var lines = inspection.Lines.OrderBy(x => x.Id).Select(x =>
+        {
+            var summary = x.GoodsReceiptLineId is long goodsReceiptLineId
+                && lineSourceSummaries.TryGetValue(goodsReceiptLineId, out var found)
+                ? found
+                : (ProjectCodes: (string?)null, OrderNumbers: (string?)null);
+            return new QualityInspectionLineDto(x.Id, x.GoodsReceiptLineId,
             x.StockId, x.StockCodeSnapshot, x.StockNameSnapshot, x.YapCodeSnapshot, x.LotNo, x.SerialNo, x.ExpiryDate,
             x.Quantity, x.SampleQuantity, x.InspectedQuantity, x.AcceptedQuantity, x.RejectedQuantity, x.QuarantineQuantity,
             x.QuarantineLocationId, x.Decision,
             x.DecisionCodeId, x.ReasonCode, x.ReasonNote, x.DecisionBy, x.DecisionAtUtc,
-            defaultAcceptedDestinationByInspectionLineId.GetValueOrDefault(x.Id))).ToList();
+            defaultAcceptedDestinationByInspectionLineId.GetValueOrDefault(x.Id),
+            summary.ProjectCodes,
+            summary.OrderNumbers);
+        }).ToList();
         var quarantineDestinations = await MergeRouteQuarantineDestinationsAsync(
             await GetQuarantineDestinationsAsync(parameter, ct), warehouseRoutes, ct);
         if (routeDefaults.QuarantineLocationId.HasValue)
@@ -2562,6 +2572,33 @@ public sealed class QualityService(
             select source.ProjectCodeSnapshot)
             .ToListAsync(ct);
         return JoinDistinctProjectCodes(codes);
+    }
+
+    private async Task<IReadOnlyDictionary<long, (string? ProjectCodes, string? OrderNumbers)>> ResolveLineSourceSummariesAsync(
+        long[] goodsReceiptLineIds, CancellationToken ct)
+    {
+        if (goodsReceiptLineIds.Length == 0)
+            return new Dictionary<long, (string? ProjectCodes, string? OrderNumbers)>();
+
+        var rows = await (
+            from source in uow.Repository<GoodsReceiptLineSource>().Query()
+            join document in uow.Repository<GoodsReceiptSourceDocument>().Query()
+                on source.GrSourceDocumentId equals document.Id
+            where goodsReceiptLineIds.Contains(source.GrLineId)
+            select new
+            {
+                source.GrLineId,
+                source.ProjectCodeSnapshot,
+                document.ExternalDocumentNo
+            }).ToListAsync(ct);
+
+        return rows
+            .GroupBy(row => row.GrLineId)
+            .ToDictionary(
+                group => group.Key,
+                group => (
+                    ProjectCodes: JoinDistinctProjectCodes(group.Select(x => x.ProjectCodeSnapshot)),
+                    OrderNumbers: JoinDistinctProjectCodes(group.Select(x => x.ExternalDocumentNo))));
     }
 
     private static string? JoinDistinctProjectCodes(IEnumerable<string?> values)
