@@ -225,6 +225,11 @@ public sealed class ProductionTransfersController(
     [HttpGet("policy")]
     public async Task<IActionResult>Policy([FromQuery]string branchCode,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.SETTINGS.VIEW",ct);return Ok(ApiResponse<ProductionTransferPolicyDto>.Ok(await service.GetPolicyAsync(branchCode,ct)));}
+    [HttpGet("effective-policy")]
+    public async Task<IActionResult>EffectivePolicy([FromQuery]string branchCode,CancellationToken ct){
+        if(!await ProductionTransferAccessPolicy.CanReadEffectivePolicyAsync(permissions,User,ct))
+            throw AppException.Forbidden();
+        return Ok(ApiResponse<ProductionTransferPolicyDto>.Ok(await service.GetPolicyAsync(branchCode,ct)));}
     [HttpPut("policy")]
     public async Task<IActionResult>UpdatePolicy(UpdateProductionTransferPolicyRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.SETTINGS.MANAGE",ct);
