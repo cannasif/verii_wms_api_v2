@@ -78,6 +78,30 @@ public sealed class QualityQuantityDecisionTests
     }
 
     [Fact]
+    public void Decision_result_keeps_quality_success_when_erp_follow_up_fails()
+    {
+        var receipt = new GoodsReceiptHeader
+        {
+            Id = 17,
+            DocumentNo = "GR1202600000017",
+            Status = WarehouseOperationStatus.Completed,
+            QualityStatus = OperationQualityStatus.Passed,
+            ApprovalStatus = OperationApprovalStatus.Approved,
+            ErpIntegrationStatus = ErpIntegrationStatus.Failed,
+            ErpPostingPolicy = GoodsReceiptErpPostingPolicy.AfterQualityApproval
+        };
+
+        var result = QualityService.BuildDecisionResult(
+            receipt,
+            null,
+            "Netsis REST oturumu açılamadı.");
+
+        Assert.False(result.ErpDocumentCreatedNow);
+        Assert.Contains("Kalite kararı uygulandı", result.Message);
+        Assert.Contains("Netsis", result.Message);
+    }
+
+    [Fact]
     public void Ten_units_can_be_split_into_five_accepted_and_five_quarantined()
     {
         var line = PendingLine(10);

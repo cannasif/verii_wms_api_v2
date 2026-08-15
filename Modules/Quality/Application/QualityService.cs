@@ -1298,11 +1298,22 @@ public sealed class QualityService(
                 }), ct);
             throw;
         }
-        var posting = await erpPosting.PostIfEligibleAsync(goodsReceiptId, actor, ct);
+        ErpPostingResult? posting = null;
+        string? erpFailureMessage = null;
+        try
+        {
+            posting = await erpPosting.PostIfEligibleAsync(goodsReceiptId, actor, ct);
+        }
+        catch (Exception exception) when (exception is not OperationCanceledException)
+        {
+            // The quality decision already committed. A Netsis/token failure must not
+            // make the decide HTTP call look like the inspection is still open.
+            erpFailureMessage = Clean(exception.Message, 1000);
+        }
         var receipt = await uow.Repository<GoodsReceiptHeader>().Query()
             .AsNoTracking()
             .SingleAsync(x => x.Id == goodsReceiptId, ct);
-        return BuildDecisionResult(receipt, posting);
+        return BuildDecisionResult(receipt, posting, erpFailureMessage);
     }
 
     public async Task<ResolvedQualityPolicy> ResolveAsync(string branchCode,long stockId,string? stockGroupCode,CancellationToken ct=default)
@@ -2270,10 +2281,13 @@ public sealed class QualityService(
 
     internal static QualityDecisionResult BuildDecisionResult(
         GoodsReceiptHeader receipt,
-        ErpPostingResult? posting)
+        ErpPostingResult? posting,
+        string? erpFailureMessage = null)
     {
         var createdNow = posting?.Status == Modules.ErpIntegration.Domain.ErpPostingStatus.Succeeded;
-        var message = createdNow
+        var message = !string.IsNullOrWhiteSpace(erpFailureMessage)
+            ? $"Kalite kararı uygulandı ancak Netsis irsaliyesi oluşturulamadı: {erpFailureMessage}"
+            : createdNow
             ? "Kalite kararı uygulandı ve Netsis alış irsaliyesi oluşturuldu."
             : receipt.ErpIntegrationStatus == ErpIntegrationStatus.Succeeded
                 ? "Kalite kararı uygulandı. Bu mal kabulün Netsis alış irsaliyesi daha önce oluşturulmuş."

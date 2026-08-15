@@ -80,8 +80,14 @@ public sealed class NetsisTokenService(
             }
 
             logger.LogError("Netsis token alınamadı. DenemeSayısı={AttemptCount}", failures.Count);
+            var uniqueFailure = failures
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault();
             throw AppException.BadRequest(
-                $"Netsis REST oturumu açılamadı. Bağlantı, şirket ve kullanıcı bilgilerini kontrol edin. {string.Join(" | ", failures.Take(4))}");
+                string.IsNullOrWhiteSpace(uniqueFailure)
+                    ? "Netsis REST oturumu açılamadı. Bağlantı, şirket ve kullanıcı bilgilerini kontrol edin."
+                    : $"Netsis REST oturumu açılamadı. Bağlantı, şirket ve kullanıcı bilgilerini kontrol edin. {uniqueFailure}");
         }
         finally
         {
