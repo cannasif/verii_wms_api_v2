@@ -909,14 +909,17 @@ public sealed partial class ProductionService
                 unassigned.Select(x => x.WorkOrderNumber.Trim()),
                 StringComparer.OrdinalIgnoreCase);
             combined = unassigned.Concat(
-                cancellationRemainders.Where(x => !unassignedWorkOrders.Contains(x.WorkOrderNumber.Trim())));
+                cancellationRemainders.Where(x =>
+                    x.ListingKind == ProductionSourceWorkOrderListingKind.UnassignedCreatedTransfer
+                    || !unassignedWorkOrders.Contains(x.WorkOrderNumber.Trim())));
         }
 
         var filtered = new List<ProductionSourceWorkOrderRow>();
         foreach (var row in combined)
         {
             if (row.ListingKind is ProductionSourceWorkOrderListingKind.CancellationReturnRemainder
-                    or ProductionSourceWorkOrderListingKind.PartialTransferRemainder)
+                    or ProductionSourceWorkOrderListingKind.PartialTransferRemainder
+                    or ProductionSourceWorkOrderListingKind.UnassignedCreatedTransfer)
             {
                 filtered.Add(row);
                 continue;

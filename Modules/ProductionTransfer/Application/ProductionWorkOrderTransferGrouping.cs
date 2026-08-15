@@ -267,12 +267,25 @@ public static class ProductionWorkOrderTransferGrouping
             and not WarehouseTransferTaskStatus.Cancelled
         && (task.Description?.Contains(UnlinkedPendingReassignmentDescriptionMarker, StringComparison.OrdinalIgnoreCase) ?? false);
 
+    public static bool IsUnassignedCreatedPickTask(
+        WarehouseTransferTask task,
+        ProductionTransferHeaderLink link,
+        IReadOnlyList<WarehouseTransferTask> allTasks) =>
+        task.TaskType == WarehouseTransferTaskType.Pick
+        && !task.Assignments.Any(assignment => !assignment.IsDeleted)
+        && task.Status is not WarehouseTransferTaskStatus.Completed
+            and not WarehouseTransferTaskStatus.Cancelled
+        && !IsPostCancellationReturnUnassignedPickTask(task, allTasks)
+        && !IsUnlinkedReleasedDraftPickTask(task, link)
+        && !IsPostShortageHandoverUnassignedPickTask(task, link);
+
     public static bool IsAtanmayanlarUnassignedPickTask(
         WarehouseTransferTask task,
         ProductionTransferHeaderLink link,
         IReadOnlyList<WarehouseTransferTask> allTasks) =>
         IsPostCancellationReturnUnassignedPickTask(task, allTasks)
-        || IsUnlinkedReleasedDraftPickTask(task, link);
+        || IsUnlinkedReleasedDraftPickTask(task, link)
+        || IsUnassignedCreatedPickTask(task, link, allTasks);
 
     public static bool IsCancellationReturnKalanPickTask(
         WarehouseTransferTask task,

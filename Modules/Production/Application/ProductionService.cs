@@ -137,6 +137,7 @@ public sealed partial class ProductionService(
             {
                 if (row.ListingKind is ProductionSourceWorkOrderListingKind.CancellationReturnRemainder
                         or ProductionSourceWorkOrderListingKind.PartialTransferRemainder
+                        or ProductionSourceWorkOrderListingKind.UnassignedCreatedTransfer
                     && row.TransferId is long transferId
                     && row.KalanTaskId is long kalanTaskId)
                 {
@@ -253,12 +254,10 @@ public sealed partial class ProductionService(
                 var dedupeKey = $"{workOrderNumber}:{header.Id}:{task.Id}";
                 if (!seenKeys.Add(dedupeKey)) continue;
 
-                if (IsCancellationReturnRemainderFullyAssigned(link, task, assignmentLinks, candidateWorkOrderSet))
+                var listingKind = ResolveAtanmayanlarListingKind(task, link, tasks);
+                if (listingKind != ProductionSourceWorkOrderListingKind.UnassignedCreatedTransfer
+                    && IsCancellationReturnRemainderFullyAssigned(link, task, assignmentLinks, candidateWorkOrderSet))
                     continue;
-
-                var listingKind = ProductionWorkOrderTransferGrouping.IsPostShortageHandoverUnassignedPickTask(task, link)
-                    ? ProductionSourceWorkOrderListingKind.PartialTransferRemainder
-                    : ProductionSourceWorkOrderListingKind.CancellationReturnRemainder;
 
                 var sourceWarehouseCode = warehouses.GetValueOrDefault(header.SourceWarehouseId);
                 var targetWarehouseCode = warehouses.GetValueOrDefault(header.TargetWarehouseId);
@@ -341,6 +340,18 @@ public sealed partial class ProductionService(
             .OrderByDescending(x => x.WorkOrderDate)
             .ThenBy(x => x.WorkOrderNumber, StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    private static ProductionSourceWorkOrderListingKind ResolveAtanmayanlarListingKind(
+        WarehouseTransferTask task,
+        ProductionTransferHeaderLink link,
+        IReadOnlyList<WarehouseTransferTask> allTasks)
+    {
+        if (ProductionWorkOrderTransferGrouping.IsPostShortageHandoverUnassignedPickTask(task, link))
+            return ProductionSourceWorkOrderListingKind.PartialTransferRemainder;
+        if (ProductionWorkOrderTransferGrouping.IsUnassignedCreatedPickTask(task, link, allTasks))
+            return ProductionSourceWorkOrderListingKind.UnassignedCreatedTransfer;
+        return ProductionSourceWorkOrderListingKind.CancellationReturnRemainder;
     }
 
     private static string? ResolveLinkedWorkOrderNumber(
@@ -848,6 +859,8 @@ public sealed partial class ProductionService(
                 && x.WarehouseTransferHeaderId == transferId
                 && contexts.Contains(x.WarehouseTransferHeader.BusinessContext))
             .Include(x => x.WarehouseTransferHeader)
+                .ThenInclude(header => header.Tasks.Where(task => !task.IsDeleted))
+                    .ThenInclude(task => task.Assignments)
             .SingleOrDefaultAsync(ct)
             ?? throw AppException.NotFound("İptal kalanı transferi bulunamadı.");
 
@@ -897,11 +910,17 @@ public sealed partial class ProductionService(
         if (split.Remaining.Count == 0 && split.Assigned.Count == 0)
             throw AppException.Conflict("İptal kalanı için atanabilir malzeme satırı bulunamadı.");
 
+        var tasks = scopedLink.WarehouseTransferHeader.Tasks.Where(x => !x.IsDeleted).ToArray();
+        var kalanTask = tasks.SingleOrDefault(x => x.Id == kalanTaskId);
+        var listingKind = kalanTask is null
+            ? ProductionSourceWorkOrderListingKind.CancellationReturnRemainder
+            : ResolveAtanmayanlarListingKind(kalanTask, scopedLink, tasks);
+
         return basePrepared with
         {
             Materials = split.Remaining,
             AssignedMaterials = split.Assigned,
-            ListingKind = ProductionSourceWorkOrderListingKind.CancellationReturnRemainder,
+            ListingKind = listingKind,
             TransferId = transferId,
             KalanTaskId = kalanTaskId,
         };
@@ -956,6 +975,12 @@ public sealed partial class ProductionService(
         if (split.Remaining.Count == 0 && split.Assigned.Count == 0)
             throw AppException.Conflict("İptal kalanı için atanabilir malzeme satırı bulunamadı.");
 
+        var tasks = scopedLink.WarehouseTransferHeader.Tasks.Where(x => !x.IsDeleted).ToArray();
+        var kalanTask = tasks.SingleOrDefault(x => x.Id == kalanTaskId);
+        var listingKind = kalanTask is null
+            ? ProductionSourceWorkOrderListingKind.CancellationReturnRemainder
+            : ResolveAtanmayanlarListingKind(kalanTask, scopedLink, tasks);
+
         return new PreparedNetsisProductionWorkOrder(
             ProductionOrderSourceType.NetsisErpFunctions,
             "MANUAL",
@@ -984,7 +1009,7 @@ public sealed partial class ProductionService(
             [],
             split.Remaining,
             split.Assigned,
-            ProductionSourceWorkOrderListingKind.CancellationReturnRemainder,
+            listingKind,
             transferId,
             kalanTaskId);
     }

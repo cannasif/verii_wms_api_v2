@@ -75,6 +75,9 @@ public sealed class ProductionTransferTaskService(
                 tab,
                 actor)
             .Include(x => x.WarehouseTransferHeader).ThenInclude(h => h.Lines)
+            .Include(x => x.WarehouseTransferHeader).ThenInclude(h => h.Tasks.Where(task => !task.IsDeleted))
+                .ThenInclude(task => task.Assignments)
+            .AsSplitQuery()
             .OrderByDescending(x => x.WarehouseTransferHeader.CreatedDate)
             .Take(1000)
             .ToListAsync(ct);
