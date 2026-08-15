@@ -101,8 +101,10 @@ public sealed class QualityInspectionConfiguration : BaseEntityConfiguration<Qua
         b.ToTable("RII_QUALITY_INSPECTIONS"); b.Property(x => x.InspectionNo).HasMaxLength(60).IsRequired(); b.Property(x => x.SourceDocumentType).HasMaxLength(50).IsRequired();
         b.Property(x => x.SourceDocumentNo).HasMaxLength(100).IsRequired(); b.Property(x => x.Status).HasConversion<string>().HasMaxLength(30); b.Property(x => x.Note).HasMaxLength(1000);
         b.Property(x => x.IsPriority).HasDefaultValue(false);
+        b.Property(x => x.PriorityAssignedAtUtc);
         b.Property(x => x.RowVersion).IsRowVersion(); b.HasIndex(x => x.CorrelationId).IsUnique(); b.HasIndex(x => new { x.BranchCode, x.Status, x.CreatedAtUtc });
         b.HasIndex(x => new { x.BranchCode, x.IsPriority, x.Status, x.QueuedAtUtc });
+        b.HasIndex(x => new { x.BranchCode, x.IsPriority, x.PriorityAssignedAtUtc });
         b.HasIndex(x => new { x.BranchCode, x.QueuedAtUtc, x.Status });
         b.HasMany(x => x.Lines).WithOne(x => x.Inspection).HasForeignKey(x => x.QualityInspectionId).OnDelete(DeleteBehavior.Restrict);
         b.HasMany(x => x.Dispositions).WithOne(x => x.QualityInspection).HasForeignKey(x => x.QualityInspectionId).OnDelete(DeleteBehavior.Restrict);

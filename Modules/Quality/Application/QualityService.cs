@@ -331,7 +331,7 @@ public sealed class QualityService(
             WarehouseName=x.Warehouse==null?null:x.Warehouse.WarehouseName,SupplierId=x.Inspection.SupplierId,
             SourceWaybillNo=x.Receipt==null?null:(x.Receipt.ElectronicWaybillNo??x.Receipt.WaybillNo),
             CreatedByName=x.User==null?null:(x.Detail==null?x.User.Username:(x.Detail.FirstName+" "+x.Detail.LastName)),
-            IsPriority=x.Inspection.IsPriority,
+            IsPriority=x.Inspection.IsPriority,PriorityAssignedAtUtc=x.Inspection.PriorityAssignedAtUtc,
             Status=x.Inspection.Status.ToString(),LineCount=x.Inspection.Lines.Count,TotalQuantity=x.Inspection.Lines.Sum(line=>line.Quantity),
             RequiredInspectionQuantity=x.Inspection.Lines.Sum(line=>line.SampleQuantity),InspectedQuantity=x.Inspection.Lines.Sum(line=>line.InspectedQuantity),
             CreatedAtUtc=x.Inspection.CreatedAtUtc,QueuedAtUtc=x.Inspection.QueuedAtUtc,DecidedAtUtc=x.Inspection.DecidedAtUtc,InspectorUserId=x.Inspection.InspectorUserId,
@@ -361,15 +361,10 @@ public sealed class QualityService(
                     && source.ProjectCodeSnapshot.Contains(search)
                 select source).Any()));
         var filtered = q.ApplyAdvancedFilters(request);
-        var page = string.IsNullOrWhiteSpace(request.SortBy)
-            ? await filtered.OrderByDescending(x => x.IsPriority)
-                .ThenBy(x => x.QueuedAtUtc)
-                .ThenBy(x => x.Id)
-                .ToPagedResponseAsync(request, ct)
-            : await filtered.ApplySort(request,nameof(QualityInspectionGridRow.QueuedAtUtc)).ToPagedResponseAsync(request,ct);
+        var page = await ApplyInspectionListSort(filtered, request).ToPagedResponseAsync(request, ct);
         return new PagedResponse<QualityInspectionGridRow>
         {
-            Items = await AttachProjectCodesAsync(page.Items, ct),
+            Items = await AttachPriorityRanksAsync(await AttachProjectCodesAsync(page.Items, ct), ct),
             TotalCount = page.TotalCount,
             PageNumber = page.PageNumber,
             PageSize = page.PageSize,
@@ -1253,6 +1248,7 @@ public sealed class QualityService(
             if (decisionState.IsTerminal)
             {
                 inspection.IsPriority = false;
+                inspection.PriorityAssignedAtUtc = null;
                 CloseWorkSession(
                     activeWorkSession,
                     now,
@@ -2269,11 +2265,30 @@ public sealed class QualityService(
         QualityInspectionStatus.PartiallyDecided or
         QualityInspectionStatus.Quarantined;
 
-    internal static bool TogglePriority(QualityInspection inspection, long actor)
+    internal static IQueryable<QualityInspectionGridRow> ApplyInspectionListSort(
+        IQueryable<QualityInspectionGridRow> query,
+        PagedRequest request) =>
+        query.OrderByDescending(row => row.IsPriority)
+            .ThenBy(row => row.PriorityAssignedAtUtc)
+            .ApplyThenSort(request, nameof(QualityInspectionGridRow.QueuedAtUtc));
+
+    internal static IReadOnlyDictionary<long, int> BuildPriorityRanks(
+        IEnumerable<(long Id, string BranchCode, DateTimeOffset? PriorityAssignedAtUtc, DateTimeOffset? QueuedAtUtc)> rows) =>
+        rows.GroupBy(row => row.BranchCode, StringComparer.Ordinal)
+            .SelectMany(group => group
+                .OrderBy(row => row.PriorityAssignedAtUtc ?? DateTimeOffset.MinValue)
+                .ThenBy(row => row.QueuedAtUtc ?? DateTimeOffset.MinValue)
+                .ThenBy(row => row.Id)
+                .Select((row, index) => (row.Id, Rank: index + 1)))
+            .ToDictionary(row => row.Id, row => row.Rank);
+
+    internal static bool TogglePriority(QualityInspection inspection, long actor, DateTimeOffset? now = null)
     {
+        var assignedAt = now ?? DateTimeOffset.UtcNow;
         inspection.IsPriority = !inspection.IsPriority;
+        inspection.PriorityAssignedAtUtc = inspection.IsPriority ? assignedAt : null;
         inspection.UpdatedBy = actor;
-        inspection.UpdatedDate = DateTime.UtcNow;
+        inspection.UpdatedDate = assignedAt.UtcDateTime;
         return inspection.IsPriority;
     }
     internal static void SynchronizeGoodsReceiptStatus(GoodsReceiptHeader receipt, long actor) =>
@@ -2538,6 +2553,35 @@ public sealed class QualityService(
         catch { throw AppException.Conflict("Kalite karar kodu güncellik bilgisi geçersiz. Sayfayı yenileyin."); }
     }
     private static void ApplyVersion(QualityInspection entity,string? supplied){if(string.IsNullOrWhiteSpace(supplied))return;try{entity.RowVersion=Convert.FromBase64String(supplied);}catch{throw AppException.Conflict("Kalite kaydı güncellik bilgisi geçersiz. Sayfayı yenileyin.");}}
+
+    private async Task<IReadOnlyList<QualityInspectionGridRow>> AttachPriorityRanksAsync(
+        IReadOnlyList<QualityInspectionGridRow> rows, CancellationToken ct)
+    {
+        var prioritized = rows.Where(row => row.IsPriority).ToList();
+        if (prioritized.Count == 0) return rows;
+
+        var branchCodes = prioritized.Select(row => row.BranchCode).Distinct(StringComparer.Ordinal).ToArray();
+        var keys = await Inspections.Query()
+            .Where(inspection => inspection.IsPriority && branchCodes.Contains(inspection.BranchCode))
+            .Select(inspection => new
+            {
+                inspection.Id,
+                inspection.BranchCode,
+                inspection.PriorityAssignedAtUtc,
+                inspection.QueuedAtUtc,
+            })
+            .ToListAsync(ct);
+
+        var ranks = BuildPriorityRanks(keys.Select(key =>
+            (key.Id, key.BranchCode, key.PriorityAssignedAtUtc, key.QueuedAtUtc)));
+        foreach (var row in rows)
+        {
+            if (row.IsPriority && ranks.TryGetValue(row.Id, out var rank))
+                row.PriorityRank = rank;
+        }
+
+        return rows;
+    }
 
     private async Task<IReadOnlyList<QualityInspectionGridRow>> AttachProjectCodesAsync(
         IReadOnlyList<QualityInspectionGridRow> rows, CancellationToken ct)

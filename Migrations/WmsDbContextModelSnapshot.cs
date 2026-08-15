@@ -17937,6 +17937,9 @@ namespace verii_wms_api_v2.Migrations
                         .HasColumnType("bit")
                         .HasDefaultValue(false);
 
+                    b.Property<DateTimeOffset?>("PriorityAssignedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
                     b.Property<string>("Note")
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)");
@@ -17998,6 +18001,8 @@ namespace verii_wms_api_v2.Migrations
                     b.HasIndex("BranchCode", "Status", "CreatedAtUtc");
 
                     b.HasIndex("BranchCode", "IsPriority", "Status", "QueuedAtUtc");
+
+                    b.HasIndex("BranchCode", "IsPriority", "PriorityAssignedAtUtc");
 
                     b.ToTable("RII_QUALITY_INSPECTIONS", (string)null);
                 });

@@ -291,7 +291,13 @@ public static class AdvancedQueryExtensions
             query.Where(Expression.Lambda<Func<T, bool>>(combined!, parameter)));
     }
 
-    public static IQueryable<T> ApplySort<T>(this IQueryable<T> query, PagedRequest request, string fallbackProperty, IReadOnlyDictionary<string, string>? columnMapping = null)
+    public static IQueryable<T> ApplySort<T>(this IQueryable<T> query, PagedRequest request, string fallbackProperty, IReadOnlyDictionary<string, string>? columnMapping = null) =>
+        ApplySortCore(query, request, fallbackProperty, columnMapping, thenBy: false);
+
+    public static IQueryable<T> ApplyThenSort<T>(this IOrderedQueryable<T> query, PagedRequest request, string fallbackProperty, IReadOnlyDictionary<string, string>? columnMapping = null) =>
+        ApplySortCore(query, request, fallbackProperty, columnMapping, thenBy: true);
+
+    private static IQueryable<T> ApplySortCore<T>(IQueryable<T> query, PagedRequest request, string fallbackProperty, IReadOnlyDictionary<string, string>? columnMapping, bool thenBy)
     {
         ArgumentNullException.ThrowIfNull(query);
         ArgumentNullException.ThrowIfNull(request);
@@ -318,7 +324,9 @@ public static class AdvancedQueryExtensions
         }
 
         var lambda = Expression.Lambda(resolved.Value.member, parameter);
-        var method = descending ? nameof(Queryable.OrderByDescending) : nameof(Queryable.OrderBy);
+        var method = thenBy
+            ? (descending ? nameof(Queryable.ThenByDescending) : nameof(Queryable.ThenBy))
+            : (descending ? nameof(Queryable.OrderByDescending) : nameof(Queryable.OrderBy));
         var call = Expression.Call(typeof(Queryable), method, [typeof(T), resolved.Value.member.Type], query.Expression, Expression.Quote(lambda));
         var sorted = query.Provider.CreateQuery<T>(call);
 

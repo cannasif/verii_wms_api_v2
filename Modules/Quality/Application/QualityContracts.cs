@@ -148,6 +148,8 @@ public sealed class QualityInspectionGridRow
     public long WarehouseId { get; init; } public int? WarehouseCode { get; init; } public string? WarehouseName { get; init; } public long? SupplierId { get; init; }
     public string? SourceWaybillNo { get; init; } public string? ProjectCodes { get; set; } public string? CreatedByName { get; init; }
     public bool IsPriority { get; init; }
+    public DateTimeOffset? PriorityAssignedAtUtc { get; init; }
+    public int? PriorityRank { get; set; }
     public string Status { get; init; } = string.Empty; public int LineCount { get; init; } public decimal TotalQuantity { get; init; }
     public decimal RequiredInspectionQuantity { get; init; } public decimal InspectedQuantity { get; init; }
     public DateTimeOffset CreatedAtUtc { get; init; } public DateTimeOffset? QueuedAtUtc { get; init; } public DateTimeOffset? DecidedAtUtc { get; init; } public long? InspectorUserId { get; init; }
