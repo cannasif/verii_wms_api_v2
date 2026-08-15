@@ -11,6 +11,7 @@ public static class QualityModule
         .AddScoped<IQualityPolicyResolver>(x=>x.GetRequiredService<QualityService>())
         .AddScoped<IQualityWarehouseRoutingResolver>(x=>x.GetRequiredService<QualityService>())
         .AddScoped<IQualityRuleImportService,QualityRuleImportService>()
+        .AddScoped<IQualityReportService,QualityReportService>()
         .AddScoped<IQualityInspectionImageService,QualityInspectionImageService>()
         .AddScoped<IGoodsReceiptErpSuccessJob,QualityDispositionDatJob>();
 }
