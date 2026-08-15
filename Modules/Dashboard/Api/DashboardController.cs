@@ -22,6 +22,22 @@ public sealed class DashboardController(IDashboardService service) : ControllerB
         return Ok(ApiResponse<DashboardSummary>.Ok(result));
     }
 
+    [HttpGet("quick-search")]
+    public async Task<IActionResult> QuickSearch(
+        [FromQuery] string? q,
+        [FromQuery] string? scopes,
+        [FromHeader(Name = "X-Branch-Code")] string? branchCode,
+        CancellationToken cancellationToken)
+    {
+        var result = await service.GetQuickSearchAsync(
+            CurrentUserId(),
+            branchCode,
+            q,
+            scopes,
+            cancellationToken);
+        return Ok(ApiResponse<DashboardQuickSearchResult>.Ok(result));
+    }
+
     private long CurrentUserId() =>
         long.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id)
             ? id

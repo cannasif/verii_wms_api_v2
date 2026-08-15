@@ -42,10 +42,29 @@ public sealed record DashboardSummary(
     DashboardSystemHealth SystemHealth,
     IReadOnlyList<DashboardActivity> RecentActivities);
 
+public sealed record DashboardQuickSearchHit(
+    string Kind,
+    string Id,
+    string Title,
+    string Subtitle,
+    string Href);
+
+public sealed record DashboardQuickSearchResult(IReadOnlyList<DashboardQuickSearchHit> Items)
+{
+    public static readonly DashboardQuickSearchResult Empty = new([]);
+}
+
 public interface IDashboardService
 {
     Task<DashboardSummary> GetSummaryAsync(
         long currentUserId,
         string? branchCode,
+        CancellationToken cancellationToken = default);
+
+    Task<DashboardQuickSearchResult> GetQuickSearchAsync(
+        long currentUserId,
+        string? branchCode,
+        string? query,
+        string? scopes = null,
         CancellationToken cancellationToken = default);
 }

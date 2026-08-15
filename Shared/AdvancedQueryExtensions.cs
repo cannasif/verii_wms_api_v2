@@ -11,6 +11,9 @@ public static class AdvancedQueryExtensions
 {
     public const string TurkishCaseInsensitiveSearchCollation = "Turkish_100_CI_AI";
 
+    public static IReadOnlyList<string> TurkishSearchVariants(string term) =>
+        BuildStringSearchVariants(term ?? string.Empty, TurkishCaseInsensitiveSearchCollation).ToArray();
+
     private const int MaximumFilterCount = 20;
     private const int MaximumSearchFieldCount = 12;
     private const int MaximumSearchTermCount = 10;

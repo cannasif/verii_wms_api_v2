@@ -11,7 +11,7 @@ using verii_wms_api_v2.Shared.Application.Exceptions;
 
 namespace verii_wms_api_v2.Modules.Dashboard.Application;
 
-public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
+public sealed partial class DashboardService(WmsDbContext dbContext) : IDashboardService
 {
     private const int RecentActivityLimit = 8;
     private const int TrendDayCount = 7;
@@ -26,6 +26,7 @@ public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
 
         var branch = NormalizeBranchCode(branchCode);
         var generatedAtUtc = DateTime.UtcNow;
+        var warehouseScope = await ResolveWarehouseScopeAsync(currentUserId, cancellationToken);
         var timeZone = await ResolveTimeZoneAsync(branch, cancellationToken);
         var businessToday = DateOnly.FromDateTime(
             TimeZoneInfo.ConvertTimeFromUtc(generatedAtUtc, timeZone));
@@ -36,6 +37,7 @@ public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
         var stockItemCount = await dbContext.WarehouseStockBalances
             .AsNoTracking()
             .Where(x => x.BranchCode == branch)
+            .Where(x => !warehouseScope.Restricted || warehouseScope.WarehouseIds.Contains(x.WarehouseId))
             .Select(x => x.StockId)
             .Distinct()
             .CountAsync(cancellationToken);
@@ -43,6 +45,7 @@ public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
         var goodsReceiptAggregate = await dbContext.GoodsReceiptHeaders
             .AsNoTracking()
             .Where(x => x.BranchCode == branch)
+            .Where(x => !warehouseScope.Restricted || warehouseScope.WarehouseIds.Contains(x.TargetWarehouseId))
             .GroupBy(_ => 1)
             .Select(group => new DocumentAggregate(
                 group.Count(),
@@ -58,6 +61,7 @@ public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
         var shipmentAggregate = await dbContext.ShipmentHeaders
             .AsNoTracking()
             .Where(x => x.BranchCode == branch)
+            .Where(x => !warehouseScope.Restricted || warehouseScope.WarehouseIds.Contains(x.SourceWarehouseId))
             .GroupBy(_ => 1)
             .Select(group => new DocumentAggregate(
                 group.Count(),
@@ -73,6 +77,9 @@ public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
         var transferAggregate = await dbContext.WarehouseTransferHeaders
             .AsNoTracking()
             .Where(x => x.BranchCode == branch)
+            .Where(x => !warehouseScope.Restricted
+                || warehouseScope.WarehouseIds.Contains(x.SourceWarehouseId)
+                || warehouseScope.WarehouseIds.Contains(x.TargetWarehouseId))
             .GroupBy(_ => 1)
             .Select(group => new TransferAggregate(
                 group.Count(x => x.BusinessContext == WarehouseTransferBusinessContext.InterWarehouse
@@ -91,6 +98,7 @@ public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
             .AsNoTracking()
             .CountAsync(
                 x => x.BranchCode == branch
+                    && (!warehouseScope.Restricted || warehouseScope.WarehouseIds.Contains(x.WarehouseId))
                     && (x.Status == QualityInspectionStatus.Pending
                         || x.Status == QualityInspectionStatus.InProgress
                         || x.Status == QualityInspectionStatus.PartiallyDecided),
@@ -100,6 +108,7 @@ public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
             .AsNoTracking()
             .CountAsync(
                 task => task.BranchCode == branch
+                    && (!warehouseScope.Restricted || warehouseScope.WarehouseIds.Contains(task.WarehouseId))
                     && task.Status != GoodsReceiptTaskStatus.Completed
                     && task.Status != GoodsReceiptTaskStatus.Cancelled
                     && task.Assignments.Any(
@@ -112,6 +121,7 @@ public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
             .AsNoTracking()
             .CountAsync(
                 task => task.BranchCode == branch
+                    && (!warehouseScope.Restricted || warehouseScope.WarehouseIds.Contains(task.WarehouseId))
                     && task.Status != ShipmentTaskStatus.Completed
                     && task.Status != ShipmentTaskStatus.Cancelled
                     && task.Assignments.Any(assignment => assignment.UserId == currentUserId),
@@ -121,6 +131,7 @@ public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
             dbContext.GoodsReceiptHeaders
                 .AsNoTracking()
                 .Where(x => x.BranchCode == branch)
+                .Where(x => !warehouseScope.Restricted || warehouseScope.WarehouseIds.Contains(x.TargetWarehouseId))
                 .Select(x => x.CreatedDate),
             trendStartUtc,
             trendEndUtc,
@@ -129,6 +140,7 @@ public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
             dbContext.ShipmentHeaders
                 .AsNoTracking()
                 .Where(x => x.BranchCode == branch)
+                .Where(x => !warehouseScope.Restricted || warehouseScope.WarehouseIds.Contains(x.SourceWarehouseId))
                 .Select(x => x.CreatedDate),
             trendStartUtc,
             trendEndUtc,
@@ -137,6 +149,9 @@ public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
             dbContext.WarehouseTransferHeaders
                 .AsNoTracking()
                 .Where(x => x.BranchCode == branch)
+                .Where(x => !warehouseScope.Restricted
+                    || warehouseScope.WarehouseIds.Contains(x.SourceWarehouseId)
+                    || warehouseScope.WarehouseIds.Contains(x.TargetWarehouseId))
                 .Select(x => x.CreatedDate),
             trendStartUtc,
             trendEndUtc,
@@ -154,7 +169,7 @@ public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
                 transferTrend.GetValueOrDefault(date)))
             .ToList();
 
-        var inventoryHealth = await BuildInventoryHealthAsync(branch, cancellationToken);
+        var inventoryHealth = await BuildInventoryHealthAsync(branch, warehouseScope, cancellationToken);
         var lastBalanceProjectionAtUtc = await dbContext.StockBalanceProjectionStates
             .AsNoTracking()
             .Where(x => x.ProjectionName == StockBalanceProjectionNames.Current)
@@ -164,6 +179,7 @@ public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
         var recentGoodsReceipts = await dbContext.GoodsReceiptHeaders
             .AsNoTracking()
             .Where(x => x.BranchCode == branch && (x.UpdatedDate != null || x.CreatedDate != null))
+            .Where(x => !warehouseScope.Restricted || warehouseScope.WarehouseIds.Contains(x.TargetWarehouseId))
             .OrderByDescending(x => x.UpdatedDate ?? x.CreatedDate)
             .Take(RecentActivityLimit)
             .Select(x => new
@@ -181,6 +197,7 @@ public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
         var recentShipments = await dbContext.ShipmentHeaders
             .AsNoTracking()
             .Where(x => x.BranchCode == branch && (x.UpdatedDate != null || x.CreatedDate != null))
+            .Where(x => !warehouseScope.Restricted || warehouseScope.WarehouseIds.Contains(x.SourceWarehouseId))
             .OrderByDescending(x => x.UpdatedDate ?? x.CreatedDate)
             .Take(RecentActivityLimit)
             .Select(x => new
@@ -198,6 +215,9 @@ public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
         var recentTransfers = await dbContext.WarehouseTransferHeaders
             .AsNoTracking()
             .Where(x => x.BranchCode == branch && (x.UpdatedDate != null || x.CreatedDate != null))
+            .Where(x => !warehouseScope.Restricted
+                || warehouseScope.WarehouseIds.Contains(x.SourceWarehouseId)
+                || warehouseScope.WarehouseIds.Contains(x.TargetWarehouseId))
             .OrderByDescending(x => x.UpdatedDate ?? x.CreatedDate)
             .Take(RecentActivityLimit)
             .Select(x => new
@@ -278,6 +298,31 @@ public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
             recentActivities);
     }
 
+    private async Task<WarehouseScope> ResolveWarehouseScopeAsync(
+        long userId,
+        CancellationToken cancellationToken)
+    {
+        var role = await dbContext.Users
+            .AsNoTracking()
+            .Where(x => x.Id == userId && x.IsActive)
+            .Select(x => x.Role)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (!string.IsNullOrWhiteSpace(role)
+            && (role.Equals("Admin", StringComparison.OrdinalIgnoreCase)
+                || role.Equals("superadmin", StringComparison.OrdinalIgnoreCase)))
+            return WarehouseScope.Unrestricted;
+
+        var warehouseIds = await dbContext.UserWarehouseAssignments
+            .AsNoTracking()
+            .Where(x => x.UserId == userId)
+            .Select(x => x.WarehouseId)
+            .Distinct()
+            .ToArrayAsync(cancellationToken);
+        return warehouseIds.Length == 0
+            ? WarehouseScope.Unrestricted
+            : new WarehouseScope(true, warehouseIds);
+    }
+
     private async Task<TimeZoneInfo> ResolveTimeZoneAsync(
         string branch,
         CancellationToken cancellationToken)
@@ -316,11 +361,13 @@ public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
 
     private async Task<DashboardInventoryHealth> BuildInventoryHealthAsync(
         string branch,
+        WarehouseScope warehouseScope,
         CancellationToken cancellationToken)
     {
         var aggregate = await dbContext.WarehouseStockBalances
             .AsNoTracking()
             .Where(x => x.BranchCode == branch && x.Quantity > 0)
+            .Where(x => !warehouseScope.Restricted || warehouseScope.WarehouseIds.Contains(x.WarehouseId))
             .GroupBy(_ => 1)
             .Select(group => new DashboardInventoryHealth(
                 group.Count(x => x.StockStatus == "Available" && x.AvailableQuantity > 0),
@@ -436,5 +483,10 @@ public sealed class DashboardService(WmsDbContext dbContext) : IDashboardService
         int ErpIssueCount)
     {
         public static readonly TransferAggregate Empty = new(0, 0, 0);
+    }
+
+    private sealed record WarehouseScope(bool Restricted, long[] WarehouseIds)
+    {
+        public static readonly WarehouseScope Unrestricted = new(false, []);
     }
 }
