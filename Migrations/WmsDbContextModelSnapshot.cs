@@ -9754,6 +9754,20 @@ namespace verii_wms_api_v2.Migrations
                         .HasColumnType("nvarchar(40)")
                         .HasDefaultValue("rack-scanner");
 
+                    b.Property<string>("NavbarCenterMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)")
+                        .HasDefaultValue("search");
+
+                    b.Property<string>("NavbarKpiKeys")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)")
+                        .HasDefaultValue("myTasks,qualityQueue,pendingApproval,erpIssues");
+
                     b.Property<DateTime?>("CreatedDate")
                         .HasColumnType("datetime2");
 
@@ -9802,7 +9816,9 @@ namespace verii_wms_api_v2.Migrations
                             BackgroundMotionEnabled = false,
                             BackgroundMotionVariant = "rack-scanner",
                             FirstName = "System",
-                            LastName = "Administrator"
+                            LastName = "Administrator",
+                            NavbarCenterMode = "search",
+                            NavbarKpiKeys = "myTasks,qualityQueue,pendingApproval,erpIssues"
                         });
                 });
 

@@ -24,7 +24,11 @@ public sealed record AuthTokenResponse(
 public sealed record AuthSessionResult(AuthTokenResponse Response, string RefreshToken, DateTime RefreshTokenExpiresAt);
 
 public sealed record ProfileRequest(decimal? Height, decimal? Weight, string? Description, int? Gender);
-public sealed record UserAppearanceRequest(bool BackgroundMotionEnabled, string BackgroundMotionVariant);
+public sealed record UserAppearanceRequest(
+    bool BackgroundMotionEnabled,
+    string BackgroundMotionVariant,
+    string? NavbarCenterMode = null,
+    string[]? NavbarKpiKeys = null);
 public sealed record UserProfileResponse(
     long Id,
     long UserId,
@@ -35,6 +39,8 @@ public sealed record UserProfileResponse(
     int? Gender,
     bool BackgroundMotionEnabled,
     string BackgroundMotionVariant,
+    string NavbarCenterMode,
+    string[] NavbarKpiKeys,
     DateTime? CreatedDate,
     DateTime? UpdatedDate);
 public sealed record ProfileImageUpload(Stream Content, string FileName, string? ContentType, long Length);

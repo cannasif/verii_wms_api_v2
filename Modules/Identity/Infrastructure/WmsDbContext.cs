@@ -302,9 +302,9 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         });
         modelBuilder.Entity<UserDetail>(entity =>
         {
-            entity.ToTable("RII_USER_DETAILS"); entity.HasKey(x => x.UserId); entity.Property(x => x.FirstName).HasMaxLength(100).IsRequired(); entity.Property(x => x.LastName).HasMaxLength(100).IsRequired(); entity.Property(x => x.Phone).HasMaxLength(40); entity.Property(x => x.ProfilePictureUrl).HasMaxLength(500); entity.Property(x => x.Description).HasMaxLength(2000); entity.Property(x => x.Height).HasColumnType("decimal(6,2)"); entity.Property(x => x.Weight).HasColumnType("decimal(6,2)"); entity.Property(x => x.BackgroundMotionVariant).HasMaxLength(40).HasDefaultValue("rack-scanner").IsRequired();
+            entity.ToTable("RII_USER_DETAILS"); entity.HasKey(x => x.UserId); entity.Property(x => x.FirstName).HasMaxLength(100).IsRequired(); entity.Property(x => x.LastName).HasMaxLength(100).IsRequired(); entity.Property(x => x.Phone).HasMaxLength(40); entity.Property(x => x.ProfilePictureUrl).HasMaxLength(500); entity.Property(x => x.Description).HasMaxLength(2000); entity.Property(x => x.Height).HasColumnType("decimal(6,2)"); entity.Property(x => x.Weight).HasColumnType("decimal(6,2)"); entity.Property(x => x.BackgroundMotionVariant).HasMaxLength(40).HasDefaultValue("rack-scanner").IsRequired(); entity.Property(x => x.NavbarCenterMode).HasMaxLength(16).HasDefaultValue("search").IsRequired(); entity.Property(x => x.NavbarKpiKeys).HasMaxLength(128).HasDefaultValue("myTasks,qualityQueue,pendingApproval,erpIssues").IsRequired();
             entity.HasOne(x => x.User).WithOne(x => x.Detail).HasForeignKey<UserDetail>(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
-            entity.HasData(new UserDetail { UserId = 1, FirstName = "System", LastName = "Administrator" });
+            entity.HasData(new UserDetail { UserId = 1, FirstName = "System", LastName = "Administrator", NavbarCenterMode = "search", NavbarKpiKeys = "myTasks,qualityQueue,pendingApproval,erpIssues" });
         });
         modelBuilder.Entity<UserWarehouseAssignment>(entity =>
         {

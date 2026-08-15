@@ -13,6 +13,8 @@ public sealed class UserDetail
     public int? Gender { get; set; }
     public bool BackgroundMotionEnabled { get; set; }
     public string BackgroundMotionVariant { get; set; } = "rack-scanner";
+    public string NavbarCenterMode { get; set; } = "search";
+    public string NavbarKpiKeys { get; set; } = "myTasks,qualityQueue,pendingApproval,erpIssues";
     public DateTime? CreatedDate { get; set; }
     public DateTime? UpdatedDate { get; set; }
 }

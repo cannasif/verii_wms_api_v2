@@ -40,6 +40,8 @@ public sealed class UserProfileService(IUnitOfWork unitOfWork, IProfileImageStor
         var detail = await GetOrCreateAsync(userId, firstName, lastName, cancellationToken);
         detail.BackgroundMotionEnabled = request.BackgroundMotionEnabled;
         detail.BackgroundMotionVariant = variant;
+        detail.NavbarCenterMode = NavbarAppearance.NormalizeMode(request.NavbarCenterMode, detail.NavbarCenterMode);
+        detail.NavbarKpiKeys = NavbarAppearance.NormalizeKeys(request.NavbarKpiKeys, detail.NavbarKpiKeys);
         detail.UpdatedDate = DateTime.UtcNow;
         await unitOfWork.SaveChangesAsync(cancellationToken);
         return ToResponse(detail);
@@ -114,6 +116,8 @@ public sealed class UserProfileService(IUnitOfWork unitOfWork, IProfileImageStor
         detail.Gender,
         detail.BackgroundMotionEnabled,
         detail.BackgroundMotionVariant,
+        NavbarAppearance.CoerceMode(detail.NavbarCenterMode),
+        NavbarAppearance.SplitKeys(detail.NavbarKpiKeys),
         detail.CreatedDate,
         detail.UpdatedDate);
 }
