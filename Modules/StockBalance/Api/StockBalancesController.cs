@@ -87,6 +87,34 @@ public sealed class StockBalancesController(IStockBalanceService service, IOpeni
         return Ok(ApiResponse<StockBalanceDrillDown>.Ok(await service.GetDrillDownAsync(id, ct)));
     }
 
+    [HttpGet("warehouses/{warehouseId:long}/inventory")]
+    public async Task<IActionResult> WarehouseInventory(long warehouseId, CancellationToken ct)
+    {
+        await RequireAsync("WMS.STOCK_BALANCES.VIEW", ct);
+        return Ok(ApiResponse<WarehouseInventoryLookup>.Ok(await service.GetWarehouseInventoryLookupAsync(warehouseId, ct)));
+    }
+
+    [HttpGet("locations/{locationId:long}/inventory")]
+    public async Task<IActionResult> LocationInventory(long locationId, CancellationToken ct)
+    {
+        await RequireAsync("WMS.STOCK_BALANCES.VIEW", ct);
+        return Ok(ApiResponse<LocationInventoryLookup>.Ok(await service.GetLocationInventoryLookupAsync(locationId, ct)));
+    }
+
+    [HttpGet("serials/{id:long}")]
+    public async Task<IActionResult> SerialInventory(long id, CancellationToken ct)
+    {
+        await RequireAsync("WMS.STOCK_BALANCES.VIEW", ct);
+        return Ok(ApiResponse<SerialInventoryLookup>.Ok(await service.GetSerialInventoryLookupAsync(id, ct)));
+    }
+
+    [HttpGet("lots/inventory")]
+    public async Task<IActionResult> LotInventory([FromQuery] string? lotNo, CancellationToken ct)
+    {
+        await RequireAsync("WMS.STOCK_BALANCES.VIEW", ct);
+        return Ok(ApiResponse<LotInventoryLookup>.Ok(await service.GetLotInventoryLookupAsync(lotNo, ct)));
+    }
+
     [HttpGet("reconciliation/summary")]
     public async Task<IActionResult> ReconciliationSummary(CancellationToken ct)
     {

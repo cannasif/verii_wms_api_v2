@@ -61,6 +61,49 @@ public sealed record SerialLocationMatchDto(string SerialNo, long? LocationId, s
 public sealed record StockLocationBalanceDto(long LocationId, string LocationCode, string LocationName,
     decimal AvailableQuantity, decimal Quantity = 0, decimal ReservedQuantity = 0);
 
+public sealed record WarehouseInventoryLookup(
+    long WarehouseId,
+    int WarehouseCode,
+    string WarehouseName,
+    string BranchCode,
+    decimal Quantity,
+    decimal ReservedQuantity,
+    decimal AvailableQuantity,
+    int DistinctStockCount,
+    int DistinctLocationCount,
+    bool LinesTruncated,
+    IReadOnlyList<LocationBalanceRow> Lines);
+
+public sealed record LocationInventoryLookup(
+    long LocationId,
+    string LocationCode,
+    string LocationName,
+    string LocationType,
+    long WarehouseId,
+    int WarehouseCode,
+    string WarehouseName,
+    string BranchCode,
+    decimal Quantity,
+    decimal ReservedQuantity,
+    decimal AvailableQuantity,
+    int DistinctStockCount,
+    bool LinesTruncated,
+    IReadOnlyList<LocationBalanceRow> Lines);
+
+public sealed record SerialInventoryLookup(
+    SerialBalanceRow Balance,
+    IReadOnlyList<SerialMovementHistoryRow> RecentMovements);
+
+public sealed record LotInventoryLookup(
+    string LotNo,
+    decimal Quantity,
+    decimal ReservedQuantity,
+    decimal AvailableQuantity,
+    int DistinctStockCount,
+    int DistinctLocationCount,
+    bool LinesTruncated,
+    IReadOnlyList<LocationBalanceRow> Lines);
+
 public interface IStockBalanceService
 {
     Task ApplyEntriesAsync(IReadOnlyCollection<StockMovementEntry> entries, CancellationToken cancellationToken = default);
@@ -75,6 +118,10 @@ public interface IStockBalanceService
     Task<PagedResponse<ReconciliationIssue>> GetReconciliationIssuesAsync(PagedRequest request, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<SerialLocationMatchDto>> ResolveSerialLocationsAsync(ResolveSerialLocationsRequest request, CancellationToken cancellationToken = default);
     Task<IReadOnlyList<StockLocationBalanceDto>> ResolveStockLocationsAsync(string branchCode, long warehouseId, long stockId, long? yapCodeId, IReadOnlyCollection<long>? excludeLocationIds = null, bool includeOnHand = false, CancellationToken cancellationToken = default);
+    Task<WarehouseInventoryLookup> GetWarehouseInventoryLookupAsync(long warehouseId, CancellationToken cancellationToken = default);
+    Task<LocationInventoryLookup> GetLocationInventoryLookupAsync(long locationId, CancellationToken cancellationToken = default);
+    Task<SerialInventoryLookup> GetSerialInventoryLookupAsync(long serialBalanceId, CancellationToken cancellationToken = default);
+    Task<LotInventoryLookup> GetLotInventoryLookupAsync(string? lotNo, CancellationToken cancellationToken = default);
 }
 
 public interface IStockBalanceJobRunner

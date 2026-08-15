@@ -16,7 +16,7 @@ using YapCodeEntity = verii_wms_api_v2.Modules.YapCode.Domain.YapCode;
 
 namespace verii_wms_api_v2.Modules.StockBalance.Application;
 
-public sealed class StockBalanceService(
+public sealed partial class StockBalanceService(
     IUnitOfWork unitOfWork,
     IStockTrackingPolicyResolver trackingPolicies) : IStockBalanceService
 {
