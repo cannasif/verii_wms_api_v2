@@ -352,14 +352,28 @@ public sealed class QualityService(
             CreatedBy=x.Inspection.CreatedBy,CreatedDate=x.Inspection.CreatedDate,UpdatedBy=x.Inspection.UpdatedBy,UpdatedDate=x.Inspection.UpdatedDate });
         var search=request.Search?.Trim(); q=q.Where(x=>string.IsNullOrWhiteSpace(search)||x.InspectionNo.Contains(search)||x.SourceDocumentNo.Contains(search)
             ||(x.SourceWaybillNo!=null&&x.SourceWaybillNo.Contains(search))||(x.CreatedByName!=null&&x.CreatedByName.Contains(search))
-            ||(x.WarehouseName!=null&&x.WarehouseName.Contains(search)));
+            ||(x.WarehouseName!=null&&x.WarehouseName.Contains(search))
+            ||(x.SourceDocumentType=="GoodsReceipt" && (
+                from line in uow.Repository<GoodsReceiptLine>().Query()
+                join source in uow.Repository<GoodsReceiptLineSource>().Query() on line.Id equals source.GrLineId
+                where line.GrHeaderId==x.SourceDocumentId
+                    && source.ProjectCodeSnapshot!=null
+                    && source.ProjectCodeSnapshot.Contains(search)
+                select source).Any()));
         var filtered = q.ApplyAdvancedFilters(request);
-        if (string.IsNullOrWhiteSpace(request.SortBy))
-            return await filtered.OrderByDescending(x => x.IsPriority)
+        var page = string.IsNullOrWhiteSpace(request.SortBy)
+            ? await filtered.OrderByDescending(x => x.IsPriority)
                 .ThenBy(x => x.QueuedAtUtc)
                 .ThenBy(x => x.Id)
-                .ToPagedResponseAsync(request, ct);
-        return await filtered.ApplySort(request,nameof(QualityInspectionGridRow.QueuedAtUtc)).ToPagedResponseAsync(request,ct);
+                .ToPagedResponseAsync(request, ct)
+            : await filtered.ApplySort(request,nameof(QualityInspectionGridRow.QueuedAtUtc)).ToPagedResponseAsync(request,ct);
+        return new PagedResponse<QualityInspectionGridRow>
+        {
+            Items = await AttachProjectCodesAsync(page.Items, ct),
+            TotalCount = page.TotalCount,
+            PageNumber = page.PageNumber,
+            PageSize = page.PageSize,
+        };
     }
 
     public async Task<QualityInspectionDetail> GetInspectionAsync(long id, long actor, bool canExecute,
@@ -398,7 +412,8 @@ public sealed class QualityService(
             ActiveWorkerUserId = inspection.WorkSessions.FirstOrDefault(x => x.EndedAtUtc == null)?.WorkerUserId,
             ActiveWorkerName = inspection.WorkSessions.FirstOrDefault(x => x.EndedAtUtc == null)?.WorkerNameSnapshot,
             ActiveWorkStartedAtUtc = inspection.WorkSessions.FirstOrDefault(x => x.EndedAtUtc == null)?.StartedAtUtc,
-            CreatedBy = inspection.CreatedBy, CreatedDate = inspection.CreatedDate, UpdatedBy = inspection.UpdatedBy, UpdatedDate = inspection.UpdatedDate };
+            CreatedBy = inspection.CreatedBy, CreatedDate = inspection.CreatedDate, UpdatedBy = inspection.UpdatedBy, UpdatedDate = inspection.UpdatedDate,
+            ProjectCodes = await ResolveProjectCodesAsync(inspection.SourceDocumentType, inspection.SourceDocumentId, ct) };
         var parameter = await Parameters.FirstOrDefaultAsync(x => x.BranchCode == inspection.BranchCode && x.ParameterKey == "DEFAULT", false, ct)
             ?? Default(inspection.BranchCode);
         var warehouseRoutes = await GetActiveWarehouseRoutesAsync(parameter, ct);
@@ -2499,4 +2514,64 @@ public sealed class QualityService(
         catch { throw AppException.Conflict("Kalite karar kodu güncellik bilgisi geçersiz. Sayfayı yenileyin."); }
     }
     private static void ApplyVersion(QualityInspection entity,string? supplied){if(string.IsNullOrWhiteSpace(supplied))return;try{entity.RowVersion=Convert.FromBase64String(supplied);}catch{throw AppException.Conflict("Kalite kaydı güncellik bilgisi geçersiz. Sayfayı yenileyin.");}}
+
+    private async Task<IReadOnlyList<QualityInspectionGridRow>> AttachProjectCodesAsync(
+        IReadOnlyList<QualityInspectionGridRow> rows, CancellationToken ct)
+    {
+        if (rows.Count == 0) return rows;
+        var receiptIds = rows
+            .Where(x => string.Equals(x.SourceDocumentType, "GoodsReceipt", StringComparison.OrdinalIgnoreCase))
+            .Select(x => x.SourceDocumentId)
+            .Distinct()
+            .ToArray();
+        if (receiptIds.Length == 0) return rows;
+
+        var projectRows = await (
+            from line in uow.Repository<GoodsReceiptLine>().Query()
+            join source in uow.Repository<GoodsReceiptLineSource>().Query() on line.Id equals source.GrLineId
+            where receiptIds.Contains(line.GrHeaderId)
+                && source.ProjectCodeSnapshot != null
+                && source.ProjectCodeSnapshot != ""
+            select new { line.GrHeaderId, source.ProjectCodeSnapshot })
+            .ToListAsync(ct);
+
+        var byReceipt = projectRows
+            .GroupBy(x => x.GrHeaderId)
+            .ToDictionary(g => g.Key, g => JoinDistinctProjectCodes(g.Select(x => x.ProjectCodeSnapshot)));
+
+        foreach (var row in rows)
+        {
+            if (string.Equals(row.SourceDocumentType, "GoodsReceipt", StringComparison.OrdinalIgnoreCase)
+                && byReceipt.TryGetValue(row.SourceDocumentId, out var codes))
+                row.ProjectCodes = codes;
+        }
+
+        return rows;
+    }
+
+    private async Task<string?> ResolveProjectCodesAsync(string sourceDocumentType, long sourceDocumentId, CancellationToken ct)
+    {
+        if (!string.Equals(sourceDocumentType, "GoodsReceipt", StringComparison.OrdinalIgnoreCase))
+            return null;
+        var codes = await (
+            from line in uow.Repository<GoodsReceiptLine>().Query()
+            join source in uow.Repository<GoodsReceiptLineSource>().Query() on line.Id equals source.GrLineId
+            where line.GrHeaderId == sourceDocumentId
+                && source.ProjectCodeSnapshot != null
+                && source.ProjectCodeSnapshot != ""
+            select source.ProjectCodeSnapshot)
+            .ToListAsync(ct);
+        return JoinDistinctProjectCodes(codes);
+    }
+
+    private static string? JoinDistinctProjectCodes(IEnumerable<string?> values)
+    {
+        var normalized = values
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return normalized.Length == 0 ? null : string.Join(", ", normalized);
+    }
 }
