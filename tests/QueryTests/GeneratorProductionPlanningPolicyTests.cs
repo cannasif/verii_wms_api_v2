@@ -78,6 +78,16 @@ public sealed class GeneratorProductionPlanningPolicyTests
         Assert.Equal([1, 2], GeneratorProductionPlanningPolicy.SelectEarliestCapacityLanes(availability, 2));
     }
 
+    [Theory]
+    [InlineData(null, "GEN-A", true)]
+    [InlineData("", "GEN-A", true)]
+    [InlineData(" gen-a ", "GEN-A", true)]
+    [InlineData("GEN-B", "GEN-A", false)]
+    public void Purchase_supply_is_shared_only_when_it_has_no_project_pegging(string? supplyProjectCode, string projectCode, bool expected)
+    {
+        Assert.Equal(expected, GeneratorProductionPlanningPolicy.CanUseProjectSupply(supplyProjectCode, projectCode));
+    }
+
     private static GeneratorStationCalendar DefaultCalendar() =>
         new(new TimeOnly(8, 0), new TimeOnly(17, 0), 31, 480,
             new Dictionary<DateOnly, GeneratorWorkingDayOverride>());
