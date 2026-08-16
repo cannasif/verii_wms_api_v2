@@ -246,3 +246,73 @@ hazırlanabilir; veri handler'ı kendi permission kontrolü olmadan çalışmaz.
 Her commit explicit dosya/hunk staging, staged diff kontrolü ve ilgili testten sonra
 oluşturulacaktır. Push, rebase, squash, PR veya migration yapılmayacaktır.
 
+## 2.8 uygulama sonucu
+
+Uygulama, migration veya harici AI/model bağımlılığı eklenmeden tamamlandı. Yerel dil
+motoru hâlâ yalnız API prosesi içinde çalışıyor; kullanıcı metninden SQL, LINQ expression
+tree, endpoint veya izin kodu üretilmiyor. Yönlendirme sonucu kapalı enum'lardan oluşan
+`WarehouseAssistantIntentResolution` planıdır.
+
+### Ölçüm karşılaştırması
+
+| Ölçüm | 2.5 baseline | 2.8 |
+|---|---:|---:|
+| Toplam doğru intent | 31/75 (%41,3) | 75/75 (%100) |
+| Mevcut+güvenlik soruları | 31/40 (%77,5) | 40/40 (%100) |
+| Yeni analitik/navigasyon soruları | 0/35 (%0) | 35/35 (%100) |
+| Harici AI/model çağrısı | 0 | 0 |
+| Dinamik SQL | 0 | 0 |
+
+`WarehouseAssistantBaselineEvaluationTests` artık 75/75 eşiğini regression gate olarak
+korur. `WarehouseAssistantQueryPlanningTests` normalizasyonu, tipli planı, limit clamp'ini,
+öğretici soru/yazma komutu ayrımını ve gerekçe kodlarını doğrular.
+
+### Çalışan yeni capability'ler
+
+- `WarehouseOverview`: yalnız kullanıcının yetkili depo havuzunda liste/sayı, aktif
+  lokasyon listesi ve birim bazlı fiziksel/rezerve/kullanılabilir toplam.
+- `LocationInventory`: lokasyon içeriği, boş/dolu, karantina lokasyonları ve kapasite.
+  Kapasite birimi stok birimiyle uyuşmazsa doluluk yüzdesi hesaplanmaz.
+- `InventoryInsights`: sıfır/sıfır-olmayan stok, top/bottom-N, fiziksel veya
+  kullanılabilir ölçü ve stok grubu karşılaştırması. Limit 1–50 aralığındadır.
+- `InventoryCountAnalysis`: header görünümü `WMS.INVENTORY_COUNT.VIEW`; snapshot,
+  counted ve variance alanları ayrıca `WMS.INVENTORY_COUNT.REVIEW` gerektirir.
+- `GeneratorProductionAnalysis`: branch-scope proje/operasyon, operasyon üzerindeki
+  material-shortage, pending quality, gecikme ve tamamlanan benzersiz ünite bazlı
+  planlanan/gerçekleşen karşılaştırması.
+- `NavigationHelp`: doğrulanmış web route kataloğu. Yazma yapmaz; route'u ancak ilgili
+  view/create izni varsa döndürür. Stok kartı için WMS create akışı uydurmaz, ERP/Netsis
+  senkronizasyonunu açıklar.
+
+### Güvenlik ve veri sınırları
+
+1. Controller hâlâ JWT kullanıcı ve zorunlu branch claim'i üzerinden çalışır.
+2. Yeni access bayrakları mevcut izin servisiyle çözülür; istemciden permission alınmaz.
+3. Depo ve lokasyon entity havuzu `UserWarehouseAccessService` sonucundan sonra kurulur;
+   yetkisiz depo adı, kodu ve lokasyonu aday veya sonuç olarak üretilmez.
+4. Tüm yeni repository sorgularında `BranchCode` filtresi açıkça bulunur.
+5. Conversation okuma/arşivleme mevcut kullanıcı+branch sahipliğiyle devam eder.
+6. Sayım farkı permission kontrolü satırlar okunmadan önce yapılır.
+7. Cevap kanıtı gerçek query kind, warehouse, location, project, measure ve tarih
+   filtrelerini taşır; sonuç sayısı analiz satırlarını da kapsar.
+8. “Aktif depo” ve “kritik stok” için domain alanı/politikası yoktur; sistem veri
+   uydurmak yerine açıklayıcı limitation cevabı verir.
+
+### Web sözleşmesi
+
+`analysisRows` additive response alanıdır; eski conversation JSON'ları boş listeyle geri
+yüklenir. Web ekranı query kind, uygulanan filtreler ve reason code'ları yorum kartında;
+depo/lokasyon/stok/sayım/üretim/navigasyon verisini ortak analiz kartında gösterir.
+İzinli doğrulanmış route'lar tıklanabilir, denied route döndürülmez. Analiz satırları
+Excel/PDF export modeline dahildir ve ana etiketler desteklenen yedi dilde eşlenmiştir.
+
+### Bilinen bilinçli sınırlar
+
+- “Eksik jeneratör malzemeleri” mevcut operasyon `HasMaterialShortage` sinyalini ve
+  ilgili proje/istasyon/kalite bağlamını listeler. Malzeme kartı bazında ihtiyaç-mevcut
+  miktarı ancak stok bakiyesi izni ve onaylı material coverage kaynağı birlikte varsa
+  ileride ayrı bir projection olarak genişletilmelidir.
+- Depo aktif/pasif alanı ve kritik/minimum stok eşiği için migration bu çalışma
+  kapsamında özellikle eklenmedi.
+- Sipariş/sevkiyat için tek bir güvenilir birleşik projection bulunmadığından yeni bir
+  birleşik sipariş analizi uydurulmadı; mevcut doğrulanmış handler'lar korunur.

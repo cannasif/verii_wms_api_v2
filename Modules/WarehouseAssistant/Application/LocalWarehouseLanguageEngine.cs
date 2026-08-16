@@ -16,7 +16,7 @@ internal sealed record LocalWarehouseIntentDecision(
 /// </summary>
 internal static class LocalWarehouseLanguageEngine
 {
-    public const string ProviderMode = "local-inprocess-v2.5";
+    public const string ProviderMode = "local-inprocess-v2.8";
 
     public static LocalWarehouseIntentDecision Resolve(string normalizedMessage, bool requestsAllUsers)
     {

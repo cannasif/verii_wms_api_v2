@@ -15,10 +15,10 @@ internal sealed partial class LocalHybridWarehouseAssistantIntentResolver(
     ILogger<LocalHybridWarehouseAssistantIntentResolver> logger)
     : IWarehouseAssistantIntentResolver, IWarehouseAssistantRoutingDiagnostics
 {
-    private const string FastProviderMode = "local-inprocess-fast-v2.5";
-    private const string ConversationProviderMode = "local-inprocess-conversation-v2.5";
-    private const string CompoundProviderMode = "local-inprocess-compound-v2.5";
-    private const string WriteRejectedProviderMode = "local-policy-write-rejected-v2.5";
+    private const string FastProviderMode = "local-inprocess-fast-v2.8";
+    private const string ConversationProviderMode = "local-inprocess-conversation-v2.8";
+    private const string CompoundProviderMode = "local-inprocess-compound-v2.8";
+    private const string WriteRejectedProviderMode = "local-policy-write-rejected-v2.8";
 
     private static readonly string[] StrongCompoundConnectors =
     [

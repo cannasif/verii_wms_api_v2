@@ -8,7 +8,7 @@ public sealed class WarehouseAssistantOptions
 {
     public const string SectionName = "WarehouseAssistant";
 
-    public string Version { get; set; } = "2.5.0";
+    public string Version { get; set; } = "2.8.0";
     public int MaximumMessageCharacters { get; set; } = 2_000;
     public int MaximumQueriesPerMessage { get; set; } = 3;
     public int MaximumConversationSegments { get; set; } = 6;

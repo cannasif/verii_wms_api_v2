@@ -90,7 +90,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             examples.Add(string.Join("; ", examples.Take(2)));
 
         var routing = routingDiagnostics?.GetRoutingInfo()
-            ?? new WarehouseAssistantRoutingInfo("2.5.0", "LocalSemantic", false, null);
+            ?? new WarehouseAssistantRoutingInfo("2.8.0", "LocalSemantic", false, null);
         return Task.FromResult(new WarehouseAssistantCapabilities(
             access.CanQueryAllUsers,
             access.CanViewStockBalances,

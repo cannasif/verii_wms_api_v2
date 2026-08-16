@@ -52,7 +52,7 @@ public sealed class InProcessWarehouseAssistantTests
         Assert.Equal(WarehouseAssistantIntent.StockLocationBalance, result.Intent);
         Assert.Null(result.SerialNo);
         Assert.Contains("01/013", result.StockQuery, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal("local-inprocess-conversation-v2.5", result.ProviderMode);
+        Assert.Equal("local-inprocess-conversation-v2.8", result.ProviderMode);
     }
 
     [Fact]
@@ -96,7 +96,7 @@ public sealed class InProcessWarehouseAssistantTests
         Assert.Equal(WarehouseAssistantIntent.MyActivities, result.Intent);
         var additional = Assert.Single(result.AdditionalQueries!);
         Assert.Equal(WarehouseAssistantIntent.AssignedTasks, additional.Intent);
-        Assert.Equal("local-inprocess-compound-v2.5", result.ProviderMode);
+        Assert.Equal("local-inprocess-compound-v2.8", result.ProviderMode);
     }
 
     [Fact]
@@ -163,7 +163,7 @@ public sealed class InProcessWarehouseAssistantTests
         var result = await CreateResolver().ResolveAsync(question, null);
 
         Assert.Equal(WarehouseAssistantIntent.Unknown, result.Intent);
-        Assert.Equal("local-policy-write-rejected-v2.5", result.ProviderMode);
+        Assert.Equal("local-policy-write-rejected-v2.8", result.ProviderMode);
     }
 
     [Fact]

@@ -152,7 +152,7 @@ public sealed record WarehouseAssistantCapabilities(
     bool CanQueryOperationalExceptions = false,
     bool CanQueryTraceability = false,
     bool CanQueryProcessBlockers = false,
-    string AssistantVersion = "2.5.0",
+    string AssistantVersion = "2.8.0",
     string RoutingMode = "LocalHybrid",
     bool SemanticRoutingAvailable = false,
     string? SemanticModel = null,
