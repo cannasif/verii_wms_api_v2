@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Text;
 using System.Text.RegularExpressions;
 
 namespace verii_wms_api_v2.Modules.WarehouseAssistant.Application;
@@ -19,7 +18,7 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
 
     private static readonly string[] BalanceWords =
     [
-        "bakiye", "miktar", "kac", "nerede", "hangi depo", "hangi raf", "lokasyon", "konum",
+        "bakiye", "miktar", "kac", "nerede", "nerde", "hangi depo", "hangi raf", "lokasyon", "konum",
         "balance", "quantity", "how many", "where", "warehouse", "location", "bin",
         "bestand", "menge", "wo", "lager", "lagerplatz",
         "solde", "quantite", "combien", "ou", "entrepot", "emplacement",
@@ -30,7 +29,7 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
 
     private static readonly string[] ReceiptWords =
     [
-        "mal kabul", "irsaliye", "iceri", "giris", "alindi", "kabul edildi", "depoya ulasan", "depoya gelen", "ne zaman", "kim tarafindan", "kim aldi",
+        "mal kabul", "irsaliye", "iceri", "giris", "gelen", "alindi", "kabul edildi", "depoya ulasan", "depoya gelen", "ne zaman", "kim tarafindan", "kim aldi",
         "goods receipt", "received", "receipt", "inbound", "when", "who",
         "wareneingang", "eingang", "angenommen", "wann", "wer",
         "reception", "recu", "entree", "quand", "qui",
@@ -48,7 +47,7 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
     private static readonly string[] ReceiptAnalysisWords =
     [
         "kac mal kabul", "kaç mal kabul", "neler alindi", "neler alındı", "hangi urunler alindi", "hangi ürünler alındı",
-        "mal kabul raporu", "mal kabulleri", "goods receipts", "what was received", "received items",
+        "mal kabul raporu", "mal kabulleri", "gelen urun", "kalite kontrol bekleyen mal kabul", "goods receipts", "what was received", "received items",
         "wareneingange", "articles recus", "mercancia recibida", "articoli ricevuti", "إيصالات البضائع"
     ];
 
@@ -64,7 +63,7 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
     private static readonly string[] MovementWords =
     [
         "stok hareket", "seri hareket", "malzeme hareket", "urun hareket", "hareket gecmis", "giris cikis", "nereden nereye",
-        "stock movement", "serial movement", "item movement", "movement history", "movement trail", "from where to where",
+        "cikis", "giris", "stock movement", "serial movement", "item movement", "movement history", "movement trail", "from where to where",
         "bestandsbeweg", "serienbeweg", "bewegungsverlauf", "mouvement de stock", "historique des mouvements",
         "movimiento de stock", "historial de movimientos", "movimento di magazzino", "storico movimenti",
         "حركة المخزون", "حركة الصنف", "سجل الحركات"
@@ -206,6 +205,9 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
             && (hasSupplier || dateFrom.HasValue || language.HasAny(ReceiptAnalysisWords));
         var hasActivity = language.HasAny(ActivityWords);
         var hasMovement = language.HasAny(MovementWords);
+        var hasThirdPartyActivity = hasActivity
+            && language.HasAny("yapmis", "yapti", "neyle ugrasmis", "ne is yapmis", "neler yapmis")
+            && !language.HasAny("yaptigim", "islemlerim", "benim", "kendim");
         var hasTask = language.HasAny(TaskWords)
             || ((normalized.Contains("atan", StringComparison.Ordinal)
                     || normalized.Contains("bana", StringComparison.Ordinal))
@@ -248,10 +250,18 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
         var hasTraceability = language.HasAny(TraceabilityWords);
         var hasProcessBlocker = language.HasAny(ProcessBlockerWords);
         var documentQuery = ExtractProcessDocument(analysisMessage) ?? context?.DocumentNo;
+        var plannedQuery = usesPendingQuestion
+            ? null
+            : WarehouseAssistantQueryPlanner.TryPlan(analysisMessage, normalized, context);
 
         WarehouseAssistantIntent intent;
         decimal confidence;
-        if (language.HasAny(HelpWords))
+        if (plannedQuery is not null)
+        {
+            intent = plannedQuery.Intent;
+            confidence = plannedQuery.Confidence;
+        }
+        else if (language.HasAny(HelpWords))
         {
             intent = WarehouseAssistantIntent.Help;
             confidence = 1m;
@@ -316,14 +326,16 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
             intent = WarehouseAssistantIntent.SerialBalance;
             confidence = string.IsNullOrWhiteSpace(serialNo) ? 0.70m : 0.98m;
         }
-        else if (hasStock && hasBalance)
+        else if ((hasStock && hasBalance)
+            || (hasStock && language.HasAny("depo", "raf", "lokasyon"))
+            || (hasBalance && language.HasAny("depo", "raf", "lokasyon") && StartsWithPossessiveStockCandidate(normalized)))
         {
             intent = WarehouseAssistantIntent.StockLocationBalance;
             confidence = 0.90m;
         }
         else if (hasActivity)
         {
-            intent = requestsAll ? WarehouseAssistantIntent.UserActivities : WarehouseAssistantIntent.MyActivities;
+            intent = requestsAll || hasThirdPartyActivity ? WarehouseAssistantIntent.UserActivities : WarehouseAssistantIntent.MyActivities;
             confidence = 0.92m;
         }
         else if (context?.LastIntent is { } lastIntent
@@ -372,7 +384,7 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
             serialNo,
             stockQuery,
             barcode,
-            isFollowUp ? context?.TargetUserQuery : null,
+            isFollowUp ? context?.TargetUserQuery : hasThirdPartyActivity ? analysisMessage.Trim() : null,
             requestsAll || (isFollowUp && context?.RequestsAllUsers == true),
             confidence,
             LocalWarehouseLanguageEngine.ProviderMode,
@@ -385,7 +397,21 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
             TransferDocumentQuery: transferDocument ?? context?.TransferDocumentNo,
             TransferScope: hasTransfer ? transferScope : context?.TransferScope ?? WarehouseAssistantTransferScope.All,
             HasExplicitDateFilter: hasExplicitDateFilter,
-            DocumentQuery: documentQuery));
+            DocumentQuery: documentQuery,
+            QueryKind: plannedQuery?.QueryKind ?? context?.QueryKind ?? WarehouseAssistantQueryKind.None,
+            WarehouseQuery: plannedQuery?.WarehouseQuery ?? context?.WarehouseQuery,
+            LocationQuery: plannedQuery?.LocationQuery ?? context?.LocationQuery,
+            StockGroupQuery: plannedQuery?.StockGroupQuery,
+            ProjectQuery: plannedQuery?.ProjectQuery ?? context?.ProjectQuery,
+            StatusQuery: plannedQuery?.StatusQuery,
+            StockMeasure: plannedQuery?.StockMeasure ?? context?.StockMeasure,
+            Sort: plannedQuery?.Sort ?? WarehouseAssistantSortDirection.None,
+            Limit: plannedQuery?.Limit,
+            ExcludeZero: plannedQuery?.ExcludeZero ?? false,
+            ExcludeCancelled: plannedQuery?.ExcludeCancelled ?? false,
+            ActiveOnly: plannedQuery?.ActiveOnly ?? false,
+            NavigationTopic: plannedQuery?.NavigationTopic,
+            ReasonCodes: plannedQuery?.ReasonCodes));
     }
 
     private static bool ShouldUsePendingQuestion(string message, WarehouseAssistantContext? context) =>
@@ -396,22 +422,14 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
     [
         "peki", "ya onceki", "ya gecen", "bir de", "ayni sorgu", "aynisini", "bunlar", "onlar",
         "bunun", "onun", "bunlardan", "onlardan", "hayir", "yok", "daha dogrusu", "demek istedigim",
-        "yanlis", "onu degil", "aslinda", "az onceki", "dedigim",
+        "yanlis", "onu degil", "aslinda", "az onceki", "dedigim", "sadece", "rezerve", "dahil etme", "haric",
         "what about", "and previous", "same query", "wie sieht", "et pour", "y que", "e invece"
     ]);
 
-    public static string Normalize(string value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return string.Empty;
-        var decomposed = value.Trim().ToLower(new CultureInfo("tr-TR")).Normalize(NormalizationForm.FormD);
-        var builder = new StringBuilder(decomposed.Length);
-        foreach (var character in decomposed)
-        {
-            if (CharUnicodeInfo.GetUnicodeCategory(character) == UnicodeCategory.NonSpacingMark) continue;
-            builder.Append(character switch { 'ı' => 'i', _ => character });
-        }
-        return Regex.Replace(builder.ToString().Normalize(NormalizationForm.FormC), @"\s+", " ");
-    }
+    public static string Normalize(string value) => WarehouseAssistantTextNormalizer.Normalize(value);
+
+    private static bool StartsWithPossessiveStockCandidate(string normalized) =>
+        Regex.IsMatch(normalized, @"^[a-z0-9][a-z0-9._/-]*\s+ten\b", RegexOptions.CultureInvariant);
 
     private static (WarehouseAssistantDatePreset Preset, bool IsExplicit) ResolveDatePreset(string normalized)
     {

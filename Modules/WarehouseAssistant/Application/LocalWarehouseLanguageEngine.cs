@@ -116,9 +116,9 @@ internal static class LocalWarehouseLanguageEngine
         else if (hasSerial && hasReceipt) Add(WarehouseAssistantIntent.SerialReceiptHistory, 6);
 
         var hasReceiptAnalysis = question.HasAny(
-            "kac mal kabul", "neler alindi", "ne alindi", "neler geldi", "neler gelmis", "ne gelmis",
+            "kac mal kabul", "neler alindi", "ne alindi", "neler geldi", "neler gelmis", "ne gelmis", "gelen urun",
             "ne girmis", "ne almisiz", "neler almisiz", "hangi urunler geldi", "gelenleri goster",
-            "mal kabul raporu", "mal kabulleri", "what was received");
+            "mal kabul raporu", "mal kabulleri", "kalite kontrol bekleyen mal kabul", "what was received");
         if (hasReceiptAnalysis) Add(WarehouseAssistantIntent.GoodsReceiptAnalysis, 9);
         if (hasReceipt && (hasSupplier || hasDate) && question.HasAny("kac", "neler", "hangi", "liste", "goster", "rapor"))
             Add(WarehouseAssistantIntent.GoodsReceiptAnalysis, 8);
@@ -165,21 +165,8 @@ internal static class LocalWarehouseLanguageEngine
 
 internal sealed class LocalWarehouseQuestion
 {
-    private static readonly string[] Suffixes =
-    [
-        "larini", "lerini", "larina", "lerine", "larimizda", "lerimizde",
-        "larinda", "lerinde", "larindan", "lerinden", "larinin", "lerinin", "larimiz", "lerimiz",
-        "sinden", "sindan", "sinden", "sundan", "sinin", "sunun", "isine", "sine", "sina", "suna",
-        "ini", "ını", "unu", "ünü", "ine", "ına", "una", "üne", "ni", "nı", "nu", "nü",
-        "dan", "den", "tan", "ten", "nda", "nde", "daki", "deki", "taki", "teki",
-        "lari", "leri", "lar", "ler", "nin", "nun", "nın", "nün", "in", "un", "ın", "ün",
-        "dir", "dur", "dır", "dür", "tir", "tur", "tır", "tür", "mis", "mus", "mış", "müş",
-        "yor", "acak", "ecek", "ildi", "ildi", "uldu", "üldü", "di", "ti", "du", "tu",
-        "im", "um", "ım", "üm", "imiz", "umuz", "ımız", "ümüz", "si", "su", "sı", "sü",
-        "da", "de", "ta", "te", "ya", "ye", "yi", "yu", "yı", "yü"
-    ];
-    private static readonly string[] OrderedSuffixes = Suffixes
-        .Select(WarehouseAssistantIntentResolver.Normalize)
+    private static readonly string[] OrderedSuffixes = WarehouseAssistantTerminology.TurkishSuffixes
+        .Select(WarehouseAssistantTextNormalizer.Normalize)
         .Distinct(StringComparer.Ordinal)
         .OrderByDescending(x => x.Length)
         .ToArray();
@@ -200,7 +187,7 @@ internal sealed class LocalWarehouseQuestion
     {
         foreach (var rawCandidate in candidates)
         {
-            var candidate = WarehouseAssistantIntentResolver.Normalize(rawCandidate);
+            var candidate = WarehouseAssistantTextNormalizer.Normalize(rawCandidate);
             if (candidate.Length == 0) continue;
             if (ContainsPhrase(candidate)) return true;
         }
@@ -209,15 +196,7 @@ internal sealed class LocalWarehouseQuestion
 
     public bool IsWriteRequest()
     {
-        var writePhrases = new[]
-        {
-            "sil", "siler misin", "siliniz", "ekle", "ekler misin", "olustur", "olusturur musun",
-            "guncelle", "degistir", "kaydet", "onayla", "iptal et", "iptal etsin", "erp ye gonder",
-            "netsise gonder", "aktar", "baslat", "bitir", "tamamla", "kapat", "rezerve et",
-            "duzelt", "kaldir", "ata", "gorevlendir", "mail at", "mail gonder",
-            "irsaliye kes", "irsaliye olustur", "sevk et", "rafa koy", "stoktan dus", "geri al"
-        };
-        return writePhrases.Any(ContainsImperativePhrase);
+        return WarehouseAssistantTerminology.WriteCommands.Any(ContainsImperativePhrase);
     }
 
     private bool ContainsPhrase(string candidate)

@@ -13,7 +13,8 @@ namespace verii_wms_api_v2.QueryTests;
 /// </summary>
 public sealed class WarehouseAssistantBaselineEvaluationTests(ITestOutputHelper output)
 {
-    private const int BaselineCorrectIntentCount = 31;
+    private const int PreChangeCorrectIntentCount = 31;
+    private const int CurrentCorrectIntentCount = 75;
 
     [Fact]
     public async Task Evaluation_corpus_does_not_regress_below_the_pre_change_intent_baseline()
@@ -30,8 +31,9 @@ public sealed class WarehouseAssistantBaselineEvaluationTests(ITestOutputHelper 
 
         Assert.Equal(75, results.Count);
         Assert.True(
-            correct >= BaselineCorrectIntentCount,
-            $"Intent accuracy regressed below the 2.5 baseline: {correct}/75, expected at least {BaselineCorrectIntentCount}/75.");
+            correct >= CurrentCorrectIntentCount,
+            $"Intent accuracy regressed: {correct}/75, expected at least {CurrentCorrectIntentCount}/75 " +
+            $"(pre-change baseline: {PreChangeCorrectIntentCount}/75).");
     }
 
     private static LocalHybridWarehouseAssistantIntentResolver CreateResolver() => new(

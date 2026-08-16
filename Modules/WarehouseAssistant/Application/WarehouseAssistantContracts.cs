@@ -24,7 +24,57 @@ public enum WarehouseAssistantIntent
     Traceability = 16,
     ProcessBlockers = 17,
     Composite = 18,
+    WarehouseOverview = 19,
+    LocationInventory = 20,
+    InventoryInsights = 21,
+    InventoryCountAnalysis = 22,
+    GeneratorProductionAnalysis = 23,
+    NavigationHelp = 24,
     Unknown = 99
+}
+
+public enum WarehouseAssistantQueryKind
+{
+    None = 0,
+    WarehouseCount = 1,
+    WarehouseList = 2,
+    WarehouseLocations = 3,
+    WarehouseStockTotals = 4,
+    LocationContents = 10,
+    LocationEmptyCheck = 11,
+    LocationCapacity = 12,
+    LocationListByType = 13,
+    ZeroStock = 20,
+    NonZeroStock = 21,
+    RankedStock = 22,
+    StockGroupComparison = 23,
+    CriticalStockUnsupported = 24,
+    InventoryCountList = 30,
+    InventoryCountVariance = 31,
+    ProductionProjects = 40,
+    ProductionOperations = 41,
+    ProductionMaterialShortages = 42,
+    ProductionQualityWaiting = 43,
+    ProductionPlannedVsActual = 44,
+    ProductionOverdue = 45,
+    ProductionProjectStatus = 46,
+    Navigation = 50
+}
+
+public enum WarehouseAssistantStockMeasure
+{
+    Physical = 1,
+    Available = 2,
+    Reserved = 3
+}
+
+public enum WarehouseAssistantSortDirection
+{
+    None = 0,
+    QuantityAscending = 1,
+    QuantityDescending = 2,
+    VarianceDescending = 3,
+    DateDescending = 4
 }
 
 public enum WarehouseAssistantTransferScope
@@ -385,7 +435,21 @@ public sealed record WarehouseAssistantInterpretationRow(
     string? VehiclePlate,
     string? TransferDocumentNo,
     string? DocumentNo,
-    WarehouseAssistantTransferScope TransferScope);
+    WarehouseAssistantTransferScope TransferScope,
+    WarehouseAssistantQueryKind QueryKind = WarehouseAssistantQueryKind.None,
+    string? WarehouseQuery = null,
+    string? LocationQuery = null,
+    string? StockGroupQuery = null,
+    string? ProjectQuery = null,
+    string? StatusQuery = null,
+    WarehouseAssistantStockMeasure? StockMeasure = null,
+    WarehouseAssistantSortDirection Sort = WarehouseAssistantSortDirection.None,
+    int? Limit = null,
+    bool ExcludeZero = false,
+    bool ExcludeCancelled = false,
+    bool ActiveOnly = false,
+    string? NavigationTopic = null,
+    IReadOnlyList<string>? ReasonCodes = null);
 
 public sealed record WarehouseAssistantChatResponse(
     long ConversationId,
@@ -435,7 +499,12 @@ public sealed record WarehouseAssistantContext(
     string? PendingQuestion = null,
     string? TargetUserQuery = null,
     bool? RequestsAllUsers = null,
-    WarehouseAssistantDatePreset? LastDatePreset = null);
+    WarehouseAssistantDatePreset? LastDatePreset = null,
+    string? WarehouseQuery = null,
+    string? LocationQuery = null,
+    string? ProjectQuery = null,
+    WarehouseAssistantQueryKind QueryKind = WarehouseAssistantQueryKind.None,
+    WarehouseAssistantStockMeasure? StockMeasure = null);
 
 public sealed record WarehouseAssistantIntentResolution(
     WarehouseAssistantIntent Intent,
@@ -459,7 +528,21 @@ public sealed record WarehouseAssistantIntentResolution(
     bool HasExplicitDateFilter = false,
     string? DocumentQuery = null,
     string? ClarificationQuestion = null,
-    IReadOnlyList<WarehouseAssistantIntentResolution>? AdditionalQueries = null);
+    IReadOnlyList<WarehouseAssistantIntentResolution>? AdditionalQueries = null,
+    WarehouseAssistantQueryKind QueryKind = WarehouseAssistantQueryKind.None,
+    string? WarehouseQuery = null,
+    string? LocationQuery = null,
+    string? StockGroupQuery = null,
+    string? ProjectQuery = null,
+    string? StatusQuery = null,
+    WarehouseAssistantStockMeasure? StockMeasure = null,
+    WarehouseAssistantSortDirection Sort = WarehouseAssistantSortDirection.None,
+    int? Limit = null,
+    bool ExcludeZero = false,
+    bool ExcludeCancelled = false,
+    bool ActiveOnly = false,
+    string? NavigationTopic = null,
+    IReadOnlyList<string>? ReasonCodes = null);
 
 public interface IWarehouseAssistantIntentResolver
 {

@@ -40,7 +40,7 @@ public sealed class WarehouseAssistantIntentResolverTests
     [InlineData("GRI-2026-0001 hangi adımda kaldı?", WarehouseAssistantIntent.ProcessBlockers)]
     [InlineData("DTG-1 serisinin başına neler geldi?", WarehouseAssistantIntent.Traceability)]
     [InlineData("Benden beklenen işler neler?", WarehouseAssistantIntent.AssignedTasks)]
-    [InlineData("Ahmet geçen hafta neyle uğraşmış?", WarehouseAssistantIntent.MyActivities)]
+    [InlineData("Ahmet geçen hafta neyle uğraşmış?", WarehouseAssistantIntent.UserActivities)]
     public async Task Resolves_natural_turkish_phrasings_without_external_ai(
         string message,
         WarehouseAssistantIntent expected)
