@@ -131,4 +131,19 @@
   <data name="EvidenceOperationalDatabase" xml:space="preserve"><value>قاعدة بيانات عمليات WMS</value></data>
   <data name="EvidenceAuthorizedScope" xml:space="preserve"><value>تم تطبيق الفرع النشط وصلاحيات المستخدم والمستودعات المسموح بها.</value></data>
   <data name="DateLastWeek" xml:space="preserve"><value>الأسبوع الماضي</value></data>
+  <data name="WriteRejectedAnswer" xml:space="preserve"><value>هذا المساعد للقراءة فقط؛ لا يمكنه إنشاء السجلات أو تعديلها أو اعتمادها أو حذفها. يمكنك سؤاله عن كيفية استخدام الشاشة ذات الصلة.</value></data>
+  <data name="NavigationStockCardTitle" xml:space="preserve"><value>الأصناف</value></data>
+  <data name="NavigationStockCardAnswer" xml:space="preserve"><value>من القائمة اليسرى انتقل إلى التكاملات ← الأصناف. لا ينشئ WMS بطاقات الأصناف؛ فهي تأتي من Netsis/ERP.</value></data>
+  <data name="NavigationGoodsReceiptTitle" xml:space="preserve"><value>إنشاء أمر</value></data>
+  <data name="NavigationGoodsReceiptAnswer" xml:space="preserve"><value>من القائمة اليسرى انتقل إلى استلام البضائع ← العمليات ← إنشاء أمر. تبدأ هذه الشاشة استلاماً جديداً مرتبطاً بأمر شراء.</value></data>
+  <data name="NavigationWarehouseTransferTitle" xml:space="preserve"><value>مسودة النقل</value></data>
+  <data name="NavigationWarehouseTransferAnswer" xml:space="preserve"><value>من القائمة اليسرى انتقل إلى عمليات المستودع ← النقل بين المستودعات ← النقل القياسي ← مسودة النقل.</value></data>
+  <data name="NavigationInventoryCountTitle" xml:space="preserve"><value>إدارة الجرد</value></data>
+  <data name="NavigationInventoryCountAnswer" xml:space="preserve"><value>من القائمة اليسرى انتقل إلى عمليات المستودع ← إدارة المستودع ← إدارة الجرد.</value></data>
+  <data name="NavigationStockMovementsTitle" xml:space="preserve"><value>حركات المخزون</value></data>
+  <data name="NavigationStockMovementsAnswer" xml:space="preserve"><value>من القائمة اليسرى انتقل إلى عمليات المستودع ← إدارة المستودع ← حركات المخزون.</value></data>
+  <data name="NavigationGeneratorProjectsTitle" xml:space="preserve"><value>مشاريع المولدات</value></data>
+  <data name="NavigationGeneratorProjectsAnswer" xml:space="preserve"><value>من القائمة اليسرى انتقل إلى الإنتاج والجودة ← إنتاج المولدات ← التخطيط ← مشاريع المولدات.</value></data>
+  <data name="NavigationUnknownTitle" xml:space="preserve"><value>مساعدة WMS</value></data>
+  <data name="NavigationUnknownAnswer" xml:space="preserve"><value>لم يتم العثور على مسار شاشة موثّق لهذا الموضوع.</value></data>
 </root>

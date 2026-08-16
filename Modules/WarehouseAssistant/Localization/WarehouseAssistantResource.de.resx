@@ -158,4 +158,19 @@
   <data name="ExceptionPackingPrintUnknownError" xml:space="preserve"><value>Keine Fehlerdetails gespeichert</value></data>
   <data name="ExceptionPackingPrintAction" xml:space="preserve"><value>Druckerverbindung und Vorlage prüfen und denselben Auftrag nach der Behebung sicher erneut ausführen.</value></data>
   <data name="DateLastWeek" xml:space="preserve"><value>letzte Woche</value></data>
+  <data name="WriteRejectedAnswer" xml:space="preserve"><value>Dieser Assistent hat nur Lesezugriff; er kann keine Datensätze erstellen, ändern, genehmigen oder löschen. Sie können fragen, wie der entsprechende Bildschirm verwendet wird.</value></data>
+  <data name="NavigationStockCardTitle" xml:space="preserve"><value>Artikel</value></data>
+  <data name="NavigationStockCardAnswer" xml:space="preserve"><value>Öffnen Sie im linken Menü Integrationen → Artikel. WMS legt keine Artikelstammdaten an; sie stammen aus Netsis/ERP.</value></data>
+  <data name="NavigationGoodsReceiptTitle" xml:space="preserve"><value>Auftrag erstellen</value></data>
+  <data name="NavigationGoodsReceiptAnswer" xml:space="preserve"><value>Öffnen Sie im linken Menü Wareneingang → Betrieb → Auftrag erstellen. Dieser Bildschirm startet einen neuen bestellbezogenen Wareneingang.</value></data>
+  <data name="NavigationWarehouseTransferTitle" xml:space="preserve"><value>Transferentwurf</value></data>
+  <data name="NavigationWarehouseTransferAnswer" xml:space="preserve"><value>Öffnen Sie im linken Menü Lageroperationen → Lagerumlagerung → Standardumlagerung → Transferentwurf.</value></data>
+  <data name="NavigationInventoryCountTitle" xml:space="preserve"><value>Inventurverwaltung</value></data>
+  <data name="NavigationInventoryCountAnswer" xml:space="preserve"><value>Öffnen Sie im linken Menü Lageroperationen → Lagerverwaltung → Inventurverwaltung.</value></data>
+  <data name="NavigationStockMovementsTitle" xml:space="preserve"><value>Lagerbewegungen</value></data>
+  <data name="NavigationStockMovementsAnswer" xml:space="preserve"><value>Öffnen Sie im linken Menü Lageroperationen → Lagerverwaltung → Lagerbewegungen.</value></data>
+  <data name="NavigationGeneratorProjectsTitle" xml:space="preserve"><value>Generatorprojekte</value></data>
+  <data name="NavigationGeneratorProjectsAnswer" xml:space="preserve"><value>Öffnen Sie im linken Menü Produktion und Qualität → Generatorproduktion → Planung → Generatorprojekte.</value></data>
+  <data name="NavigationUnknownTitle" xml:space="preserve"><value>WMS-Hilfe</value></data>
+  <data name="NavigationUnknownAnswer" xml:space="preserve"><value>Für dieses Thema wurde kein bestätigter Bildschirmpfad gefunden.</value></data>
 </root>

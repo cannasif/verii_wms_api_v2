@@ -131,4 +131,19 @@
   <data name="ExceptionPackingPrintUnknownError" xml:space="preserve"><value>Aucun détail d’erreur n’a été enregistré</value></data>
   <data name="ExceptionPackingPrintAction" xml:space="preserve"><value>Vérifiez la connexion de l’imprimante et le modèle, puis relancez le même travail de façon sécurisée.</value></data>
   <data name="DateLastWeek" xml:space="preserve"><value>la semaine dernière</value></data>
+  <data name="WriteRejectedAnswer" xml:space="preserve"><value>Cet assistant est en lecture seule ; il ne peut ni créer, ni modifier, ni approuver, ni supprimer des enregistrements. Vous pouvez demander comment utiliser l’écran concerné.</value></data>
+  <data name="NavigationStockCardTitle" xml:space="preserve"><value>Articles</value></data>
+  <data name="NavigationStockCardAnswer" xml:space="preserve"><value>Dans le menu de gauche, ouvrez Intégrations → Articles. WMS ne crée pas les fiches article ; elles proviennent de Netsis/ERP.</value></data>
+  <data name="NavigationGoodsReceiptTitle" xml:space="preserve"><value>Créer un ordre</value></data>
+  <data name="NavigationGoodsReceiptAnswer" xml:space="preserve"><value>Dans le menu de gauche, ouvrez Réception de marchandises → Opérations → Créer un ordre. Cet écran démarre une réception liée à une commande.</value></data>
+  <data name="NavigationWarehouseTransferTitle" xml:space="preserve"><value>Brouillon de transfert</value></data>
+  <data name="NavigationWarehouseTransferAnswer" xml:space="preserve"><value>Dans le menu de gauche, ouvrez Opérations d’entrepôt → Transfert inter-entrepôts → Transfert standard → Brouillon de transfert.</value></data>
+  <data name="NavigationInventoryCountTitle" xml:space="preserve"><value>Gestion des inventaires</value></data>
+  <data name="NavigationInventoryCountAnswer" xml:space="preserve"><value>Dans le menu de gauche, ouvrez Opérations d’entrepôt → Gestion d’entrepôt → Gestion des inventaires.</value></data>
+  <data name="NavigationStockMovementsTitle" xml:space="preserve"><value>Mouvements de stock</value></data>
+  <data name="NavigationStockMovementsAnswer" xml:space="preserve"><value>Dans le menu de gauche, ouvrez Opérations d’entrepôt → Gestion d’entrepôt → Mouvements de stock.</value></data>
+  <data name="NavigationGeneratorProjectsTitle" xml:space="preserve"><value>Projets de générateurs</value></data>
+  <data name="NavigationGeneratorProjectsAnswer" xml:space="preserve"><value>Dans le menu de gauche, ouvrez Production et qualité → Production de générateurs → Planification → Projets de générateurs.</value></data>
+  <data name="NavigationUnknownTitle" xml:space="preserve"><value>Aide WMS</value></data>
+  <data name="NavigationUnknownAnswer" xml:space="preserve"><value>Aucun chemin d’écran vérifié n’a été trouvé pour ce sujet.</value></data>
 </root>

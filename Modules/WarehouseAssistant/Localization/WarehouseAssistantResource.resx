@@ -192,4 +192,19 @@
   <data name="ExceptionPackingPrintUnknownError" xml:space="preserve"><value>Hata ayrıntısı kaydedilmedi</value></data>
   <data name="ExceptionPackingPrintAction" xml:space="preserve"><value>Yazıcı bağlantısını ve şablonu kontrol edin; sorun giderildikten sonra aynı işi güvenli biçimde yeniden deneyin.</value></data>
   <data name="DateLastWeek" xml:space="preserve"><value>Geçen hafta</value></data>
+  <data name="WriteRejectedAnswer" xml:space="preserve"><value>Bu yardımcı salt okunurdur; kayıt oluşturamaz, değiştiremez, onaylayamaz veya silemez. İlgili ekranı nasıl kullanacağınızı sorabilirsiniz.</value></data>
+  <data name="NavigationStockCardTitle" xml:space="preserve"><value>Stoklar</value></data>
+  <data name="NavigationStockCardAnswer" xml:space="preserve"><value>Sol menüden Entegrasyonlar → Stoklar yolunu izleyin. WMS stok kartı oluşturmaz; kartlar Netsis/ERP kaynaklıdır.</value></data>
+  <data name="NavigationGoodsReceiptTitle" xml:space="preserve"><value>Emir Oluştur</value></data>
+  <data name="NavigationGoodsReceiptAnswer" xml:space="preserve"><value>Sol menüden Mal Kabul → Operasyon → Emir Oluştur yolunu izleyin. Bu ekran siparişe bağlı yeni mal kabul emri başlatır.</value></data>
+  <data name="NavigationWarehouseTransferTitle" xml:space="preserve"><value>Transfer Taslağı</value></data>
+  <data name="NavigationWarehouseTransferAnswer" xml:space="preserve"><value>Sol menüden Depo(Ambar) İşlemleri → Depolar Arası Transfer → Normal Transfer → Transfer Taslağı yolunu izleyin.</value></data>
+  <data name="NavigationInventoryCountTitle" xml:space="preserve"><value>Sayım Yönetimi</value></data>
+  <data name="NavigationInventoryCountAnswer" xml:space="preserve"><value>Sol menüden Depo(Ambar) İşlemleri → Depo Yönetimi → Sayım Yönetimi yolunu izleyin.</value></data>
+  <data name="NavigationStockMovementsTitle" xml:space="preserve"><value>Stok Hareketleri</value></data>
+  <data name="NavigationStockMovementsAnswer" xml:space="preserve"><value>Sol menüden Depo(Ambar) İşlemleri → Depo Yönetimi → Stok Hareketleri yolunu izleyin.</value></data>
+  <data name="NavigationGeneratorProjectsTitle" xml:space="preserve"><value>Jeneratör Projeleri</value></data>
+  <data name="NavigationGeneratorProjectsAnswer" xml:space="preserve"><value>Sol menüden Üretim ve Kalite → Jeneratör Üretim → Planlama → Jeneratör Projeleri yolunu izleyin.</value></data>
+  <data name="NavigationUnknownTitle" xml:space="preserve"><value>WMS yardımı</value></data>
+  <data name="NavigationUnknownAnswer" xml:space="preserve"><value>Bu konu için doğrulanmış bir ekran yolu bulunamadı.</value></data>
 </root>

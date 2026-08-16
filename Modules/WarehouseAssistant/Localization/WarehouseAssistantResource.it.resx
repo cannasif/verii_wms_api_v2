@@ -131,4 +131,19 @@
   <data name="EvidenceOperationalDatabase" xml:space="preserve"><value>Database operativo WMS</value></data>
   <data name="EvidenceAuthorizedScope" xml:space="preserve"><value>Sono stati applicati filiale attiva, autorizzazioni utente e magazzini consentiti.</value></data>
   <data name="DateLastWeek" xml:space="preserve"><value>la settimana scorsa</value></data>
+  <data name="WriteRejectedAnswer" xml:space="preserve"><value>Questo assistente è di sola lettura; non può creare, modificare, approvare o eliminare record. Puoi chiedere come utilizzare la schermata pertinente.</value></data>
+  <data name="NavigationStockCardTitle" xml:space="preserve"><value>Articoli</value></data>
+  <data name="NavigationStockCardAnswer" xml:space="preserve"><value>Nel menu a sinistra, apri Integrazioni → Articoli. WMS non crea le anagrafiche articolo; provengono da Netsis/ERP.</value></data>
+  <data name="NavigationGoodsReceiptTitle" xml:space="preserve"><value>Crea ordine</value></data>
+  <data name="NavigationGoodsReceiptAnswer" xml:space="preserve"><value>Nel menu a sinistra, apri Ricevimento merci → Operazioni → Crea ordine. Questa schermata avvia un ricevimento collegato a un ordine.</value></data>
+  <data name="NavigationWarehouseTransferTitle" xml:space="preserve"><value>Bozza di trasferimento</value></data>
+  <data name="NavigationWarehouseTransferAnswer" xml:space="preserve"><value>Nel menu a sinistra, apri Operazioni di magazzino → Trasferimento tra magazzini → Trasferimento standard → Bozza di trasferimento.</value></data>
+  <data name="NavigationInventoryCountTitle" xml:space="preserve"><value>Gestione inventario</value></data>
+  <data name="NavigationInventoryCountAnswer" xml:space="preserve"><value>Nel menu a sinistra, apri Operazioni di magazzino → Gestione magazzino → Gestione inventario.</value></data>
+  <data name="NavigationStockMovementsTitle" xml:space="preserve"><value>Movimenti di magazzino</value></data>
+  <data name="NavigationStockMovementsAnswer" xml:space="preserve"><value>Nel menu a sinistra, apri Operazioni di magazzino → Gestione magazzino → Movimenti di magazzino.</value></data>
+  <data name="NavigationGeneratorProjectsTitle" xml:space="preserve"><value>Progetti di generatori</value></data>
+  <data name="NavigationGeneratorProjectsAnswer" xml:space="preserve"><value>Nel menu a sinistra, apri Produzione e qualità → Produzione generatori → Pianificazione → Progetti di generatori.</value></data>
+  <data name="NavigationUnknownTitle" xml:space="preserve"><value>Guida WMS</value></data>
+  <data name="NavigationUnknownAnswer" xml:space="preserve"><value>Non è stato trovato un percorso schermata verificato per questo argomento.</value></data>
 </root>

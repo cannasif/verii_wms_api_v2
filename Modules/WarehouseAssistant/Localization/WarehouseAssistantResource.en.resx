@@ -192,4 +192,19 @@
   <data name="ExceptionPackingPrintUnknownError" xml:space="preserve"><value>No error details were recorded</value></data>
   <data name="ExceptionPackingPrintAction" xml:space="preserve"><value>Check the printer connection and template, then safely retry the same job after resolving the issue.</value></data>
   <data name="DateLastWeek" xml:space="preserve"><value>last week</value></data>
+  <data name="WriteRejectedAnswer" xml:space="preserve"><value>This assistant is read-only; it cannot create, change, approve, or delete records. You can ask how to use the relevant screen.</value></data>
+  <data name="NavigationStockCardTitle" xml:space="preserve"><value>Stocks</value></data>
+  <data name="NavigationStockCardAnswer" xml:space="preserve"><value>From the left menu, go to Integrations → Stocks. WMS does not create stock cards; they are sourced from Netsis/ERP.</value></data>
+  <data name="NavigationGoodsReceiptTitle" xml:space="preserve"><value>Create Order</value></data>
+  <data name="NavigationGoodsReceiptAnswer" xml:space="preserve"><value>From the left menu, go to Goods Receipt → Operations → Create Order. This screen starts a new order-based goods receipt.</value></data>
+  <data name="NavigationWarehouseTransferTitle" xml:space="preserve"><value>Transfer Draft</value></data>
+  <data name="NavigationWarehouseTransferAnswer" xml:space="preserve"><value>From the left menu, go to Warehouse Operations → Inter-Warehouse Transfer → Standard Transfer → Transfer Draft.</value></data>
+  <data name="NavigationInventoryCountTitle" xml:space="preserve"><value>Inventory Counts</value></data>
+  <data name="NavigationInventoryCountAnswer" xml:space="preserve"><value>From the left menu, go to Warehouse Operations → Warehouse Management → Inventory Counts.</value></data>
+  <data name="NavigationStockMovementsTitle" xml:space="preserve"><value>Stock Movements</value></data>
+  <data name="NavigationStockMovementsAnswer" xml:space="preserve"><value>From the left menu, go to Warehouse Operations → Warehouse Management → Stock Movements.</value></data>
+  <data name="NavigationGeneratorProjectsTitle" xml:space="preserve"><value>Generator Projects</value></data>
+  <data name="NavigationGeneratorProjectsAnswer" xml:space="preserve"><value>From the left menu, go to Production and Quality → Generator Production → Planning → Generator Projects.</value></data>
+  <data name="NavigationUnknownTitle" xml:space="preserve"><value>WMS help</value></data>
+  <data name="NavigationUnknownAnswer" xml:space="preserve"><value>No verified screen path was found for this topic.</value></data>
 </root>

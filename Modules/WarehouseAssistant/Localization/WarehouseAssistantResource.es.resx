@@ -131,4 +131,19 @@
   <data name="ExceptionPackingPrintUnknownError" xml:space="preserve"><value>No se registraron detalles del error</value></data>
   <data name="ExceptionPackingPrintAction" xml:space="preserve"><value>Revise la conexión de la impresora y la plantilla; después vuelva a intentar el mismo trabajo de forma segura.</value></data>
   <data name="DateLastWeek" xml:space="preserve"><value>la semana pasada</value></data>
+  <data name="WriteRejectedAnswer" xml:space="preserve"><value>Este asistente es de solo lectura; no puede crear, cambiar, aprobar ni eliminar registros. Puede preguntar cómo utilizar la pantalla correspondiente.</value></data>
+  <data name="NavigationStockCardTitle" xml:space="preserve"><value>Artículos</value></data>
+  <data name="NavigationStockCardAnswer" xml:space="preserve"><value>En el menú izquierdo, vaya a Integraciones → Artículos. WMS no crea fichas de artículo; proceden de Netsis/ERP.</value></data>
+  <data name="NavigationGoodsReceiptTitle" xml:space="preserve"><value>Crear orden</value></data>
+  <data name="NavigationGoodsReceiptAnswer" xml:space="preserve"><value>En el menú izquierdo, vaya a Recepción de mercancías → Operaciones → Crear orden. Esta pantalla inicia una recepción vinculada a un pedido.</value></data>
+  <data name="NavigationWarehouseTransferTitle" xml:space="preserve"><value>Borrador de transferencia</value></data>
+  <data name="NavigationWarehouseTransferAnswer" xml:space="preserve"><value>En el menú izquierdo, vaya a Operaciones de almacén → Transferencia entre almacenes → Transferencia estándar → Borrador de transferencia.</value></data>
+  <data name="NavigationInventoryCountTitle" xml:space="preserve"><value>Gestión de inventarios</value></data>
+  <data name="NavigationInventoryCountAnswer" xml:space="preserve"><value>En el menú izquierdo, vaya a Operaciones de almacén → Gestión de almacén → Gestión de inventarios.</value></data>
+  <data name="NavigationStockMovementsTitle" xml:space="preserve"><value>Movimientos de stock</value></data>
+  <data name="NavigationStockMovementsAnswer" xml:space="preserve"><value>En el menú izquierdo, vaya a Operaciones de almacén → Gestión de almacén → Movimientos de stock.</value></data>
+  <data name="NavigationGeneratorProjectsTitle" xml:space="preserve"><value>Proyectos de generadores</value></data>
+  <data name="NavigationGeneratorProjectsAnswer" xml:space="preserve"><value>En el menú izquierdo, vaya a Producción y calidad → Producción de generadores → Planificación → Proyectos de generadores.</value></data>
+  <data name="NavigationUnknownTitle" xml:space="preserve"><value>Ayuda de WMS</value></data>
+  <data name="NavigationUnknownAnswer" xml:space="preserve"><value>No se encontró una ruta de pantalla verificada para este tema.</value></data>
 </root>

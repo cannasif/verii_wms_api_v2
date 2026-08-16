@@ -35,6 +35,7 @@ public static class WarehouseAssistantMessageKeys
     public const string StockBalanceFound = nameof(StockBalanceFound);
     public const string HelpAnswer = nameof(HelpAnswer);
     public const string UnknownAnswer = nameof(UnknownAnswer);
+    public const string WriteRejectedAnswer = nameof(WriteRejectedAnswer);
     public const string AllUsers = nameof(AllUsers);
     public const string ConversationNotFound = nameof(ConversationNotFound);
     public const string DateToday = nameof(DateToday);

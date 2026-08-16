@@ -508,22 +508,25 @@ public sealed partial class WarehouseAssistantService
 
     private ExecutionResult ExecuteNavigationHelp(WarehouseAssistantIntentResolution resolution, WarehouseAssistantAccess access)
     {
-        var (title, route, allowed, detail) = resolution.NavigationTopic switch
+        var (titleKey, titleFallback, route, allowed, detailKey, detailFallback) = resolution.NavigationTopic switch
         {
-            "stockCard" => ("Stok kartları", "/erp/stocks", access.CanViewErpMirror,
-                "WMS stok kartı oluşturmaz; kartlar Netsis/ERP kaynaklıdır ve ERP stokları ekranından görüntülenir."),
-            "goodsReceipt" => ("Mal kabul", "/warehouse/goods-receipts/new", access.CanCreateGoodsReceipts,
-                "Yeni mal kabul ekranında cari, belge ve hedef depo bilgileriyle taslak oluşturulur."),
-            "warehouseTransfer" => ("Depolar arası transfer", "/warehouse/transfers/new", access.CanCreateWarehouseTransfers,
-                "Yeni transfer ekranında kaynak ve hedef depo seçilerek salt kullanıcı işlemiyle taslak başlatılır."),
-            "inventoryCount" => ("Sayım", "/warehouse/inventory-counts", access.CanViewInventoryCounts,
-                "Sayım emirleri ekranı açık, devam eden ve tamamlanan sayımları gösterir."),
-            "stockMovements" => ("Stok hareketleri", "/warehouse/stock-movements", access.CanViewStockMovements,
-                "Stok hareketleri ekranından tarih, stok, seri ve depo filtreleri kullanılabilir."),
-            "generatorProjects" => ("Jeneratör projeleri", "/warehouse/production/generator/projects", access.CanViewGeneratorProduction,
-                "Jeneratör projeleri ekranı proje, operasyon, malzeme ve kalite durumlarını gösterir."),
-            _ => ("WMS yardımı", (string?)null, false, "Bu konu için doğrulanmış bir ekran rotası bulunamadı.")
+            "stockCard" => ("NavigationStockCardTitle", "Stoklar", "/erp/stocks", access.CanViewErpMirror,
+                "NavigationStockCardAnswer", "Sol menüden Entegrasyonlar → Stoklar yolunu izleyin. WMS stok kartı oluşturmaz; kartlar Netsis/ERP kaynaklıdır."),
+            "goodsReceipt" => ("NavigationGoodsReceiptTitle", "Emir Oluştur", "/warehouse/goods-receipts/new", access.CanCreateGoodsReceipts,
+                "NavigationGoodsReceiptAnswer", "Sol menüden Mal Kabul → Operasyon → Emir Oluştur yolunu izleyin. Bu ekran siparişe bağlı yeni mal kabul emri başlatır."),
+            "warehouseTransfer" => ("NavigationWarehouseTransferTitle", "Transfer Taslağı", "/warehouse/transfers/new", access.CanCreateWarehouseTransfers,
+                "NavigationWarehouseTransferAnswer", "Sol menüden Depo(Ambar) İşlemleri → Depolar Arası Transfer → Normal Transfer → Transfer Taslağı yolunu izleyin."),
+            "inventoryCount" => ("NavigationInventoryCountTitle", "Sayım Yönetimi", "/warehouse/inventory-counts", access.CanViewInventoryCounts,
+                "NavigationInventoryCountAnswer", "Sol menüden Depo(Ambar) İşlemleri → Depo Yönetimi → Sayım Yönetimi yolunu izleyin."),
+            "stockMovements" => ("NavigationStockMovementsTitle", "Stok Hareketleri", "/warehouse/stock-movements", access.CanViewStockMovements,
+                "NavigationStockMovementsAnswer", "Sol menüden Depo(Ambar) İşlemleri → Depo Yönetimi → Stok Hareketleri yolunu izleyin."),
+            "generatorProjects" => ("NavigationGeneratorProjectsTitle", "Jeneratör Projeleri", "/warehouse/production/generator/projects", access.CanViewGeneratorProduction,
+                "NavigationGeneratorProjectsAnswer", "Sol menüden Üretim ve Kalite → Jeneratör Üretim → Planlama → Jeneratör Projeleri yolunu izleyin."),
+            _ => ("NavigationUnknownTitle", "WMS yardımı", (string?)null, false,
+                "NavigationUnknownAnswer", "Bu konu için doğrulanmış bir ekran yolu bulunamadı.")
         };
+        var title = AdvancedMessage(titleKey, titleFallback);
+        var detail = AdvancedMessage(detailKey, detailFallback);
         var row = new WarehouseAssistantAnalysisRow(
             "Navigation", "Route", null, resolution.NavigationTopic ?? "unknown", title,
             Status: allowed ? "Allowed" : "Denied",

@@ -390,7 +390,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             WarehouseAssistantIntent.NavigationHelp => ExecuteNavigationHelp(resolution, access),
             WarehouseAssistantIntent.ParameterHelp => ExecuteParameterHelp(resolution),
             WarehouseAssistantIntent.Help => HelpResult(access),
-            _ => UnknownResult(access, resolution.ClarificationQuestion)
+            _ => UnknownResult(access, resolution)
         };
     }
 
@@ -650,6 +650,15 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             Answer = string.IsNullOrWhiteSpace(clarificationQuestion) ? M(UnknownAnswer) : clarificationQuestion.Trim()
         };
     }
+
+    private ExecutionResult UnknownResult(
+        WarehouseAssistantAccess access,
+        WarehouseAssistantIntentResolution resolution) =>
+        UnknownResult(
+            access,
+            resolution.ProviderMode.Contains("write-rejected", StringComparison.OrdinalIgnoreCase)
+                ? M(WriteRejectedAnswer)
+                : resolution.ClarificationQuestion);
 
     private ExecutionResult Denied(WarehouseAssistantIntent intent, string answer) => new(
         intent, "denied", "authorization-check", answer, [], [], [], [], null, [], [],

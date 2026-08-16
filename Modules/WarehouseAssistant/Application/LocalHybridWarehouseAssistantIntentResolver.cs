@@ -47,7 +47,14 @@ internal sealed partial class LocalHybridWarehouseAssistantIntentResolver(
             original.RequestsAllUsers);
 
         if (policy.IsWriteRequest)
-            return original with { ProviderMode = WriteRejectedProviderMode, AdditionalQueries = null };
+            return original with
+            {
+                Intent = WarehouseAssistantIntent.Unknown,
+                Confidence = 1m,
+                ProviderMode = WriteRejectedProviderMode,
+                AdditionalQueries = null,
+                QueryKind = WarehouseAssistantQueryKind.None
+            };
 
         var rewrite = RewriteConversation(boundedMessage, context);
         var primary = rewrite.Changed
