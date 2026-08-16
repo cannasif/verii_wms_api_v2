@@ -1,5 +1,8 @@
 using verii_wms_api_v2.Modules.Production.Domain;
 using verii_wms_api_v2.Shared.Domain;
+using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
+using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
+using YapCodeEntity = verii_wms_api_v2.Modules.YapCode.Domain.YapCode;
 
 namespace verii_wms_api_v2.Modules.GeneratorProduction.Domain;
 
@@ -8,6 +11,7 @@ public enum GeneratorPartType { Common, Stator, Rotor, Stiffener, FinalAssembly,
 public enum GeneratorStationArea { CommonEntry, Stator, Rotor, Stiffener, FinalAssembly, Outbound }
 public enum GeneratorOperationStatus { Draft, Planned, Ready, InProgress, Paused, Completed, Blocked, Cancelled }
 public enum GeneratorOperationAction { Start, Pause, Resume, Complete, ReportProblem, ResolveProblem }
+public enum GeneratorQualityGateStatus { Pending, Passed, Rejected }
 public enum GeneratorDependencyType { FinishToStart, StartToStart, FinishToFinish }
 public enum GeneratorRuleSeverity { Information, Warning, Error }
 public enum GeneratorResourceType { Personnel, Team, Welding, RobotWelding, ResinCassette, CuringOven, Laser, PigCart, Crane, Transport, Machine }
@@ -29,6 +33,7 @@ public sealed class GeneratorProductionPolicy : BaseEntity
     public int ScheduleFutureDays { get; set; } = 180;
     public int GanttDefaultWindowDays { get; set; } = 45;
     public int AndonRefreshSeconds { get; set; } = 15;
+    public int InboundQualityBufferDays { get; set; } = 2;
     public int WorkingCalendarSearchLimitDays { get; set; } = 3660;
     public bool RequireComponentForFinalAssembly { get; set; } = true;
     public bool RequireMaterialAvailabilityToStart { get; set; } = true;
@@ -42,6 +47,8 @@ public sealed class GeneratorProductionProject : BaseEntity
 {
     public long? ProductionHeaderId { get; set; }
     public ProductionHeader? ProductionHeader { get; set; }
+    public long? ProductId { get; set; }
+    public GeneratorProductionProduct? Product { get; set; }
     public string ProjectCode { get; set; } = string.Empty;
     public string ProjectName { get; set; } = string.Empty;
     public string? GeneratorType { get; set; }
@@ -63,6 +70,32 @@ public sealed class GeneratorProductionProject : BaseEntity
     public string? Description { get; set; }
     public byte[] RowVersion { get; set; } = [];
     public ICollection<GeneratorProductionOperation> Operations { get; set; } = [];
+}
+
+public sealed class GeneratorProductionProduct : BaseEntity
+{
+    public string Code { get; set; } = string.Empty;
+    public string Name { get; set; } = string.Empty;
+    public string? GeneratorType { get; set; }
+    public long? ProducedStockId { get; set; }
+    public StockEntity? ProducedStock { get; set; }
+    public string? ProducedStockCodeSnapshot { get; set; }
+    public string? Description { get; set; }
+    public bool IsActive { get; set; } = true;
+    public byte[] RowVersion { get; set; } = [];
+    public ICollection<GeneratorProductionProductRoute> Routes { get; set; } = [];
+    public ICollection<GeneratorProductionStationCapability> StationCapabilities { get; set; } = [];
+    public ICollection<GeneratorProductionOperationMaterial> Materials { get; set; } = [];
+}
+
+public sealed class GeneratorProductionProductRoute : BaseEntity
+{
+    public long ProductId { get; set; }
+    public GeneratorProductionProduct Product { get; set; } = null!;
+    public GeneratorPartType PartType { get; set; }
+    public long RouteId { get; set; }
+    public GeneratorProductionRoute Route { get; set; } = null!;
+    public bool IsActive { get; set; } = true;
 }
 
 public sealed class GeneratorProductionStation : BaseEntity
@@ -173,6 +206,43 @@ public sealed class GeneratorProductionRouteOperation : BaseEntity
     public byte[] RowVersion { get; set; } = [];
 }
 
+public sealed class GeneratorProductionStationCapability : BaseEntity
+{
+    public long ProductId { get; set; }
+    public GeneratorProductionProduct Product { get; set; } = null!;
+    public long RouteOperationId { get; set; }
+    public GeneratorProductionRouteOperation RouteOperation { get; set; } = null!;
+    public long StationId { get; set; }
+    public GeneratorProductionStation Station { get; set; } = null!;
+    public bool IsPrimary { get; set; }
+    public int EfficiencyPercent { get; set; } = 100;
+    public int SetupMinutes { get; set; }
+    public bool IsActive { get; set; } = true;
+    public byte[] RowVersion { get; set; } = [];
+}
+
+public sealed class GeneratorProductionOperationMaterial : BaseEntity
+{
+    public long ProductId { get; set; }
+    public GeneratorProductionProduct Product { get; set; } = null!;
+    public long RouteOperationId { get; set; }
+    public GeneratorProductionRouteOperation RouteOperation { get; set; } = null!;
+    public long StockId { get; set; }
+    public StockEntity Stock { get; set; } = null!;
+    public long? YapCodeId { get; set; }
+    public YapCodeEntity? YapCode { get; set; }
+    public long WarehouseId { get; set; }
+    public WarehouseEntity Warehouse { get; set; } = null!;
+    public string StockCodeSnapshot { get; set; } = string.Empty;
+    public string StockNameSnapshot { get; set; } = string.Empty;
+    public string UnitCode { get; set; } = "ADET";
+    public decimal QuantityPerUnit { get; set; }
+    public decimal WasteRate { get; set; }
+    public int NeedOffsetMinutes { get; set; }
+    public bool IsMandatory { get; set; } = true;
+    public byte[] RowVersion { get; set; } = [];
+}
+
 public sealed class GeneratorProductionRouteDependency : BaseEntity
 {
     public long RouteId { get; set; }
@@ -208,7 +278,12 @@ public sealed class GeneratorProductionOperation : BaseEntity
     public bool HasProblem { get; set; }
     public string? ProblemDescription { get; set; }
     public bool IsCritical { get; set; }
+    public bool IsScheduleLocked { get; set; }
+    public string? ManualScheduleReason { get; set; }
+    public long? ManualScheduledBy { get; set; }
+    public DateTime? ManualScheduledAtUtc { get; set; }
     public byte[] RowVersion { get; set; } = [];
+    public GeneratorProductionQualityGate? QualityGate { get; set; }
     public ICollection<GeneratorProductionOperationDependency> Predecessors { get; set; } = [];
     public ICollection<GeneratorProductionOperationDependency> Successors { get; set; } = [];
 }
@@ -246,5 +321,17 @@ public sealed class GeneratorProductionRule : BaseEntity
     public bool IsEnabled { get; set; } = true;
     public bool IsSystemRequired { get; set; }
     public string? ParametersJson { get; set; }
+    public byte[] RowVersion { get; set; } = [];
+}
+
+public sealed class GeneratorProductionQualityGate : BaseEntity
+{
+    public long OperationId { get; set; }
+    public GeneratorProductionOperation Operation { get; set; } = null!;
+    public GeneratorQualityGateStatus Status { get; set; } = GeneratorQualityGateStatus.Pending;
+    public DateTime RequestedAtUtc { get; set; }
+    public long? DecisionBy { get; set; }
+    public DateTime? DecisionAtUtc { get; set; }
+    public string? DecisionNote { get; set; }
     public byte[] RowVersion { get; set; } = [];
 }

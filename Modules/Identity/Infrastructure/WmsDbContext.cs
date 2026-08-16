@@ -235,6 +235,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<ProductionOrderDependency> ProductionOrderDependencies => Set<ProductionOrderDependency>();
     public DbSet<GeneratorProductionPolicy> GeneratorProductionPolicies => Set<GeneratorProductionPolicy>();
     public DbSet<GeneratorProductionProject> GeneratorProductionProjects => Set<GeneratorProductionProject>();
+    public DbSet<GeneratorProductionProduct> GeneratorProductionProducts => Set<GeneratorProductionProduct>();
+    public DbSet<GeneratorProductionProductRoute> GeneratorProductionProductRoutes => Set<GeneratorProductionProductRoute>();
     public DbSet<GeneratorProductionStation> GeneratorProductionStations => Set<GeneratorProductionStation>();
     public DbSet<GeneratorProductionShift> GeneratorProductionShifts => Set<GeneratorProductionShift>();
     public DbSet<GeneratorProductionStationShift> GeneratorProductionStationShifts => Set<GeneratorProductionStationShift>();
@@ -244,7 +246,10 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
     public DbSet<GeneratorProductionRoute> GeneratorProductionRoutes => Set<GeneratorProductionRoute>();
     public DbSet<GeneratorProductionRouteOperation> GeneratorProductionRouteOperations => Set<GeneratorProductionRouteOperation>();
     public DbSet<GeneratorProductionRouteDependency> GeneratorProductionRouteDependencies => Set<GeneratorProductionRouteDependency>();
+    public DbSet<GeneratorProductionStationCapability> GeneratorProductionStationCapabilities => Set<GeneratorProductionStationCapability>();
+    public DbSet<GeneratorProductionOperationMaterial> GeneratorProductionOperationMaterials => Set<GeneratorProductionOperationMaterial>();
     public DbSet<GeneratorProductionOperation> GeneratorProductionOperations => Set<GeneratorProductionOperation>();
+    public DbSet<GeneratorProductionQualityGate> GeneratorProductionQualityGates => Set<GeneratorProductionQualityGate>();
     public DbSet<GeneratorProductionOperationDependency> GeneratorProductionOperationDependencies => Set<GeneratorProductionOperationDependency>();
     public DbSet<GeneratorProductionPlanRevision> GeneratorProductionPlanRevisions => Set<GeneratorProductionPlanRevision>();
     public DbSet<GeneratorProductionRule> GeneratorProductionRules => Set<GeneratorProductionRule>();
@@ -478,6 +483,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new ProductionOrderDependencyConfiguration());
         modelBuilder.ApplyConfiguration(new GeneratorProductionPolicyConfiguration());
         modelBuilder.ApplyConfiguration(new GeneratorProductionProjectConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionProductConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionProductRouteConfiguration());
         modelBuilder.ApplyConfiguration(new GeneratorProductionStationConfiguration());
         modelBuilder.ApplyConfiguration(new GeneratorProductionShiftConfiguration());
         modelBuilder.ApplyConfiguration(new GeneratorProductionStationShiftConfiguration());
@@ -487,7 +494,10 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.ApplyConfiguration(new GeneratorProductionRouteConfiguration());
         modelBuilder.ApplyConfiguration(new GeneratorProductionRouteOperationConfiguration());
         modelBuilder.ApplyConfiguration(new GeneratorProductionRouteDependencyConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionStationCapabilityConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionOperationMaterialConfiguration());
         modelBuilder.ApplyConfiguration(new GeneratorProductionOperationConfiguration());
+        modelBuilder.ApplyConfiguration(new GeneratorProductionQualityGateConfiguration());
         modelBuilder.ApplyConfiguration(new GeneratorProductionOperationDependencyConfiguration());
         modelBuilder.ApplyConfiguration(new GeneratorProductionPlanRevisionConfiguration());
         modelBuilder.ApplyConfiguration(new GeneratorProductionRuleConfiguration());

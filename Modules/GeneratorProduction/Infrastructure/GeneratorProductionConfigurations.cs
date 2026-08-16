@@ -15,9 +15,10 @@ public sealed class GeneratorProductionPolicyConfiguration : BaseEntityConfigura
             t.HasCheckConstraint("CK_RII_GP_POLICY_QUANTITY", "[DefaultProjectQuantity] > 0 AND [DefaultProjectQuantity] <= [MaximumProjectQuantity] AND [MaximumProjectQuantity] <= 10000");
             t.HasCheckConstraint("CK_RII_GP_POLICY_DAYS", "[DefaultLeadTimeDays] > 0 AND [MaximumScheduleRangeDays] > 0 AND [SchedulePastDays] >= 0 AND [ScheduleFutureDays] > 0 AND [SchedulePastDays] + [ScheduleFutureDays] <= [MaximumScheduleRangeDays] AND [GanttDefaultWindowDays] BETWEEN 1 AND [MaximumScheduleRangeDays] AND [WorkingCalendarSearchLimitDays] > 0");
             t.HasCheckConstraint("CK_RII_GP_POLICY_REASON", "[MinimumPlanReasonLength] BETWEEN 3 AND 1000 AND [MinimumOperationReasonLength] BETWEEN 3 AND 1000");
-            t.HasCheckConstraint("CK_RII_GP_POLICY_REFRESH", "[AndonRefreshSeconds] BETWEEN 5 AND 3600");
+            t.HasCheckConstraint("CK_RII_GP_POLICY_REFRESH", "[AndonRefreshSeconds] BETWEEN 5 AND 3600 AND [InboundQualityBufferDays] BETWEEN 0 AND 365");
         });
         b.Property(x => x.PolicyKey).HasMaxLength(30).IsRequired();
+        b.Property(x => x.InboundQualityBufferDays).HasDefaultValue(2);
         b.Property(x => x.PlanningOrderStrategy).HasConversion<string>().HasMaxLength(40);
         b.Property(x => x.RowVersion).IsRowVersion();
         b.HasIndex(x => new { x.BranchCode, x.PolicyKey }).IsUnique().HasFilter("[IsDeleted] = 0");
@@ -35,8 +36,34 @@ public sealed class GeneratorProductionProjectConfiguration : BaseEntityConfigur
         b.Property(x => x.ExternalWorkOrderNo).HasMaxLength(100); b.Property(x => x.SourceSystemCode).HasMaxLength(50);
         b.Property(x => x.Description).HasMaxLength(2000); b.Property(x => x.Status).HasConversion<string>().HasMaxLength(30); b.Property(x => x.RowVersion).IsRowVersion();
         b.HasOne(x => x.ProductionHeader).WithMany().HasForeignKey(x => x.ProductionHeaderId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.Product).WithMany().HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(x => new { x.BranchCode, x.ProjectCode }).IsUnique().HasFilter("[IsDeleted] = 0");
         b.HasIndex(x => new { x.BranchCode, x.Status, x.PlannedDeliveryAtUtc });
+    }
+}
+
+public sealed class GeneratorProductionProductConfiguration : BaseEntityConfiguration<GeneratorProductionProduct>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<GeneratorProductionProduct> b)
+    {
+        b.ToTable("RII_GP_PRODUCT");
+        b.Property(x => x.Code).HasMaxLength(80).IsRequired(); b.Property(x => x.Name).HasMaxLength(250).IsRequired();
+        b.Property(x => x.GeneratorType).HasMaxLength(100); b.Property(x => x.ProducedStockCodeSnapshot).HasMaxLength(100);
+        b.Property(x => x.Description).HasMaxLength(1000); b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasOne(x => x.ProducedStock).WithMany().HasForeignKey(x => x.ProducedStockId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => new { x.BranchCode, x.Code }).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x => new { x.BranchCode, x.IsActive, x.GeneratorType });
+    }
+}
+
+public sealed class GeneratorProductionProductRouteConfiguration : BaseEntityConfiguration<GeneratorProductionProductRoute>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<GeneratorProductionProductRoute> b)
+    {
+        b.ToTable("RII_GP_PRODUCT_ROUTE"); b.Property(x => x.PartType).HasConversion<string>().HasMaxLength(30);
+        b.HasOne(x => x.Product).WithMany(x => x.Routes).HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.Route).WithMany().HasForeignKey(x => x.RouteId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => new { x.ProductId, x.PartType }).IsUnique().HasFilter("[IsDeleted] = 0");
     }
 }
 
@@ -138,18 +165,63 @@ public sealed class GeneratorProductionRouteDependencyConfiguration : BaseEntity
     }
 }
 
+public sealed class GeneratorProductionStationCapabilityConfiguration : BaseEntityConfiguration<GeneratorProductionStationCapability>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<GeneratorProductionStationCapability> b)
+    {
+        b.ToTable("RII_GP_STATION_CAPABILITY", t => t.HasCheckConstraint("CK_RII_GP_STATION_CAPABILITY_VALUES", "[EfficiencyPercent] BETWEEN 1 AND 300 AND [SetupMinutes] BETWEEN 0 AND 10080"));
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasOne(x => x.Product).WithMany(x => x.StationCapabilities).HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.RouteOperation).WithMany().HasForeignKey(x => x.RouteOperationId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.Station).WithMany().HasForeignKey(x => x.StationId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => new { x.ProductId, x.RouteOperationId, x.StationId }).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x => new { x.BranchCode, x.StationId, x.IsActive });
+    }
+}
+
+public sealed class GeneratorProductionOperationMaterialConfiguration : BaseEntityConfiguration<GeneratorProductionOperationMaterial>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<GeneratorProductionOperationMaterial> b)
+    {
+        b.ToTable("RII_GP_OPERATION_MATERIAL", t => t.HasCheckConstraint("CK_RII_GP_OPERATION_MATERIAL_VALUES", "[QuantityPerUnit] > 0 AND [WasteRate] BETWEEN 0 AND 100 AND [NeedOffsetMinutes] BETWEEN -10080 AND 10080"));
+        b.Property(x => x.StockCodeSnapshot).HasMaxLength(100).IsRequired(); b.Property(x => x.StockNameSnapshot).HasMaxLength(300).IsRequired();
+        b.Property(x => x.UnitCode).HasMaxLength(20).IsRequired(); b.Property(x => x.QuantityPerUnit).HasPrecision(20, 6); b.Property(x => x.WasteRate).HasPrecision(9, 4); b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasOne(x => x.Product).WithMany(x => x.Materials).HasForeignKey(x => x.ProductId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.RouteOperation).WithMany().HasForeignKey(x => x.RouteOperationId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.Stock).WithMany().HasForeignKey(x => x.StockId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.YapCode).WithMany().HasForeignKey(x => x.YapCodeId).OnDelete(DeleteBehavior.Restrict);
+        b.HasOne(x => x.Warehouse).WithMany().HasForeignKey(x => x.WarehouseId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => new { x.ProductId, x.RouteOperationId, x.StockId, x.YapCodeId, x.WarehouseId, x.UnitCode }).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x => new { x.BranchCode, x.StockId, x.WarehouseId });
+    }
+}
+
 public sealed class GeneratorProductionOperationConfiguration : BaseEntityConfiguration<GeneratorProductionOperation>
 {
     protected override void ConfigureEntity(EntityTypeBuilder<GeneratorProductionOperation> b)
     {
         b.ToTable("RII_GP_OPERATION", t => t.HasCheckConstraint("CK_RII_GP_OPERATION_VALUES", "[UnitIndex] > 0 AND [PlannedEndAtUtc] > [PlannedStartAtUtc] AND [GoodQuantity] >= 0 AND [DefectQuantity] >= 0 AND [ScrapQuantity] >= 0"));
-        b.Property(x => x.Status).HasConversion<string>().HasMaxLength(30); b.Property(x => x.ProblemDescription).HasMaxLength(1000); b.Property(x => x.RowVersion).IsRowVersion();
+        b.Property(x => x.Status).HasConversion<string>().HasMaxLength(30); b.Property(x => x.ProblemDescription).HasMaxLength(1000); b.Property(x => x.ManualScheduleReason).HasMaxLength(1000); b.Property(x => x.RowVersion).IsRowVersion();
         b.Property(x => x.GoodQuantity).HasPrecision(20, 6); b.Property(x => x.DefectQuantity).HasPrecision(20, 6); b.Property(x => x.ScrapQuantity).HasPrecision(20, 6);
         b.HasOne(x => x.Project).WithMany(x => x.Operations).HasForeignKey(x => x.ProjectId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne(x => x.RouteOperation).WithMany().HasForeignKey(x => x.RouteOperationId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne(x => x.Station).WithMany().HasForeignKey(x => x.StationId).OnDelete(DeleteBehavior.Restrict);
         b.HasOne(x => x.ProductionOrder).WithMany().HasForeignKey(x => x.ProductionOrderId).OnDelete(DeleteBehavior.Restrict);
         b.HasIndex(x => new { x.ProjectId, x.RouteOperationId, x.UnitIndex }).IsUnique().HasFilter("[IsDeleted] = 0"); b.HasIndex(x => new { x.BranchCode, x.StationId, x.PlannedStartAtUtc, x.PlannedEndAtUtc });
+    }
+}
+
+public sealed class GeneratorProductionQualityGateConfiguration : BaseEntityConfiguration<GeneratorProductionQualityGate>
+{
+    protected override void ConfigureEntity(EntityTypeBuilder<GeneratorProductionQualityGate> b)
+    {
+        b.ToTable("RII_GP_QUALITY_GATE");
+        b.Property(x => x.Status).HasConversion<string>().HasMaxLength(30);
+        b.Property(x => x.DecisionNote).HasMaxLength(1000);
+        b.Property(x => x.RowVersion).IsRowVersion();
+        b.HasOne(x => x.Operation).WithOne(x => x.QualityGate).HasForeignKey<GeneratorProductionQualityGate>(x => x.OperationId).OnDelete(DeleteBehavior.Restrict);
+        b.HasIndex(x => x.OperationId).IsUnique().HasFilter("[IsDeleted] = 0");
+        b.HasIndex(x => new { x.BranchCode, x.Status, x.RequestedAtUtc });
     }
 }
 
