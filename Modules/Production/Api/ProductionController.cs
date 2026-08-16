@@ -34,11 +34,15 @@ public sealed class ProductionController(
 
     [HttpGet("work-orders")]
     public async Task<IActionResult>SourceWorkOrders(
-        [FromQuery]string? search,[FromQuery]int take=200,CancellationToken ct=default)
+        [FromQuery]string? search,
+        [FromQuery]int? take=null,
+        [FromQuery]DateTime? fromDate=null,
+        [FromQuery]DateTime? toDate=null,
+        CancellationToken ct=default)
     {
         await Require("WMS.PRODUCTION.VIEW",ct);
         return Ok(ApiResponse<IReadOnlyList<ProductionSourceWorkOrderRow>>.Ok(
-            await service.GetSourceWorkOrdersAsync(search,BranchCode(),take,ct)));
+            await service.GetSourceWorkOrdersAsync(search,BranchCode(),take,fromDate,toDate,ct)));
     }
 
     [HttpGet("work-orders/returned")]

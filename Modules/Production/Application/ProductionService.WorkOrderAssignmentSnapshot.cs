@@ -158,6 +158,30 @@ public sealed partial class ProductionService
             return (assignedKeys.Count, total);
         }
 
+        public (decimal Quantity, string? UnitCode) GetCancellationRemainderOpenQuantity(long transferId, long kalanTaskId)
+        {
+            var sourceLink = _links.FirstOrDefault(link => link.WarehouseTransferHeaderId == transferId);
+            if (sourceLink is null)
+                return (0, null);
+
+            var kalanTask = sourceLink.WarehouseTransferHeader.Tasks
+                .FirstOrDefault(task => !task.IsDeleted && task.Id == kalanTaskId);
+            if (kalanTask is null)
+                return (0, null);
+
+            var kalanMaterials = ProductionWorkOrderMaterialAssignment.BuildKalanOpenMaterials(sourceLink, kalanTask);
+            if (kalanMaterials.Count == 0)
+                return (0, null);
+
+            var quantity = kalanMaterials.Sum(material => material.RequiredQuantity);
+            var units = kalanMaterials
+                .Select(material => material.UnitCode?.Trim())
+                .Where(unit => !string.IsNullOrWhiteSpace(unit))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            return (quantity, units.Length == 1 ? units[0] : kalanMaterials[0].UnitCode);
+        }
+
         private Dictionary<ProductionRecipeMaterialKey, decimal> BuildCancellableRemainingQuantities(
             ProductionSourceWorkOrderRow templateRow)
         {

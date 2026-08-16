@@ -321,7 +321,7 @@ public sealed partial class ProductionService
                 .Distinct()
                 .ToArray();
             foreach (var transferId in restoredTransferIds)
-                await TryRestoreCancellationReturnKalanTaskAsync(branch, transferId, actor, token);
+                await TryRestoreAtanmayanlarPickTaskAsync(branch, transferId, actor, token);
 
             var remainingCancelled = cancellation.Lines
                 .Where(x => !x.IsDeleted && x.CancelledQuantity > 0)
@@ -443,14 +443,15 @@ public sealed partial class ProductionService
                 && contexts.Contains(x.WarehouseTransferHeader.BusinessContext))
             .Include(x => x.WarehouseTransferHeader)
                 .ThenInclude(h => h.Tasks.Where(task => !task.IsDeleted))
+                    .ThenInclude(task => task.Assignments)
             .SingleOrDefaultAsync(ct)
             ?? throw AppException.NotFound("İptal kalanı transferi bulunamadı.");
 
         var tasks = link.WarehouseTransferHeader.Tasks.Where(x => !x.IsDeleted).ToArray();
         var kalanTask = tasks.SingleOrDefault(x => x.Id == kalanTaskId)
             ?? throw AppException.NotFound("İptal kalanı görevi bulunamadı.");
-        if (!ProductionWorkOrderTransferGrouping.IsPostCancellationReturnUnassignedPickTask(kalanTask, tasks))
-            throw AppException.Conflict("Seçilen görev aktif bir iptal kalanı toplama görevi değildir.");
+        if (!ProductionWorkOrderTransferGrouping.IsCancellableAtanmayanlarPickTask(kalanTask, link, tasks))
+            throw AppException.Conflict("Seçilen görev Atanmayanlar kuyruğunda iptal edilebilir bir toplama görevi değildir.");
         if (kalanTask.Status is WarehouseTransferTaskStatus.Completed or WarehouseTransferTaskStatus.Cancelled)
             return;
 
@@ -460,7 +461,7 @@ public sealed partial class ProductionService
         kalanTask.UpdatedDate = now;
     }
 
-    private async Task TryRestoreCancellationReturnKalanTaskAsync(
+    private async Task TryRestoreAtanmayanlarPickTaskAsync(
         string branch,
         long transferId,
         long actor,
@@ -473,13 +474,14 @@ public sealed partial class ProductionService
                 && contexts.Contains(x.WarehouseTransferHeader.BusinessContext))
             .Include(x => x.WarehouseTransferHeader)
                 .ThenInclude(h => h.Tasks.Where(task => !task.IsDeleted))
+                    .ThenInclude(task => task.Assignments)
             .SingleOrDefaultAsync(ct);
         if (link is null) return;
 
-        var tasks = link.WarehouseTransferHeader.Tasks.Where(x => !x.IsDeleted).ToArray();
+        var header = link.WarehouseTransferHeader;
+        var tasks = header.Tasks.Where(x => !x.IsDeleted).ToArray();
         var kalanTask = tasks
-            .Where(task => task.Status == WarehouseTransferTaskStatus.Cancelled
-                && ProductionWorkOrderTransferGrouping.IsCancellationReturnKalanPickTask(task, tasks))
+            .Where(task => ProductionWorkOrderTransferGrouping.IsRestorableAtanmayanlarPickTask(task, link, tasks))
             .OrderByDescending(task => task.UpdatedDate ?? task.CreatedDate)
             .ThenByDescending(task => task.Id)
             .FirstOrDefault();
@@ -489,6 +491,24 @@ public sealed partial class ProductionService
         kalanTask.Status = WarehouseTransferTaskStatus.Open;
         kalanTask.UpdatedBy = actor;
         kalanTask.UpdatedDate = now;
+
+        if (link.WorkflowStatus == ProductionTransferWorkflowStatus.Cancelled)
+        {
+            link.WorkflowStatus = ProductionTransferWorkflowStatus.Planned;
+            link.UpdatedBy = actor;
+            link.UpdatedDate = now;
+        }
+
+        if (header.Status == WarehouseTransferStatus.Cancelled)
+        {
+            header.Status = tasks.Any(task =>
+                    task.Id != kalanTask.Id
+                    && task.Status == WarehouseTransferTaskStatus.Completed)
+                ? WarehouseTransferStatus.Released
+                : WarehouseTransferStatus.Draft;
+            header.UpdatedBy = actor;
+            header.UpdatedDate = now;
+        }
     }
 
     private async Task<Dictionary<ProductionRecipeMaterialKey, decimal>> LoadCancelledMaterialQuantitiesAsync(
@@ -899,7 +919,7 @@ public sealed partial class ProductionService
     private static IReadOnlyList<ProductionSourceWorkOrderRow> MergeUnassignedWithCancellationRemaindersAsync(
         IReadOnlyList<ProductionSourceWorkOrderRow> unassigned,
         IReadOnlyList<ProductionSourceWorkOrderRow> cancellationRemainders,
-        int take,
+        int? take,
         WorkOrderAssignmentSnapshot assignmentSnapshot)
     {
         IEnumerable<ProductionSourceWorkOrderRow> combined = unassigned;
@@ -931,11 +951,10 @@ public sealed partial class ProductionService
             filtered.Add(row);
         }
 
-        return filtered
+        var ordered = filtered
             .OrderByDescending(x => x.WorkOrderDate)
             .ThenBy(x => x.WorkOrderNumber, StringComparer.OrdinalIgnoreCase)
-            .ThenBy(x => x.SourceSystemCode, StringComparer.OrdinalIgnoreCase)
-            .Take(take)
-            .ToArray();
+            .ThenBy(x => x.SourceSystemCode, StringComparer.OrdinalIgnoreCase);
+        return (take is int boundedTake ? ordered.Take(boundedTake) : ordered).ToArray();
     }
 }

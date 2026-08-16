@@ -37,17 +37,17 @@ public sealed partial class ProductionService(
     private IGenericRepository<ProductionHeader> Headers => uow.Repository<ProductionHeader>();
 
     public async Task<IReadOnlyList<ProductionSourceWorkOrderRow>> GetSourceWorkOrdersAsync(
-        string? search,string branchCode,int take=200,CancellationToken ct=default)
+        string? search,string branchCode,int? take=null,DateTime? fromDate=null,DateTime? toDate=null,CancellationToken ct=default)
     {
         var branch=branchCode.Trim();
         if(!int.TryParse(branch,out var branchNumber))
             throw AppException.BadRequest("Oturum şube kodu sayısal değildir.");
         var setting=await GetSourceSettingAsync(branch,ct);
-        var boundedTake=Math.Clamp(take,1,500);
-        var result=new List<ProductionSourceWorkOrderRow>(boundedTake*2);
+        var boundedTake=take is int requestedTake ? Math.Max(1, requestedTake) : (int?)null;
+        var result=new List<ProductionSourceWorkOrderRow>();
         if(setting.Source is ProductionOrderSourceType.NetsisErpFunctions or ProductionOrderSourceType.ErpAndWms)
         {
-            var rows=await netsisRead.GetProductionWorkOrdersAsync(search,branchNumber,false,boundedTake,ct);
+            var rows=await netsisRead.GetProductionWorkOrdersAsync(search,branchNumber,false,boundedTake,ct,fromDate,toDate);
             result.AddRange(rows.Select(x=>new ProductionSourceWorkOrderRow(
                 ProductionOrderSourceType.NetsisErpFunctions,"NETSIS",1,x.WorkOrderNumber,x.BranchCode??branchNumber,x.StockCode,x.StockName,
                 x.ConfigurationCode,x.WorkOrderQuantity,x.UnitCode,x.RecipeTotal,x.WorkOrderDate,x.DeliveryDate,
@@ -66,9 +66,15 @@ public sealed partial class ProductionService(
                     (x.ProductName!=null&&x.ProductName.Contains(term))||(x.ProjectCode!=null&&x.ProjectCode.Contains(term))||
                     (x.Description!=null&&x.Description.Contains(term)));
             }
-            var candidates=await query.AsNoTracking()
-                .OrderByDescending(x=>x.SourceUpdatedAtUtc).ThenByDescending(x=>x.RevisionNumber)
-                .Take(Math.Min(1500,boundedTake*5))
+            if(fromDate.HasValue)
+                query=query.Where(x=>x.WorkOrderDate!=null&&x.WorkOrderDate>=fromDate.Value);
+            if(toDate.HasValue)
+                query=query.Where(x=>x.WorkOrderDate!=null&&x.WorkOrderDate<toDate.Value);
+            IQueryable<ProductionSourceWorkOrder> candidatesQuery=query.AsNoTracking()
+                .OrderByDescending(x=>x.SourceUpdatedAtUtc).ThenByDescending(x=>x.RevisionNumber);
+            if(boundedTake is int wmsTake)
+                candidatesQuery=candidatesQuery.Take(wmsTake);
+            var candidates=await candidatesQuery
                 .Select(x=>new
                 {
                     x.SourceSystemCode,
@@ -89,9 +95,11 @@ public sealed partial class ProductionService(
                     x.SourceUpdatedAtUtc
                 })
                 .ToListAsync(ct);
-            result.AddRange(candidates.GroupBy(x=>x.WorkOrderNumber,StringComparer.OrdinalIgnoreCase)
-                .Select(x=>x.OrderByDescending(v=>v.RevisionNumber).ThenByDescending(v=>v.SourceUpdatedAtUtc).First())
-                .Take(boundedTake)
+            var latestByWorkOrder=candidates.GroupBy(x=>x.WorkOrderNumber,StringComparer.OrdinalIgnoreCase)
+                .Select(x=>x.OrderByDescending(v=>v.RevisionNumber).ThenByDescending(v=>v.SourceUpdatedAtUtc).First());
+            if(boundedTake is int latestTake)
+                latestByWorkOrder=latestByWorkOrder.Take(latestTake);
+            result.AddRange(latestByWorkOrder
                 .Select(x=>new ProductionSourceWorkOrderRow(
                     ProductionOrderSourceType.WmsIntegrationTables,x.SourceSystemCode,x.RevisionNumber,x.WorkOrderNumber,
                     branchNumber,x.ProductCode,x.ProductName??x.ProductCode,x.ConfigurationCode,x.PlannedQuantity,
@@ -101,8 +109,9 @@ public sealed partial class ProductionService(
                     Description: x.Description)));
         }
 
-        var ordered=result.OrderByDescending(x=>x.WorkOrderDate).ThenBy(x=>x.WorkOrderNumber)
-            .ThenBy(x=>x.SourceSystemCode).Take(boundedTake).ToArray();
+        var orderedQuery=result.OrderByDescending(x=>x.WorkOrderDate).ThenBy(x=>x.WorkOrderNumber)
+            .ThenBy(x=>x.SourceSystemCode);
+        var ordered=(boundedTake is int orderedTake ? orderedQuery.Take(orderedTake) : orderedQuery).ToArray();
         var cancellationRemainders=await LoadCancellationReturnRemainderSourceRowsAsync(
             branch,
             branchNumber,
@@ -145,8 +154,14 @@ public sealed partial class ProductionService(
                         transferId,
                         kalanTaskId,
                         row.WorkOrderNumber.Trim());
+                    var (openQuantity, openUnitCode) = assignmentSnapshot.GetCancellationRemainderOpenQuantity(
+                        transferId,
+                        kalanTaskId);
                     return row with
                     {
+                        WorkOrderQuantity = openQuantity,
+                        UnitCode = openUnitCode ?? row.UnitCode,
+                        RecipeTotal = openQuantity,
                         AssignedRecipeLineCount = assigned,
                         RecipeLineCount = total,
                     };
@@ -162,6 +177,9 @@ public sealed partial class ProductionService(
                     RecipeLineCount = recipeLineCount
                 };
             })
+            .Where(row =>
+                (!fromDate.HasValue || (row.WorkOrderDate is DateTime workOrderDate && workOrderDate >= fromDate.Value))
+                && (!toDate.HasValue || (row.WorkOrderDate is DateTime workOrderEnd && workOrderEnd < toDate.Value)))
             .ToArray();
     }
 
@@ -1032,6 +1050,9 @@ public sealed partial class ProductionService(
                 .ThenInclude(h => h.Tasks.Where(task => !task.IsDeleted))
                     .ThenInclude(task => task.Lines.Where(line => !line.IsDeleted))
                         .ThenInclude(line => line.Line)
+            .Include(x => x.WarehouseTransferHeader)
+                .ThenInclude(h => h.Tasks.Where(task => !task.IsDeleted))
+                    .ThenInclude(task => task.Assignments)
             .Include(x => x.Lines.Where(line => !line.IsDeleted))
             .SingleOrDefaultAsync(ct)
             ?? throw AppException.NotFound("İptal kalanı transferi bulunamadı.");
@@ -1051,8 +1072,8 @@ public sealed partial class ProductionService(
         var tasks = header.Tasks.Where(x => !x.IsDeleted).ToArray();
         var kalanTask = tasks.SingleOrDefault(x => x.Id == kalanTaskId)
             ?? throw AppException.NotFound("İptal kalanı görevi bulunamadı.");
-        if (!ProductionWorkOrderTransferGrouping.IsAtanmayanlarUnassignedPickTask(kalanTask, link, tasks))
-            throw AppException.Conflict("Seçilen görev aktif bir iptal kalanı toplama görevi değildir.");
+        if (!ProductionWorkOrderTransferGrouping.IsCancellableAtanmayanlarPickTask(kalanTask, link, tasks))
+            throw AppException.Conflict("Seçilen görev Atanmayanlar kuyruğunda iptal edilebilir bir toplama görevi değildir.");
 
         var recipeByKey = ProductionWorkOrderTransferGrouping.IsUnlinkedProductionTransfer(link)
             ? new Dictionary<ProductionRecipeMaterialKey, PreparedNetsisProductionMaterial>()

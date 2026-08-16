@@ -142,7 +142,8 @@ public sealed record ProductionWorkOrderTransferHeaderRowDto(
     string? ErpErrorMessage,
     IReadOnlyList<ProductionWorkOrderTransferTaskRowDto> Tasks,
     bool SourceIsRackless = false,
-    bool TargetIsRackless = false);
+    bool TargetIsRackless = false,
+    string? ProjectCode = null);
 
 public interface IProductionTransferTaskService
 {

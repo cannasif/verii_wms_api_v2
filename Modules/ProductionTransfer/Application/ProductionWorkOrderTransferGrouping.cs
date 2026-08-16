@@ -130,7 +130,8 @@ public static class ProductionWorkOrderTransferGrouping
         var term = search.Trim();
         return header.DocumentNo.Contains(term, StringComparison.OrdinalIgnoreCase)
             || (header.ExternalReferenceNo?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
-            || (link.ProductionOrderNo?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false);
+            || (link.ProductionOrderNo?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (header.ProjectCode?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false);
     }
 
     public static LabelContext BuildLabelContext(IEnumerable<ProductionTransferHeaderLink> links)
@@ -254,30 +255,20 @@ public static class ProductionWorkOrderTransferGrouping
         WarehouseTransferTask task,
         IReadOnlyList<WarehouseTransferTask> allTasks) =>
         IsCancellationReturnKalanPickTask(task, allTasks)
-        && task.Status is not WarehouseTransferTaskStatus.Completed
-            and not WarehouseTransferTaskStatus.Cancelled;
+        && IsOpenAtanmayanlarPickStatus(task);
 
     public static bool IsUnlinkedReleasedDraftPickTask(
         WarehouseTransferTask task,
         ProductionTransferHeaderLink link) =>
-        IsUnlinkedProductionTransfer(link)
-        && task.TaskType == WarehouseTransferTaskType.Pick
-        && !task.Assignments.Any(assignment => !assignment.IsDeleted)
-        && task.Status is not WarehouseTransferTaskStatus.Completed
-            and not WarehouseTransferTaskStatus.Cancelled
-        && (task.Description?.Contains(UnlinkedPendingReassignmentDescriptionMarker, StringComparison.OrdinalIgnoreCase) ?? false);
+        IsUnlinkedReleasedDraftPickStructure(task, link)
+        && IsOpenAtanmayanlarPickStatus(task);
 
     public static bool IsUnassignedCreatedPickTask(
         WarehouseTransferTask task,
         ProductionTransferHeaderLink link,
         IReadOnlyList<WarehouseTransferTask> allTasks) =>
-        task.TaskType == WarehouseTransferTaskType.Pick
-        && !task.Assignments.Any(assignment => !assignment.IsDeleted)
-        && task.Status is not WarehouseTransferTaskStatus.Completed
-            and not WarehouseTransferTaskStatus.Cancelled
-        && !IsPostCancellationReturnUnassignedPickTask(task, allTasks)
-        && !IsUnlinkedReleasedDraftPickTask(task, link)
-        && !IsPostShortageHandoverUnassignedPickTask(task, link);
+        IsUnassignedCreatedPickStructure(task, link, allTasks)
+        && IsOpenAtanmayanlarPickStatus(task);
 
     public static bool IsAtanmayanlarUnassignedPickTask(
         WarehouseTransferTask task,
@@ -287,11 +278,28 @@ public static class ProductionWorkOrderTransferGrouping
         || IsUnlinkedReleasedDraftPickTask(task, link)
         || IsUnassignedCreatedPickTask(task, link, allTasks);
 
+    public static bool IsCancellableAtanmayanlarPickTask(
+        WarehouseTransferTask task,
+        ProductionTransferHeaderLink link,
+        IReadOnlyList<WarehouseTransferTask> allTasks) =>
+        IsAtanmayanlarUnassignedPickTask(task, link, allTasks)
+        || IsPostShortageHandoverUnassignedPickTask(task, link);
+
+    public static bool IsRestorableAtanmayanlarPickTask(
+        WarehouseTransferTask task,
+        ProductionTransferHeaderLink link,
+        IReadOnlyList<WarehouseTransferTask> allTasks) =>
+        task.Status == WarehouseTransferTaskStatus.Cancelled
+        && (IsCancellationReturnKalanPickTask(task, allTasks)
+            || IsUnlinkedReleasedDraftPickStructure(task, link)
+            || IsUnassignedCreatedPickStructure(task, link, allTasks)
+            || IsPostShortageHandoverPickStructure(task, link));
+
     public static bool IsCancellationReturnKalanPickTask(
         WarehouseTransferTask task,
         IReadOnlyList<WarehouseTransferTask> allTasks) =>
         task.TaskType == WarehouseTransferTaskType.Pick
-        && !task.Assignments.Any(assignment => !assignment.IsDeleted)
+        && HasNoActiveAssignment(task)
         && task.PreviousTaskId is long cancellationReturnTaskId
         && allTasks.Any(other => !other.IsDeleted
             && other.TaskType == WarehouseTransferTaskType.CancellationReturn
@@ -301,12 +309,41 @@ public static class ProductionWorkOrderTransferGrouping
     public static bool IsPostShortageHandoverUnassignedPickTask(
         WarehouseTransferTask task,
         ProductionTransferHeaderLink link) =>
+        IsPostShortageHandoverPickStructure(task, link)
+        && IsOpenAtanmayanlarPickStatus(task);
+
+    private static bool IsOpenAtanmayanlarPickStatus(WarehouseTransferTask task) =>
+        task.Status is not WarehouseTransferTaskStatus.Completed
+            and not WarehouseTransferTaskStatus.Cancelled;
+
+    private static bool HasNoActiveAssignment(WarehouseTransferTask task) =>
+        !task.Assignments.Any(assignment => !assignment.IsDeleted);
+
+    private static bool IsUnlinkedReleasedDraftPickStructure(
+        WarehouseTransferTask task,
+        ProductionTransferHeaderLink link) =>
+        IsUnlinkedProductionTransfer(link)
+        && task.TaskType == WarehouseTransferTaskType.Pick
+        && HasNoActiveAssignment(task)
+        && (task.Description?.Contains(UnlinkedPendingReassignmentDescriptionMarker, StringComparison.OrdinalIgnoreCase) ?? false);
+
+    private static bool IsPostShortageHandoverPickStructure(
+        WarehouseTransferTask task,
+        ProductionTransferHeaderLink link) =>
         task.TaskType == WarehouseTransferTaskType.Pick
-        && task.Status is not WarehouseTransferTaskStatus.Completed
-            and not WarehouseTransferTaskStatus.Cancelled
-        && !task.Assignments.Any(assignment => !assignment.IsDeleted)
+        && HasNoActiveAssignment(task)
         && link.ParentWarehouseTransferHeaderId.HasValue
         && link.AutoGenerated;
+
+    private static bool IsUnassignedCreatedPickStructure(
+        WarehouseTransferTask task,
+        ProductionTransferHeaderLink link,
+        IReadOnlyList<WarehouseTransferTask> allTasks) =>
+        task.TaskType == WarehouseTransferTaskType.Pick
+        && HasNoActiveAssignment(task)
+        && !IsCancellationReturnKalanPickTask(task, allTasks)
+        && !IsUnlinkedReleasedDraftPickStructure(task, link)
+        && !IsPostShortageHandoverPickStructure(task, link);
 
     public static bool IsOpenPartialTransferRemainderLink(ProductionTransferHeaderLink link)
     {

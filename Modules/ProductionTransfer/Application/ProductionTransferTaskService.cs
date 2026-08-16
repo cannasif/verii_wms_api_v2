@@ -185,7 +185,8 @@ public sealed class ProductionTransferTaskService(
                 erpPosting?.LastErrorMessage,
                 [],
                 racklessFlags.GetValueOrDefault(header.SourceWarehouseId),
-                racklessFlags.GetValueOrDefault(header.TargetWarehouseId)));
+                racklessFlags.GetValueOrDefault(header.TargetWarehouseId),
+                header.ProjectCode));
         }
 
         return rows;

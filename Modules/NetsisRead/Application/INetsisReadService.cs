@@ -30,8 +30,10 @@ public interface INetsisReadService
         string? workOrderNumber,
         int branchCode,
         bool includeClosed,
-        int take,
-        CancellationToken cancellationToken);
+        int? take,
+        CancellationToken cancellationToken,
+        DateTime? fromDate = null,
+        DateTime? toDate = null);
     Task<IReadOnlyList<StockRecipeComponentDto>> GetStockRecipeAsync(
         string stockCode,
         int branchCode,

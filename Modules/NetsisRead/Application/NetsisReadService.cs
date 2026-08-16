@@ -288,19 +288,32 @@ public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INet
         string? workOrderNumber,
         int branchCode,
         bool includeClosed,
-        int take,
-        CancellationToken ct)
+        int? take,
+        CancellationToken ct,
+        DateTime? fromDate = null,
+        DateTime? toDate = null)
     {
         workOrderNumber = Normalize(workOrderNumber);
-        take = Math.Clamp(take, 1, 1_000);
+        var boundedTake = take is int requestedTake ? Math.Max(1, requestedTake) : (int?)null;
+        var sql = boundedTake is null
+            ? """
+            SELECT *
+            FROM dbo.RII_FN_ISEMRI(@workOrderNumber, @branchCode, @includeClosed)
+            WHERE (@fromDate IS NULL OR Tarih >= @fromDate)
+              AND (@toDate IS NULL OR Tarih < @toDate)
+            ORDER BY Tarih DESC, IsEmriNo
+            """
+            : """
+            SELECT TOP (@take) *
+            FROM dbo.RII_FN_ISEMRI(@workOrderNumber, @branchCode, @includeClosed)
+            WHERE (@fromDate IS NULL OR Tarih >= @fromDate)
+              AND (@toDate IS NULL OR Tarih < @toDate)
+            ORDER BY Tarih DESC, IsEmriNo
+            """;
 
         return await queryExecutor.QueryAsync<ProductionWorkOrderDto>(
             "RII_FN_ISEMRI",
-            """
-            SELECT TOP (@take) *
-            FROM dbo.RII_FN_ISEMRI(@workOrderNumber, @branchCode, @includeClosed)
-            ORDER BY Tarih DESC, IsEmriNo
-            """,
+            sql,
             r => new ProductionWorkOrderDto(
                 String(r, "IsEmriNo"), Nullable<int>(r, "SubeKodu"), String(r, "StokKodu"), String(r, "StokAdi"),
                 NullableString(r, "YapilandirmaKodu"), Get<decimal>(r, "IsEmriMiktari"), Get<int>(r, "BirimSirasi"),
@@ -309,10 +322,12 @@ public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INet
                 NullableString(r, "ProjeKodu"), Get<int>(r, "DepoKodu"), Get<int>(r, "CikisDepoKodu"), Get<bool>(r, "Kapali"),
                 NullableString(r, "Aciklama")),
             ct,
-            Parameter("@take", take),
+            Parameter("@take", boundedTake),
             Parameter("@workOrderNumber", workOrderNumber),
             Parameter("@branchCode", branchCode),
-            Parameter("@includeClosed", includeClosed));
+            Parameter("@includeClosed", includeClosed),
+            Parameter("@fromDate", fromDate),
+            Parameter("@toDate", toDate));
     }
 
     public async Task<IReadOnlyList<StockRecipeComponentDto>> GetStockRecipeAsync(

@@ -332,7 +332,13 @@ public sealed record ProductionTransitionRequest(string RowVersion,string? Reaso
 
 public interface IProductionService
 {
-    Task<IReadOnlyList<ProductionSourceWorkOrderRow>> GetSourceWorkOrdersAsync(string? search,string branchCode,int take=200,CancellationToken ct=default);
+    Task<IReadOnlyList<ProductionSourceWorkOrderRow>> GetSourceWorkOrdersAsync(
+        string? search,
+        string branchCode,
+        int? take=null,
+        DateTime? fromDate=null,
+        DateTime? toDate=null,
+        CancellationToken ct=default);
     Task<IReadOnlyList<ProductionReturnedWorkOrderRow>> GetReturnedSourceWorkOrdersAsync(string? search,string branchCode,int take=200,CancellationToken ct=default);
     Task<PreparedNetsisProductionWorkOrder> PrepareSourceWorkOrderAsync(
         string workOrderNumber,
