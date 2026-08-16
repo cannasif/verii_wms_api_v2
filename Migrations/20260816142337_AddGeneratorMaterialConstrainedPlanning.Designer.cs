@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 
@@ -11,9 +12,11 @@ using verii_wms_api_v2.Modules.Identity.Infrastructure;
 namespace verii_wms_api_v2.Migrations
 {
     [DbContext(typeof(WmsDbContext))]
-    partial class WmsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260816142337_AddGeneratorMaterialConstrainedPlanning")]
+    partial class AddGeneratorMaterialConstrainedPlanning
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -6798,84 +6801,6 @@ namespace verii_wms_api_v2.Migrations
                         });
                 });
 
-            modelBuilder.Entity("verii_wms_api_v2.Modules.GeneratorProduction.Domain.GeneratorProductionQualityGate", b =>
-                {
-                    b.Property<long>("Id")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bigint");
-
-                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
-
-                    b.Property<string>("BranchCode")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(10)
-                        .HasColumnType("nvarchar(10)")
-                        .HasDefaultValue("0");
-
-                    b.Property<long?>("CreatedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("CreatedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<DateTime?>("DecisionAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<long?>("DecisionBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<string>("DecisionNote")
-                        .HasMaxLength(1000)
-                        .HasColumnType("nvarchar(1000)");
-
-                    b.Property<long?>("DeletedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("DeletedDate")
-                        .HasColumnType("datetime2");
-
-                    b.Property<bool>("IsDeleted")
-                        .ValueGeneratedOnAdd()
-                        .HasColumnType("bit")
-                        .HasDefaultValue(false);
-
-                    b.Property<long>("OperationId")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime>("RequestedAtUtc")
-                        .HasColumnType("datetime2");
-
-                    b.Property<byte[]>("RowVersion")
-                        .IsConcurrencyToken()
-                        .IsRequired()
-                        .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("rowversion");
-
-                    b.Property<string>("Status")
-                        .IsRequired()
-                        .HasMaxLength(30)
-                        .HasColumnType("nvarchar(30)");
-
-                    b.Property<long?>("UpdatedBy")
-                        .HasColumnType("bigint");
-
-                    b.Property<DateTime?>("UpdatedDate")
-                        .HasColumnType("datetime2");
-
-                    b.HasKey("Id");
-
-                    b.HasIndex("IsDeleted");
-
-                    b.HasIndex("OperationId")
-                        .IsUnique()
-                        .HasFilter("[IsDeleted] = 0");
-
-                    b.HasIndex("BranchCode", "Status", "RequestedAtUtc");
-
-                    b.ToTable("RII_GP_QUALITY_GATE", (string)null);
-                });
-
             modelBuilder.Entity("verii_wms_api_v2.Modules.GeneratorProduction.Domain.GeneratorProductionResource", b =>
                 {
                     b.Property<long>("Id")
@@ -10204,20 +10129,6 @@ namespace verii_wms_api_v2.Migrations
                         .HasColumnType("nvarchar(40)")
                         .HasDefaultValue("rack-scanner");
 
-                    b.Property<string>("NavbarCenterMode")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(16)
-                        .HasColumnType("nvarchar(16)")
-                        .HasDefaultValue("search");
-
-                    b.Property<string>("NavbarKpiKeys")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)")
-                        .HasDefaultValue("myTasks,qualityQueue,pendingApproval,erpIssues");
-
                     b.Property<DateTime?>("CreatedDate")
                         .HasColumnType("datetime2");
 
@@ -10266,9 +10177,7 @@ namespace verii_wms_api_v2.Migrations
                             BackgroundMotionEnabled = false,
                             BackgroundMotionVariant = "rack-scanner",
                             FirstName = "System",
-                            LastName = "Administrator",
-                            NavbarCenterMode = "search",
-                            NavbarKpiKeys = "myTasks,qualityQueue,pendingApproval,erpIssues"
+                            LastName = "Administrator"
                         });
                 });
 
@@ -18387,9 +18296,6 @@ namespace verii_wms_api_v2.Migrations
                         .HasColumnType("bit")
                         .HasDefaultValue(false);
 
-                    b.Property<DateTimeOffset?>("PriorityAssignedAtUtc")
-                        .HasColumnType("datetimeoffset");
-
                     b.Property<string>("Note")
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)");
@@ -18451,8 +18357,6 @@ namespace verii_wms_api_v2.Migrations
                     b.HasIndex("BranchCode", "Status", "CreatedAtUtc");
 
                     b.HasIndex("BranchCode", "IsPriority", "Status", "QueuedAtUtc");
-
-                    b.HasIndex("BranchCode", "IsPriority", "PriorityAssignedAtUtc");
 
                     b.ToTable("RII_QUALITY_INSPECTIONS", (string)null);
                 });
@@ -28023,17 +27927,6 @@ namespace verii_wms_api_v2.Migrations
                     b.Navigation("ProductionHeader");
                 });
 
-            modelBuilder.Entity("verii_wms_api_v2.Modules.GeneratorProduction.Domain.GeneratorProductionQualityGate", b =>
-                {
-                    b.HasOne("verii_wms_api_v2.Modules.GeneratorProduction.Domain.GeneratorProductionOperation", "Operation")
-                        .WithOne("QualityGate")
-                        .HasForeignKey("verii_wms_api_v2.Modules.GeneratorProduction.Domain.GeneratorProductionQualityGate", "OperationId")
-                        .OnDelete(DeleteBehavior.Restrict)
-                        .IsRequired();
-
-                    b.Navigation("Operation");
-                });
-
             modelBuilder.Entity("verii_wms_api_v2.Modules.GeneratorProduction.Domain.GeneratorProductionRouteDependency", b =>
                 {
                     b.HasOne("verii_wms_api_v2.Modules.GeneratorProduction.Domain.GeneratorProductionRouteOperation", "PredecessorOperation")
@@ -30838,8 +30731,6 @@ namespace verii_wms_api_v2.Migrations
             modelBuilder.Entity("verii_wms_api_v2.Modules.GeneratorProduction.Domain.GeneratorProductionOperation", b =>
                 {
                     b.Navigation("Predecessors");
-
-                    b.Navigation("QualityGate");
 
                     b.Navigation("Successors");
                 });

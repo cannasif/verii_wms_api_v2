@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 
@@ -11,9 +12,11 @@ using verii_wms_api_v2.Modules.Identity.Infrastructure;
 namespace verii_wms_api_v2.Migrations
 {
     [DbContext(typeof(WmsDbContext))]
-    partial class WmsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260816162927_AddGeneratorQualityGate")]
+    partial class AddGeneratorQualityGate
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -10204,20 +10207,6 @@ namespace verii_wms_api_v2.Migrations
                         .HasColumnType("nvarchar(40)")
                         .HasDefaultValue("rack-scanner");
 
-                    b.Property<string>("NavbarCenterMode")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(16)
-                        .HasColumnType("nvarchar(16)")
-                        .HasDefaultValue("search");
-
-                    b.Property<string>("NavbarKpiKeys")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)")
-                        .HasDefaultValue("myTasks,qualityQueue,pendingApproval,erpIssues");
-
                     b.Property<DateTime?>("CreatedDate")
                         .HasColumnType("datetime2");
 
@@ -10266,9 +10255,7 @@ namespace verii_wms_api_v2.Migrations
                             BackgroundMotionEnabled = false,
                             BackgroundMotionVariant = "rack-scanner",
                             FirstName = "System",
-                            LastName = "Administrator",
-                            NavbarCenterMode = "search",
-                            NavbarKpiKeys = "myTasks,qualityQueue,pendingApproval,erpIssues"
+                            LastName = "Administrator"
                         });
                 });
 
@@ -18387,9 +18374,6 @@ namespace verii_wms_api_v2.Migrations
                         .HasColumnType("bit")
                         .HasDefaultValue(false);
 
-                    b.Property<DateTimeOffset?>("PriorityAssignedAtUtc")
-                        .HasColumnType("datetimeoffset");
-
                     b.Property<string>("Note")
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)");
@@ -18451,8 +18435,6 @@ namespace verii_wms_api_v2.Migrations
                     b.HasIndex("BranchCode", "Status", "CreatedAtUtc");
 
                     b.HasIndex("BranchCode", "IsPriority", "Status", "QueuedAtUtc");
-
-                    b.HasIndex("BranchCode", "IsPriority", "PriorityAssignedAtUtc");
 
                     b.ToTable("RII_QUALITY_INSPECTIONS", (string)null);
                 });
