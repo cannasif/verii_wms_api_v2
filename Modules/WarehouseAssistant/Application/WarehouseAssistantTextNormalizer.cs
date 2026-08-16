@@ -26,9 +26,14 @@ public static partial class WarehouseAssistantTextNormalizer
                 : normalizedCharacter);
         }
 
-        return WhitespaceRegex().Replace(builder.ToString().Normalize(NormalizationForm.FormC), " ").Trim();
+        var canonical = builder.ToString().Normalize(NormalizationForm.FormC);
+        canonical = FusedQuestionParticleRegex().Replace(canonical, "$1 $2");
+        return WhitespaceRegex().Replace(canonical, " ").Trim();
     }
 
     [GeneratedRegex(@"\s+", RegexOptions.CultureInvariant)]
     private static partial Regex WhitespaceRegex();
+
+    [GeneratedRegex(@"\b([\p{L}]{2,})(misiniz|musunuz|miyiz|muyuz|misin|musun|miyim|muyum|mi|mu)\b", RegexOptions.CultureInvariant)]
+    private static partial Regex FusedQuestionParticleRegex();
 }

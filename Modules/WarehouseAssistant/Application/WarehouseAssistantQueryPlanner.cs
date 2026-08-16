@@ -38,11 +38,24 @@ internal static partial class WarehouseAssistantQueryPlanner
             return Plan(WarehouseAssistantIntent.NavigationHelp, WarehouseAssistantQueryKind.Navigation, 0.99m,
                 navigationTopic: navigationTopic, reasons: ["instructional-question", $"topic:{navigationTopic}"]);
 
-        if (question.HasAny(WarehouseAssistantTerminology.GeneratorProductionWords))
+        var contextualProjectQuestion = !string.IsNullOrWhiteSpace(context?.ProjectQuery)
+            && question.HasAny(
+                "eksik", "malzeme", "materyal", "parca bekleyen", "kalite", "kontrol",
+                "geciken", "planlanan", "bitirdik", "urettik", "operasyon", "is");
+        if (question.HasAny(WarehouseAssistantTerminology.GeneratorProductionWords)
+            || ProjectRegex().IsMatch(normalizedMessage)
+            || contextualProjectQuestion)
             return PlanGeneratorProduction(question, normalizedMessage, context);
 
         if (question.HasAny(WarehouseAssistantTerminology.InventoryCountWords))
             return PlanInventoryCount(question, normalizedMessage, context);
+
+        // Serial balance questions may legitimately mention both a warehouse and a location.
+        // Leave those established intents to the base resolver instead of treating them as
+        // a request to list every location in the warehouse.
+        if (question.HasAny("seri", "seri no", "serino", "serial")
+            && question.HasAny("bakiye", "miktar", "nerede", "hangi depo", "hangi raf", "lokasyon"))
+            return null;
 
         var warehousePlan = TryPlanWarehouse(question, normalizedMessage, context);
         if (warehousePlan is not null) return warehousePlan;
@@ -62,23 +75,33 @@ internal static partial class WarehouseAssistantQueryPlanner
         string normalized,
         WarehouseAssistantContext? context)
     {
-        if (!question.HasAny(WarehouseAssistantTerminology.WarehouseWords)) return null;
+        var hasWarehouseSignal = question.HasAny(WarehouseAssistantTerminology.WarehouseWords);
+        var hasContextualWarehouseRequest = !string.IsNullOrWhiteSpace(context?.WarehouseQuery)
+            && question.HasAny("toplam stok", "stok toplami", "lokasyon", "raf", "goz");
+        if (!hasWarehouseSignal && !hasContextualWarehouseRequest) return null;
 
         var warehouse = ExtractWarehouseQuery(normalized) ?? context?.WarehouseQuery;
-        if (ContainsAnyPhrase(normalized, "kac depo", "depo sayisi", "how many warehouses"))
+        if (ContainsAnyPhrase(normalized,
+                "kac depo", "kac tane depo", "kac adet depo", "depo sayisi", "depo mevcut",
+                "kac ambar", "kac tane ambar", "kac adet ambar", "ambar sayisi", "how many warehouses")
+            || question.HasAny("depolari say", "ambarlari say"))
             return Plan(WarehouseAssistantIntent.WarehouseOverview, WarehouseAssistantQueryKind.WarehouseCount, 0.99m,
                 warehouse: warehouse, reasons: ["warehouse-signal", "aggregate:count"]);
 
-        if (question.HasAny("depolar hangileri", "depolari listele", "aktif depolar", "warehouse list"))
+        if (question.HasAny(
+                "depolar hangileri", "depolari listele", "aktif depolar",
+                "ambarlar hangileri", "ambarlari listele", "aktif ambarlar", "warehouse list"))
             return Plan(WarehouseAssistantIntent.WarehouseOverview, WarehouseAssistantQueryKind.WarehouseList, 0.99m,
                 warehouse: warehouse, activeOnly: question.HasAny("aktif"), reasons: ["warehouse-signal", "list-request"]);
 
         if (question.HasAny(WarehouseAssistantTerminology.LocationWords)
-            && question.HasAny("hangi", "liste", "var"))
+            && question.HasAny("hangi", "liste", "var", "goster", "say"))
             return Plan(WarehouseAssistantIntent.WarehouseOverview, WarehouseAssistantQueryKind.WarehouseLocations, 0.98m,
                 warehouse: warehouse, reasons: ["warehouse-signal", "warehouse-location-list"]);
 
-        if (question.HasAny("toplam fiziksel", "toplam kullanilabilir", "depo toplami", "stok toplami"))
+        if (question.HasAny(
+                "toplam fiziksel", "toplam kullanilabilir", "depo toplami", "ambar toplami",
+                "stok toplami", "toplam stok"))
             return Plan(WarehouseAssistantIntent.WarehouseOverview, WarehouseAssistantQueryKind.WarehouseStockTotals, 0.98m,
                 warehouse: warehouse,
                 measure: question.HasAny("kullanilabilir") ? WarehouseAssistantStockMeasure.Available : WarehouseAssistantStockMeasure.Physical,
@@ -94,8 +117,16 @@ internal static partial class WarehouseAssistantQueryPlanner
     {
         var hasExplicitLocation = LocationBeforeRegex().IsMatch(normalized);
         var hasLocationCodeWithLocationQuestion = LocationCodeRegex().IsMatch(normalized)
-            && question.HasAny("bos mu", "dolu mu", "kapasite", "doluluk", "lokasyon", "raf");
-        if (!question.HasAny(WarehouseAssistantTerminology.LocationWords) && !hasLocationCodeWithLocationQuestion && !hasExplicitLocation) return null;
+            && question.HasAny(
+                "bos mu", "bosta mi", "dolu mu", "kapasite", "doluluk", "lokasyon", "raf", "goz",
+                "icinde", "hangi mal", "mallar duruyor");
+        var hasContextualLocationRequest = !string.IsNullOrWhiteSpace(context?.LocationQuery)
+            && question.HasAny("bos mu", "bosta mi", "dolu mu", "kapasite", "doluluk", "ne var", "icinde");
+        if (!question.HasAny(WarehouseAssistantTerminology.LocationWords)
+            && !hasLocationCodeWithLocationQuestion
+            && !hasExplicitLocation
+            && !hasContextualLocationRequest)
+            return null;
 
         var warehouse = ExtractWarehouseQuery(normalized) ?? context?.WarehouseQuery;
         var location = ExtractLocationQuery(normalized) ?? context?.LocationQuery;
@@ -103,15 +134,17 @@ internal static partial class WarehouseAssistantQueryPlanner
             return Plan(WarehouseAssistantIntent.LocationInventory, WarehouseAssistantQueryKind.LocationListByType, 0.99m,
                 warehouse: warehouse, location: location, status: "Quarantine", reasons: ["location-signal", "location-type:quarantine"]);
 
-        if (question.HasAny("kapasite", "doluluk", "capacity", "occupancy"))
+        if (question.HasAny("kapasite", "doluluk", "ne kadar dolu", "capacity", "occupancy"))
             return Plan(WarehouseAssistantIntent.LocationInventory, WarehouseAssistantQueryKind.LocationCapacity, 0.99m,
                 warehouse: warehouse, location: location, reasons: ["location-signal", "capacity-request"]);
 
-        if (question.HasAny("bos mu", "dolu mu", "empty"))
+        if (question.HasAny("bos mu", "bosta mi", "bos olan", "dolu mu", "empty"))
             return Plan(WarehouseAssistantIntent.LocationInventory, WarehouseAssistantQueryKind.LocationEmptyCheck, 0.99m,
                 warehouse: warehouse, location: location, reasons: ["location-signal", "occupancy-request"]);
 
-        if (location is not null && question.HasAny("hangi urun", "urunler var", "var mi", "lokasyonunda", "rafinda"))
+        if (location is not null && question.HasAny(
+                "hangi urun", "hangi mal", "urunler var", "mallar duruyor", "ne var", "icinde ne", "var mi",
+                "lokasyonunda", "rafinda", "gozunde"))
             return Plan(WarehouseAssistantIntent.LocationInventory, WarehouseAssistantQueryKind.LocationContents, 0.97m,
                 warehouse: warehouse, location: location, reasons: ["location-signal", "location-contents"]);
 
@@ -121,7 +154,7 @@ internal static partial class WarehouseAssistantQueryPlanner
     private static WarehouseAssistantPlannedQuery PlanInventoryInsight(LocalWarehouseQuestion question, string normalized)
     {
         var limit = ExtractLimit(normalized);
-        if (question.HasAny("kritik stok"))
+        if (question.HasAny("kritik stok", "riskli seviye", "asgari stok", "minimum stok"))
             return Plan(WarehouseAssistantIntent.InventoryInsights, WarehouseAssistantQueryKind.CriticalStockUnsupported, 0.99m,
                 reasons: ["inventory-insight", "domain-limitation:critical-threshold"]);
 
@@ -129,18 +162,23 @@ internal static partial class WarehouseAssistantQueryPlanner
             return Plan(WarehouseAssistantIntent.InventoryInsights, WarehouseAssistantQueryKind.NonZeroStock, 0.99m,
                 excludeZero: true, reasons: ["inventory-insight", "filter:non-zero"]);
 
-        if (question.HasAny("stoku olmayan", "stok olmayan", "stoku sifir", "sifir stok"))
+        if (question.HasAny(
+                "stoku olmayan", "stok olmayan", "stoku sifir", "sifir stok", "hic kalmayan",
+                "hic olmayan urun", "elde hic olmayan", "stokta hic olmayan", "mevcudu olmayan", "stogu bitmis"))
             return Plan(WarehouseAssistantIntent.InventoryInsights, WarehouseAssistantQueryKind.ZeroStock, 0.99m,
                 reasons: ["inventory-insight", "filter:zero"]);
 
         var group = ExtractGroupQuery(normalized);
-        if (group is not null || question.HasAny("stoklari karsilastir"))
+        if (group is not null || question.HasAny(
+                "stoklari karsilastir", "mallari kiyasla", "kiyasla", "mukayese", "yan yana goster"))
             return Plan(WarehouseAssistantIntent.InventoryInsights, WarehouseAssistantQueryKind.StockGroupComparison, 0.97m,
                 stockGroup: group, reasons: ["inventory-insight", "group-comparison"]);
 
-        var ascending = question.HasAny("en az", "lowest");
+        var ascending = question.HasAny("en az", "en dusuk", "lowest");
         return Plan(WarehouseAssistantIntent.InventoryInsights, WarehouseAssistantQueryKind.RankedStock, 0.98m,
-            measure: question.HasAny("kullanilabilir") ? WarehouseAssistantStockMeasure.Available : WarehouseAssistantStockMeasure.Physical,
+            measure: question.HasAny("kullanilabilir", "kullanabilecegimiz", "kullanabilecegim", "kullanima hazir")
+                ? WarehouseAssistantStockMeasure.Available
+                : WarehouseAssistantStockMeasure.Physical,
             sort: ascending ? WarehouseAssistantSortDirection.QuantityAscending : WarehouseAssistantSortDirection.QuantityDescending,
             limit: limit ?? 10,
             reasons: ["inventory-insight", ascending ? "sort:quantity-asc" : "sort:quantity-desc"]);
@@ -152,8 +190,10 @@ internal static partial class WarehouseAssistantQueryPlanner
         WarehouseAssistantContext? context)
     {
         var warehouse = ExtractWarehouseQuery(normalized) ?? context?.WarehouseQuery;
-        var excludeCancelled = question.HasAny("iptal edilen", "iptalleri dahil etme", "haric");
-        var variance = question.HasAny("fark", "varyans", "variance");
+        var excludeCancelled = question.HasAny(
+            "iptal edilen", "iptalleri dahil etme", "iptal sayimlari gosterme", "iptal sayimlari getirme", "haric");
+        var variance = question.HasAny(
+            "fark", "varyans", "tutmayan", "uyusmayan", "eksik fazla", "eksik cikan", "fazla cikan", "sapma", "variance");
         return Plan(
             WarehouseAssistantIntent.InventoryCountAnalysis,
             variance ? WarehouseAssistantQueryKind.InventoryCountVariance : WarehouseAssistantQueryKind.InventoryCountList,
@@ -172,16 +212,23 @@ internal static partial class WarehouseAssistantQueryPlanner
         WarehouseAssistantContext? context)
     {
         var project = ExtractProjectQuery(normalized) ?? context?.ProjectQuery;
-        if (project is not null && question.HasAny("ne durumda", "durumu", "status"))
+        if (project is not null && question.HasAny(
+                "ne durumda", "durumu", "ne alemde", "nasil gidiyor", "hangi asamada", "status"))
             return Plan(WarehouseAssistantIntent.GeneratorProductionAnalysis, WarehouseAssistantQueryKind.ProductionProjectStatus, 0.99m,
                 project: project, reasons: ["generator-production-signal", "project-status"]);
-        if (question.HasAny("eksik", "malzeme bekliyor", "material shortage"))
+        if (question.HasAny(
+                "eksik", "malzeme bekliyor", "materyal bekleyen", "parca bekleyen", "malzeme yuzunden",
+                "malzeme yok", "materyal yok", "parca yok", "material shortage"))
             return Plan(WarehouseAssistantIntent.GeneratorProductionAnalysis, WarehouseAssistantQueryKind.ProductionMaterialShortages, 0.99m,
                 project: project, status: "MaterialShortage", reasons: ["generator-production-signal", "material-shortage"]);
-        if (question.HasAny("kalite kontrol bekleyen", "quality pending"))
+        if (question.HasAny(
+                "kalite kontrol bekleyen", "kontrolden onay bekleyen", "kontrol onayi bekleyen",
+                "kalitede bekleyen", "quality pending"))
             return Plan(WarehouseAssistantIntent.GeneratorProductionAnalysis, WarehouseAssistantQueryKind.ProductionQualityWaiting, 0.99m,
                 project: project, status: "QualityPending", reasons: ["generator-production-signal", "quality-pending"]);
-        if (question.HasAny("planlanan ve gerceklesen", "planned vs actual"))
+        if (question.HasAny(
+                "planlanan ve gerceklesen", "kac planladik kac bitirdik", "kac planlandi kac bitti",
+                "kac planladik kac urettik", "planlanan tamamlanan", "planned vs actual"))
             return Plan(WarehouseAssistantIntent.GeneratorProductionAnalysis, WarehouseAssistantQueryKind.ProductionPlannedVsActual, 0.99m,
                 project: project, reasons: ["generator-production-signal", "planned-vs-actual"]);
         if (question.HasAny("geciken", "overdue"))
@@ -198,11 +245,13 @@ internal static partial class WarehouseAssistantQueryPlanner
 
     private static string? ResolveNavigationTopic(LocalWarehouseQuestion question)
     {
-        if (question.HasAny("yeni urun", "stok kart", "urun ekle")) return "stockCard";
-        if (question.HasAny("mal kabul")) return "goodsReceipt";
-        if (question.HasAny("transfer")) return "warehouseTransfer";
-        if (question.HasAny("sayim", "envanter sayimi")) return "inventoryCount";
-        if (question.HasAny("stok hareket")) return "stockMovements";
+        if (question.HasAny("yeni urun", "urun kart", "stok kart", "urun ekle")) return "stockCard";
+        if (question.HasAny("mal kabul", "mal giris", "urun giris", "depoya mal alma")) return "goodsReceipt";
+        if (question.HasAny("transfer", "depolar arasi", "depo arasinda", "urun yolla", "mal yolla")) return "warehouseTransfer";
+        if (question.HasAny("sayim", "envanter sayimi", "envanter sayma")) return "inventoryCount";
+        if (question.HasAny(
+                "stok hareket", "urun hareket", "stok giris cikis", "stoklarin giris cikis", "giris cikisina"))
+            return "stockMovements";
         if (question.HasAny(WarehouseAssistantTerminology.GeneratorProductionWords)) return "generatorProjects";
         return null;
     }
@@ -218,7 +267,9 @@ internal static partial class WarehouseAssistantQueryPlanner
     private static string? ExtractLocationQuery(string normalized)
     {
         var match = LocationBeforeRegex().Match(normalized);
-        return match.Success && !IsEntityStopWord(match.Groups[1].Value) ? match.Groups[1].Value : null;
+        if (match.Success && !IsEntityStopWord(match.Groups[1].Value)) return match.Groups[1].Value;
+        var code = LocationCodeRegex().Match(normalized);
+        return code.Success ? code.Value : null;
     }
 
     private static string? ExtractProjectQuery(string normalized)
@@ -230,24 +281,33 @@ internal static partial class WarehouseAssistantQueryPlanner
     private static string? ExtractGroupQuery(string normalized)
     {
         var match = StockGroupRegex().Match(normalized);
-        return match.Success ? match.Groups[1].Value.Trim() : null;
+        if (match.Success) return match.Groups[1].Value.Trim();
+        var colloquial = ColloquialStockGroupRegex().Match(normalized);
+        if (colloquial.Success) return colloquial.Groups[1].Value.Trim();
+        var comparison = GroupComparisonRegex().Match(normalized);
+        return comparison.Success ? comparison.Groups[1].Value.Trim() : null;
     }
 
     private static int? ExtractLimit(string normalized)
     {
         var match = LimitRegex().Match(normalized);
+        if (!match.Success) match = FlexibleLimitRegex().Match(normalized);
+        if (!match.Success) match = FirstLimitRegex().Match(normalized);
         if (!match.Success) match = ItemLimitRegex().Match(normalized);
         if (!match.Success || !int.TryParse(match.Groups[1].Value, out var value)) return null;
         return Math.Clamp(value, 1, 50);
     }
 
-    private static bool IsEntityStopWord(string value) => value is "kac" or "hangi" or "aktif" or "toplam" or "tum" or "butun";
+    private static bool IsEntityStopWord(string value) => value is
+        "kac" or "hangi" or "aktif" or "toplam" or "tum" or "butun" or "tane" or "adet" or "bizim";
 
     internal static WarehouseAssistantStockMeasure? ExtractStockMeasure(string normalized)
     {
         var question = new LocalWarehouseQuestion(normalized);
         if (question.HasAny("rezerve", "reserved")) return WarehouseAssistantStockMeasure.Reserved;
-        if (question.HasAny("kullanilabilir", "available")) return WarehouseAssistantStockMeasure.Available;
+        if (question.HasAny(
+                "kullanilabilir", "kullanabilecegimiz", "kullanabilecegim", "kullanima hazir", "available"))
+            return WarehouseAssistantStockMeasure.Available;
         if (question.HasAny("fiziksel", "physical")) return WarehouseAssistantStockMeasure.Physical;
         return null;
     }
@@ -261,7 +321,9 @@ internal static partial class WarehouseAssistantQueryPlanner
     }
 
     internal static bool ExtractExcludeCancelled(string normalized) =>
-        new LocalWarehouseQuestion(normalized).HasAny("iptal edilen", "iptalleri dahil etme", "iptal dahil etme", "haric");
+        new LocalWarehouseQuestion(normalized).HasAny(
+            "iptal edilen", "iptalleri dahil etme", "iptal dahil etme",
+            "iptal sayimlari gosterme", "iptal sayimlari getirme", "haric");
 
     private static bool ContainsAnyPhrase(string normalized, params string[] phrases) =>
         phrases.Any(phrase => normalized.Contains(WarehouseAssistantTextNormalizer.Normalize(phrase), StringComparison.Ordinal));
@@ -286,16 +348,16 @@ internal static partial class WarehouseAssistantQueryPlanner
         new(intent, kind, confidence, warehouse, location, stockGroup, project, status, measure, sort, limit,
             excludeZero, excludeCancelled, activeOnly, navigationTopic, reasons);
 
-    [GeneratedRegex(@"\b([a-z0-9][a-z0-9._/-]*)\s+(?:numarali\s+)?(?:depo|deposu|depoda|deposunda|deposundaki)\b", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\b([a-z0-9][a-z0-9._/-]*)\s+(?:(?:numarali|nolu)\s+)?(?:depo|deposu|depoda|depodaki|deposunda|deposundaki|ambar|ambari|ambarin|ambarda|ambardaki|ambarinda|ambarindaki)\b", RegexOptions.CultureInvariant)]
     private static partial Regex WarehouseBeforeRegex();
 
-    [GeneratedRegex(@"\b(\d+)\s+numarali\s+depo\b", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\b(\d+)\s+(?:numarali|nolu)\s+(?:depo|ambar)\b", RegexOptions.CultureInvariant)]
     private static partial Regex NumberedWarehouseRegex();
 
-    [GeneratedRegex(@"\b([a-z0-9][a-z0-9._/-]*)\s+(?:lokasyonunda|lokasyonu|rafinda|rafi|raf)\b", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\b([a-z0-9][a-z0-9._/-]*)\s+(?:lokasyonunda|lokasyonu|rafinda|rafi|raf|gozunde|gozu|goz|hucresinde|hucre)\b", RegexOptions.CultureInvariant)]
     private static partial Regex LocationBeforeRegex();
 
-    [GeneratedRegex(@"\b[a-z][a-z0-9]*[/_-][a-z0-9][a-z0-9/_-]*\b", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"(?<!stok\s)(?<!urun\s)(?<!malzeme\s)(?<!seri\s)\b[a-z][a-z0-9]*[/_-][a-z0-9][a-z0-9/_-]*\b", RegexOptions.CultureInvariant)]
     private static partial Regex LocationCodeRegex();
 
     [GeneratedRegex(@"\bprj[-/._][a-z0-9-]+\b", RegexOptions.CultureInvariant)]
@@ -304,8 +366,20 @@ internal static partial class WarehouseAssistantQueryPlanner
     [GeneratedRegex(@"\b(.{2,40}?)\s+grubundaki\s+stok", RegexOptions.CultureInvariant)]
     private static partial Regex StockGroupRegex();
 
+    [GeneratedRegex(@"\b([a-z0-9_-]{2,40})\s+(?:tarafindaki\s+)?(?:stoklari|stoklarini|urunleri|urunlerini|mallari|mallarini)\s+(?:kiyasla|karsilastir|yan\s+yana)", RegexOptions.CultureInvariant)]
+    private static partial Regex ColloquialStockGroupRegex();
+
+    [GeneratedRegex(@"\b([a-z0-9_-]{2,40})\s+grubunu\s+(?:kiyasla|karsilastir|mukayese)", RegexOptions.CultureInvariant)]
+    private static partial Regex GroupComparisonRegex();
+
     [GeneratedRegex(@"(?:en\s+(?:fazla|az|yuksek)\s+)(\d+)\b", RegexOptions.CultureInvariant)]
     private static partial Regex LimitRegex();
+
+    [GeneratedRegex(@"\ben\s+(?:cok|dusuk|az|fazla|yuksek)(?:\s+[a-z]+){0,2}\s+(\d+)\b", RegexOptions.CultureInvariant)]
+    private static partial Regex FlexibleLimitRegex();
+
+    [GeneratedRegex(@"\bilk\s+(\d+)\b", RegexOptions.CultureInvariant)]
+    private static partial Regex FirstLimitRegex();
 
     [GeneratedRegex(@"\b(\d+)\s+urun", RegexOptions.CultureInvariant)]
     private static partial Regex ItemLimitRegex();
