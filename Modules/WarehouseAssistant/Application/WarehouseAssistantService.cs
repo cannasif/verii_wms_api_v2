@@ -111,7 +111,12 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             routing.Version,
             routing.RoutingMode,
             routing.SemanticRoutingAvailable,
-            routing.SemanticModel));
+            routing.SemanticModel,
+            CanQueryWarehouseOverview: access.CanViewLocations || access.CanViewStockBalances,
+            CanQueryLocationInventory: access.CanViewLocations,
+            CanQueryInventoryInsights: access.CanViewStockBalances,
+            CanQueryInventoryCounts: access.CanViewInventoryCounts,
+            CanQueryGeneratorProduction: access.CanViewGeneratorProduction));
     }
 
     public async Task<IReadOnlyList<WarehouseAssistantConversationRow>> GetConversationsAsync(
@@ -202,7 +207,21 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             item.VehiclePlateQuery,
             item.TransferDocumentQuery,
             item.DocumentQuery,
-            item.TransferScope)).ToArray();
+            item.TransferScope,
+            item.QueryKind,
+            item.WarehouseQuery,
+            item.LocationQuery,
+            item.StockGroupQuery,
+            item.ProjectQuery,
+            item.StatusQuery,
+            item.StockMeasure,
+            item.Sort,
+            item.Limit,
+            item.ExcludeZero,
+            item.ExcludeCancelled,
+            item.ActiveOnly,
+            item.NavigationTopic,
+            item.ReasonCodes)).ToArray();
 
         var userMessage = new WarehouseAssistantMessage
         {
@@ -242,6 +261,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             TraceabilityEvents = result.TraceabilityEvents ?? [],
             Evidence = result.Evidence ?? [],
             Interpretations = interpretations,
+            AnalysisRows = result.AnalysisRows ?? [],
             Suggestions = result.Suggestions
         };
         var assistantMessage = new WarehouseAssistantMessage
@@ -285,6 +305,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                     + (result.GoodsReceipts?.Count ?? 0) + (result.ParameterGuides?.Count ?? 0)
                     + (result.SteelVehicles?.Count ?? 0) + (result.Transfers?.Count ?? 0)
                     + (result.Exceptions?.Count ?? 0) + (result.TraceabilityEvents?.Count ?? 0)
+                    + (result.AnalysisRows?.Count ?? 0)
                     + (result.Barcode is null ? 0 : 1),
                 CorrelationId = correlationId
             },
@@ -314,7 +335,8 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             result.Exceptions ?? [],
             result.TraceabilityEvents ?? [],
             result.Evidence ?? [],
-            interpretations);
+            interpretations,
+            result.AnalysisRows ?? []);
     }
 
     private async Task<ExecutionResult> ExecuteIntentAsync(
@@ -355,6 +377,17 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                 await ExecuteTraceabilityAsync(resolution, actorUserId, branchCode, access, ct),
             WarehouseAssistantIntent.ProcessBlockers =>
                 await ExecuteProcessBlockersAsync(resolution, actorUserId, branchCode, access, ct),
+            WarehouseAssistantIntent.WarehouseOverview =>
+                await ExecuteWarehouseOverviewAsync(resolution, actorUserId, branchCode, access, ct),
+            WarehouseAssistantIntent.LocationInventory =>
+                await ExecuteLocationInventoryAsync(resolution, actorUserId, branchCode, access, ct),
+            WarehouseAssistantIntent.InventoryInsights =>
+                await ExecuteInventoryInsightsAsync(resolution, actorUserId, branchCode, access, ct),
+            WarehouseAssistantIntent.InventoryCountAnalysis =>
+                await ExecuteInventoryCountAnalysisAsync(resolution, actorUserId, branchCode, access, ct),
+            WarehouseAssistantIntent.GeneratorProductionAnalysis =>
+                await ExecuteGeneratorProductionAnalysisAsync(resolution, actorUserId, branchCode, access, ct),
+            WarehouseAssistantIntent.NavigationHelp => ExecuteNavigationHelp(resolution, access),
             WarehouseAssistantIntent.ParameterHelp => ExecuteParameterHelp(resolution),
             WarehouseAssistantIntent.Help => HelpResult(access),
             _ => UnknownResult(access, resolution.ClarificationQuestion)
@@ -445,11 +478,11 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             return MissingEntity(resolution.Intent, M(SerialRequired));
 
         var serialNo = resolution.SerialNo.Trim();
-        var warehouseAccess = await UserWarehouseAccessService.ResolveAsync(unitOfWork, actorUserId, branchCode, ct);
+        var authorizedWarehouses = await ResolveAuthorizedWarehousesAsync(actorUserId, branchCode, resolution.WarehouseQuery, ct);
+        var warehouseIds = authorizedWarehouses.Select(x => x.Id).ToArray();
         var balances = unitOfWork.Repository<LocationStockBalance>().Query()
-            .Where(x => x.BranchCode == branchCode && x.SerialNo.ToUpper() == serialNo.ToUpper() && x.Quantity != 0);
-        if (warehouseAccess.IsRestricted)
-            balances = balances.Where(x => warehouseAccess.WarehouseIds.Contains(x.WarehouseId));
+            .Where(x => x.BranchCode == branchCode && warehouseIds.Contains(x.WarehouseId)
+                && x.SerialNo.ToUpper() == serialNo.ToUpper() && x.Quantity != 0);
 
         var rows = await (from balance in balances
                           join warehouse in unitOfWork.Repository<WarehouseEntity>().Query() on balance.WarehouseId equals warehouse.Id
@@ -469,7 +502,8 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             : M(SerialBalanceFound, serialNo, rows.Count, rows.Sum(x => x.Quantity), rows[0].UnitCode, rows.Sum(x => x.AvailableQuantity));
         return new ExecutionResult(
             resolution.Intent, "authorized-warehouses", "query-serial-balance", answer,
-            [], rows, [], [], null, [], [], new WarehouseAssistantContext(serialNo, rows.FirstOrDefault()?.StockId, rows.FirstOrDefault()?.StockCode),
+            [], rows, [], [], null, [], [], new WarehouseAssistantContext(serialNo, rows.FirstOrDefault()?.StockId, rows.FirstOrDefault()?.StockCode,
+                WarehouseQuery: resolution.WarehouseQuery, QueryKind: resolution.QueryKind, StockMeasure: resolution.StockMeasure),
             [M(CapabilityExampleSerialReceipt)]);
     }
 
@@ -560,11 +594,17 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                 ? MissingEntity(resolution.Intent, M(StockRequired))
                 : EntityClarification(resolution.Intent, stockLookup.SearchTerm, stockLookup.Candidates);
 
-        var warehouseAccess = await UserWarehouseAccessService.ResolveAsync(unitOfWork, actorUserId, branchCode, ct);
+        var authorizedWarehouses = await ResolveAuthorizedWarehousesAsync(actorUserId, branchCode, resolution.WarehouseQuery, ct);
+        var warehouseIds = authorizedWarehouses.Select(x => x.Id).ToArray();
         var balances = unitOfWork.Repository<LocationStockBalance>().Query()
-            .Where(x => x.BranchCode == branchCode && x.StockId == stock.Id && x.Quantity != 0);
-        if (warehouseAccess.IsRestricted)
-            balances = balances.Where(x => warehouseAccess.WarehouseIds.Contains(x.WarehouseId));
+            .Where(x => x.BranchCode == branchCode && warehouseIds.Contains(x.WarehouseId)
+                && x.StockId == stock.Id && x.Quantity != 0);
+        balances = resolution.StockMeasure switch
+        {
+            WarehouseAssistantStockMeasure.Reserved => balances.Where(x => x.ReservedQuantity != 0),
+            WarehouseAssistantStockMeasure.Available => balances.Where(x => x.AvailableQuantity != 0),
+            _ => balances
+        };
         var rows = await (from balance in balances
                           join warehouse in unitOfWork.Repository<WarehouseEntity>().Query() on balance.WarehouseId equals warehouse.Id
                           join location in unitOfWork.Repository<WarehouseLocation>().Query() on balance.LocationId equals location.Id
@@ -581,7 +621,8 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
             : M(StockBalanceFound, stock.ErpStockCode, stock.StockName, rows.Count, rows.Sum(x => x.AvailableQuantity), rows[0].UnitCode);
         return new ExecutionResult(
             resolution.Intent, "authorized-warehouses", "query-stock-location-balance", answer,
-            [], [], [], rows, null, [], [], new WarehouseAssistantContext(null, stock.Id, stock.ErpStockCode),
+            [], [], [], rows, null, [], [], new WarehouseAssistantContext(null, stock.Id, stock.ErpStockCode,
+                WarehouseQuery: resolution.WarehouseQuery, QueryKind: resolution.QueryKind, StockMeasure: resolution.StockMeasure),
             [M(SuggestionSerialBalance, stock.ErpStockCode)]);
     }
 
@@ -761,7 +802,8 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
                 stored.Exceptions ?? [],
                 stored.TraceabilityEvents ?? [],
                 stored.Evidence ?? [],
-                stored.Interpretations ?? []);
+                stored.Interpretations ?? [],
+                stored.AnalysisRows ?? []);
         }
         catch (JsonException)
         {
@@ -1007,7 +1049,8 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         IReadOnlyList<WarehouseAssistantSummaryMetricRow>? SummaryMetrics = null,
         IReadOnlyList<WarehouseAssistantExceptionRow>? Exceptions = null,
         IReadOnlyList<WarehouseAssistantTraceabilityEventRow>? TraceabilityEvents = null,
-        IReadOnlyList<WarehouseAssistantEvidenceRow>? Evidence = null);
+        IReadOnlyList<WarehouseAssistantEvidenceRow>? Evidence = null,
+        IReadOnlyList<WarehouseAssistantAnalysisRow>? AnalysisRows = null);
 
     private sealed class StoredResponseData
     {
@@ -1029,6 +1072,7 @@ public sealed partial class WarehouseAssistantService : IWarehouseAssistantServi
         public IReadOnlyList<WarehouseAssistantTraceabilityEventRow> TraceabilityEvents { get; init; } = [];
         public IReadOnlyList<WarehouseAssistantEvidenceRow> Evidence { get; init; } = [];
         public IReadOnlyList<WarehouseAssistantInterpretationRow> Interpretations { get; init; } = [];
+        public IReadOnlyList<WarehouseAssistantAnalysisRow> AnalysisRows { get; init; } = [];
         public IReadOnlyList<string> Suggestions { get; init; } = [];
     }
 }

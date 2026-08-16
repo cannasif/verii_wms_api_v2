@@ -39,7 +39,20 @@ public sealed partial class WarehouseAssistantService
         query.TransferScope,
         query.DocumentQuery,
         query.DateFrom,
-        query.DateTo);
+        query.DateTo,
+        query.QueryKind,
+        query.WarehouseQuery,
+        query.LocationQuery,
+        query.StockGroupQuery,
+        query.ProjectQuery,
+        query.StatusQuery,
+        query.StockMeasure,
+        query.Sort,
+        query.Limit,
+        query.ExcludeZero,
+        query.ExcludeCancelled,
+        query.ActiveOnly,
+        query.NavigationTopic);
 
     private async Task<ExecutionResult> ExecuteQueryPlanAsync(
         IReadOnlyList<WarehouseAssistantIntentResolution> queryPlan,
@@ -91,7 +104,8 @@ public sealed partial class WarehouseAssistantService
             Take(results.SelectMany(x => x.EntityCandidates ?? [])),
             Take(results.SelectMany(x => x.SummaryMetrics ?? [])),
             Take(results.SelectMany(x => x.Exceptions ?? [])),
-            Take(results.SelectMany(x => x.TraceabilityEvents ?? [])));
+            Take(results.SelectMany(x => x.TraceabilityEvents ?? [])),
+            AnalysisRows: Take(results.SelectMany(x => x.AnalysisRows ?? [])));
     }
 
     private static IReadOnlyList<T> Take<T>(IEnumerable<T> source) =>
@@ -120,7 +134,12 @@ public sealed partial class WarehouseAssistantService
             RequestsAllUsers = successful
                 ? queryPlan.Any(x => x.RequestsAllUsers) || current.RequestsAllUsers == true
                 : previous?.RequestsAllUsers,
-            LastDatePreset = successful ? queryPlan[0].DatePreset : previous?.LastDatePreset
+            LastDatePreset = successful ? queryPlan[0].DatePreset : previous?.LastDatePreset,
+            WarehouseQuery = successful ? queryPlan[0].WarehouseQuery ?? current.WarehouseQuery : previous?.WarehouseQuery,
+            LocationQuery = successful ? queryPlan[0].LocationQuery ?? current.LocationQuery : previous?.LocationQuery,
+            ProjectQuery = successful ? queryPlan[0].ProjectQuery ?? current.ProjectQuery : previous?.ProjectQuery,
+            QueryKind = successful ? queryPlan[0].QueryKind : previous?.QueryKind ?? WarehouseAssistantQueryKind.None,
+            StockMeasure = successful ? queryPlan[0].StockMeasure ?? current.StockMeasure : previous?.StockMeasure
         };
     }
 
@@ -157,5 +176,10 @@ public sealed partial class WarehouseAssistantService
         current.PendingQuestion ?? previous?.PendingQuestion,
         current.TargetUserQuery ?? previous?.TargetUserQuery,
         current.RequestsAllUsers ?? previous?.RequestsAllUsers,
-        current.LastDatePreset ?? previous?.LastDatePreset);
+        current.LastDatePreset ?? previous?.LastDatePreset,
+        current.WarehouseQuery ?? previous?.WarehouseQuery,
+        current.LocationQuery ?? previous?.LocationQuery,
+        current.ProjectQuery ?? previous?.ProjectQuery,
+        current.QueryKind != WarehouseAssistantQueryKind.None ? current.QueryKind : previous?.QueryKind ?? WarehouseAssistantQueryKind.None,
+        current.StockMeasure ?? previous?.StockMeasure);
 }

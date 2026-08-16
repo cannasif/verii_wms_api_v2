@@ -429,7 +429,8 @@ public sealed partial class WarehouseAssistantService
             + result.StockLocations.Count + result.Movements.Count + result.Tasks.Count
             + (result.GoodsReceipts?.Count ?? 0) + (result.SteelVehicles?.Count ?? 0)
             + (result.Transfers?.Count ?? 0) + (result.Exceptions?.Count ?? 0)
-            + (result.TraceabilityEvents?.Count ?? 0) + (result.Barcode is null ? 0 : 1);
+            + (result.TraceabilityEvents?.Count ?? 0) + (result.AnalysisRows?.Count ?? 0)
+            + (result.Barcode is null ? 0 : 1);
         var dataAsOf = result.TraceabilityEvents?.Select(x => (DateTimeOffset?)x.OccurredAtUtc).Max()
             ?? result.Activities.Select(x => (DateTimeOffset?)x.OccurredAtUtc).Max()
             ?? result.SerialBalances.Select(x => (DateTimeOffset?)Utc(x.LastTransactionAtUtc)).Max()
@@ -443,9 +444,22 @@ public sealed partial class WarehouseAssistantService
                 timeProvider.GetUtcNow(),
                 dataAsOf,
                 result.Scope,
-                M(EvidenceAuthorizedScope),
+                BuildEvidenceFilters(result.Context),
                 count >= MaximumResultCount,
                 null)
         ];
+    }
+
+    private string BuildEvidenceFilters(WarehouseAssistantContext context)
+    {
+        var filters = new List<string> { M(EvidenceAuthorizedScope) };
+        if (context.QueryKind != WarehouseAssistantQueryKind.None) filters.Add($"queryKind={context.QueryKind}");
+        if (!string.IsNullOrWhiteSpace(context.WarehouseQuery)) filters.Add($"warehouse={context.WarehouseQuery}");
+        if (!string.IsNullOrWhiteSpace(context.LocationQuery)) filters.Add($"location={context.LocationQuery}");
+        if (!string.IsNullOrWhiteSpace(context.ProjectQuery)) filters.Add($"project={context.ProjectQuery}");
+        if (context.StockMeasure.HasValue) filters.Add($"measure={context.StockMeasure.Value}");
+        if (context.DateFrom.HasValue) filters.Add($"dateFrom={context.DateFrom:yyyy-MM-dd}");
+        if (context.DateTo.HasValue) filters.Add($"dateTo={context.DateTo:yyyy-MM-dd}");
+        return string.Join("; ", filters);
     }
 }

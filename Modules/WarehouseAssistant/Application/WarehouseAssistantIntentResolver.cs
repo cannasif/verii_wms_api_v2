@@ -253,6 +253,12 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
         var plannedQuery = usesPendingQuestion
             ? null
             : WarehouseAssistantQueryPlanner.TryPlan(analysisMessage, normalized, context);
+        var warehouseQuery = plannedQuery?.WarehouseQuery
+            ?? WarehouseAssistantQueryPlanner.ExtractWarehouseQuery(normalized)
+            ?? context?.WarehouseQuery;
+        var stockMeasure = plannedQuery?.StockMeasure
+            ?? WarehouseAssistantQueryPlanner.ExtractStockMeasure(normalized)
+            ?? context?.StockMeasure;
 
         WarehouseAssistantIntent intent;
         decimal confidence;
@@ -399,16 +405,16 @@ public sealed class WarehouseAssistantIntentResolver : IWarehouseAssistantIntent
             HasExplicitDateFilter: hasExplicitDateFilter,
             DocumentQuery: documentQuery,
             QueryKind: plannedQuery?.QueryKind ?? context?.QueryKind ?? WarehouseAssistantQueryKind.None,
-            WarehouseQuery: plannedQuery?.WarehouseQuery ?? context?.WarehouseQuery,
+            WarehouseQuery: warehouseQuery,
             LocationQuery: plannedQuery?.LocationQuery ?? context?.LocationQuery,
             StockGroupQuery: plannedQuery?.StockGroupQuery,
             ProjectQuery: plannedQuery?.ProjectQuery ?? context?.ProjectQuery,
-            StatusQuery: plannedQuery?.StatusQuery,
-            StockMeasure: plannedQuery?.StockMeasure ?? context?.StockMeasure,
+            StatusQuery: plannedQuery?.StatusQuery ?? WarehouseAssistantQueryPlanner.ExtractMovementDirection(normalized),
+            StockMeasure: stockMeasure,
             Sort: plannedQuery?.Sort ?? WarehouseAssistantSortDirection.None,
             Limit: plannedQuery?.Limit,
             ExcludeZero: plannedQuery?.ExcludeZero ?? false,
-            ExcludeCancelled: plannedQuery?.ExcludeCancelled ?? false,
+            ExcludeCancelled: plannedQuery?.ExcludeCancelled == true || WarehouseAssistantQueryPlanner.ExtractExcludeCancelled(normalized),
             ActiveOnly: plannedQuery?.ActiveOnly ?? false,
             NavigationTopic: plannedQuery?.NavigationTopic,
             ReasonCodes: plannedQuery?.ReasonCodes));

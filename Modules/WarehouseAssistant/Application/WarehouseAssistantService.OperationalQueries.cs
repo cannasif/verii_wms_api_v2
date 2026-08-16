@@ -144,17 +144,24 @@ public sealed partial class WarehouseAssistantService
                 ? EntityClarification(resolution.Intent, stockLookup.SearchTerm, stockLookup.Candidates)
                 : MissingEntity(resolution.Intent, M(MovementSubjectRequired));
 
-        var (startUtc, endUtc, periodLabel) = await ResolveDateRangeAsync(resolution.DatePreset, ct);
-        var warehouseAccess = await UserWarehouseAccessService.ResolveAsync(unitOfWork, actorUserId, branchCode, ct);
+        var (startUtc, endUtc, periodLabel) = await ResolveDateRangeAsync(
+            resolution.DatePreset, ct, resolution.DateFrom, resolution.DateTo);
+        var authorizedWarehouses = await ResolveAuthorizedWarehousesAsync(actorUserId, branchCode, resolution.WarehouseQuery, ct);
+        var warehouseIds = authorizedWarehouses.Select(x => x.Id).ToArray();
         var entries = unitOfWork.Repository<StockMovementEntry>().Query()
-            .Where(x => x.BranchCode == branchCode && x.OccurredAt >= startUtc && x.OccurredAt < endUtc);
+            .Where(x => x.BranchCode == branchCode && warehouseIds.Contains(x.WarehouseId)
+                && x.OccurredAt >= startUtc && x.OccurredAt < endUtc);
         entries = serialNo is not null
             ? entries.Where(x => x.SerialNo != null && x.SerialNo == serialNo)
             : entries.Where(x => x.StockId == stock!.Id);
-        if (warehouseAccess.IsRestricted)
-            entries = entries.Where(x => warehouseAccess.WarehouseIds.Contains(x.WarehouseId));
+        if (resolution.StatusQuery == "Outbound") entries = entries.Where(x => x.QuantityDelta < 0);
+        if (resolution.StatusQuery == "Inbound") entries = entries.Where(x => x.QuantityDelta > 0);
 
         var operations = unitOfWork.Repository<StockMovementOperation>().Query();
+        if (resolution.ExcludeCancelled)
+            operations = operations.Where(x => x.Status != StockMovementStatuses.Reversed
+                && x.ReversalOfOperationId == null
+                && !unitOfWork.Repository<StockMovementOperation>().Query().Any(reversal => reversal.ReversalOfOperationId == x.Id));
         var rows = await (from entry in entries
                           join operation in operations on entry.OperationId equals operation.Id
                           join stockRow in unitOfWork.Repository<StockEntity>().Query() on entry.StockId equals stockRow.Id
@@ -199,7 +206,9 @@ public sealed partial class WarehouseAssistantService
             "query-stock-movement-history",
             answer,
             [], [], [], [], null, rows, [],
-            new WarehouseAssistantContext(serialNo, first?.StockId ?? stock?.Id, first?.StockCode ?? stock?.ErpStockCode),
+            new WarehouseAssistantContext(serialNo, first?.StockId ?? stock?.Id, first?.StockCode ?? stock?.ErpStockCode,
+                DateFrom: resolution.DateFrom, DateTo: resolution.DateTo,
+                WarehouseQuery: resolution.WarehouseQuery, QueryKind: resolution.QueryKind, StockMeasure: resolution.StockMeasure),
             [serialNo is not null ? M(SuggestionSerialBalance, serialNo) : M(SuggestionStockLocation, stock!.ErpStockCode)]);
     }
 

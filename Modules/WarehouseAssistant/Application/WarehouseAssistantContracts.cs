@@ -115,7 +115,15 @@ public sealed record WarehouseAssistantAccess(
     bool CanViewPacking = false,
     bool CanViewProcurement = false,
     bool CanViewKkd = false,
-    bool CanViewSystemHealth = false);
+    bool CanViewSystemHealth = false,
+    bool CanViewLocations = false,
+    bool CanViewInventoryCounts = false,
+    bool CanReviewInventoryCounts = false,
+    bool CanViewGeneratorProduction = false,
+    bool CanViewErpMirror = false,
+    bool CanCreateGoodsReceipts = false,
+    bool CanCreateWarehouseTransfers = false,
+    bool CanCreateInventoryCounts = false);
 
 public sealed record WarehouseAssistantParameterHint(
     string Module,
@@ -148,7 +156,13 @@ public sealed record WarehouseAssistantCapabilities(
     string RoutingMode = "LocalHybrid",
     bool SemanticRoutingAvailable = false,
     string? SemanticModel = null,
-    bool CanRunCompoundQueries = true);
+    bool CanRunCompoundQueries = true,
+    bool CanQueryWarehouseOverview = false,
+    bool CanQueryLocationInventory = false,
+    bool CanQueryInventoryInsights = false,
+    bool CanQueryInventoryCounts = false,
+    bool CanQueryGeneratorProduction = false,
+    bool CanUseNavigationHelp = true);
 
 public sealed record WarehouseAssistantConversationRow(
     long Id,
@@ -424,6 +438,31 @@ public sealed record WarehouseAssistantEvidenceRow(
     bool IsTruncated,
     string? Route = null);
 
+public sealed record WarehouseAssistantAnalysisRow(
+    string Category,
+    string EntityType,
+    long? EntityId,
+    string Code,
+    string Name,
+    int? WarehouseCode = null,
+    string? WarehouseName = null,
+    string? LocationCode = null,
+    string? LocationName = null,
+    string? Status = null,
+    string? UnitCode = null,
+    decimal? PhysicalQuantity = null,
+    decimal? AvailableQuantity = null,
+    decimal? ReservedQuantity = null,
+    decimal? PlannedQuantity = null,
+    decimal? ActualQuantity = null,
+    decimal? VarianceQuantity = null,
+    decimal? CapacityQuantity = null,
+    string? CapacityUnit = null,
+    DateTimeOffset? PlannedAtUtc = null,
+    DateTimeOffset? ActualAtUtc = null,
+    string? Detail = null,
+    string? Route = null);
+
 public sealed record WarehouseAssistantInterpretationRow(
     WarehouseAssistantIntent Intent,
     decimal Confidence,
@@ -475,7 +514,8 @@ public sealed record WarehouseAssistantChatResponse(
     IReadOnlyList<WarehouseAssistantExceptionRow>? Exceptions = null,
     IReadOnlyList<WarehouseAssistantTraceabilityEventRow>? TraceabilityEvents = null,
     IReadOnlyList<WarehouseAssistantEvidenceRow>? Evidence = null,
-    IReadOnlyList<WarehouseAssistantInterpretationRow>? Interpretations = null);
+    IReadOnlyList<WarehouseAssistantInterpretationRow>? Interpretations = null,
+    IReadOnlyList<WarehouseAssistantAnalysisRow>? AnalysisRows = null);
 
 public sealed record WarehouseAssistantContext(
     string? SerialNo,

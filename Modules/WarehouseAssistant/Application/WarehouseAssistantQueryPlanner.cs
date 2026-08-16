@@ -207,7 +207,7 @@ internal static partial class WarehouseAssistantQueryPlanner
         return null;
     }
 
-    private static string? ExtractWarehouseQuery(string normalized)
+    internal static string? ExtractWarehouseQuery(string normalized)
     {
         var before = WarehouseBeforeRegex().Match(normalized);
         if (before.Success && !IsEntityStopWord(before.Groups[1].Value)) return before.Groups[1].Value;
@@ -243,6 +243,26 @@ internal static partial class WarehouseAssistantQueryPlanner
 
     private static bool IsEntityStopWord(string value) => value is "kac" or "hangi" or "aktif" or "toplam" or "tum" or "butun";
 
+    internal static WarehouseAssistantStockMeasure? ExtractStockMeasure(string normalized)
+    {
+        var question = new LocalWarehouseQuestion(normalized);
+        if (question.HasAny("rezerve", "reserved")) return WarehouseAssistantStockMeasure.Reserved;
+        if (question.HasAny("kullanilabilir", "available")) return WarehouseAssistantStockMeasure.Available;
+        if (question.HasAny("fiziksel", "physical")) return WarehouseAssistantStockMeasure.Physical;
+        return null;
+    }
+
+    internal static string? ExtractMovementDirection(string normalized)
+    {
+        var question = new LocalWarehouseQuestion(normalized);
+        if (question.HasAny("cikis", "outbound")) return "Outbound";
+        if (question.HasAny("giris", "inbound")) return "Inbound";
+        return null;
+    }
+
+    internal static bool ExtractExcludeCancelled(string normalized) =>
+        new LocalWarehouseQuestion(normalized).HasAny("iptal edilen", "iptalleri dahil etme", "iptal dahil etme", "haric");
+
     private static bool ContainsAnyPhrase(string normalized, params string[] phrases) =>
         phrases.Any(phrase => normalized.Contains(WarehouseAssistantTextNormalizer.Normalize(phrase), StringComparison.Ordinal));
 
@@ -266,7 +286,7 @@ internal static partial class WarehouseAssistantQueryPlanner
         new(intent, kind, confidence, warehouse, location, stockGroup, project, status, measure, sort, limit,
             excludeZero, excludeCancelled, activeOnly, navigationTopic, reasons);
 
-    [GeneratedRegex(@"\b([a-z0-9][a-z0-9._/-]*)\s+(?:numarali\s+)?(?:deposu|depoda|deposunda|deposundaki)\b", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"\b([a-z0-9][a-z0-9._/-]*)\s+(?:numarali\s+)?(?:depo|deposu|depoda|deposunda|deposundaki)\b", RegexOptions.CultureInvariant)]
     private static partial Regex WarehouseBeforeRegex();
 
     [GeneratedRegex(@"\b(\d+)\s+numarali\s+depo\b", RegexOptions.CultureInvariant)]
