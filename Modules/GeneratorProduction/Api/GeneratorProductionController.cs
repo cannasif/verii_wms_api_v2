@@ -42,6 +42,14 @@ public sealed class GeneratorProductionController(IGeneratorProductionService se
         return Ok(ApiResponse<GeneratorProjectDetail>.Ok(await service.UpdateProjectAsync(id, request, UserId(), ct), "Jeneratör üretim projesi güncellendi."));
     }
 
+    [HttpPost("projects/{id:long}/release")]
+    public async Task<IActionResult> ReleaseProject(long id, ReleaseGeneratorProjectRequest request, CancellationToken ct)
+    {
+        await Require("WMS.GENERATOR_PRODUCTION.PLAN", ct);
+        return Ok(ApiResponse<GeneratorProjectDetail>.Ok(
+            await service.ReleaseProjectAsync(id, request, UserId(), ct), "Jeneratör üretim projesi üretime serbest bırakıldı."));
+    }
+
     [HttpDelete("projects/{id:long}"), HttpPost("projects/{id:long}/delete")]
     public async Task<IActionResult> DeleteProject(long id, CancellationToken ct)
     {
@@ -75,6 +83,69 @@ public sealed class GeneratorProductionController(IGeneratorProductionService se
             await service.UpdateRuleAsync(id, request, UserId(), ct), "Planlama kuralı kaydedildi."));
     }
 
+    [HttpPost("definitions/products")]
+    public async Task<IActionResult> CreateProduct(SaveGeneratorProductRequest request, CancellationToken ct)
+    {
+        await Require("WMS.GENERATOR_PRODUCTION.SETTINGS.MANAGE", ct);
+        return Ok(ApiResponse<GeneratorProductRow>.Ok(await service.SaveProductAsync(null, request, UserId(), ct), "Jeneratör ürün tanımı oluşturuldu."));
+    }
+
+    [HttpPut("definitions/products/{id:long}"), HttpPost("definitions/products/{id:long}/update")]
+    public async Task<IActionResult> UpdateProduct(long id, SaveGeneratorProductRequest request, CancellationToken ct)
+    {
+        await Require("WMS.GENERATOR_PRODUCTION.SETTINGS.MANAGE", ct);
+        return Ok(ApiResponse<GeneratorProductRow>.Ok(await service.SaveProductAsync(id, request, UserId(), ct), "Jeneratör ürün tanımı kaydedildi."));
+    }
+
+    [HttpDelete("definitions/products/{id:long}"), HttpPost("definitions/products/{id:long}/delete")]
+    public async Task<IActionResult> DeleteProduct(long id, CancellationToken ct)
+    {
+        await Require("WMS.GENERATOR_PRODUCTION.SETTINGS.MANAGE", ct); await service.DeleteProductAsync(id, UserId(), ct);
+        return Ok(ApiResponse<bool>.Ok(true, "Jeneratör ürün tanımı silindi."));
+    }
+
+    [HttpPost("definitions/station-capabilities")]
+    public async Task<IActionResult> CreateStationCapability(SaveGeneratorStationCapabilityRequest request, CancellationToken ct)
+    {
+        await Require("WMS.GENERATOR_PRODUCTION.SETTINGS.MANAGE", ct);
+        return Ok(ApiResponse<GeneratorStationCapabilityRow>.Ok(await service.SaveStationCapabilityAsync(null, request, UserId(), ct), "İstasyon yeteneği oluşturuldu."));
+    }
+
+    [HttpPut("definitions/station-capabilities/{id:long}"), HttpPost("definitions/station-capabilities/{id:long}/update")]
+    public async Task<IActionResult> UpdateStationCapability(long id, SaveGeneratorStationCapabilityRequest request, CancellationToken ct)
+    {
+        await Require("WMS.GENERATOR_PRODUCTION.SETTINGS.MANAGE", ct);
+        return Ok(ApiResponse<GeneratorStationCapabilityRow>.Ok(await service.SaveStationCapabilityAsync(id, request, UserId(), ct), "İstasyon yeteneği kaydedildi."));
+    }
+
+    [HttpDelete("definitions/station-capabilities/{id:long}"), HttpPost("definitions/station-capabilities/{id:long}/delete")]
+    public async Task<IActionResult> DeleteStationCapability(long id, CancellationToken ct)
+    {
+        await Require("WMS.GENERATOR_PRODUCTION.SETTINGS.MANAGE", ct); await service.DeleteStationCapabilityAsync(id, UserId(), ct);
+        return Ok(ApiResponse<bool>.Ok(true, "İstasyon yeteneği silindi."));
+    }
+
+    [HttpPost("definitions/materials")]
+    public async Task<IActionResult> CreateMaterial(SaveGeneratorOperationMaterialRequest request, CancellationToken ct)
+    {
+        await Require("WMS.GENERATOR_PRODUCTION.SETTINGS.MANAGE", ct);
+        return Ok(ApiResponse<GeneratorOperationMaterialRow>.Ok(await service.SaveOperationMaterialAsync(null, request, UserId(), ct), "Operasyon malzemesi oluşturuldu."));
+    }
+
+    [HttpPut("definitions/materials/{id:long}"), HttpPost("definitions/materials/{id:long}/update")]
+    public async Task<IActionResult> UpdateMaterial(long id, SaveGeneratorOperationMaterialRequest request, CancellationToken ct)
+    {
+        await Require("WMS.GENERATOR_PRODUCTION.SETTINGS.MANAGE", ct);
+        return Ok(ApiResponse<GeneratorOperationMaterialRow>.Ok(await service.SaveOperationMaterialAsync(id, request, UserId(), ct), "Operasyon malzemesi kaydedildi."));
+    }
+
+    [HttpDelete("definitions/materials/{id:long}"), HttpPost("definitions/materials/{id:long}/delete")]
+    public async Task<IActionResult> DeleteMaterial(long id, CancellationToken ct)
+    {
+        await Require("WMS.GENERATOR_PRODUCTION.SETTINGS.MANAGE", ct); await service.DeleteOperationMaterialAsync(id, UserId(), ct);
+        return Ok(ApiResponse<bool>.Ok(true, "Operasyon malzemesi silindi."));
+    }
+
     [HttpPost("definitions/bootstrap")]
     public async Task<IActionResult> Bootstrap(CancellationToken ct)
     {
@@ -94,6 +165,13 @@ public sealed class GeneratorProductionController(IGeneratorProductionService se
     {
         await Require("WMS.GENERATOR_PRODUCTION.PLAN", ct);
         return Ok(ApiResponse<GeneratorPlanApplyResult>.Ok(await service.ApplyPlanAsync(request, UserId(), ct), "Jeneratör üretim planı uygulandı."));
+    }
+
+    [HttpGet("planning/assistant")]
+    public async Task<IActionResult> Assistant(CancellationToken ct)
+    {
+        await Require("WMS.GENERATOR_PRODUCTION.PLAN", ct);
+        return Ok(ApiResponse<GeneratorPlanningAssistantResult>.Ok(await service.GetPlanningAssistantAsync(ct)));
     }
 
     [HttpGet("schedule")]
@@ -116,6 +194,22 @@ public sealed class GeneratorProductionController(IGeneratorProductionService se
         await Require("WMS.GENERATOR_PRODUCTION.OPERATE", ct);
         return Ok(ApiResponse<GeneratorScheduleRow>.Ok(
             await service.TransitionOperationAsync(operationId, request, UserId(), ct), "Jeneratör üretim operasyonu güncellendi."));
+    }
+
+    [HttpPost("operations/{operationId:long}/quality-decision")]
+    public async Task<IActionResult> DecideOperationQuality(long operationId, GeneratorQualityDecisionRequest request, CancellationToken ct)
+    {
+        await Require("WMS.QUALITY.INSPECTIONS.DECIDE", ct);
+        return Ok(ApiResponse<GeneratorScheduleRow>.Ok(
+            await service.DecideOperationQualityAsync(operationId, request, UserId(), ct), "Jeneratör üretim kalite kararı kaydedildi."));
+    }
+
+    [HttpPut("operations/{operationId:long}/schedule"), HttpPost("operations/{operationId:long}/schedule")]
+    public async Task<IActionResult> UpdateOperationSchedule(long operationId, UpdateGeneratorOperationScheduleRequest request, CancellationToken ct)
+    {
+        await Require("WMS.GENERATOR_PRODUCTION.PLAN", ct);
+        return Ok(ApiResponse<GeneratorScheduleRow>.Ok(
+            await service.UpdateOperationScheduleAsync(operationId, request, UserId(), ct), "Operasyon planı güncellendi."));
     }
 
     private long UserId() => long.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var id) ? id : throw AppException.Unauthorized("Kullanıcı kimliği bulunamadı.");
