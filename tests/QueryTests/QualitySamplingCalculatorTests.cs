@@ -117,4 +117,11 @@ public sealed class QualitySamplingCalculatorTests
             expectedOutstandingMinimum,
             QualityService.RequiredControlQuantityForDecision(line));
     }
+
+    [Fact]
+    public void Fully_inspected_lot_does_not_accept_another_control_quantity_on_decision()
+    {
+        Assert.Equal(0m, QualityService.NormalizeAdditionalControlQuantity(5m, 0m));
+        Assert.Equal(7m, QualityService.NormalizeAdditionalControlQuantity(7m, 95m));
+    }
 }

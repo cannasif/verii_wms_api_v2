@@ -349,9 +349,12 @@ public sealed class QualityService(
             ActiveWorkerUserId=x.Inspection.WorkSessions.Where(session=>session.EndedAtUtc==null).Select(session=>(long?)session.WorkerUserId).FirstOrDefault(),
             ActiveWorkerName=x.Inspection.WorkSessions.Where(session=>session.EndedAtUtc==null).Select(session=>session.WorkerNameSnapshot).FirstOrDefault(),
             ActiveWorkStartedAtUtc=x.Inspection.WorkSessions.Where(session=>session.EndedAtUtc==null).Select(session=>(DateTimeOffset?)session.StartedAtUtc).FirstOrDefault(),
+            WorkStartedByName=x.Inspection.WorkSessions.OrderByDescending(session=>session.SequenceNo).Select(session=>session.WorkerNameSnapshot).FirstOrDefault(),
+            WorkStoppedByUserId=x.Inspection.WorkSessions.OrderByDescending(session=>session.SequenceNo).Select(session=>session.EndedAtUtc==null?null:session.EndedByUserId).FirstOrDefault(),
             CreatedBy=x.Inspection.CreatedBy,CreatedDate=x.Inspection.CreatedDate,UpdatedBy=x.Inspection.UpdatedBy,UpdatedDate=x.Inspection.UpdatedDate });
         var search=request.Search?.Trim(); q=q.Where(x=>string.IsNullOrWhiteSpace(search)||x.InspectionNo.Contains(search)||x.SourceDocumentNo.Contains(search)
             ||(x.SourceWaybillNo!=null&&x.SourceWaybillNo.Contains(search))||(x.CreatedByName!=null&&x.CreatedByName.Contains(search))
+            ||(x.WorkStartedByName!=null&&x.WorkStartedByName.Contains(search))
             ||(x.WarehouseName!=null&&x.WarehouseName.Contains(search))
             ||(x.SourceDocumentType=="GoodsReceipt" && (
                 from line in uow.Repository<GoodsReceiptLine>().Query()
@@ -364,7 +367,8 @@ public sealed class QualityService(
         var page = await ApplyInspectionListSort(filtered, request).ToPagedResponseAsync(request, ct);
         return new PagedResponse<QualityInspectionGridRow>
         {
-            Items = await AttachPriorityRanksAsync(await AttachProjectCodesAsync(page.Items, ct), ct),
+            Items = await AttachPriorityRanksAsync(
+                await AttachWorkStoppedByNamesAsync(await AttachProjectCodesAsync(page.Items, ct), ct), ct),
             TotalCount = page.TotalCount,
             PageNumber = page.PageNumber,
             PageSize = page.PageSize,
@@ -390,6 +394,7 @@ public sealed class QualityService(
                      where user.Id == inspection.CreatedBy.Value
                      select detail == null ? user.Username : detail.FirstName + " " + detail.LastName).FirstOrDefaultAsync(ct)
             : null;
+        var lastWork = ResolveLastWorkActors(inspection);
         var header = new QualityInspectionGridRow { Id = inspection.Id, BranchCode = inspection.BranchCode,
             InspectionNo = inspection.InspectionNo, SourceDocumentType = inspection.SourceDocumentType,
             SourceDocumentId = inspection.SourceDocumentId, SourceDocumentNo = inspection.SourceDocumentNo,
@@ -407,12 +412,15 @@ public sealed class QualityService(
             ActiveWorkerUserId = inspection.WorkSessions.FirstOrDefault(x => x.EndedAtUtc == null)?.WorkerUserId,
             ActiveWorkerName = inspection.WorkSessions.FirstOrDefault(x => x.EndedAtUtc == null)?.WorkerNameSnapshot,
             ActiveWorkStartedAtUtc = inspection.WorkSessions.FirstOrDefault(x => x.EndedAtUtc == null)?.StartedAtUtc,
+            WorkStartedByName = lastWork.StartedByName,
+            WorkStoppedByUserId = lastWork.StoppedByUserId,
+            WorkStoppedByName = await ResolveWorkStoppedByNameAsync(lastWork, ct),
             CreatedBy = inspection.CreatedBy, CreatedDate = inspection.CreatedDate, UpdatedBy = inspection.UpdatedBy, UpdatedDate = inspection.UpdatedDate,
             ProjectCodes = await ResolveProjectCodesAsync(inspection.SourceDocumentType, inspection.SourceDocumentId, ct) };
         var parameter = await Parameters.FirstOrDefaultAsync(x => x.BranchCode == inspection.BranchCode && x.ParameterKey == "DEFAULT", false, ct)
             ?? Default(inspection.BranchCode);
         var warehouseRoutes = await GetActiveWarehouseRoutesAsync(parameter, ct);
-        var routeDefaults = ResolveWarehouseRouteDefaults(parameter, warehouseRoutes, inspection.WarehouseId);
+        var routeDefaults = ResolveInspectionWarehouseRoute(warehouseRoutes, inspection.WarehouseId);
         var goodsReceiptLineIds = inspection.Lines
             .Where(line => line.GoodsReceiptLineId.HasValue)
             .Select(line => line.GoodsReceiptLineId!.Value)
@@ -435,12 +443,7 @@ public sealed class QualityService(
                 if (!line.GoodsReceiptLineId.HasValue
                     || !receiptLineDefaults.TryGetValue(line.GoodsReceiptLineId.Value, out var receiptLine))
                     return routeDefaults.AcceptedLocationId;
-                var defaults = ResolveWarehouseRouteDefaults(parameter, warehouseRoutes, receiptLine.WarehouseId);
-                return ResolveAcceptedLocationId(
-                    defaults.AcceptedLocationId,
-                    receiptLine.DefaultPutawayLocationId,
-                    receiptLine.DefaultReceivingLocationId,
-                    receipt?.ReceivingLocationId);
+                return ResolveInspectionWarehouseRoute(warehouseRoutes, receiptLine.WarehouseId).AcceptedLocationId;
             });
         var acceptedLocationIds = acceptedLocationIdByInspectionLineId.Values
             .Where(locationId => locationId.HasValue)
@@ -483,14 +486,16 @@ public sealed class QualityService(
             summary.ProjectCodes,
             summary.OrderNumbers);
         }).ToList();
-        var quarantineDestinations = await MergeRouteQuarantineDestinationsAsync(
-            await GetQuarantineDestinationsAsync(parameter, ct), warehouseRoutes, ct);
-        if (routeDefaults.QuarantineLocationId.HasValue)
-            quarantineDestinations = quarantineDestinations
-                .Select(destination => destination with
-                {
-                    IsDefault = destination.LocationId == routeDefaults.QuarantineLocationId.Value
-                }).ToArray();
+        var quarantineSourceWarehouseIds = receiptLineDefaults.Values
+            .Select(line => line.WarehouseId)
+            .Append(inspection.WarehouseId)
+            .Distinct()
+            .ToArray();
+        var quarantineDestinations = MarkInspectionQuarantineDefaults(
+            await BuildInspectionQuarantineDestinationsAsync(
+                parameter, warehouseRoutes, quarantineSourceWarehouseIds, ct),
+            inspection.WarehouseId,
+            routeDefaults.QuarantineLocationId);
         var defaultAcceptedDestination = await GetDecisionDestinationAsync(routeDefaults.AcceptedLocationId, ct);
         if (defaultAcceptedDestination is null)
         {
@@ -672,7 +677,7 @@ public sealed class QualityService(
 
         return uow.ExecuteInTransactionAsync(async token =>
         {
-            var inspection = await Inspections.Query(true).Include(x => x.WorkSessions)
+            var inspection = await Inspections.Query(true).Include(x => x.WorkSessions).Include(x => x.Lines)
                 .FirstOrDefaultAsync(x => x.Id == id, token)
                 ?? throw AppException.NotFound(Message(QualityMessageKeys.InspectionNotFound));
             var now = DateTimeOffset.UtcNow;
@@ -686,7 +691,9 @@ public sealed class QualityService(
             if (active.WorkerUserId != actor && !canSupervise)
                 throw AppException.Forbidden(Message(QualityMessageKeys.WorkPauseRequiresOwnerOrSupervisor));
 
+            await ApplyProgressControlsAsync(inspection, request.ControlQuantities, request.IdempotencyKey, actor, now, token);
             CloseWorkSession(active, now, request.Reason, note, request.IdempotencyKey, actor);
+            var revertedToPending = TryRevertIdleInProgress(inspection);
             inspection.UpdatedBy = actor;
             inspection.UpdatedDate = DateTime.UtcNow;
             await uow.SaveChangesAsync(token);
@@ -696,8 +703,10 @@ public sealed class QualityService(
                 id.ToString(),
                 "Succeeded",
                 "quality",
-                NewValues: new { active.Id, active.SequenceNo, active.WorkerUserId, active.EndedAtUtc, active.DurationSeconds, active.StopReason, active.StopNote, active.EndedByUserId },
-                ChangedFields: ["WorkSession"]), token);
+                NewValues: new { active.Id, active.SequenceNo, active.WorkerUserId, active.EndedAtUtc, active.DurationSeconds, active.StopReason, active.StopNote, active.EndedByUserId, inspection.Status },
+                ChangedFields: revertedToPending
+                    ? ["WorkSession", nameof(QualityInspection.Status)]
+                    : ["WorkSession"]), token);
             return BuildWorkSummary(inspection, actor, canExecute, canSupervise, canDecide, receiptReady, now);
         }, ct, IsolationLevel.Serializable);
     }
@@ -769,9 +778,8 @@ public sealed class QualityService(
             var parameter = await Parameters.FirstOrDefaultAsync(x => x.BranchCode == inspection.BranchCode && x.ParameterKey == "DEFAULT", false, token)
                 ?? Default(inspection.BranchCode);
             var warehouseRoutes = await GetActiveWarehouseRoutesAsync(parameter, token);
-            var globalQuarantineDestinations = await GetQuarantineDestinationsAsync(parameter, token);
-            var configuredQuarantineDestinations = await MergeRouteQuarantineDestinationsAsync(
-                globalQuarantineDestinations, warehouseRoutes, token);
+            var sectionQuarantineDestinations = await GetQuarantineDestinationsAsync(parameter, token);
+            IReadOnlyList<QualityQuarantineDestinationDto> configuredQuarantineDestinations = sectionQuarantineDestinations;
             var quantityDecisionGroups = request.QuantityDecisions?.GroupBy(x => x.LineId).ToList();
             if (quantityDecisionGroups?.Any(x => x.Count() != 1) == true)
                 throw AppException.BadRequest("Aynı kalite satırı için birden fazla miktar dağılımı gönderilemez.");
@@ -810,6 +818,16 @@ public sealed class QualityService(
             var grLineIds = selected.Where(x => x.GoodsReceiptLineId.HasValue).Select(x => x.GoodsReceiptLineId!.Value).Distinct().ToArray();
             var grLines = gr.Lines.Where(x => grLineIds.Contains(x.Id)).ToDictionary(x => x.Id);
             if (grLines.Count != grLineIds.Length) throw AppException.Conflict("Kalite satırının mal kabul bağlantısı eksik.");
+            configuredQuarantineDestinations = await BuildInspectionQuarantineDestinationsAsync(
+                parameter,
+                warehouseRoutes,
+                grLines.Values.Select(line => line.TargetWarehouseId).Append(inspection.WarehouseId),
+                token);
+            EnsureInspectionDecisionDestinations(
+                decisionParts,
+                grLines,
+                warehouseRoutes,
+                configuredQuarantineDestinations);
             foreach (var line in selected.Where(x =>
                          !string.IsNullOrWhiteSpace(x.SerialNo)
                          || grLines[x.GoodsReceiptLineId!.Value].TrackingType == StockTrackingType.Serial))
@@ -825,22 +843,6 @@ public sealed class QualityService(
                     throw AppException.Conflict(
                         $"'{line.SerialNo ?? line.StockCodeSnapshot}' seri takipli satırı birden fazla kalite sonucuna bölünemez.");
             }
-
-            if (decisionParts.Any(part => part.Decision == QualityDecision.Quarantined
-                    && !part.TargetLocationId.HasValue
-                    && !ResolveWarehouseRouteDefaults(
-                        parameter,
-                        warehouseRoutes,
-                        grLines[part.Line.GoodsReceiptLineId!.Value].TargetWarehouseId).QuarantineLocationId.HasValue)
-                && globalQuarantineDestinations.Count == 0)
-                throw AppException.Conflict("Karantina kararı için en az bir aktif hedef depo/raf tanımlanmalıdır.");
-            if (decisionParts.Any(part => part.Decision == QualityDecision.Rejected
-                    && !part.TargetLocationId.HasValue
-                    && !ResolveWarehouseRouteDefaults(
-                        parameter,
-                        warehouseRoutes,
-                        grLines[part.Line.GoodsReceiptLineId!.Value].TargetWarehouseId).RejectLocationId.HasValue))
-                throw AppException.Conflict("Ret kararı için hedef kalite rafı ayarlarda tanımlı değil.");
 
             var qualityLineIds = selected.Select(line => line.Id).ToArray();
             var executionSources = await uow.Repository<GoodsReceiptExecutionLine>().Query()
@@ -869,23 +871,28 @@ public sealed class QualityService(
                     && balance.AvailableQuantity > 0)
                 .ToListAsync(token);
 
+            var involvedWarehouseIds = grLines.Values
+                .Select(line => line.TargetWarehouseId)
+                .Append(inspection.WarehouseId)
+                .ToHashSet();
             var decisionTargetLocationIds = configuredQuarantineDestinations
                 .Select(destination => destination.LocationId)
-                .Append(parameter.DefaultAcceptedLocationId ?? 0)
-                .Append(parameter.DefaultRejectLocationId ?? 0)
-                .Concat(warehouseRoutes.Values.SelectMany(route => new long?[]
-                    { route.AcceptedLocationId, route.QuarantineLocationId, route.RejectLocationId })
-                    .Where(locationId => locationId.HasValue).Select(locationId => locationId!.Value))
+                .Concat(warehouseRoutes
+                    .Where(route => involvedWarehouseIds.Contains(route.Key))
+                    .SelectMany(route => new long?[]
+                    {
+                        route.Value.AcceptedLocationId,
+                        route.Value.QuarantineLocationId,
+                        route.Value.RejectLocationId
+                    })
+                    .Where(locationId => locationId.HasValue)
+                    .Select(locationId => locationId!.Value))
                 .Concat(decisionParts.Select(part => part.TargetLocationId ?? 0))
                 .Where(locationId => locationId > 0)
                 .Distinct()
                 .ToArray();
             var acceptedFallbackLocationIds = grLines.Values
-                .Select(line => ResolveAcceptedLocationId(
-                    ResolveWarehouseRouteDefaults(parameter, warehouseRoutes, line.TargetWarehouseId).AcceptedLocationId,
-                    line.DefaultPutawayLocationId,
-                    line.DefaultReceivingLocationId,
-                    gr.ReceivingLocationId))
+                .Select(line => ResolveInspectionWarehouseRoute(warehouseRoutes, line.TargetWarehouseId).AcceptedLocationId)
                 .Where(locationId => locationId.HasValue)
                 .Select(locationId => locationId!.Value)
                 .Distinct()
@@ -909,28 +916,18 @@ public sealed class QualityService(
                 parameter,
                 warehouseRoutes,
                 gr.ReceivingLocationId,
-                globalQuarantineDestinations);
+                configuredQuarantineDestinations);
             if (requiredLocationIds.Any(locationId => !movementLocations.ContainsKey(locationId)))
                 throw AppException.Conflict("Kalite stok hareketi için hedef raf bulunamadı veya kullanıma kapatılmış.");
 
             foreach (var part in decisionParts)
             {
-                var routeDefaults = ResolveWarehouseRouteDefaults(
-                    parameter,
-                    warehouseRoutes,
-                    grLines[part.Line.GoodsReceiptLineId!.Value].TargetWarehouseId);
                 var receiptLine = grLines[part.Line.GoodsReceiptLineId!.Value];
-                var effectiveTargetLocationId = part.TargetLocationId ?? part.Decision switch
-                {
-                    QualityDecision.Accepted => ResolveAcceptedLocationId(
-                        routeDefaults.AcceptedLocationId,
-                        receiptLine.DefaultPutawayLocationId,
-                        receiptLine.DefaultReceivingLocationId,
-                        gr.ReceivingLocationId),
-                    QualityDecision.Quarantined => routeDefaults.QuarantineLocationId,
-                    QualityDecision.Rejected => routeDefaults.RejectLocationId,
-                    _ => null
-                };
+                var effectiveTargetLocationId = ResolveInspectionDecisionTargetLocationId(
+                    part,
+                    receiptLine.TargetWarehouseId,
+                    warehouseRoutes,
+                    configuredQuarantineDestinations);
                 if (!effectiveTargetLocationId.HasValue)
                     continue;
 
@@ -1003,38 +1000,14 @@ public sealed class QualityService(
 
                 foreach (var allocation in allocations)
                 {
-                    var allocationRouteDefaults = ResolveWarehouseRouteDefaults(
-                        parameter, warehouseRoutes, allocation.WarehouseId);
-                    var acceptedLocationId = ResolveAcceptedLocationId(
-                        allocationRouteDefaults.AcceptedLocationId,
-                        receiptLine.DefaultPutawayLocationId,
-                        receiptLine.DefaultReceivingLocationId,
-                        gr.ReceivingLocationId);
-                    var quarantineDestination = part.Decision == QualityDecision.Quarantined
-                        ? part.TargetLocationId.HasValue
-                            ? ResolveQuarantineDestination(
-                                configuredQuarantineDestinations,
-                                part.TargetLocationId,
-                                allocation.WarehouseId)
-                            : allocationRouteDefaults.QuarantineLocationId.HasValue
-                                ? configuredQuarantineDestinations.First(destination =>
-                                    destination.LocationId == allocationRouteDefaults.QuarantineLocationId.Value)
-                                : ResolveQuarantineDestination(
-                                    globalQuarantineDestinations,
-                                    null,
-                                    allocation.WarehouseId)
-                        : null;
-                    var destinationLocationId = part.Decision switch
-                    {
-                        QualityDecision.Accepted when part.TargetLocationId.HasValue => part.TargetLocationId.Value,
-                        QualityDecision.Accepted when acceptedLocationId.HasValue => acceptedLocationId.Value,
-                        QualityDecision.Accepted when string.Equals(
-                            allocation.StockStatus, "Available", StringComparison.OrdinalIgnoreCase) => allocation.LocationId,
-                        QualityDecision.Accepted => receiptLocationId,
-                        QualityDecision.Quarantined => quarantineDestination!.LocationId,
-                        QualityDecision.Rejected => part.TargetLocationId ?? allocationRouteDefaults.RejectLocationId!.Value,
-                        _ => receiptLocationId
-                    };
+                    var destinationLocationId = ResolveInspectionDecisionTargetLocationId(
+                        part,
+                        receiptLine.TargetWarehouseId,
+                        warehouseRoutes,
+                        configuredQuarantineDestinations)
+                        ?? (part.Decision is QualityDecision.Accepted or QualityDecision.Quarantined or QualityDecision.Rejected
+                            ? throw AppException.Conflict(Message(InspectionDestinationMessageKey(part.Decision)))
+                            : receiptLocationId);
                     var destinationStatus = part.Decision switch
                     {
                         QualityDecision.Accepted => "Available",
@@ -1777,6 +1750,179 @@ public sealed class QualityService(
             route?.RejectLocationId ?? parameter.DefaultRejectLocationId);
     }
 
+    internal static QualityWarehouseRouteDefaults ResolveInspectionWarehouseRoute(
+        IReadOnlyDictionary<long, QualityWarehouseRoute> routes,
+        long sourceWarehouseId)
+    {
+        routes.TryGetValue(sourceWarehouseId, out var route);
+        return new QualityWarehouseRouteDefaults(
+            route?.QualityLocationId,
+            route?.AcceptedLocationId,
+            route?.QuarantineLocationId,
+            route?.RejectLocationId);
+    }
+
+    internal static long? ResolveInspectionQuarantineLocationId(
+        IReadOnlyDictionary<long, QualityWarehouseRoute> routes,
+        IReadOnlyCollection<QualityQuarantineDestinationDto> sectionDestinations,
+        long sourceWarehouseId)
+    {
+        var matrixLocationId = ResolveInspectionWarehouseRoute(routes, sourceWarehouseId).QuarantineLocationId;
+        if (matrixLocationId.HasValue)
+            return matrixLocationId;
+
+        var active = sectionDestinations.Where(destination => destination.IsActive).ToArray();
+        if (active.Length == 0)
+            return null;
+        return active
+            .OrderByDescending(destination => destination.WarehouseId == sourceWarehouseId)
+            .ThenByDescending(destination => destination.IsDefault)
+            .ThenBy(destination => destination.Priority)
+            .ThenBy(destination => destination.WarehouseCode)
+            .ThenBy(destination => destination.LocationCode)
+            .First().LocationId;
+    }
+
+    internal static long? ResolveInspectionDecisionTargetLocationId(
+        QualityDecisionPart part,
+        long sourceWarehouseId,
+        IReadOnlyDictionary<long, QualityWarehouseRoute> warehouseRoutes,
+        IReadOnlyCollection<QualityQuarantineDestinationDto> sectionQuarantineDestinations)
+    {
+        if (part.TargetLocationId.HasValue)
+        {
+            if (part.Decision == QualityDecision.Quarantined)
+                return ResolveQuarantineDestination(
+                    sectionQuarantineDestinations,
+                    part.TargetLocationId,
+                    sourceWarehouseId).LocationId;
+            return part.TargetLocationId;
+        }
+
+        var route = ResolveInspectionWarehouseRoute(warehouseRoutes, sourceWarehouseId);
+        return part.Decision switch
+        {
+            QualityDecision.Accepted => route.AcceptedLocationId,
+            QualityDecision.Rejected => route.RejectLocationId,
+            QualityDecision.Quarantined => ResolveInspectionQuarantineLocationId(
+                warehouseRoutes,
+                sectionQuarantineDestinations,
+                sourceWarehouseId),
+            _ => null
+        };
+    }
+
+    internal static IReadOnlyList<QualityQuarantineDestinationDto> MarkInspectionQuarantineDefaults(
+        IReadOnlyList<QualityQuarantineDestinationDto> destinations,
+        long sourceWarehouseId,
+        long? matrixQuarantineLocationId)
+    {
+        if (destinations.Count == 0)
+            return destinations;
+
+        var defaultLocationId = matrixQuarantineLocationId
+            ?? destinations
+                .Where(destination => destination.IsActive)
+                .OrderByDescending(destination => destination.WarehouseId == sourceWarehouseId)
+                .ThenByDescending(destination => destination.IsDefault)
+                .ThenBy(destination => destination.Priority)
+                .ThenBy(destination => destination.WarehouseCode)
+                .ThenBy(destination => destination.LocationCode)
+                .Select(destination => (long?)destination.LocationId)
+                .FirstOrDefault();
+
+        return destinations
+            .Select(destination => destination with
+            {
+                IsDefault = defaultLocationId.HasValue && destination.LocationId == defaultLocationId.Value
+            })
+            .OrderByDescending(destination => destination.IsDefault)
+            .ThenByDescending(destination => destination.WarehouseId == sourceWarehouseId)
+            .ThenBy(destination => destination.Priority)
+            .ThenBy(destination => destination.WarehouseCode)
+            .ThenBy(destination => destination.LocationCode)
+            .ToArray();
+    }
+
+    private async Task<IReadOnlyList<QualityQuarantineDestinationDto>> BuildInspectionQuarantineDestinationsAsync(
+        QualityParameter parameter,
+        IReadOnlyDictionary<long, QualityWarehouseRoute> routes,
+        IEnumerable<long> sourceWarehouseIds,
+        CancellationToken ct)
+    {
+        var section = (await GetQuarantineDestinationsAsync(parameter, ct)).ToList();
+        var existingIds = section.Select(destination => destination.LocationId).ToHashSet();
+        var extraLocationIds = sourceWarehouseIds
+            .Select(warehouseId => ResolveInspectionWarehouseRoute(routes, warehouseId).QuarantineLocationId)
+            .Where(locationId => locationId.HasValue && !existingIds.Contains(locationId.Value))
+            .Select(locationId => locationId!.Value)
+            .Distinct()
+            .ToArray();
+        if (extraLocationIds.Length == 0)
+            return section;
+
+        var additional = await (from location in uow.Repository<WarehouseLocation>().Query()
+                                join warehouse in uow.Repository<WarehouseEntity>().Query()
+                                    on location.WarehouseId equals warehouse.Id
+                                where extraLocationIds.Contains(location.Id)
+                                    && location.IsActive
+                                    && location.IsQuarantine
+                                select new QualityQuarantineDestinationDto(
+                                    0,
+                                    location.Id,
+                                    warehouse.Id,
+                                    warehouse.WarehouseCode,
+                                    warehouse.WarehouseName,
+                                    location.Code,
+                                    location.Name,
+                                    0,
+                                    false,
+                                    true)).ToListAsync(ct);
+        return section.Concat(additional)
+            .GroupBy(destination => destination.LocationId)
+            .Select(group => group.First())
+            .ToArray();
+    }
+
+    private void EnsureInspectionDecisionDestinations(
+        IReadOnlyList<QualityDecisionPart> decisionParts,
+        IReadOnlyDictionary<long, GoodsReceiptLine> receiptLines,
+        IReadOnlyDictionary<long, QualityWarehouseRoute> warehouseRoutes,
+        IReadOnlyCollection<QualityQuarantineDestinationDto> sectionQuarantineDestinations)
+    {
+        foreach (var part in decisionParts)
+        {
+            if (part.TargetLocationId.HasValue
+                || !part.Line.GoodsReceiptLineId.HasValue
+                || !receiptLines.TryGetValue(part.Line.GoodsReceiptLineId.Value, out var receiptLine))
+                continue;
+
+            var warehouseId = receiptLine.TargetWarehouseId;
+            var route = ResolveInspectionWarehouseRoute(warehouseRoutes, warehouseId);
+            switch (part.Decision)
+            {
+                case QualityDecision.Accepted when !route.AcceptedLocationId.HasValue:
+                    throw AppException.Conflict(Message(QualityMessageKeys.InspectionWarehouseAcceptedLocationMissing));
+                case QualityDecision.Rejected when !route.RejectLocationId.HasValue:
+                    throw AppException.Conflict(Message(QualityMessageKeys.InspectionWarehouseRejectLocationMissing));
+                case QualityDecision.Quarantined when !ResolveInspectionQuarantineLocationId(
+                    warehouseRoutes,
+                    sectionQuarantineDestinations,
+                    warehouseId).HasValue:
+                    throw AppException.Conflict(Message(QualityMessageKeys.InspectionWarehouseQuarantineLocationMissing));
+            }
+        }
+    }
+
+    private static string InspectionDestinationMessageKey(QualityDecision decision) =>
+        decision switch
+        {
+            QualityDecision.Accepted => QualityMessageKeys.InspectionWarehouseAcceptedLocationMissing,
+            QualityDecision.Rejected => QualityMessageKeys.InspectionWarehouseRejectLocationMissing,
+            QualityDecision.Quarantined => QualityMessageKeys.InspectionWarehouseQuarantineLocationMissing,
+            _ => QualityMessageKeys.InspectionWarehouseQualityHoldLocationMissing
+        };
+
     private static QualityParameter Default(string branch)=>new(){BranchCode=branch,ParameterKey="DEFAULT"};
     private async Task<QualityParameterDto> MapParameterAsync(QualityParameter x, CancellationToken ct) => new(
         x.Id, x.BranchCode, x.AutoCreateInspectionOnReceipt, x.DefaultInspectionMode, x.DefaultFailAction,
@@ -2055,6 +2201,7 @@ public sealed class QualityService(
                     QualityMessageKeys.ControlQuantityMustBePositive,
                     line.StockCodeSnapshot));
             var remainingInspectable = RemainingInspectableQuantity(line);
+            inspected = NormalizeAdditionalControlQuantity(inspected, remainingInspectable);
             if (inspected - remainingInspectable > 0.000001m)
                 throw AppException.BadRequest(Message(
                     QualityMessageKeys.ControlQuantityExceedsLot,
@@ -2079,6 +2226,63 @@ public sealed class QualityService(
         Math.Max(0, Math.Min(line.SampleQuantity, line.Quantity) - line.InspectedQuantity);
     internal static decimal RemainingInspectableQuantity(QualityInspectionLine line) =>
         Math.Max(0, line.Quantity - line.InspectedQuantity);
+
+    internal static decimal NormalizeAdditionalControlQuantity(decimal requested, decimal remainingInspectable) =>
+        remainingInspectable <= 0.000001m ? 0 : requested;
+
+    private IReadOnlyList<(QualityInspectionLine Line, decimal InspectedQuantity)> ResolveProgressControls(
+        IEnumerable<QualityInspectionLine> lines,
+        IReadOnlyList<QualityInspectionControlQuantityRequest>? requests)
+    {
+        if (requests is null || requests.Count == 0) return [];
+        var byId = lines.ToDictionary(line => line.Id);
+        var result = new List<(QualityInspectionLine Line, decimal InspectedQuantity)>();
+        foreach (var request in requests)
+        {
+            if (!byId.TryGetValue(request.LineId, out var line))
+                throw AppException.BadRequest(Message(QualityMessageKeys.InspectionLineNotFound));
+            if (request.InspectedQuantity <= 0) continue;
+            var remaining = RemainingInspectableQuantity(line);
+            if (request.InspectedQuantity - remaining > 0.000001m)
+                throw AppException.BadRequest(Message(
+                    QualityMessageKeys.ControlQuantityExceedsLot,
+                    line.StockCodeSnapshot,
+                    request.InspectedQuantity,
+                    remaining));
+            result.Add((line, request.InspectedQuantity));
+        }
+        return result;
+    }
+
+    private async Task ApplyProgressControlsAsync(
+        QualityInspection inspection,
+        IReadOnlyList<QualityInspectionControlQuantityRequest>? requests,
+        Guid idempotencyKey,
+        long actor,
+        DateTimeOffset now,
+        CancellationToken token)
+    {
+        foreach (var (line, inspected) in ResolveProgressControls(inspection.Lines, requests))
+        {
+            var required = RequiredControlQuantityForDecision(line);
+            line.InspectedQuantity += inspected;
+            await Controls.AddAsync(new QualityInspectionControl
+            {
+                BranchCode = inspection.BranchCode,
+                QualityInspectionId = inspection.Id,
+                QualityInspectionLineId = line.Id,
+                IdempotencyKey = idempotencyKey,
+                LotQuantitySnapshot = line.Quantity,
+                RequiredQuantitySnapshot = required,
+                InspectedQuantity = inspected,
+                OutcomeSummary = "Progress",
+                InspectedBy = actor,
+                InspectedAtUtc = now,
+                CreatedBy = actor,
+                CreatedDate = DateTime.UtcNow
+            }, token);
+        }
+    }
     private static decimal DecidedQuantity(QualityInspectionLine line) =>
         line.AcceptedQuantity + line.RejectedQuantity + line.QuarantineQuantity;
     private static QualityDecision ResolveLineDecision(QualityInspectionLine line) =>
@@ -2109,6 +2313,8 @@ public sealed class QualityService(
         long headerReceivingLocationId,
         IReadOnlyCollection<QualityQuarantineDestinationDto> globalQuarantineDestinations)
     {
+        _ = parameter;
+        _ = headerReceivingLocationId;
         var result = new HashSet<long>();
         foreach (var part in decisionParts)
         {
@@ -2116,26 +2322,11 @@ public sealed class QualityService(
                 || !receiptLines.TryGetValue(part.Line.GoodsReceiptLineId.Value, out var receiptLine))
                 continue;
 
-            var defaults = ResolveWarehouseRouteDefaults(
-                parameter,
+            var targetLocationId = ResolveInspectionDecisionTargetLocationId(
+                part,
+                receiptLine.TargetWarehouseId,
                 warehouseRoutes,
-                receiptLine.TargetWarehouseId);
-            var targetLocationId = part.Decision switch
-            {
-                QualityDecision.Accepted => part.TargetLocationId ?? ResolveAcceptedLocationId(
-                    defaults.AcceptedLocationId,
-                    receiptLine.DefaultPutawayLocationId,
-                    receiptLine.DefaultReceivingLocationId,
-                    headerReceivingLocationId),
-                QualityDecision.Quarantined => part.TargetLocationId
-                    ?? defaults.QuarantineLocationId
-                    ?? ResolveQuarantineDestination(
-                        globalQuarantineDestinations,
-                        null,
-                        receiptLine.TargetWarehouseId).LocationId,
-                QualityDecision.Rejected => part.TargetLocationId ?? defaults.RejectLocationId,
-                _ => null
-            };
+                globalQuarantineDestinations);
             if (targetLocationId.HasValue)
                 result.Add(targetLocationId.Value);
         }
@@ -2180,6 +2371,27 @@ public sealed class QualityService(
         return inspection.WorkSessions.Count > 0
             ? QualityInspectionWorkState.Paused
             : QualityInspectionWorkState.NotStarted;
+    }
+
+    internal static bool TryRevertIdleInProgress(QualityInspection inspection)
+    {
+        if (inspection.Status != QualityInspectionStatus.InProgress) return false;
+        if (inspection.WorkSessions.Any(session => session.EndedAtUtc == null)) return false;
+        inspection.Status = QualityInspectionStatus.Pending;
+        return true;
+    }
+
+    internal readonly record struct QualityWorkActors(string? StartedByName, long? WorkerUserId, long? StoppedByUserId);
+
+    internal static QualityWorkActors ResolveLastWorkActors(QualityInspection inspection)
+    {
+        var last = inspection.WorkSessions
+            .Where(session => !session.IsDeleted)
+            .OrderByDescending(session => session.SequenceNo)
+            .ThenByDescending(session => session.StartedAtUtc)
+            .FirstOrDefault();
+        if (last is null) return default;
+        return new(last.WorkerNameSnapshot, last.WorkerUserId, last.EndedAtUtc is null ? null : last.EndedByUserId);
     }
 
     internal static QualityInspectionWorkSummaryDto BuildWorkSummary(
@@ -2581,6 +2793,54 @@ public sealed class QualityService(
         }
 
         return rows;
+    }
+
+    private async Task<IReadOnlyList<QualityInspectionGridRow>> AttachWorkStoppedByNamesAsync(
+        IReadOnlyList<QualityInspectionGridRow> rows, CancellationToken ct)
+    {
+        var userIds = rows
+            .Select(row => row.WorkStoppedByUserId)
+            .Where(id => id is > 0)
+            .Select(id => id!.Value)
+            .Distinct()
+            .ToArray();
+        if (userIds.Length == 0) return rows;
+
+        var names = await (
+            from user in uow.Repository<User>().Query()
+            join detail in uow.Repository<UserDetail>().Query() on user.Id equals detail.UserId into details
+            from detail in details.DefaultIfEmpty()
+            where userIds.Contains(user.Id)
+            select new
+            {
+                user.Id,
+                user.Username,
+                FirstName = detail == null ? null : detail.FirstName,
+                LastName = detail == null ? null : detail.LastName
+            }).ToListAsync(ct);
+
+        var byId = names.ToDictionary(
+            value => value.Id,
+            value =>
+            {
+                var fullName = $"{value.FirstName} {value.LastName}".Trim();
+                return string.IsNullOrWhiteSpace(fullName) ? value.Username : fullName;
+            });
+
+        foreach (var row in rows)
+        {
+            if (row.WorkStoppedByUserId is not long userId) continue;
+            row.WorkStoppedByName = byId.TryGetValue(userId, out var name) ? name : $"#{userId}";
+        }
+
+        return rows;
+    }
+
+    private async Task<string?> ResolveWorkStoppedByNameAsync(QualityWorkActors actors, CancellationToken ct)
+    {
+        if (actors.StoppedByUserId is not long userId) return null;
+        if (actors.WorkerUserId == userId) return actors.StartedByName;
+        return await GetActorDisplayNameAsync(userId, ct);
     }
 
     private async Task<IReadOnlyList<QualityInspectionGridRow>> AttachProjectCodesAsync(

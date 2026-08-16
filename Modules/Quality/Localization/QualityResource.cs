@@ -30,4 +30,8 @@ public static class QualityMessageKeys
     public const string InspectionImageRequired = nameof(InspectionImageRequired);
     public const string InspectionImagesUploaded = nameof(InspectionImagesUploaded);
     public const string InspectionImageDeleted = nameof(InspectionImageDeleted);
+    public const string InspectionWarehouseAcceptedLocationMissing = nameof(InspectionWarehouseAcceptedLocationMissing);
+    public const string InspectionWarehouseRejectLocationMissing = nameof(InspectionWarehouseRejectLocationMissing);
+    public const string InspectionWarehouseQuarantineLocationMissing = nameof(InspectionWarehouseQuarantineLocationMissing);
+    public const string InspectionWarehouseQualityHoldLocationMissing = nameof(InspectionWarehouseQualityHoldLocationMissing);
 }

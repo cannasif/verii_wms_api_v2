@@ -173,7 +173,7 @@ public sealed class QualityWarehouseDispositionTests
     }
 
     [Fact]
-    public void Accepted_quality_decision_without_explicit_target_uses_configured_fallback()
+    public void Inspection_accepted_decision_without_matrix_does_not_use_branch_or_receipt_fallback()
     {
         var inspectionLine = new QualityInspectionLine
         {
@@ -202,6 +202,90 @@ public sealed class QualityWarehouseDispositionTests
             headerReceivingLocationId: 43,
             []);
 
-        Assert.Equal([95], required);
+        Assert.Empty(required);
+    }
+
+    [Fact]
+    public void Inspection_accepted_decision_uses_only_that_warehouse_matrix()
+    {
+        var inspectionLine = new QualityInspectionLine
+        {
+            Id = 1,
+            GoodsReceiptLineId = 10,
+            StockId = 100,
+            StockCodeSnapshot = "STK-1",
+            Quantity = 1
+        };
+        var receiptLine = new GoodsReceiptLine
+        {
+            Id = 10,
+            TargetWarehouseId = 1,
+            DefaultReceivingLocationId = 43
+        };
+        IReadOnlyDictionary<long, QualityWarehouseRoute> routes = new Dictionary<long, QualityWarehouseRoute>
+        {
+            [1] = new() { SourceWarehouseId = 1, AcceptedLocationId = 20 },
+            [2] = new() { SourceWarehouseId = 2, AcceptedLocationId = 99 }
+        };
+
+        var required = QualityService.ResolveRequiredDecisionTargetLocationIds(
+            [new QualityService.QualityDecisionPart(
+                inspectionLine,
+                QualityDecision.Accepted,
+                1)],
+            new Dictionary<long, GoodsReceiptLine> { [receiptLine.Id] = receiptLine },
+            new QualityParameter { DefaultAcceptedLocationId = 95 },
+            routes,
+            headerReceivingLocationId: 43,
+            []);
+
+        Assert.Equal([20], required);
+        Assert.DoesNotContain(95, required);
+        Assert.DoesNotContain(99, required);
+    }
+
+    [Fact]
+    public void Inspection_route_does_not_inherit_branch_defaults()
+    {
+        IReadOnlyDictionary<long, QualityWarehouseRoute> routes = new Dictionary<long, QualityWarehouseRoute>
+        {
+            [100] = new()
+            {
+                SourceWarehouseId = 100,
+                AcceptedLocationId = 20
+            }
+        };
+
+        var resolved = QualityService.ResolveInspectionWarehouseRoute(routes, 100);
+
+        Assert.Null(resolved.QualityLocationId);
+        Assert.Equal(20, resolved.AcceptedLocationId);
+        Assert.Null(resolved.QuarantineLocationId);
+        Assert.Null(resolved.RejectLocationId);
+        Assert.Null(QualityService.ResolveInspectionWarehouseRoute(routes, 399).AcceptedLocationId);
+    }
+
+    [Fact]
+    public void Inspection_quarantine_prefers_warehouse_matrix_then_section_list()
+    {
+        IReadOnlyDictionary<long, QualityWarehouseRoute> routes = new Dictionary<long, QualityWarehouseRoute>
+        {
+            [1] = new() { SourceWarehouseId = 1, QuarantineLocationId = 30 },
+            [2] = new() { SourceWarehouseId = 2, QuarantineLocationId = 99 }
+        };
+        var section = new[]
+        {
+            new QualityQuarantineDestinationDto(1, 10, 8, 800, "Diger", "K-8", "Karantina 8", 1, true, true)
+        };
+
+        Assert.Equal(30, QualityService.ResolveInspectionQuarantineLocationId(routes, section, 1));
+        Assert.Equal(10, QualityService.ResolveInspectionQuarantineLocationId(
+            new Dictionary<long, QualityWarehouseRoute>(),
+            section,
+            1));
+        Assert.Null(QualityService.ResolveInspectionQuarantineLocationId(
+            new Dictionary<long, QualityWarehouseRoute>(),
+            [],
+            1));
     }
 }

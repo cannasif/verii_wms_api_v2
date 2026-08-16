@@ -30,4 +30,8 @@
   <data name="InspectionImageRequired" xml:space="preserve"><value>Seleccione al menos una imagen de calidad.</value></data>
   <data name="InspectionImagesUploaded" xml:space="preserve"><value>Se cargaron las imágenes de la decisión de calidad.</value></data>
   <data name="InspectionImageDeleted" xml:space="preserve"><value>Se eliminó la imagen de la decisión de calidad.</value></data>
+  <data name="InspectionWarehouseAcceptedLocationMissing" xml:space="preserve"><value>Este almacén no tiene una ubicación de aceptación predeterminada definida.</value></data>
+  <data name="InspectionWarehouseRejectLocationMissing" xml:space="preserve"><value>Este almacén no tiene una ubicación de rechazo predeterminada definida.</value></data>
+  <data name="InspectionWarehouseQuarantineLocationMissing" xml:space="preserve"><value>Este almacén no tiene una ubicación de cuarentena predeterminada definida.</value></data>
+  <data name="InspectionWarehouseQualityHoldLocationMissing" xml:space="preserve"><value>Este almacén no tiene una ubicación de espera de calidad predeterminada definida.</value></data>
 </root>

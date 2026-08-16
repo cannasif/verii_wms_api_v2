@@ -129,4 +129,147 @@ public sealed class QualityInspectionWorkSessionTests
         Assert.False(result.CanPause);
         Assert.False(result.CanApplyDecision);
     }
+
+    [Fact]
+    public void Pausing_idle_in_progress_inspection_returns_it_to_pending()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var inspection = new QualityInspection
+        {
+            Status = QualityInspectionStatus.InProgress,
+            WorkSessions =
+            [
+                new QualityInspectionWorkSession
+                {
+                    WorkerUserId = 11,
+                    WorkerNameSnapshot = "Kalite Operatörü",
+                    StartedAtUtc = now.AddMinutes(-20),
+                    EndedAtUtc = now,
+                    DurationSeconds = 1200,
+                    StopReason = QualityInspectionWorkStopReason.Break
+                }
+            ]
+        };
+
+        Assert.True(QualityService.TryRevertIdleInProgress(inspection));
+        Assert.Equal(QualityInspectionStatus.Pending, inspection.Status);
+    }
+
+    [Fact]
+    public void Running_or_partially_decided_inspection_does_not_revert_to_pending()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var running = new QualityInspection
+        {
+            Status = QualityInspectionStatus.InProgress,
+            WorkSessions =
+            [
+                new QualityInspectionWorkSession
+                {
+                    WorkerUserId = 11,
+                    WorkerNameSnapshot = "Kalite Operatörü",
+                    StartedAtUtc = now.AddMinutes(-10)
+                }
+            ]
+        };
+        var partial = new QualityInspection
+        {
+            Status = QualityInspectionStatus.PartiallyDecided,
+            WorkSessions =
+            [
+                new QualityInspectionWorkSession
+                {
+                    WorkerUserId = 11,
+                    WorkerNameSnapshot = "Kalite Operatörü",
+                    StartedAtUtc = now.AddMinutes(-20),
+                    EndedAtUtc = now,
+                    DurationSeconds = 1200,
+                    StopReason = QualityInspectionWorkStopReason.Break
+                }
+            ]
+        };
+
+        Assert.False(QualityService.TryRevertIdleInProgress(running));
+        Assert.Equal(QualityInspectionStatus.InProgress, running.Status);
+        Assert.False(QualityService.TryRevertIdleInProgress(partial));
+        Assert.Equal(QualityInspectionStatus.PartiallyDecided, partial.Status);
+    }
+
+    [Fact]
+    public void Last_work_actors_use_latest_session_starter_and_stopper()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var inspection = new QualityInspection
+        {
+            WorkSessions =
+            [
+                new QualityInspectionWorkSession
+                {
+                    SequenceNo = 1,
+                    WorkerUserId = 11,
+                    WorkerNameSnapshot = "Ali Yılmaz",
+                    StartedAtUtc = now.AddHours(-2),
+                    EndedAtUtc = now.AddHours(-1),
+                    EndedByUserId = 11
+                },
+                new QualityInspectionWorkSession
+                {
+                    SequenceNo = 2,
+                    WorkerUserId = 22,
+                    WorkerNameSnapshot = "Ayşe Demir",
+                    StartedAtUtc = now.AddMinutes(-20),
+                    EndedAtUtc = now,
+                    EndedByUserId = 33
+                }
+            ]
+        };
+
+        var actors = QualityService.ResolveLastWorkActors(inspection);
+
+        Assert.Equal("Ayşe Demir", actors.StartedByName);
+        Assert.Equal(22, actors.WorkerUserId);
+        Assert.Equal(33, actors.StoppedByUserId);
+    }
+
+    [Fact]
+    public void Running_session_has_starter_but_no_stopper()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var inspection = new QualityInspection
+        {
+            WorkSessions =
+            [
+                new QualityInspectionWorkSession
+                {
+                    SequenceNo = 1,
+                    WorkerUserId = 11,
+                    WorkerNameSnapshot = "Ali Yılmaz",
+                    StartedAtUtc = now.AddMinutes(-10)
+                }
+            ]
+        };
+
+        var actors = QualityService.ResolveLastWorkActors(inspection);
+
+        Assert.Equal("Ali Yılmaz", actors.StartedByName);
+        Assert.Equal(11, actors.WorkerUserId);
+        Assert.Null(actors.StoppedByUserId);
+    }
+
+    [Fact]
+    public void Progress_control_quantity_reduces_remaining_inspectable_amount()
+    {
+        var line = new QualityInspectionLine
+        {
+            Quantity = 100,
+            SampleQuantity = 10,
+            InspectedQuantity = 4
+        };
+
+        line.InspectedQuantity += 6;
+
+        Assert.Equal(10m, line.InspectedQuantity);
+        Assert.Equal(90m, QualityService.RemainingInspectableQuantity(line));
+        Assert.Equal(0m, QualityService.RequiredControlQuantityForDecision(line));
+    }
 }

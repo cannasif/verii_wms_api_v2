@@ -30,4 +30,8 @@
   <data name="InspectionImageRequired" xml:space="preserve"><value>Wählen Sie mindestens ein Qualitätsbild aus.</value></data>
   <data name="InspectionImagesUploaded" xml:space="preserve"><value>Die Bilder zur Qualitätsentscheidung wurden hochgeladen.</value></data>
   <data name="InspectionImageDeleted" xml:space="preserve"><value>Das Bild zur Qualitätsentscheidung wurde gelöscht.</value></data>
+  <data name="InspectionWarehouseAcceptedLocationMissing" xml:space="preserve"><value>Für dieses Lager ist kein Standard-Freigabeplatz definiert.</value></data>
+  <data name="InspectionWarehouseRejectLocationMissing" xml:space="preserve"><value>Für dieses Lager ist kein Standard-Ablehnungsplatz definiert.</value></data>
+  <data name="InspectionWarehouseQuarantineLocationMissing" xml:space="preserve"><value>Für dieses Lager ist kein Standard-Quarantäneplatz definiert.</value></data>
+  <data name="InspectionWarehouseQualityHoldLocationMissing" xml:space="preserve"><value>Für dieses Lager ist kein Standard-Qualitätshalteplatz definiert.</value></data>
 </root>

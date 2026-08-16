@@ -160,6 +160,9 @@ public sealed class QualityInspectionGridRow
     public long? ActiveWorkerUserId { get; init; }
     public string? ActiveWorkerName { get; init; }
     public DateTimeOffset? ActiveWorkStartedAtUtc { get; init; }
+    public string? WorkStartedByName { get; init; }
+    public long? WorkStoppedByUserId { get; init; }
+    public string? WorkStoppedByName { get; set; }
     public long? CreatedBy { get; init; } public DateTime? CreatedDate { get; init; } public long? UpdatedBy { get; init; } public DateTime? UpdatedDate { get; init; }
 }
 
@@ -259,7 +262,8 @@ public sealed record PauseQualityInspectionWorkRequest(
     Guid IdempotencyKey,
     QualityInspectionWorkStopReason Reason,
     string? Note,
-    string? RowVersion);
+    string? RowVersion,
+    IReadOnlyList<QualityInspectionControlQuantityRequest>? ControlQuantities = null);
 
 public sealed record QualityInspectionWorkSessionDto(
     long Id,
