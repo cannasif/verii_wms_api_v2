@@ -1,14 +1,16 @@
+using System.Data;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.GeneratorProduction.Domain;
+using verii_wms_api_v2.Modules.Quality.Domain;
 using verii_wms_api_v2.Shared;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 
 namespace verii_wms_api_v2.Modules.GeneratorProduction.Application;
 
-public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter audit) : IGeneratorProductionService
+public sealed partial class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter audit) : IGeneratorProductionService
 {
     private IGenericRepository<GeneratorProductionProject> Projects => uow.Repository<GeneratorProductionProject>();
     private IGenericRepository<GeneratorProductionPolicy> Policies => uow.Repository<GeneratorProductionPolicy>();
@@ -31,7 +33,7 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
     {
         var query = Projects.Query()
             .Select(x => new GeneratorProjectRow(
-                x.Id, x.ProjectCode, x.ProjectName, x.GeneratorType, x.SerialNumber, x.CustomerNameSnapshot,
+                x.Id, x.ProjectCode, x.ProjectName, x.ProductId, x.Product == null ? null : x.Product.Code, x.GeneratorType, x.SerialNumber, x.CustomerNameSnapshot,
                 x.Status, x.Priority, x.Quantity, x.PlannedStartAtUtc, x.PlannedDeliveryAtUtc,
                 x.PlanningOrder, x.Operations.Count, x.Operations.Count(o => o.Status == GeneratorOperationStatus.Completed),
                 Convert.ToBase64String(x.RowVersion)))
@@ -64,9 +66,10 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
             request.HasStator, request.HasRotor, request.HasStiffener, request.IncludeFinalAssembly, policy);
         var code = request.ProjectCode.Trim();
         if (await Projects.AnyAsync(x => x.ProjectCode == code, ct)) throw AppException.Conflict("Bu jeneratör proje kodu zaten kullanılıyor.");
+        await ValidateProductSelectionAsync(request.ProductId, ct);
         var entity = new GeneratorProductionProject
         {
-            ProductionHeaderId = request.ProductionHeaderId, ProjectCode = code, ProjectName = request.ProjectName.Trim(),
+            ProductionHeaderId = request.ProductionHeaderId, ProductId = request.ProductId, ProjectCode = code, ProjectName = request.ProjectName.Trim(),
             GeneratorType = Clean(request.GeneratorType), SerialNumber = Clean(request.SerialNumber), CustomerCodeSnapshot = Clean(request.CustomerCode),
             CustomerNameSnapshot = Clean(request.CustomerName), ExternalWorkOrderNo = Clean(request.ExternalWorkOrderNo), SourceSystemCode = Clean(request.SourceSystemCode),
             PlannedStartAtUtc = AsUtc(request.PlannedStartAtUtc), PlannedDeliveryAtUtc = AsUtc(request.PlannedDeliveryAtUtc), Priority = priority,
@@ -82,23 +85,106 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
     public async Task<GeneratorProjectDetail> UpdateProjectAsync(long id, UpdateGeneratorProjectRequest request, long userId, CancellationToken ct = default)
     {
         var policy = await GetRequiredPolicyEntityAsync(false, ct);
-        var entity = await Projects.FindByIdAsync(id, true, ct) ?? throw AppException.NotFound("Jeneratör üretim projesi bulunamadı.");
-        if (entity.Status is not (GeneratorProjectStatus.Draft or GeneratorProjectStatus.ReadyToPlan or GeneratorProjectStatus.Planned))
-            throw AppException.Conflict("Serbest bırakılmış veya başlamış proje planlama bilgileri değiştirilemez.");
-        var suppliedVersion = DecodeRowVersion(request.RowVersion);
-        if (!entity.RowVersion.SequenceEqual(suppliedVersion)) throw AppException.Conflict("Proje başka bir kullanıcı tarafından değiştirildi. Sayfayı yenileyin.");
-        ValidateProject(entity.ProjectCode, request.ProjectName, request.PlannedStartAtUtc, request.PlannedDeliveryAtUtc, request.Priority, request.Quantity,
-            request.HasStator, request.HasRotor, request.HasStiffener, request.IncludeFinalAssembly, policy);
-        var old = MapProject(entity);
-        entity.ProjectName = request.ProjectName.Trim(); entity.GeneratorType = Clean(request.GeneratorType); entity.SerialNumber = Clean(request.SerialNumber);
-        entity.CustomerCodeSnapshot = Clean(request.CustomerCode); entity.CustomerNameSnapshot = Clean(request.CustomerName);
-        entity.PlannedStartAtUtc = AsUtc(request.PlannedStartAtUtc); entity.PlannedDeliveryAtUtc = AsUtc(request.PlannedDeliveryAtUtc);
-        entity.Priority = request.Priority; entity.Quantity = request.Quantity; entity.HasStator = request.HasStator; entity.HasRotor = request.HasRotor;
-        entity.HasStiffener = request.HasStiffener; entity.IncludeFinalAssembly = request.IncludeFinalAssembly; entity.PlanningOrder = request.PlanningOrder; entity.Description = Clean(request.Description);
-        entity.Status = GeneratorProjectStatus.ReadyToPlan; entity.UpdatedBy = userId;
-        await uow.SaveChangesAsync(ct);
-        await audit.WriteAsync(new AuditLogWriteEntry("Update", nameof(GeneratorProductionProject), entity.Id.ToString(), "Success", "GeneratorProduction", OldValues: old, NewValues: MapProject(entity)), ct);
-        return MapProject(entity);
+        await ValidateProductSelectionAsync(request.ProductId, ct);
+        await uow.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        try
+        {
+            var entity = await Projects.Query(true).FirstOrDefaultAsync(x => x.Id == id, ct)
+                ?? throw AppException.NotFound("Jeneratör üretim projesi bulunamadı.");
+            if (entity.Status is not (GeneratorProjectStatus.Draft or GeneratorProjectStatus.ReadyToPlan or GeneratorProjectStatus.Planned))
+                throw AppException.Conflict("Serbest bırakılmış veya başlamış proje planlama bilgileri değiştirilemez.");
+            if (!entity.RowVersion.SequenceEqual(DecodeRowVersion(request.RowVersion)))
+                throw AppException.Conflict("Proje başka bir kullanıcı tarafından değiştirildi. Sayfayı yenileyin.");
+            ValidateProject(entity.ProjectCode, request.ProjectName, request.PlannedStartAtUtc, request.PlannedDeliveryAtUtc, request.Priority, request.Quantity,
+                request.HasStator, request.HasRotor, request.HasStiffener, request.IncludeFinalAssembly, policy);
+            var invalidatesPlan = entity.Status == GeneratorProjectStatus.Planned;
+            if (invalidatesPlan) RequireReason(request.Reason, "Planı geçersiz kılan değişiklik nedeni", policy.MinimumPlanReasonLength);
+
+            var old = MapProject(entity);
+            var now = DateTime.UtcNow;
+            entity.ProjectName = request.ProjectName.Trim(); entity.ProductId = request.ProductId; entity.GeneratorType = Clean(request.GeneratorType); entity.SerialNumber = Clean(request.SerialNumber);
+            entity.CustomerCodeSnapshot = Clean(request.CustomerCode); entity.CustomerNameSnapshot = Clean(request.CustomerName);
+            entity.PlannedStartAtUtc = AsUtc(request.PlannedStartAtUtc); entity.PlannedDeliveryAtUtc = AsUtc(request.PlannedDeliveryAtUtc);
+            entity.Priority = request.Priority; entity.Quantity = request.Quantity; entity.HasStator = request.HasStator; entity.HasRotor = request.HasRotor;
+            entity.HasStiffener = request.HasStiffener; entity.IncludeFinalAssembly = request.IncludeFinalAssembly; entity.PlanningOrder = request.PlanningOrder; entity.Description = Clean(request.Description);
+            entity.Status = GeneratorProjectStatus.ReadyToPlan; entity.UpdatedBy = userId; entity.UpdatedDate = now;
+
+            if (invalidatesPlan)
+            {
+                var operations = await uow.Repository<GeneratorProductionOperation>().Query(true).Where(x => x.ProjectId == id).ToListAsync(ct);
+                var operationIds = operations.Select(x => x.Id).ToArray();
+                var dependencies = operationIds.Length == 0 ? [] : await uow.Repository<GeneratorProductionOperationDependency>().Query(true)
+                    .Where(x => operationIds.Contains(x.PredecessorOperationId) || operationIds.Contains(x.SuccessorOperationId)).ToListAsync(ct);
+                foreach (var dependency in dependencies) { dependency.IsDeleted = true; dependency.DeletedDate = now; dependency.DeletedBy = userId; }
+                foreach (var operation in operations) { operation.IsDeleted = true; operation.DeletedDate = now; operation.DeletedBy = userId; }
+                await uow.Repository<GeneratorProductionPlanRevision>().AddAsync(new GeneratorProductionPlanRevision
+                {
+                    ProjectId = id, ActionType = "PlanInvalidated", Reason = request.Reason!.Trim(),
+                    PreviousPlanJson = JsonSerializer.Serialize(operations.Select(x => new { x.Id, x.StationId, x.PlannedStartAtUtc, x.PlannedEndAtUtc })),
+                    NewPlanJson = "[]", OccurredAtUtc = now, ActorUserId = userId, CreatedBy = userId
+                }, ct);
+            }
+            await uow.SaveChangesAsync(ct);
+            await audit.WriteAsync(new AuditLogWriteEntry("Update", nameof(GeneratorProductionProject), entity.Id.ToString(), "Success", "GeneratorProduction",
+                request.Reason, OldValues: old, NewValues: MapProject(entity), ChangedFields: invalidatesPlan ? ["Project", "PlanInvalidated"] : ["Project"]), ct);
+            await uow.CommitTransactionAsync(ct);
+            return MapProject(entity);
+        }
+        catch
+        {
+            await uow.RollbackTransactionAsync(ct);
+            throw;
+        }
+    }
+
+    public async Task<GeneratorProjectDetail> ReleaseProjectAsync(long id, ReleaseGeneratorProjectRequest request, long userId, CancellationToken ct = default)
+    {
+        var policy = await GetRequiredPolicyEntityAsync(false, ct);
+        RequireReason(request.Reason, "Üretime serbest bırakma nedeni", policy.MinimumPlanReasonLength);
+        await uow.BeginTransactionAsync(IsolationLevel.Serializable, ct);
+        try
+        {
+            var entity = await Projects.Query(true).FirstOrDefaultAsync(x => x.Id == id, ct)
+                ?? throw AppException.NotFound("Jeneratör üretim projesi bulunamadı.");
+            if (!entity.RowVersion.SequenceEqual(DecodeRowVersion(request.RowVersion)))
+                throw AppException.Conflict("Proje başka bir kullanıcı tarafından değiştirildi. Sayfayı yenileyin.");
+            if (entity.Status != GeneratorProjectStatus.Planned)
+                throw AppException.Conflict("Yalnızca planı uygulanmış proje üretime serbest bırakılabilir.");
+
+            var operations = await uow.Repository<GeneratorProductionOperation>().Query(true)
+                .Where(x => x.ProjectId == id).ToListAsync(ct);
+            if (operations.Count == 0)
+                throw AppException.Conflict("Operasyon planı bulunmayan proje üretime serbest bırakılamaz.");
+            if (operations.Any(x => x.Status is not (GeneratorOperationStatus.Planned or GeneratorOperationStatus.Ready)))
+                throw AppException.Conflict("Başlamış, tamamlanmış veya bloke operasyonu bulunan plan bu işlemle serbest bırakılamaz.");
+
+            var operationIds = operations.Select(x => x.Id).ToArray();
+            var successorIds = await uow.Repository<GeneratorProductionOperationDependency>().Query()
+                .Where(x => operationIds.Contains(x.SuccessorOperationId))
+                .Select(x => x.SuccessorOperationId).Distinct().ToListAsync(ct);
+            var successorSet = successorIds.ToHashSet();
+            var now = DateTime.UtcNow;
+            foreach (var operation in operations.Where(x => !successorSet.Contains(x.Id)))
+            {
+                operation.Status = GeneratorOperationStatus.Ready;
+                operation.UpdatedBy = userId;
+                operation.UpdatedDate = now;
+            }
+            entity.Status = GeneratorProjectStatus.Released;
+            entity.UpdatedBy = userId;
+            entity.UpdatedDate = now;
+            await uow.SaveChangesAsync(ct);
+            await audit.WriteAsync(new AuditLogWriteEntry("Release", nameof(GeneratorProductionProject), entity.Id.ToString(), "Success", "GeneratorProduction",
+                request.Reason.Trim(), OldValues: new { Status = GeneratorProjectStatus.Planned },
+                NewValues: new { entity.Status, ReadyOperationCount = operations.Count(x => x.Status == GeneratorOperationStatus.Ready) }), ct);
+            await uow.CommitTransactionAsync(ct);
+            return MapProject(entity);
+        }
+        catch
+        {
+            await uow.RollbackTransactionAsync(ct);
+            throw;
+        }
     }
 
     public async Task DeleteProjectAsync(long id, long userId, CancellationToken ct = default)
@@ -212,7 +298,12 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
         var rules = await uow.Repository<GeneratorProductionRule>().Query().OrderByDescending(x => x.Severity).ThenBy(x => x.Code)
             .Select(x => new GeneratorRuleRow(x.Id, x.Code, x.Name, x.Description, x.Severity, x.IsEnabled, x.IsSystemRequired, x.ParametersJson,
                 Convert.ToBase64String(x.RowVersion))).ToListAsync(ct);
-        return new GeneratorDefinitionsResult(policy, stations, shifts, stationShifts, calendarExceptions, resources, routes, rules, stations.Count > 0 && routes.Length > 0);
+        var products = await GetProductRowsAsync(ct);
+        var capabilities = await GetStationCapabilityRowsAsync(ct);
+        var materials = await GetOperationMaterialRowsAsync(ct);
+        var warehouses = await GetWarehouseOptionsAsync(ct);
+        return new GeneratorDefinitionsResult(policy, stations, shifts, stationShifts, calendarExceptions, resources, routes,
+            products, capabilities, materials, warehouses, rules, stations.Count > 0 && routes.Length > 0);
     }
 
     public async Task<GeneratorBootstrapResult> BootstrapDefinitionsAsync(long userId, CancellationToken ct = default)
@@ -266,6 +357,21 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
                 });
             }
             await uow.Repository<GeneratorProductionRouteDependency>().AddRangeAsync(dependencies, ct);
+            var defaultProduct = new GeneratorProductionProduct
+            {
+                Code = "GEN-STD", Name = "Standart Jeneratör", GeneratorType = "Standart",
+                Description = "Başlangıç SA/RA/FA rotalarıyla oluşturulan varsayılan jeneratör ürün tanımı.", CreatedBy = userId
+            };
+            await uow.Repository<GeneratorProductionProduct>().AddAsync(defaultProduct, ct); await uow.SaveChangesAsync(ct);
+            await uow.Repository<GeneratorProductionProductRoute>().AddRangeAsync(routes.Select(route => new GeneratorProductionProductRoute
+            {
+                ProductId = defaultProduct.Id, PartType = route.PartType, RouteId = route.Id, CreatedBy = userId
+            }), ct);
+            await uow.Repository<GeneratorProductionStationCapability>().AddRangeAsync(routeOperations.Select(operation => new GeneratorProductionStationCapability
+            {
+                ProductId = defaultProduct.Id, RouteOperationId = operation.Id, StationId = operation.StationId,
+                IsPrimary = true, EfficiencyPercent = 100, CreatedBy = userId
+            }), ct);
             var rules = DefaultRules(userId); await uow.Repository<GeneratorProductionRule>().AddRangeAsync(rules, ct); await uow.SaveChangesAsync(ct);
             await audit.WriteAsync(new AuditLogWriteEntry("Bootstrap", "GeneratorProductionDefinitions", "branch", "Success", "GeneratorProduction",
                 NewValues: new { Stations = stations.Count, Routes = routes.Length, Operations = routeOperations.Count, Rules = rules.Count }), ct);
@@ -282,11 +388,12 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
         var policy = await GetRequiredPolicyEntityAsync(false, ct);
         if (string.IsNullOrWhiteSpace(request.Reason) || request.Reason.Trim().Length < policy.MinimumPlanReasonLength)
             throw AppException.BadRequest($"Plan uygulama nedeni en az {policy.MinimumPlanReasonLength} karakter olmalıdır.");
-        var preview = await BuildPlanAsync(request.ProjectIds, request.EarliestStartAtUtc, ct);
-        if (!preview.CanApply) throw AppException.Conflict("Planlama önizlemesinde engelleyici hatalar var.");
-        await uow.BeginTransactionAsync(cancellationToken: ct);
+        await uow.BeginTransactionAsync(IsolationLevel.Serializable, ct);
         try
         {
+            // Önizleme ile kayıt arasındaki stok/kapasite değişimini aynı seri işlem içinde yeniden değerlendir.
+            var preview = await BuildPlanAsync(request.ProjectIds, request.EarliestStartAtUtc, ct);
+            if (!preview.CanApply) throw AppException.Conflict("Planlama önizlemesinde engelleyici hatalar var.");
             var projectIds = preview.Items.Select(x => x.ProjectId).Distinct().ToArray();
             var projects = await Projects.Query(true).Where(x => projectIds.Contains(x.Id)).ToListAsync(ct);
             var oldOperations = await uow.Repository<GeneratorProductionOperation>().Query(true).Where(x => projectIds.Contains(x.ProjectId)).ToListAsync(ct);
@@ -303,7 +410,10 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
             {
                 ProjectId = item.ProjectId, RouteOperationId = item.RouteOperationId, StationId = item.StationId, UnitIndex = item.UnitIndex,
                 Status = GeneratorOperationStatus.Planned, PlannedStartAtUtc = item.PlannedStartAtUtc, PlannedEndAtUtc = item.PlannedEndAtUtc,
-                IsCritical = item.IsCritical, CreatedBy = userId
+                IsCritical = item.IsCritical, HasMaterialShortage = item.HasMaterialShortage,
+                IsScheduleLocked = item.IsScheduleLocked, ManualScheduleReason = item.ManualScheduleReason,
+                ManualScheduledBy = item.IsScheduleLocked ? userId : null, ManualScheduledAtUtc = item.IsScheduleLocked ? DateTime.UtcNow : null,
+                CreatedBy = userId
             }).ToArray();
             await uow.Repository<GeneratorProductionOperation>().AddRangeAsync(created, ct); await uow.SaveChangesAsync(ct);
             var byKey = preview.Items.Zip(created).ToDictionary(x => x.First.Key, x => x.Second);
@@ -341,7 +451,9 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
             .Select(x => new GeneratorScheduleRow(x.Id, x.ProjectId, x.Project.ProjectCode, x.Project.ProjectName, x.UnitIndex, x.RouteOperation.Route.PartType,
                 x.StationId, x.Station.Code, x.Station.Name, x.RouteOperation.OperationCode, x.RouteOperation.OperationName, x.Status,
                 x.PlannedStartAtUtc, x.PlannedEndAtUtc, x.ActualStartAtUtc, x.ActualEndAtUtc, x.IsCritical, x.HasMaterialShortage, x.HasProblem,
-                Convert.ToBase64String(x.RowVersion))).ToListAsync(ct);
+                x.IsScheduleLocked, x.ManualScheduleReason, Convert.ToBase64String(x.RowVersion),
+                x.QualityGate == null ? null : (GeneratorQualityGateStatus?)x.QualityGate.Status,
+                x.QualityGate == null ? null : Convert.ToBase64String(x.QualityGate.RowVersion), x.RouteOperationId, x.Project.ProductId)).ToListAsync(ct);
     }
 
     public async Task<IReadOnlyList<GeneratorScheduleRow>> GetProjectOperationsAsync(long projectId, CancellationToken ct = default)
@@ -353,7 +465,9 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
             .Select(x => new GeneratorScheduleRow(x.Id, x.ProjectId, x.Project.ProjectCode, x.Project.ProjectName, x.UnitIndex, x.RouteOperation.Route.PartType,
                 x.StationId, x.Station.Code, x.Station.Name, x.RouteOperation.OperationCode, x.RouteOperation.OperationName, x.Status,
                 x.PlannedStartAtUtc, x.PlannedEndAtUtc, x.ActualStartAtUtc, x.ActualEndAtUtc, x.IsCritical, x.HasMaterialShortage, x.HasProblem,
-                Convert.ToBase64String(x.RowVersion))).ToListAsync(ct);
+                x.IsScheduleLocked, x.ManualScheduleReason, Convert.ToBase64String(x.RowVersion),
+                x.QualityGate == null ? null : (GeneratorQualityGateStatus?)x.QualityGate.Status,
+                x.QualityGate == null ? null : Convert.ToBase64String(x.QualityGate.RowVersion), x.RouteOperationId, x.Project.ProductId)).ToListAsync(ct);
     }
 
     public async Task<IReadOnlyList<GeneratorPlanRevisionRow>> GetPlanRevisionsAsync(long? projectId, int take, CancellationToken ct = default)
@@ -374,7 +488,7 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
     {
         var policy = await GetRequiredPolicyEntityAsync(false, ct);
         var operation = await uow.Repository<GeneratorProductionOperation>().Query(true)
-            .Include(x => x.Project).Include(x => x.Station).Include(x => x.RouteOperation).ThenInclude(x => x.Route)
+            .Include(x => x.Project).Include(x => x.Station).Include(x => x.RouteOperation).ThenInclude(x => x.Route).Include(x => x.QualityGate)
             .FirstOrDefaultAsync(x => x.Id == operationId, ct)
             ?? throw AppException.NotFound("Jeneratör üretim operasyonu bulunamadı.");
         if (!operation.RowVersion.SequenceEqual(DecodeRowVersion(request.RowVersion)))
@@ -387,17 +501,27 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
         switch (request.Action)
         {
             case GeneratorOperationAction.Start:
-                if (operation.Status is not (GeneratorOperationStatus.Planned or GeneratorOperationStatus.Ready))
-                    throw AppException.Conflict("Yalnızca planlanmış veya hazır operasyon başlatılabilir.");
+                if (operation.Project.Status is not (GeneratorProjectStatus.Released or GeneratorProjectStatus.InProgress))
+                    throw AppException.Conflict("Proje üretime serbest bırakılmadan operasyon başlatılamaz.");
+                if (operation.Status != GeneratorOperationStatus.Ready)
+                    throw AppException.Conflict("Yalnızca bağımlılıkları karşılanmış hazır operasyon başlatılabilir.");
                 var predecessorStates = await uow.Repository<GeneratorProductionOperationDependency>().Query()
                     .Where(x => x.SuccessorOperationId == operationId)
-                    .Select(x => new { x.DependencyType, x.PredecessorOperation.Status, x.PredecessorOperation.ActualStartAtUtc })
+                    .Select(x => new { x.PredecessorOperationId, x.DependencyType, x.PredecessorOperation.Status, x.PredecessorOperation.ActualStartAtUtc })
                     .ToListAsync(ct);
                 if (predecessorStates.Any(x => x.DependencyType == GeneratorDependencyType.FinishToStart
                         ? x.Status != GeneratorOperationStatus.Completed
                         : x.ActualStartAtUtc == null))
                     throw AppException.Conflict("Operasyon bağımlılıkları karşılanmadan bu operasyon başlatılamaz.");
-                if (policy.RequireMaterialAvailabilityToStart && operation.HasMaterialShortage) throw AppException.Conflict("Malzeme eksiği bulunan operasyon başlatılamaz.");
+                if (await HasBlockingQualityInspectionAsync(predecessorStates.Select(x => x.PredecessorOperationId), ct))
+                    throw AppException.Conflict("Öncül operasyonun kalite kontrolü kabul edilmeden sonraki operasyon başlatılamaz.");
+                if (policy.RequireMaterialAvailabilityToStart)
+                {
+                    var materialCheck = await CheckOperationMaterialAvailabilityAsync(operation, now, policy.InboundQualityBufferDays, ct);
+                    operation.HasMaterialShortage = materialCheck.HasShortage;
+                    if (materialCheck.HasShortage)
+                        throw AppException.Conflict(materialCheck.Message ?? "Zorunlu malzeme güncel stok ve termin hesabında kullanılabilir değil.");
+                }
                 operation.Status = GeneratorOperationStatus.InProgress; operation.ActualStartAtUtc ??= now;
                 operation.Project.Status = GeneratorProjectStatus.InProgress;
                 break;
@@ -417,10 +541,27 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
                         && x.PredecessorOperation.Status != GeneratorOperationStatus.Completed, ct);
                 if (unfinishedFinishDependencies) throw AppException.Conflict("Finish-to-finish öncülleri tamamlanmadan operasyon tamamlanamaz.");
                 if (policy.RequireProblemClosureToComplete && operation.HasProblem) throw AppException.Conflict("Açık problem çözülmeden operasyon tamamlanamaz.");
-                if (policy.RequireMaterialAvailabilityToStart && operation.HasMaterialShortage) throw AppException.Conflict("Malzeme eksiği çözülmeden operasyon tamamlanamaz.");
+                if (policy.RequireMaterialAvailabilityToStart)
+                {
+                    var materialCheck = await CheckOperationMaterialAvailabilityAsync(operation, operation.ActualStartAtUtc ?? now, policy.InboundQualityBufferDays, ct);
+                    operation.HasMaterialShortage = materialCheck.HasShortage;
+                    if (materialCheck.HasShortage)
+                        throw AppException.Conflict(materialCheck.Message ?? "Malzeme eksiği çözülmeden operasyon tamamlanamaz.");
+                }
                 if (policy.RequirePositiveCompletionQuantity && request.GoodQuantity + request.DefectQuantity + request.ScrapQuantity <= 0) throw AppException.BadRequest("Tamamlama için en az bir üretim miktarı girilmelidir.");
                 operation.Status = GeneratorOperationStatus.Completed; operation.ActualEndAtUtc = now;
                 operation.GoodQuantity = request.GoodQuantity; operation.DefectQuantity = request.DefectQuantity; operation.ScrapQuantity = request.ScrapQuantity;
+                if (operation.IsCritical && operation.QualityGate is null)
+                {
+                    operation.QualityGate = new GeneratorProductionQualityGate
+                    {
+                        OperationId = operation.Id,
+                        Status = GeneratorQualityGateStatus.Pending,
+                        RequestedAtUtc = now,
+                        CreatedBy = userId
+                    };
+                    await uow.Repository<GeneratorProductionQualityGate>().AddAsync(operation.QualityGate, ct);
+                }
                 break;
             case GeneratorOperationAction.ReportProblem:
                 RequireReason(request.Reason, "Problem açıklaması", policy.MinimumOperationReasonLength); operation.HasProblem = true; operation.ProblemDescription = Clean(request.Reason);
@@ -442,11 +583,62 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
         {
             var hasOpenOperation = await uow.Repository<GeneratorProductionOperation>().Query()
                 .AnyAsync(x => x.ProjectId == operation.ProjectId && x.Id != operationId && x.Status != GeneratorOperationStatus.Completed && x.Status != GeneratorOperationStatus.Cancelled, ct);
-            if (!hasOpenOperation) operation.Project.Status = GeneratorProjectStatus.Completed;
+            var hasOpenQualityGate = await uow.Repository<GeneratorProductionOperation>().Query()
+                .AnyAsync(x => x.ProjectId == operation.ProjectId && x.IsCritical
+                    && (x.QualityGate == null || x.QualityGate.Status != GeneratorQualityGateStatus.Passed), ct);
+            if (!hasOpenOperation && !hasOpenQualityGate) operation.Project.Status = GeneratorProjectStatus.Completed;
             await uow.SaveChangesAsync(ct);
         }
         await audit.WriteAsync(new AuditLogWriteEntry(request.Action.ToString(), nameof(GeneratorProductionOperation), operation.Id.ToString(), "Success", "GeneratorProduction",
             request.Reason, OldValues: oldValues, NewValues: new { operation.Status, operation.ActualStartAtUtc, operation.ActualEndAtUtc, operation.GoodQuantity, operation.DefectQuantity, operation.ScrapQuantity, operation.HasProblem, operation.ProblemDescription }), ct);
+        return ToScheduleRow(operation);
+    }
+
+    public async Task<GeneratorScheduleRow> DecideOperationQualityAsync(long operationId, GeneratorQualityDecisionRequest request, long userId, CancellationToken ct = default)
+    {
+        if (request.Status is not (GeneratorQualityGateStatus.Passed or GeneratorQualityGateStatus.Rejected))
+            throw AppException.BadRequest("Kalite kararı kabul veya ret olmalıdır.");
+        var policy = await GetRequiredPolicyEntityAsync(false, ct);
+        RequireReason(request.Reason, "Kalite karar açıklaması", policy.MinimumOperationReasonLength);
+        var operation = await uow.Repository<GeneratorProductionOperation>().Query(true)
+            .Include(x => x.Project).Include(x => x.Station).Include(x => x.RouteOperation).ThenInclude(x => x.Route).Include(x => x.QualityGate)
+            .FirstOrDefaultAsync(x => x.Id == operationId, ct)
+            ?? throw AppException.NotFound("Jeneratör üretim operasyonu bulunamadı.");
+        if (!operation.IsCritical)
+            throw AppException.Conflict("Bu operasyon kalite kabul kapısı olarak tanımlı değil.");
+        if (operation.Status != GeneratorOperationStatus.Completed)
+            throw AppException.Conflict("Operasyon tamamlanmadan kalite kararı verilemez.");
+        var gate = operation.QualityGate ?? throw AppException.Conflict("Operasyon için bekleyen kalite kontrolü bulunamadı.");
+        if (!gate.RowVersion.SequenceEqual(DecodeRowVersion(request.RowVersion)))
+            throw AppException.Conflict("Kalite kontrolü başka bir kullanıcı tarafından değiştirildi. Sayfayı yenileyin.");
+
+        var oldStatus = gate.Status;
+        var now = DateTime.UtcNow;
+        gate.Status = request.Status;
+        gate.DecisionBy = userId;
+        gate.DecisionAtUtc = now;
+        gate.DecisionNote = request.Reason.Trim();
+        gate.UpdatedBy = userId;
+        gate.UpdatedDate = now;
+        await uow.SaveChangesAsync(ct);
+        if (request.Status == GeneratorQualityGateStatus.Passed)
+        {
+            await RefreshSuccessorReadinessAsync(operationId, userId, now, ct);
+            var hasOpenOperation = await uow.Repository<GeneratorProductionOperation>().Query()
+                .AnyAsync(x => x.ProjectId == operation.ProjectId && x.Status != GeneratorOperationStatus.Completed && x.Status != GeneratorOperationStatus.Cancelled, ct);
+            var hasOpenQualityGate = await uow.Repository<GeneratorProductionOperation>().Query()
+                .AnyAsync(x => x.ProjectId == operation.ProjectId && x.IsCritical
+                    && (x.QualityGate == null || x.QualityGate.Status != GeneratorQualityGateStatus.Passed), ct);
+            if (!hasOpenOperation && !hasOpenQualityGate)
+            {
+                operation.Project.Status = GeneratorProjectStatus.Completed;
+                operation.Project.UpdatedBy = userId;
+                operation.Project.UpdatedDate = now;
+                await uow.SaveChangesAsync(ct);
+            }
+        }
+        await audit.WriteAsync(new AuditLogWriteEntry("QualityDecision", nameof(GeneratorProductionQualityGate), gate.Id.ToString(), "Success", "GeneratorProduction",
+            request.Reason.Trim(), OldValues: new { Status = oldStatus }, NewValues: new { gate.Status, gate.DecisionBy, gate.DecisionAtUtc }), ct);
         return ToScheduleRow(operation);
     }
 
@@ -462,12 +654,13 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
         {
             var states = await uow.Repository<GeneratorProductionOperationDependency>().Query()
                 .Where(x => x.SuccessorOperationId == successorId)
-                .Select(x => new { x.DependencyType, x.PredecessorOperation.Status, x.PredecessorOperation.ActualStartAtUtc })
+                .Select(x => new { x.PredecessorOperationId, x.DependencyType, x.PredecessorOperation.Status, x.PredecessorOperation.ActualStartAtUtc })
                 .ToListAsync(ct);
             var isReady = states.All(x => x.DependencyType == GeneratorDependencyType.FinishToStart
                 ? x.Status == GeneratorOperationStatus.Completed
                 : x.ActualStartAtUtc != null);
             if (!isReady) continue;
+            if (await HasBlockingQualityInspectionAsync(states.Select(x => x.PredecessorOperationId), ct)) continue;
             var successor = await uow.Repository<GeneratorProductionOperation>().FindByIdAsync(successorId, true, ct);
             if (successor?.Status == GeneratorOperationStatus.Planned)
             {
@@ -480,11 +673,28 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
         if (changed) await uow.SaveChangesAsync(ct);
     }
 
+    private async Task<bool> HasBlockingQualityInspectionAsync(IEnumerable<long> operationIds, CancellationToken ct)
+    {
+        var ids = operationIds.Distinct().ToArray();
+        if (ids.Length == 0) return false;
+        var generatorGates = await uow.Repository<GeneratorProductionOperation>().Query()
+            .Where(x => ids.Contains(x.Id) && x.IsCritical)
+            .Select(x => new { x.Id, Status = x.QualityGate == null ? null : (GeneratorQualityGateStatus?)x.QualityGate.Status })
+            .ToListAsync(ct);
+        if (generatorGates.Any(x => x.Status != GeneratorQualityGateStatus.Passed)) return true;
+        var inspections = await uow.Repository<QualityInspection>().Query()
+            .Where(x => x.SourceDocumentType == "GeneratorProductionOperation" && ids.Contains(x.SourceDocumentId))
+            .Select(x => new { x.SourceDocumentId, x.Status, x.CreatedAtUtc, x.Id }).ToListAsync(ct);
+        return inspections.GroupBy(x => x.SourceDocumentId)
+            .Select(x => x.OrderByDescending(row => row.CreatedAtUtc).ThenByDescending(row => row.Id).First())
+            .Any(x => x.Status is not (QualityInspectionStatus.Passed or QualityInspectionStatus.Released));
+    }
+
     private async Task<GeneratorPlanPreviewResult> BuildPlanAsync(IReadOnlyCollection<long> requestedIds, DateTime? earliestStart, CancellationToken ct)
     {
         var ids = requestedIds.Distinct().ToArray(); if (ids.Length == 0) throw AppException.BadRequest("Planlanacak en az bir proje seçin.");
         var policy = await GetRequiredPolicyEntityAsync(false, ct);
-        var projects = await Projects.Query().Where(x => ids.Contains(x.Id)).ToListAsync(ct);
+        var projects = await Projects.Query().Include(x => x.Product).Where(x => ids.Contains(x.Id)).ToListAsync(ct);
         projects = OrderProjects(projects, policy.PlanningOrderStrategy).ToList();
         if (projects.Count != ids.Length) throw AppException.NotFound("Seçilen projelerden biri bulunamadı.");
         if (projects.Any(x => x.Status is GeneratorProjectStatus.Released or GeneratorProjectStatus.InProgress or GeneratorProjectStatus.Completed or GeneratorProjectStatus.Cancelled))
@@ -509,17 +719,45 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
             issues.Add(new GeneratorPlanningIssue(code, rule.IsSystemRequired ? GeneratorRuleSeverity.Error : rule.Severity, projectId, message));
         }
 
-        var requiredParts = projects.SelectMany(GeneratorProductionPlanningPolicy.SelectRoutes).Distinct().ToArray();
-        foreach (var part in requiredParts)
-            if (routes.Count(x => x.PartType == part) != 1)
-                AddIssue("ROUTE_DEFINITION", null, $"{part} için tam bir aktif rota bulunmalıdır.");
-        foreach (var route in routes.Where(x => requiredParts.Contains(x.PartType)))
+        var productIds = projects.Where(x => x.ProductId.HasValue).Select(x => x.ProductId!.Value).Distinct().ToArray();
+        var productRouteLinks = productIds.Length == 0 ? [] : await uow.Repository<GeneratorProductionProductRoute>().Query()
+            .Where(x => productIds.Contains(x.ProductId) && x.IsActive).ToListAsync(ct);
+        var routesByProject = new Dictionary<long, IReadOnlyList<GeneratorProductionRoute>>();
+        foreach (var project in projects)
+        {
+            var requiredParts = GeneratorProductionPlanningPolicy.SelectRoutes(project).ToArray();
+            var selectedRoutes = new List<GeneratorProductionRoute>();
+            foreach (var part in requiredParts)
+            {
+                GeneratorProductionRoute[] matches;
+                if (project.ProductId.HasValue)
+                {
+                    var mappedIds = productRouteLinks.Where(x => x.ProductId == project.ProductId && x.PartType == part).Select(x => x.RouteId).ToArray();
+                    matches = routes.Where(x => mappedIds.Contains(x.Id)).ToArray();
+                }
+                else matches = routes.Where(x => x.PartType == part).ToArray();
+                if (matches.Length != 1)
+                    AddIssue("ROUTE_DEFINITION", project.Id, $"{project.ProjectCode} / {part} için tam bir aktif ürün rotası bulunmalıdır.");
+                else selectedRoutes.Add(matches[0]);
+            }
+            routesByProject[project.Id] = selectedRoutes;
+        }
+        var selectedRoutesAll = routesByProject.Values.SelectMany(x => x).DistinctBy(x => x.Id).ToArray();
+        foreach (var route in selectedRoutesAll)
             if (!TryTopologicalOrder(route, out _, out var graphError))
                 AddIssue("DEPENDENCY_VIOLATION", null, $"{route.Code}: {graphError}");
-        var stations = routes.SelectMany(x => x.Operations).Select(x => x.Station).DistinctBy(x => x.Id).ToDictionary(x => x.Id);
-        foreach (var operation in routes.SelectMany(x => x.Operations))
+        var selectedOperationIds = selectedRoutesAll.SelectMany(x => x.Operations).Select(x => x.Id).Distinct().ToArray();
+        var capabilityRows = productIds.Length == 0 ? [] : await uow.Repository<GeneratorProductionStationCapability>().Query()
+            .Include(x => x.Station).Where(x => productIds.Contains(x.ProductId) && selectedOperationIds.Contains(x.RouteOperationId) && x.IsActive).ToListAsync(ct);
+        foreach (var project in projects.Where(x => x.ProductId.HasValue))
+        foreach (var operation in routesByProject[project.Id].SelectMany(x => x.Operations).Where(x => x.IsActive))
+            if (!capabilityRows.Any(x => x.ProductId == project.ProductId && x.RouteOperationId == operation.Id))
+                AddIssue("LINE_UNAVAILABLE", project.Id, $"{project.ProjectCode} / {operation.OperationCode} için ürünü işleyebilen aktif istasyon tanımlı değil.");
+        var legacyStations = projects.Where(x => !x.ProductId.HasValue).SelectMany(x => routesByProject[x.Id]).SelectMany(x => x.Operations).Select(x => x.Station);
+        var stations = legacyStations.Concat(capabilityRows.Select(x => x.Station)).DistinctBy(x => x.Id).ToDictionary(x => x.Id);
+        foreach (var operation in selectedRoutesAll.SelectMany(x => x.Operations))
         {
-            if (!operation.Station.IsActive)
+            if (projects.Any(x => !x.ProductId.HasValue && routesByProject[x.Id].Any(r => r.Id == operation.RouteId)) && !operation.Station.IsActive)
                 AddIssue("INACTIVE_LINE_USAGE", null, $"{operation.Station.Code} istasyonu pasif olduğu için planlamada kullanılamaz.");
             if (operation.DurationMinutes < operation.MinimumDurationMinutes || operation.DurationMinutes > operation.MaximumDurationMinutes)
                 AddIssue("MIN_MAX_OPERATION_DURATION", null, $"{operation.OperationCode} süresi tanımlı alt ve üst sınırın dışında.");
@@ -549,7 +787,7 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
         if (ruleSet.TryGetValue("DELIVERY_DATE_RISK", out var deliveryRule) && deliveryRule.IsEnabled
             && !TryReadRuleIntParameter(deliveryRule, "toleranceMinutes", 0, 525_600, out deliveryToleranceMinutes))
             AddIssue("RULE_DEFINITION", null, "DELIVERY_DATE_RISK kuralında 0-525600 aralığında toleranceMinutes parametresi tanımlanmalıdır.");
-        if (issues.Any(x => x.Severity == GeneratorRuleSeverity.Error)) return new([], issues, DateTime.UtcNow, false);
+        if (issues.Any(x => x.Severity == GeneratorRuleSeverity.Error)) return new([], issues, [], [], DateTime.UtcNow, false);
 
         var exceptions = await uow.Repository<GeneratorProductionCalendarException>().Query().ToListAsync(ct);
         var calendars = stations.Keys.ToDictionary(stationId => stationId, stationId =>
@@ -564,6 +802,9 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
                 stationShift.CapacityMinutes, overrides);
         });
         var scheduleStart = AsUtc(earliestStart ?? projects.Min(x => x.PlannedStartAtUtc));
+        var materialAnalysis = await CreateMaterialPlanningAnalysisAsync(projects, routesByProject, policy, scheduleStart, ids, ct);
+        foreach (var suggestion in materialAnalysis.Suggestions.Where(x => x.Severity == GeneratorRuleSeverity.Error))
+            AddIssue("MATERIAL_SHORTAGE", suggestion.ProjectId, suggestion.Explanation);
         var existingEnds = await uow.Repository<GeneratorProductionOperation>().Query()
             .Where(x => x.PlannedEndAtUtc >= scheduleStart && !ids.Contains(x.ProjectId) && x.Status != GeneratorOperationStatus.Cancelled)
             .GroupBy(x => x.StationId).Select(x => new { StationId = x.Key, End = x.Max(o => o.PlannedEndAtUtc) }).ToDictionaryAsync(x => x.StationId, x => x.End, ct);
@@ -582,30 +823,65 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
                 return Enumerable.Repeat(availableAt, x.Capacity).ToArray();
             });
         var resourcesByStation = stationResources.GroupBy(x => x.StationId).ToDictionary(x => x.Key, x => x.ToArray());
+        var capabilitiesByOperation = capabilityRows.GroupBy(x => (x.ProductId, x.RouteOperationId)).ToDictionary(x => x.Key, x => x.ToArray());
         var items = new List<GeneratorPlanItem>();
-        foreach (var project in projects)
-        for (var unit = 1; unit <= project.Quantity; unit++)
+        var projectOrder = projects.Select((project, index) => new { project.Id, Index = index }).ToDictionary(x => x.Id, x => x.Index);
+        var remaining = projects.SelectMany(project => Enumerable.Range(1, project.Quantity).Select(unit => (Project: project, Unit: unit))).ToList();
+        while (remaining.Count > 0)
         {
-            var partTypes = GeneratorProductionPlanningPolicy.SelectRoutes(project).Where(x => x != GeneratorPartType.FinalAssembly).ToArray();
+            var selected = remaining.Select(x => new
+                {
+                    Candidate = x,
+                    ReleaseAt = materialAnalysis.Context.EstimateProjectRelease(x.Project, routesByProject[x.Project.Id],
+                        AsUtc(x.Project.PlannedStartAtUtc) > scheduleStart ? AsUtc(x.Project.PlannedStartAtUtc) : scheduleStart)
+                })
+                .OrderBy(x => x.ReleaseAt.HasValue ? 0 : 1).ThenBy(x => x.ReleaseAt ?? DateTime.MaxValue)
+                .ThenBy(x => projectOrder[x.Candidate.Project.Id]).ThenBy(x => x.Candidate.Unit).First().Candidate;
+            remaining.Remove(selected);
+            var project = selected.Project; var unit = selected.Unit;
+            var projectRoutes = routesByProject[project.Id];
+            var componentRoutes = projectRoutes.Where(x => x.PartType != GeneratorPartType.FinalAssembly).ToArray();
             var componentLastKeys = new List<string>();
             var componentStart = AsUtc(project.PlannedStartAtUtc) > scheduleStart ? AsUtc(project.PlannedStartAtUtc) : scheduleStart;
             var componentEnd = componentStart;
-            foreach (var part in partTypes)
+            foreach (var route in componentRoutes)
             {
-                var routeResult = ScheduleRoute(project, unit, routes.Single(x => x.PartType == part), componentStart, [], lanes,
-                    resourceLanes, resourcesByStation, calendars, items, policy.WorkingCalendarSearchLimitDays);
+                var routeResult = ScheduleRoute(project, unit, route, componentStart, [], lanes,
+                    resourceLanes, resourcesByStation, calendars, stations, capabilitiesByOperation, materialAnalysis.Context,
+                    items, policy.WorkingCalendarSearchLimitDays, (projectId, message) => AddIssue("MATERIAL_SHORTAGE", projectId, message));
                 componentLastKeys.AddRange(routeResult.TerminalKeys); componentEnd = componentEnd > routeResult.End ? componentEnd : routeResult.End;
             }
             if (project.IncludeFinalAssembly)
-                ScheduleRoute(project, unit, routes.Single(x => x.PartType == GeneratorPartType.FinalAssembly), componentEnd,
+                ScheduleRoute(project, unit, projectRoutes.Single(x => x.PartType == GeneratorPartType.FinalAssembly), componentEnd,
                     componentLastKeys.Select(x => new GeneratorPlanPredecessor(x, GeneratorDependencyType.FinishToStart, 0)).ToArray(),
-                    lanes, resourceLanes, resourcesByStation, calendars, items, policy.WorkingCalendarSearchLimitDays);
+                    lanes, resourceLanes, resourcesByStation, calendars, stations, capabilitiesByOperation, materialAnalysis.Context,
+                    items, policy.WorkingCalendarSearchLimitDays, (projectId, message) => AddIssue("MATERIAL_SHORTAGE", projectId, message));
             var projectEnd = items.Where(x => x.ProjectId == project.Id && x.UnitIndex == unit).Max(x => x.PlannedEndAtUtc);
             if (projectEnd > project.PlannedDeliveryAtUtc.AddMinutes(deliveryToleranceMinutes))
                 AddIssue("DELIVERY_DATE_RISK", project.Id,
                     $"{project.ProjectCode} / ünite {unit}, teslim tarihini {Math.Ceiling((projectEnd - project.PlannedDeliveryAtUtc).TotalHours)} saat aşıyor.");
         }
-        return new GeneratorPlanPreviewResult(items, issues, DateTime.UtcNow, !issues.Any(x => x.Severity == GeneratorRuleSeverity.Error));
+        var lockedOperations = await uow.Repository<GeneratorProductionOperation>().Query()
+            .Where(x => ids.Contains(x.ProjectId) && x.IsScheduleLocked && x.Status != GeneratorOperationStatus.Cancelled)
+            .Select(x => new { x.ProjectId, x.UnitIndex, x.RouteOperationId, x.StationId, x.Station.Code, x.Station.Name,
+                x.PlannedStartAtUtc, x.PlannedEndAtUtc, x.ManualScheduleReason, x.HasMaterialShortage }).ToListAsync(ct);
+        foreach (var locked in lockedOperations)
+        {
+            var index = items.FindIndex(x => x.ProjectId == locked.ProjectId && x.UnitIndex == locked.UnitIndex && x.RouteOperationId == locked.RouteOperationId);
+            if (index < 0) { AddIssue("ROUTE_DEFINITION", locked.ProjectId, "Kilitli operasyon yeni ürün rotasında bulunamadı."); continue; }
+            var current = items[index];
+            items[index] = current with
+            {
+                StationId = locked.StationId, StationCode = locked.Code, StationName = locked.Name,
+                PlannedStartAtUtc = locked.PlannedStartAtUtc, PlannedEndAtUtc = locked.PlannedEndAtUtc,
+                UsesAlternativeStation = locked.StationId != current.StationId || current.UsesAlternativeStation,
+                HasMaterialShortage = locked.HasMaterialShortage, IsScheduleLocked = true,
+                ManualScheduleReason = locked.ManualScheduleReason
+            };
+        }
+        ValidateLockedPlan(items, stations, AddIssue);
+        return new GeneratorPlanPreviewResult(items, issues, materialAnalysis.Coverage, materialAnalysis.Suggestions,
+            DateTime.UtcNow, !issues.Any(x => x.Severity == GeneratorRuleSeverity.Error));
     }
 
     private sealed record RouteScheduleResult(IReadOnlyList<string> TerminalKeys, DateTime End);
@@ -620,8 +896,12 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
         Dictionary<long, DateTime[]> resourceLanes,
         IReadOnlyDictionary<long, GeneratorProductionStationResource[]> resourcesByStation,
         IReadOnlyDictionary<long, GeneratorStationCalendar> calendars,
+        IReadOnlyDictionary<long, GeneratorProductionStation> stations,
+        IReadOnlyDictionary<(long ProductId, long RouteOperationId), GeneratorProductionStationCapability[]> capabilitiesByOperation,
+        MaterialPlanningContext materialContext,
         List<GeneratorPlanItem> items,
-        int calendarSearchLimitDays)
+        int calendarSearchLimitDays,
+        Action<long, string> materialShortage)
     {
         if (!TryTopologicalOrder(route, out var ordered, out var error))
             throw AppException.Conflict($"{route.Name} rota bağımlılıkları geçersiz: {error}");
@@ -640,7 +920,6 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
                 ? initialPredecessors.ToArray()
                 : operationDependencies.Select(x => new GeneratorPlanPredecessor(
                     scheduled[x.PredecessorOperationId].Key, x.DependencyType, x.LagMinutes)).ToArray();
-            var calendar = calendars[operation.StationId];
             var dependencyStart = earliest;
 
             foreach (var predecessor in predecessors)
@@ -650,36 +929,56 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
                     ?? throw AppException.Conflict($"{route.Name} rotasında {predecessor.Key} öncül operasyonu bulunamadı.");
                 var constrainedStart = predecessor.DependencyType switch
                 {
-                    GeneratorDependencyType.StartToStart => ApplyWorkingLag(predecessorItem.PlannedStartAtUtc, predecessor.LagMinutes, calendar, calendarSearchLimitDays),
-                    GeneratorDependencyType.FinishToFinish => GeneratorProductionPlanningPolicy.SubtractWorkingMinutes(
-                        ApplyWorkingLag(predecessorItem.PlannedEndAtUtc, predecessor.LagMinutes, calendar, calendarSearchLimitDays),
-                        operation.DurationMinutes, calendar, calendarSearchLimitDays),
-                    _ => ApplyWorkingLag(predecessorItem.PlannedEndAtUtc, predecessor.LagMinutes, calendar, calendarSearchLimitDays)
+                    GeneratorDependencyType.StartToStart => predecessorItem.PlannedStartAtUtc.AddMinutes(predecessor.LagMinutes),
+                    GeneratorDependencyType.FinishToFinish => predecessorItem.PlannedEndAtUtc.AddMinutes(predecessor.LagMinutes - operation.DurationMinutes),
+                    _ => predecessorItem.PlannedEndAtUtc.AddMinutes(predecessor.LagMinutes)
                 };
                 if (constrainedStart > dependencyStart) dependencyStart = constrainedStart;
             }
-
-            var stationLanes = lanes[operation.StationId];
-            var laneIndex = Array.IndexOf(stationLanes, stationLanes.Min());
-            var candidate = stationLanes[laneIndex] > dependencyStart ? stationLanes[laneIndex] : dependencyStart;
-            var resourceReservations = new List<(DateTime[] Lanes, int[] Indices)>();
-            foreach (var assignment in resourcesByStation.GetValueOrDefault(operation.StationId, []))
+            var choices = project.ProductId.HasValue
+                ? capabilitiesByOperation.GetValueOrDefault((project.ProductId.Value, operation.Id), [])
+                    .Select(x => new StationChoice(x.StationId, x.IsPrimary, x.EfficiencyPercent, x.SetupMinutes)).ToArray()
+                : [new StationChoice(operation.StationId, true, 100, 0)];
+            StationCandidate? selected = null;
+            foreach (var choice in choices)
             {
-                var assignedLanes = resourceLanes[assignment.ResourceId];
-                var indices = GeneratorProductionPlanningPolicy.SelectEarliestCapacityLanes(assignedLanes, assignment.RequiredQuantity);
-                var resourceAvailableAt = indices.Max(x => assignedLanes[x]);
-                if (resourceAvailableAt > candidate) candidate = resourceAvailableAt;
-                resourceReservations.Add((assignedLanes, indices));
+                if (!stations.ContainsKey(choice.StationId) || !calendars.TryGetValue(choice.StationId, out var calendar)) continue;
+                var stationLanes = lanes[choice.StationId];
+                var laneIndex = Array.IndexOf(stationLanes, stationLanes.Min());
+                var candidate = stationLanes[laneIndex] > dependencyStart ? stationLanes[laneIndex] : dependencyStart;
+                var resourceReservations = new List<(DateTime[] Lanes, int[] Indices)>();
+                foreach (var assignment in resourcesByStation.GetValueOrDefault(choice.StationId, []))
+                {
+                    var assignedLanes = resourceLanes[assignment.ResourceId];
+                    var indices = GeneratorProductionPlanningPolicy.SelectEarliestCapacityLanes(assignedLanes, assignment.RequiredQuantity);
+                    var resourceAvailableAt = indices.Max(x => assignedLanes[x]);
+                    if (resourceAvailableAt > candidate) candidate = resourceAvailableAt;
+                    resourceReservations.Add((assignedLanes, indices));
+                }
+                var capacityCandidate = candidate;
+                var material = materialContext.Find(project.Id, operation.Id, candidate);
+                if (material.AvailableAtUtc > candidate) candidate = material.AvailableAtUtc.Value;
+                var start = GeneratorProductionPlanningPolicy.NextWorkingInstant(candidate, calendar, calendarSearchLimitDays);
+                var adjustedDuration = Math.Clamp((int)Math.Ceiling(operation.DurationMinutes * 100m / choice.EfficiencyPercent),
+                    operation.MinimumDurationMinutes, operation.MaximumDurationMinutes) + choice.SetupMinutes;
+                var end = GeneratorProductionPlanningPolicy.AddWorkingMinutes(start, adjustedDuration, calendar, calendarSearchLimitDays);
+                var current = new StationCandidate(choice, stationLanes, laneIndex, resourceReservations, start, end, material,
+                    material.AvailableAtUtc.HasValue && material.AvailableAtUtc.Value > capacityCandidate);
+                if (selected is null || current.End < selected.End || current.End == selected.End && current.Choice.IsPrimary) selected = current;
             }
-            var start = GeneratorProductionPlanningPolicy.NextWorkingInstant(candidate, calendar, calendarSearchLimitDays);
-            var end = GeneratorProductionPlanningPolicy.AddWorkingMinutes(start, operation.DurationMinutes, calendar, calendarSearchLimitDays);
-            stationLanes[laneIndex] = end;
-            foreach (var reservation in resourceReservations)
-                foreach (var index in reservation.Indices) reservation.Lanes[index] = end;
+            if (selected is null) throw AppException.Conflict($"{project.ProjectCode} / {operation.OperationCode} için planlanabilir istasyon bulunamadı.");
+            selected.StationLanes[selected.LaneIndex] = selected.End;
+            foreach (var reservation in selected.ResourceReservations)
+                foreach (var index in reservation.Indices) reservation.Lanes[index] = selected.End;
+            materialContext.Reserve(project.Id, operation.Id, selected.Start, $"Preview:{project.Id}:{unit}:{operation.Id}");
+            if (selected.Material.HasShortage)
+                materialShortage(project.Id, $"{project.ProjectCode} / ünite {unit} / {operation.OperationCode}: {selected.Material.Message}");
+            var station = stations[selected.Choice.StationId];
             var key = $"{project.Id}:{unit}:{operation.Id}";
-            var item = new GeneratorPlanItem(key, project.Id, project.ProjectCode, unit, route.PartType, operation.Id, operation.StationId,
-                operation.Station.Code, operation.Station.Name, operation.OperationCode, operation.OperationName, start, end,
-                operation.IsCritical || operation.Station.IsCritical, predecessors);
+            var item = new GeneratorPlanItem(key, project.Id, project.ProjectCode, unit, route.PartType, operation.Id, station.Id,
+                station.Code, station.Name, operation.OperationCode, operation.OperationName, selected.Start, selected.End,
+                operation.IsCritical || station.IsCritical, station.Id != operation.StationId, selected.Material.HasShortage,
+                selected.MaterialDelayed ? selected.Material.AvailableAtUtc : null, false, null, predecessors);
             items.Add(item);
             scheduled[operation.Id] = item;
             allItemsByKey[key] = item;
@@ -689,6 +988,46 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
         var predecessorIds = dependencies.Select(x => x.PredecessorOperationId).ToHashSet();
         var terminalKeys = scheduled.Where(x => !predecessorIds.Contains(x.Key)).Select(x => x.Value.Key).ToArray();
         return new RouteScheduleResult(terminalKeys, scheduled.Values.Max(x => x.PlannedEndAtUtc));
+    }
+
+    private sealed record StationChoice(long StationId, bool IsPrimary, int EfficiencyPercent, int SetupMinutes);
+    private sealed record StationCandidate(
+        StationChoice Choice, DateTime[] StationLanes, int LaneIndex,
+        List<(DateTime[] Lanes, int[] Indices)> ResourceReservations,
+        DateTime Start, DateTime End, MaterialAvailability Material, bool MaterialDelayed);
+
+    private static void ValidateLockedPlan(
+        IReadOnlyList<GeneratorPlanItem> items,
+        IReadOnlyDictionary<long, GeneratorProductionStation> stations,
+        Action<string, long?, string> addIssue)
+    {
+        var byKey = items.ToDictionary(x => x.Key, StringComparer.Ordinal);
+        foreach (var item in items)
+        foreach (var predecessor in item.Predecessors)
+        {
+            if (!byKey.TryGetValue(predecessor.Key, out var previous)) continue;
+            var valid = predecessor.DependencyType switch
+            {
+                GeneratorDependencyType.StartToStart => item.PlannedStartAtUtc >= previous.PlannedStartAtUtc.AddMinutes(predecessor.LagMinutes),
+                GeneratorDependencyType.FinishToFinish => item.PlannedEndAtUtc >= previous.PlannedEndAtUtc.AddMinutes(predecessor.LagMinutes),
+                _ => item.PlannedStartAtUtc >= previous.PlannedEndAtUtc.AddMinutes(predecessor.LagMinutes)
+            };
+            if (!valid) addIssue("DEPENDENCY_VIOLATION", item.ProjectId,
+                $"Kilitli {item.OperationCode} zamanı {previous.OperationCode} bağımlılığıyla çakışıyor.");
+        }
+        foreach (var stationGroup in items.GroupBy(x => x.StationId))
+        {
+            var capacity = stations.GetValueOrDefault(stationGroup.Key)?.MaxParallelJobs ?? 1;
+            foreach (var instant in stationGroup.SelectMany(x => new[] { x.PlannedStartAtUtc, x.PlannedEndAtUtc }).Distinct())
+            {
+                var concurrent = stationGroup.Count(x => x.PlannedStartAtUtc <= instant && x.PlannedEndAtUtc > instant);
+                if (concurrent > capacity)
+                {
+                    addIssue("CAPACITY_OVERLOAD", null, $"Kilitli plan {stationGroup.First().StationCode} istasyonunda {concurrent}/{capacity} kapasite aşımı oluşturuyor.");
+                    break;
+                }
+            }
+        }
     }
 
     private static DateTime ApplyWorkingLag(DateTime value, int lagMinutes, GeneratorStationCalendar calendar, int searchLimitDays) =>
@@ -855,7 +1194,7 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
         x.Id, x.BranchCode, x.MinimumProjectPriority, x.MaximumProjectPriority, x.DefaultProjectPriority,
         x.DefaultProjectQuantity, x.MaximumProjectQuantity, x.DefaultLeadTimeDays,
         x.MinimumPlanReasonLength, x.MinimumOperationReasonLength, x.MaximumScheduleRangeDays,
-        x.SchedulePastDays, x.ScheduleFutureDays, x.GanttDefaultWindowDays, x.AndonRefreshSeconds,
+        x.SchedulePastDays, x.ScheduleFutureDays, x.GanttDefaultWindowDays, x.AndonRefreshSeconds, x.InboundQualityBufferDays,
         x.WorkingCalendarSearchLimitDays, x.RequireComponentForFinalAssembly,
         x.RequireMaterialAvailabilityToStart, x.RequireProblemClosureToComplete,
         x.RequirePositiveCompletionQuantity, x.PlanningOrderStrategy, Convert.ToBase64String(x.RowVersion));
@@ -875,6 +1214,7 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
         entity.ScheduleFutureDays = request.ScheduleFutureDays;
         entity.GanttDefaultWindowDays = request.GanttDefaultWindowDays;
         entity.AndonRefreshSeconds = request.AndonRefreshSeconds;
+        entity.InboundQualityBufferDays = request.InboundQualityBufferDays;
         entity.WorkingCalendarSearchLimitDays = request.WorkingCalendarSearchLimitDays;
         entity.RequireComponentForFinalAssembly = request.RequireComponentForFinalAssembly;
         entity.RequireMaterialAvailabilityToStart = request.RequireMaterialAvailabilityToStart;
@@ -904,6 +1244,8 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
             throw AppException.BadRequest("Geçmiş ve Gantt pencerelerinin toplamı azami takvim aralığını aşamaz.");
         if (request.AndonRefreshSeconds is < 5 or > 3600)
             throw AppException.BadRequest("Andon yenileme süresi 5-3600 saniye arasında olmalıdır.");
+        if (request.InboundQualityBufferDays is < 0 or > 365)
+            throw AppException.BadRequest("Mal kabul ve kalite bekleme süresi 0-365 gün arasında olmalıdır.");
         if (request.WorkingCalendarSearchLimitDays is < 1 or > 36_600)
             throw AppException.BadRequest("Çalışma takvimi arama sınırı 1-36600 gün arasında olmalıdır.");
     }
@@ -961,13 +1303,15 @@ public sealed class GeneratorProductionService(IUnitOfWork uow, IAuditLogWriter 
             throw AppException.BadRequest("Teslim tarihi riski için 0-525600 aralığında toleranceMinutes parametresi zorunludur.");
     }
 
-    private static GeneratorProjectDetail MapProject(GeneratorProductionProject x) => new(x.Id, x.ProductionHeaderId, x.ProjectCode, x.ProjectName, x.GeneratorType, x.SerialNumber,
+    private static GeneratorProjectDetail MapProject(GeneratorProductionProject x) => new(x.Id, x.ProductionHeaderId, x.ProductId, x.Product?.Code, x.ProjectCode, x.ProjectName, x.GeneratorType, x.SerialNumber,
         x.CustomerCodeSnapshot, x.CustomerNameSnapshot, x.ExternalWorkOrderNo, x.SourceSystemCode, x.PlannedStartAtUtc, x.PlannedDeliveryAtUtc,
         x.Status, x.Priority, x.Quantity, x.HasStator, x.HasRotor, x.HasStiffener, x.IncludeFinalAssembly, x.PlanningOrder, x.Description, Convert.ToBase64String(x.RowVersion));
 
     private static GeneratorScheduleRow ToScheduleRow(GeneratorProductionOperation x) => new(x.Id, x.ProjectId, x.Project.ProjectCode, x.Project.ProjectName, x.UnitIndex,
         x.RouteOperation.Route.PartType, x.StationId, x.Station.Code, x.Station.Name, x.RouteOperation.OperationCode, x.RouteOperation.OperationName,
-        x.Status, x.PlannedStartAtUtc, x.PlannedEndAtUtc, x.ActualStartAtUtc, x.ActualEndAtUtc, x.IsCritical, x.HasMaterialShortage, x.HasProblem, Convert.ToBase64String(x.RowVersion));
+        x.Status, x.PlannedStartAtUtc, x.PlannedEndAtUtc, x.ActualStartAtUtc, x.ActualEndAtUtc, x.IsCritical, x.HasMaterialShortage, x.HasProblem,
+        x.IsScheduleLocked, x.ManualScheduleReason, Convert.ToBase64String(x.RowVersion), x.QualityGate?.Status,
+        x.QualityGate is null ? null : Convert.ToBase64String(x.QualityGate.RowVersion), x.RouteOperationId, x.Project.ProductId);
 
     private static int CountRevisionOperations(string json)
     {

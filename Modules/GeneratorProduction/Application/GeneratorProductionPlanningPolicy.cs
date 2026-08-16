@@ -9,6 +9,15 @@ internal sealed record GeneratorStationCalendar(
 
 internal static class GeneratorProductionPlanningPolicy
 {
+    public static string? NormalizeProjectCode(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();
+
+    public static bool CanUseProjectSupply(string? supplyProjectCode, string projectCode)
+    {
+        var normalizedSupply = NormalizeProjectCode(supplyProjectCode);
+        return normalizedSupply is null || normalizedSupply == NormalizeProjectCode(projectCode);
+    }
+
     public static IReadOnlyList<GeneratorPartType> SelectRoutes(GeneratorProductionProject project)
     {
         var parts = new List<GeneratorPartType>(4);
