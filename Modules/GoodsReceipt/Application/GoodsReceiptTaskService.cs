@@ -33,6 +33,17 @@ public sealed class GoodsReceiptTaskService(
         };
     private static readonly string[] DefaultGridSearchColumns =
         ["taskNo", "documentNo", "waybillNo", "supplierCode", "supplierName", "warehouseCode", "warehouseName"];
+    private static readonly HashSet<string> LineSummaryColumns = new(StringComparer.OrdinalIgnoreCase)
+    {
+        nameof(GoodsReceiptTaskGridRow.LineCount),
+        nameof(GoodsReceiptTaskGridRow.PlannedQuantity),
+        nameof(GoodsReceiptTaskGridRow.ProcessedQuantity)
+    };
+    private static readonly HashSet<string> AssignmentSummaryColumns = new(StringComparer.OrdinalIgnoreCase)
+    {
+        nameof(GoodsReceiptTaskGridRow.AssigneeCount),
+        nameof(GoodsReceiptTaskGridRow.MyAssignmentStatus)
+    };
 
     private IGenericRepository<GoodsReceiptTask> Tasks => unitOfWork.Repository<GoodsReceiptTask>();
     private IGenericRepository<GoodsReceiptTaskAssignment> Assignments => unitOfWork.Repository<GoodsReceiptTaskAssignment>();
@@ -61,22 +72,83 @@ public sealed class GoodsReceiptTaskService(
         var warehouses = unitOfWork.Repository<WarehouseEntity>().Query();
         var lines = unitOfWork.Repository<GoodsReceiptTaskLine>().Query();
         var assignments = Assignments.Query();
+        var includeLines = RequiresLineSummaryInMainQuery(request);
+        var includeAssignments = RequiresAssignmentSummaryInMainQuery(request);
+        var query = BuildPagedQuery(request, tasks, headers, warehouses, lines, assignments,
+            currentUserId, includeLines, includeAssignments);
+        var countQuery = BuildCountQuery(request, tasks, headers, warehouses, lines, assignments, currentUserId);
+        var page = await query.ToPagedResponseAsync(countQuery, request, cancellationToken);
+        if (page.Items.Count == 0 || includeLines && includeAssignments) return page;
+
+        return new PagedResponse<GoodsReceiptTaskGridRow>
+        {
+            Items = await EnrichSummariesAsync(page.Items, lines, assignments, currentUserId,
+                enrichLines: !includeLines, enrichAssignments: !includeAssignments, cancellationToken),
+            TotalCount = page.TotalCount,
+            PageNumber = page.PageNumber,
+            PageSize = page.PageSize
+        };
+    }
+
+    internal static IQueryable<GoodsReceiptTaskGridRow> BuildPagedQuery(
+        PagedRequest request,
+        IQueryable<GoodsReceiptTask> tasks,
+        IQueryable<GoodsReceiptHeader> headers,
+        IQueryable<WarehouseEntity> warehouses,
+        IQueryable<GoodsReceiptTaskLine> lines,
+        IQueryable<GoodsReceiptTaskAssignment> assignments,
+        long? currentUserId,
+        bool? includeLinesOverride = null,
+        bool? includeAssignmentsOverride = null)
+    {
+        var query = BuildGridRows(tasks, headers, warehouses, lines, assignments, currentUserId,
+            includeLinesOverride ?? RequiresLineSummaryInMainQuery(request),
+            includeAssignmentsOverride ?? RequiresAssignmentSummaryInMainQuery(request));
+        return query.ApplySearch(request, GridSearchColumns, DefaultGridSearchColumns)
+            .ApplyAdvancedFilters(request).ApplySort(request, nameof(GoodsReceiptTaskGridRow.CreatedDate));
+    }
+
+    internal static IQueryable<long> BuildCountQuery(
+        PagedRequest request,
+        IQueryable<GoodsReceiptTask> tasks,
+        IQueryable<GoodsReceiptHeader> headers,
+        IQueryable<WarehouseEntity> warehouses,
+        IQueryable<GoodsReceiptTaskLine> lines,
+        IQueryable<GoodsReceiptTaskAssignment> assignments,
+        long? currentUserId)
+    {
+        var query = BuildGridRows(tasks, headers, warehouses, lines, assignments, currentUserId,
+            RequiresLineSummaryForCount(request), RequiresAssignmentSummaryForCount(request));
+        return query.ApplySearch(request, GridSearchColumns, DefaultGridSearchColumns)
+            .ApplyAdvancedFilters(request).Select(x => x.Id);
+    }
+
+    private static IQueryable<GoodsReceiptTaskGridRow> BuildGridRows(
+        IQueryable<GoodsReceiptTask> tasks,
+        IQueryable<GoodsReceiptHeader> headers,
+        IQueryable<WarehouseEntity> warehouses,
+        IQueryable<GoodsReceiptTaskLine> lines,
+        IQueryable<GoodsReceiptTaskAssignment> assignments,
+        long? currentUserId,
+        bool includeLines,
+        bool includeAssignments)
+    {
         var joined = from task in tasks
                      join header in headers on task.GrHeaderId equals header.Id
                      join warehouse in warehouses on task.WarehouseId equals warehouse.Id
                      select new { Task = task, Header = header, Warehouse = warehouse };
-        var query = joined.Select(x => new GoodsReceiptTaskGridRow(
+        return joined.Select(x => new GoodsReceiptTaskGridRow(
             x.Task.Id, x.Header.Id, x.Task.BranchCode, x.Task.TaskNo, x.Header.DocumentNo,
             x.Header.WaybillNo, x.Header.ElectronicWaybillNo, x.Task.TaskType, x.Task.Status,
             x.Header.Status, x.Header.ProcessType, x.Header.LabelStrategy, x.Task.Priority, x.Warehouse.Id, x.Warehouse.WarehouseCode,
             x.Warehouse.WarehouseName, x.Header.SupplierCodeSnapshot, x.Header.SupplierNameSnapshot,
-            lines.Count(line => line.GrTaskId == x.Task.Id),
-            lines.Where(line => line.GrTaskId == x.Task.Id).Sum(line => (decimal?)line.PlannedQuantity) ?? 0,
-            lines.Where(line => line.GrTaskId == x.Task.Id).Sum(line => (decimal?)line.ProcessedQuantity) ?? 0,
-            assignments.Count(assignment => assignment.GrTaskId == x.Task.Id
+            includeLines ? lines.Count(line => line.GrTaskId == x.Task.Id) : 0,
+            includeLines ? lines.Where(line => line.GrTaskId == x.Task.Id).Sum(line => (decimal?)line.PlannedQuantity) ?? 0 : 0,
+            includeLines ? lines.Where(line => line.GrTaskId == x.Task.Id).Sum(line => (decimal?)line.ProcessedQuantity) ?? 0 : 0,
+            includeAssignments ? assignments.Count(assignment => assignment.GrTaskId == x.Task.Id
                 && assignment.Status != GoodsReceiptAssignmentStatus.Unassigned
-                && assignment.Status != GoodsReceiptAssignmentStatus.Rejected),
-            currentUserId.HasValue
+                && assignment.Status != GoodsReceiptAssignmentStatus.Rejected) : 0,
+            includeAssignments && currentUserId.HasValue
                 ? assignments.Where(assignment => assignment.GrTaskId == x.Task.Id
                         && assignment.UserId == currentUserId.Value
                         && assignment.Status != GoodsReceiptAssignmentStatus.Unassigned
@@ -86,10 +158,76 @@ public sealed class GoodsReceiptTaskService(
             x.Task.PlannedStartAtUtc, x.Task.DueAtUtc, x.Task.StartedAtUtc, x.Task.CompletedAtUtc,
             x.Task.CreatedBy, x.Task.CreatedDate, x.Task.UpdatedBy, x.Task.UpdatedDate, x.Task.RowVersion,
             (x.Header.WaybillNo ?? "") + " " + (x.Header.ElectronicWaybillNo ?? "")));
+    }
 
-        return await query.ApplySearch(request, GridSearchColumns, DefaultGridSearchColumns)
-            .ApplyAdvancedFilters(request).ApplySort(request, nameof(GoodsReceiptTaskGridRow.CreatedDate))
-            .ToPagedResponseAsync(request, cancellationToken);
+    private static bool RequiresLineSummaryForCount(PagedRequest request) =>
+        (!string.IsNullOrWhiteSpace(request.EffectiveSearch)
+         && request.SearchFields.Any(LineSummaryColumns.Contains))
+        || request.Filters.Any(filter => LineSummaryColumns.Contains(filter.Column));
+
+    private static bool RequiresLineSummaryInMainQuery(PagedRequest request) =>
+        RequiresLineSummaryForCount(request) || LineSummaryColumns.Contains(request.SortBy ?? string.Empty);
+
+    private static bool RequiresAssignmentSummaryForCount(PagedRequest request) =>
+        (!string.IsNullOrWhiteSpace(request.EffectiveSearch)
+         && request.SearchFields.Any(AssignmentSummaryColumns.Contains))
+        || request.Filters.Any(filter => AssignmentSummaryColumns.Contains(filter.Column));
+
+    private static bool RequiresAssignmentSummaryInMainQuery(PagedRequest request) =>
+        RequiresAssignmentSummaryForCount(request) || AssignmentSummaryColumns.Contains(request.SortBy ?? string.Empty);
+
+    private static async Task<IReadOnlyList<GoodsReceiptTaskGridRow>> EnrichSummariesAsync(
+        IReadOnlyList<GoodsReceiptTaskGridRow> rows,
+        IQueryable<GoodsReceiptTaskLine> lines,
+        IQueryable<GoodsReceiptTaskAssignment> assignments,
+        long? currentUserId,
+        bool enrichLines,
+        bool enrichAssignments,
+        CancellationToken cancellationToken)
+    {
+        var taskIds = rows.Select(x => x.Id).ToArray();
+        var lineTotals = enrichLines
+            ? await lines.Where(x => taskIds.Contains(x.GrTaskId)).GroupBy(x => x.GrTaskId)
+                .Select(groupRows => new
+                {
+                    TaskId = groupRows.Key,
+                    LineCount = groupRows.Count(),
+                    PlannedQuantity = groupRows.Sum(x => x.PlannedQuantity),
+                    ProcessedQuantity = groupRows.Sum(x => x.ProcessedQuantity)
+                }).ToDictionaryAsync(x => x.TaskId, cancellationToken)
+            : [];
+        var assignmentRows = enrichAssignments
+            ? await assignments.Where(x => taskIds.Contains(x.GrTaskId)
+                    && x.Status != GoodsReceiptAssignmentStatus.Unassigned
+                    && x.Status != GoodsReceiptAssignmentStatus.Rejected)
+                .Select(x => new { x.GrTaskId, x.UserId, x.Status }).ToListAsync(cancellationToken)
+            : [];
+        var assignmentTotals = assignmentRows.GroupBy(x => x.GrTaskId).ToDictionary(x => x.Key, x => new
+        {
+            Count = x.Count(),
+            MyStatus = currentUserId.HasValue
+                ? x.Where(y => y.UserId == currentUserId.Value).Select(y => (GoodsReceiptAssignmentStatus?)y.Status).FirstOrDefault()
+                : null
+        });
+
+        return rows.Select(row =>
+        {
+            var result = row;
+            if (enrichLines && lineTotals.TryGetValue(row.Id, out var lineTotal))
+                result = result with
+                {
+                    LineCount = lineTotal.LineCount,
+                    PlannedQuantity = lineTotal.PlannedQuantity,
+                    ProcessedQuantity = lineTotal.ProcessedQuantity
+                };
+            if (enrichAssignments && assignmentTotals.TryGetValue(row.Id, out var assignmentTotal))
+                result = result with
+                {
+                    AssigneeCount = assignmentTotal.Count,
+                    MyAssignmentStatus = assignmentTotal.MyStatus
+                };
+            return result;
+        }).ToArray();
     }
 
     public async Task<GoodsReceiptTaskDetail> GetDetailAsync(long id, long currentUserId, CancellationToken cancellationToken = default)
