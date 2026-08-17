@@ -33,6 +33,10 @@ public sealed class KkdRequestService(
 
     private static readonly string[] DefaultSearchFields =
         ["requestNo", "employeeCode", "employeeName", "externalRequestNo", "groupCode", "groupName", "stockCode", "stockName"];
+    private static readonly IReadOnlySet<string> LineSummaryColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "totalLineCount", "unresolvedLineCount", "requestedQuantity", "allocatedQuantity", "deliveredQuantity"
+    };
 
     private IGenericRepository<KkdRequest> Requests => uow.Repository<KkdRequest>();
     private IGenericRepository<KkdRequestLineResolution> Resolutions => uow.Repository<KkdRequestLineResolution>();
@@ -47,37 +51,149 @@ public sealed class KkdRequestService(
     {
         var warehouseScope = await ActorWarehouseScopeAsync(actor, ct);
         var query = ApplyTabFilter(await AuthorizedRequestsAsync(actor, warehouseScope, ct), tab, actor, warehouseScope);
-        var rows = ApplySearch(query, request).Select(x => new KkdRequestGridRow(
-            x.Id,
-            x.RequestNo,
-            x.Status.ToString(),
-            x.Priority.ToString(),
-            x.SourceType.ToString(),
-            x.EmployeeId,
-            x.Employee.EmployeeCode,
-            (x.Employee.FirstName + " " + x.Employee.LastName).Trim(),
-            x.Employee.Department.Name,
-            x.Employee.Role.Name,
-            x.WarehouseId,
-            x.AssignedUserId,
-            x.ExternalRequestNo,
-            x.Lines.Count,
-            x.Lines.Count(line => line.StockId == null && line.Status != KkdRequestLineStatus.Cancelled),
-            x.Lines.Sum(line => line.RequestedQuantity),
-            x.Lines.Sum(line => line.AllocatedQuantity),
-            x.Lines.Sum(line => line.DeliveredQuantity),
-            x.RequestedAtUtc,
-            x.NeededAtUtc,
-            x.CreatedBy,
-            x.CreatedDate,
-            x.UpdatedBy,
-            x.UpdatedDate));
-
-        var page = await rows
-            .ApplyAdvancedFilters(request)
-            .ApplySort(request, nameof(KkdRequestGridRow.RequestedAtUtc))
-            .ToPagedResponseAsync(request, ct);
+        var searched = ApplySearch(query, request);
+        var lines = uow.Repository<KkdRequestLine>().Query();
+        var rows = BuildPagedQuery(request, searched, lines);
+        var countQuery = BuildCountQuery(request, searched, lines);
+        var page = await rows.ToPagedResponseAsync(countQuery, request, ct);
+        if (page.Items.Count > 0 && !RequiresLineSummaryInMainQuery(request))
+            page = new PagedResponse<KkdRequestGridRow>
+            {
+                Items = await EnrichLineSummariesAsync(page.Items, lines, ct),
+                TotalCount = page.TotalCount,
+                PageNumber = page.PageNumber,
+                PageSize = page.PageSize
+            };
         return await EnrichPageAsync(page, actor, ct);
+    }
+
+    internal static IQueryable<KkdRequestGridRow> BuildPagedQuery(
+        PagedRequest request,
+        IQueryable<KkdRequest> requests,
+        IQueryable<KkdRequestLine> lines)
+    {
+        var rows = BuildGridRows(requests, lines, RequiresLineSummaryInMainQuery(request))
+            .ApplyAdvancedFilters(request)
+            .ApplySort(request, nameof(KkdRequestGridRow.RequestedAtUtc));
+        return rows.Select(x => new KkdRequestGridRow(
+            x.Id, x.RequestNo, x.Status, x.Priority, x.SourceType, x.EmployeeId, x.EmployeeCode, x.EmployeeName,
+            x.DepartmentName, x.RoleName, x.WarehouseId, x.AssignedUserId, x.ExternalRequestNo,
+            x.TotalLineCount, x.UnresolvedLineCount, x.RequestedQuantity, x.AllocatedQuantity, x.DeliveredQuantity,
+            x.RequestedAtUtc, x.NeededAtUtc, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate));
+    }
+
+    internal static IQueryable<long> BuildCountQuery(
+        PagedRequest request,
+        IQueryable<KkdRequest> requests,
+        IQueryable<KkdRequestLine> lines) =>
+        BuildGridRows(requests, lines, RequiresLineSummaryForCount(request))
+            .ApplyAdvancedFilters(request)
+            .Select(x => x.Id);
+
+    private static IQueryable<KkdRequestGridProjection> BuildGridRows(
+        IQueryable<KkdRequest> requests,
+        IQueryable<KkdRequestLine> lines,
+        bool includeLineSummary)
+    {
+        if (!includeLineSummary)
+            return requests.Select(x => new KkdRequestGridProjection
+            {
+                Id = x.Id, RequestNo = x.RequestNo, Status = x.Status.ToString(), Priority = x.Priority.ToString(), SourceType = x.SourceType.ToString(),
+                EmployeeId = x.EmployeeId, EmployeeCode = x.Employee.EmployeeCode,
+                EmployeeName = (x.Employee.FirstName + " " + x.Employee.LastName).Trim(),
+                DepartmentName = x.Employee.Department.Name, RoleName = x.Employee.Role.Name, WarehouseId = x.WarehouseId,
+                AssignedUserId = x.AssignedUserId, ExternalRequestNo = x.ExternalRequestNo, RequestedAtUtc = x.RequestedAtUtc,
+                NeededAtUtc = x.NeededAtUtc, CreatedBy = x.CreatedBy, CreatedDate = x.CreatedDate,
+                UpdatedBy = x.UpdatedBy, UpdatedDate = x.UpdatedDate
+            });
+
+        var totals = lines.GroupBy(x => x.RequestId).Select(groupRows => new
+        {
+            RequestId = groupRows.Key,
+            TotalLineCount = groupRows.Count(),
+            UnresolvedLineCount = groupRows.Count(x => x.StockId == null && x.Status != KkdRequestLineStatus.Cancelled),
+            RequestedQuantity = groupRows.Sum(x => x.RequestedQuantity),
+            AllocatedQuantity = groupRows.Sum(x => x.AllocatedQuantity),
+            DeliveredQuantity = groupRows.Sum(x => x.DeliveredQuantity)
+        });
+        return from request in requests
+               join total in totals on request.Id equals total.RequestId into totalRows
+               from total in totalRows.DefaultIfEmpty()
+               select new KkdRequestGridProjection
+               {
+                   Id = request.Id, RequestNo = request.RequestNo, Status = request.Status.ToString(), Priority = request.Priority.ToString(),
+                   SourceType = request.SourceType.ToString(), EmployeeId = request.EmployeeId, EmployeeCode = request.Employee.EmployeeCode,
+                   EmployeeName = (request.Employee.FirstName + " " + request.Employee.LastName).Trim(),
+                   DepartmentName = request.Employee.Department.Name, RoleName = request.Employee.Role.Name, WarehouseId = request.WarehouseId,
+                   AssignedUserId = request.AssignedUserId, ExternalRequestNo = request.ExternalRequestNo,
+                   TotalLineCount = (int?)total.TotalLineCount ?? 0, UnresolvedLineCount = (int?)total.UnresolvedLineCount ?? 0,
+                   RequestedQuantity = (decimal?)total.RequestedQuantity ?? 0, AllocatedQuantity = (decimal?)total.AllocatedQuantity ?? 0,
+                   DeliveredQuantity = (decimal?)total.DeliveredQuantity ?? 0, RequestedAtUtc = request.RequestedAtUtc,
+                   NeededAtUtc = request.NeededAtUtc, CreatedBy = request.CreatedBy, CreatedDate = request.CreatedDate,
+                   UpdatedBy = request.UpdatedBy, UpdatedDate = request.UpdatedDate
+               };
+    }
+
+    private static bool RequiresLineSummaryForCount(PagedRequest request) =>
+        request.Filters.Any(filter => LineSummaryColumns.Contains(filter.Column));
+
+    private static bool RequiresLineSummaryInMainQuery(PagedRequest request) =>
+        RequiresLineSummaryForCount(request) || LineSummaryColumns.Contains(request.SortBy ?? string.Empty);
+
+    private static async Task<IReadOnlyList<KkdRequestGridRow>> EnrichLineSummariesAsync(
+        IReadOnlyList<KkdRequestGridRow> rows,
+        IQueryable<KkdRequestLine> lines,
+        CancellationToken ct)
+    {
+        var requestIds = rows.Select(x => x.Id).ToArray();
+        var totals = await lines.Where(x => requestIds.Contains(x.RequestId)).GroupBy(x => x.RequestId)
+            .Select(groupRows => new
+            {
+                RequestId = groupRows.Key,
+                TotalLineCount = groupRows.Count(),
+                UnresolvedLineCount = groupRows.Count(x => x.StockId == null && x.Status != KkdRequestLineStatus.Cancelled),
+                RequestedQuantity = groupRows.Sum(x => x.RequestedQuantity),
+                AllocatedQuantity = groupRows.Sum(x => x.AllocatedQuantity),
+                DeliveredQuantity = groupRows.Sum(x => x.DeliveredQuantity)
+            }).ToDictionaryAsync(x => x.RequestId, ct);
+        return rows.Select(row => totals.TryGetValue(row.Id, out var total)
+            ? row with
+            {
+                TotalLineCount = total.TotalLineCount,
+                UnresolvedLineCount = total.UnresolvedLineCount,
+                RequestedQuantity = total.RequestedQuantity,
+                AllocatedQuantity = total.AllocatedQuantity,
+                DeliveredQuantity = total.DeliveredQuantity
+            }
+            : row).ToArray();
+    }
+
+    private sealed class KkdRequestGridProjection
+    {
+        public long Id { get; init; }
+        public string RequestNo { get; init; } = string.Empty;
+        public string Status { get; init; } = string.Empty;
+        public string Priority { get; init; } = string.Empty;
+        public string SourceType { get; init; } = string.Empty;
+        public long EmployeeId { get; init; }
+        public string EmployeeCode { get; init; } = string.Empty;
+        public string EmployeeName { get; init; } = string.Empty;
+        public string DepartmentName { get; init; } = string.Empty;
+        public string RoleName { get; init; } = string.Empty;
+        public long? WarehouseId { get; init; }
+        public long? AssignedUserId { get; init; }
+        public string? ExternalRequestNo { get; init; }
+        public int TotalLineCount { get; init; }
+        public int UnresolvedLineCount { get; init; }
+        public decimal RequestedQuantity { get; init; }
+        public decimal AllocatedQuantity { get; init; }
+        public decimal DeliveredQuantity { get; init; }
+        public DateTimeOffset RequestedAtUtc { get; init; }
+        public DateTimeOffset? NeededAtUtc { get; init; }
+        public long? CreatedBy { get; init; }
+        public DateTime? CreatedDate { get; init; }
+        public long? UpdatedBy { get; init; }
+        public DateTime? UpdatedDate { get; init; }
     }
 
     public async Task<KkdRequestTabCounts> GetTabCountsAsync(long actor, CancellationToken ct = default)
@@ -714,7 +830,11 @@ public sealed class KkdRequestService(
     private IQueryable<KkdRequest> ApplySearch(IQueryable<KkdRequest> query, PagedRequest request)
     {
         var search = request.EffectiveSearch?.Trim();
-        if (string.IsNullOrWhiteSpace(search)) return query;
+        if (string.IsNullOrWhiteSpace(search))
+        {
+            request.MarkSearchApplied();
+            return query;
+        }
         var fields = request.SearchFields.Count == 0 ? DefaultSearchFields : request.SearchFields;
         foreach (var field in fields)
             if (!AllowedSearchFields.Contains(field))
