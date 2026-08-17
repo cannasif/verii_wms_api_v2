@@ -447,11 +447,43 @@ public sealed class KkdDistributionService(
     public async Task<PagedResponse<KkdDistributionRow>> GetPagedAsync(PagedRequest request, long actor, CancellationToken ct = default)
     {
         var query = await AuthorizedDistributionsAsync(actor, ct);
-        var projected = query.Select(x => new KkdDistributionRow(
+        var projected = BuildPagedQuery(request, query);
+        var page = await projected.ToPagedResponseAsync(request, ct);
+        if (page.Items.Count == 0) return page;
+
+        var distributionIds = page.Items.Select(x => x.Id).ToArray();
+        var totals = await uow.Repository<KkdDistributionLine>().Query()
+            .Where(x => distributionIds.Contains(x.DistributionId)).GroupBy(x => x.DistributionId)
+            .Select(groupRows => new
+            {
+                DistributionId = groupRows.Key,
+                TotalQuantity = groupRows.Sum(x => x.Quantity),
+                EntitledQuantity = groupRows.Sum(x => x.EntitledQuantity),
+                ExcessQuantity = groupRows.Sum(x => x.ExcessQuantity)
+            }).ToDictionaryAsync(x => x.DistributionId, ct);
+        return new PagedResponse<KkdDistributionRow>
+        {
+            Items = page.Items.Select(row => totals.TryGetValue(row.Id, out var total)
+                ? row with
+                {
+                    TotalQuantity = total.TotalQuantity,
+                    EntitledQuantity = total.EntitledQuantity,
+                    ExcessQuantity = total.ExcessQuantity
+                }
+                : row).ToArray(),
+            TotalCount = page.TotalCount,
+            PageNumber = page.PageNumber,
+            PageSize = page.PageSize
+        };
+    }
+
+    internal static IQueryable<KkdDistributionRow> BuildPagedQuery(
+        PagedRequest request,
+        IQueryable<KkdDistribution> distributions) =>
+        distributions.Select(x => new KkdDistributionRow(
                 x.Id, x.DocumentNo, x.Status.ToString(), x.EmployeeId, x.Employee.EmployeeCode,
                 x.Employee.FirstName + " " + x.Employee.LastName, x.WarehouseId, x.WarehouseOutboundId,
-                x.Lines.Sum(l => l.Quantity), x.Lines.Sum(l => l.EntitledQuantity),
-                x.Lines.Sum(l => l.ExcessQuantity), x.ExcessApprovalStatus.ToString(),
+                0, 0, 0, x.ExcessApprovalStatus.ToString(),
                 x.ExcessApprovalReason, x.ExcessApprovedBy, x.ExcessApprovedAtUtc,
                 x.CreatedDate, x.CompletedAtUtc, Convert.ToBase64String(x.RowVersion)))
             .ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -461,8 +493,6 @@ public sealed class KkdDistributionService(
                 ["employeeName"] = nameof(KkdDistributionRow.EmployeeName)
             }, ["documentNo", "employeeCode", "employeeName"])
             .ApplySort(request, nameof(KkdDistributionRow.Id));
-        return await projected.ToPagedResponseAsync(request, ct);
-    }
 
     public async Task<KkdDistributionDetail> GetDetailAsync(long id, long actor, CancellationToken ct = default)
     {
