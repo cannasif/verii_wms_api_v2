@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using verii_wms_api_v2.Modules.SerialNumberPolicy.Domain;
 using verii_wms_api_v2.Shared;
 
@@ -12,7 +13,8 @@ public sealed record SerialRuleRow(long Id, string BranchCode, string RuleCode, 
     long? StockId, string? StockCode, string? StockName, string? StockGroupCode, int Version, int Priority,
     string MaskTemplate, string CharacterSet, string UniquenessScope, int MinLength, int MaxLength,
     bool IsRequired, bool IsActive, DateTimeOffset EffectiveFromUtc, DateTimeOffset? EffectiveToUtc,
-    string? Description, string ConcurrencyToken, long? CreatedBy, DateTime? CreatedDate);
+    string? Description, string ConcurrencyToken, long? CreatedBy, DateTime? CreatedDate,
+    [property: JsonIgnore] string RuleSearchText = "");
 public sealed record ValidateSerialRequest(string BranchCode, long StockId, long? YapCodeId, string? SerialNo);
 public sealed record SerialValidationResult(string? NormalizedSerial, bool IsValid, string Source,
     long? RuleId, int? RuleVersion, string? RuleCode, string? MaskTemplate, string? Error);

@@ -18,6 +18,19 @@ namespace verii_wms_api_v2.Modules.SerialNumberPolicy.Application;
 public sealed class SerialNumberPolicyService(IUnitOfWork uow, IAuditLogWriter audit, ISerialSequenceAllocator sequenceAllocator)
     : ISerialNumberPolicyService, ISerialNumberPolicyResolver
 {
+    private static readonly IReadOnlyDictionary<string, string> GridSearchColumns =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["id"] = nameof(SerialRuleRow.Id),
+            ["ruleCode"] = nameof(SerialRuleRow.RuleSearchText),
+            ["stockCode"] = nameof(SerialRuleRow.StockCode),
+            ["stockName"] = nameof(SerialRuleRow.StockName),
+            ["stockGroupCode"] = nameof(SerialRuleRow.StockGroupCode),
+            ["maskTemplate"] = nameof(SerialRuleRow.MaskTemplate)
+        };
+    private static readonly string[] DefaultGridSearchColumns =
+        ["ruleCode", "stockCode", "stockName", "stockGroupCode", "maskTemplate"];
+
     private IGenericRepository<SerialNumberRule> Rules => uow.Repository<SerialNumberRule>();
     private IGenericRepository<StockSerialRegistry> SerialRegistry => uow.Repository<StockSerialRegistry>();
 
@@ -32,10 +45,8 @@ public sealed class SerialNumberPolicyService(IUnitOfWork uow, IAuditLogWriter a
             x.Rule.StockGroupCode,x.Rule.Version,x.Rule.Priority,x.Rule.MaskTemplate,x.Rule.CharacterSet.ToString(),
             x.Rule.UniquenessScope.ToString(),x.Rule.MinLength,x.Rule.MaxLength,x.Rule.IsRequired,x.Rule.IsActive,
             x.Rule.EffectiveFromUtc,x.Rule.EffectiveToUtc,x.Rule.Description,Convert.ToBase64String(x.Rule.RowVersion),
-            x.Rule.CreatedBy,x.Rule.CreatedDate));
-        var search=request.Search?.Trim();
-        q=q.Where(x=>string.IsNullOrWhiteSpace(search)||x.RuleCode.Contains(search)||x.DisplayName.Contains(search)
-            ||(x.StockCode!=null&&x.StockCode.Contains(search))||(x.StockGroupCode!=null&&x.StockGroupCode.Contains(search)));
+            x.Rule.CreatedBy,x.Rule.CreatedDate,x.Rule.RuleCode + " " + x.Rule.DisplayName + " v" + x.Rule.Version));
+        q=q.ApplySearch(request,GridSearchColumns,DefaultGridSearchColumns);
         return await q.ApplyAdvancedFilters(request).ApplySort(request,nameof(SerialRuleRow.Id)).ToPagedResponseAsync(request,ct);
     }
 
