@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using verii_wms_api_v2.Shared;
 
 namespace verii_wms_api_v2.Modules.Procurement.Application;
@@ -42,7 +43,9 @@ public sealed record ProcurementGridRow(
     string? CreatedByName=null,
     DateTime? UpdatedDate=null,
     long? UpdatedBy=null,
-    string? UpdatedByName=null);
+    string? UpdatedByName=null,
+    [property: JsonIgnore] string? SubjectSearchText=null,
+    [property: JsonIgnore] string? TotalSearchText=null);
 public sealed record ProcurementAttachmentRow(long Id,string OwnerType,long OwnerId,string FileName,string ContentType,string Url,long FileSize,string? Caption,DateTime? CreatedDate);
 public sealed record ProcurementAttachmentDownload(Stream Content,string FileName,string ContentType);
 public sealed record ProcurementAttachmentUpload(Stream Content,string FileName,string? ContentType,long Length);
