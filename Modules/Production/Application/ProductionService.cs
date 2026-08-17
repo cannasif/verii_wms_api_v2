@@ -35,6 +35,18 @@ public sealed partial class ProductionService(
     IOperationCancellationCoordinator cancellationCoordinator) : IProductionService
 {
     private IGenericRepository<ProductionHeader> Headers => uow.Repository<ProductionHeader>();
+    private static readonly HashSet<string> OrderSummaryColumns=new(StringComparer.OrdinalIgnoreCase)
+    {
+        nameof(ProductionPlanGridRow.OrderCount),nameof(ProductionPlanGridRow.PlannedQuantity),nameof(ProductionPlanGridRow.CompletedQuantity)
+    };
+    private static readonly HashSet<string> MaterialSummaryColumns=new(StringComparer.OrdinalIgnoreCase)
+    {
+        nameof(ProductionPlanGridRow.MaterialCount)
+    };
+    private static readonly HashSet<string> OutputSummaryColumns=new(StringComparer.OrdinalIgnoreCase)
+    {
+        nameof(ProductionPlanGridRow.OutputCount)
+    };
 
     public async Task<IReadOnlyList<ProductionSourceWorkOrderRow>> GetSourceWorkOrdersAsync(
         string? search,string branchCode,int? take=null,DateTime? fromDate=null,DateTime? toDate=null,CancellationToken ct=default)
@@ -1587,25 +1599,85 @@ public sealed partial class ProductionService(
         var orders=uow.Repository<ProductionOrder>().Query();
         var materials=uow.Repository<ProductionMaterialRequirement>().Query();
         var outputs=uow.Repository<ProductionOutputExpectation>().Query();
-        var query=Headers.Query().Select(h=>new ProductionPlanGridRow(
-            h.Id,h.BranchCode,h.DocumentNo,h.DocumentDate,h.PlanType,h.ExecutionMode,h.Status,h.Priority,
-            h.CustomerCodeSnapshot,h.CustomerNameSnapshot,
-            orders.Count(x=>x.ProductionHeaderId==h.Id),
-            materials.Count(x=>x.Order.ProductionHeaderId==h.Id),
-            outputs.Count(x=>x.Order.ProductionHeaderId==h.Id),
-            orders.Where(x=>x.ProductionHeaderId==h.Id).Sum(x=>(decimal?)x.PlannedQuantity)??0,
-            orders.Where(x=>x.ProductionHeaderId==h.Id).Sum(x=>(decimal?)x.CompletedQuantity)??0,
-            h.PlannedStartAtUtc,h.PlannedEndAtUtc,h.CreatedBy,h.CreatedDate,h.UpdatedBy,h.UpdatedDate));
-        if(!string.IsNullOrWhiteSpace(request.Search))
+        var headers=Headers.Query();
+        var query=BuildPagedQuery(request,headers,orders,materials,outputs);
+        var countQuery=BuildCountQuery(request,headers,orders,materials,outputs);
+        var page=await query.ToPagedResponseAsync(countQuery,request,ct);
+        if(page.Items.Count==0)return page;
+        return new PagedResponse<ProductionPlanGridRow>
         {
-            var search=request.Search.Trim();
-            query=query.Where(x=>x.DocumentNo.Contains(search)||
-                (x.CustomerCode!=null&&x.CustomerCode.Contains(search))||
-                (x.CustomerName!=null&&x.CustomerName.Contains(search)));
-        }
-        return await query.ApplyAdvancedFilters(request)
-            .ApplySort(request,nameof(ProductionPlanGridRow.CreatedDate))
-            .ToPagedResponseAsync(request,ct);
+            Items=await EnrichPlanSummariesAsync(page.Items,orders,materials,outputs,ct),
+            TotalCount=page.TotalCount,PageNumber=page.PageNumber,PageSize=page.PageSize
+        };
+    }
+
+    internal static IQueryable<ProductionPlanGridRow> BuildPagedQuery(PagedRequest request,
+        IQueryable<ProductionHeader> headers,IQueryable<ProductionOrder> orders,
+        IQueryable<ProductionMaterialRequirement> materials,IQueryable<ProductionOutputExpectation> outputs)
+    {
+        var query=BuildGridRows(request,headers,orders,materials,outputs,
+            RequiresInMainQuery(request,OrderSummaryColumns),RequiresInMainQuery(request,MaterialSummaryColumns),
+            RequiresInMainQuery(request,OutputSummaryColumns));
+        if(request.HasExplicitSearchFields)query=query.ApplySearch(request);
+        return query.ApplyAdvancedFilters(request).ApplySort(request,nameof(ProductionPlanGridRow.CreatedDate));
+    }
+
+    internal static IQueryable<long> BuildCountQuery(PagedRequest request,
+        IQueryable<ProductionHeader> headers,IQueryable<ProductionOrder> orders,
+        IQueryable<ProductionMaterialRequirement> materials,IQueryable<ProductionOutputExpectation> outputs)
+    {
+        var query=BuildGridRows(request,headers,orders,materials,outputs,
+            RequiresForCount(request,OrderSummaryColumns),RequiresForCount(request,MaterialSummaryColumns),
+            RequiresForCount(request,OutputSummaryColumns));
+        if(request.HasExplicitSearchFields)query=query.ApplySearch(request);
+        return query.ApplyAdvancedFilters(request).Select(x=>x.Id);
+    }
+
+    private static IQueryable<ProductionPlanGridRow> BuildGridRows(PagedRequest request,
+        IQueryable<ProductionHeader> headers,IQueryable<ProductionOrder> orders,
+        IQueryable<ProductionMaterialRequirement> materials,IQueryable<ProductionOutputExpectation> outputs,
+        bool includeOrders,bool includeMaterials,bool includeOutputs)
+    {
+        var search=request.Search?.Trim();
+        return headers.Where(h=>string.IsNullOrWhiteSpace(search)||h.DocumentNo.Contains(search)
+                ||(h.CustomerCodeSnapshot!=null&&h.CustomerCodeSnapshot.Contains(search))
+                ||(h.CustomerNameSnapshot!=null&&h.CustomerNameSnapshot.Contains(search)))
+            .Select(h=>new ProductionPlanGridRow(
+                h.Id,h.BranchCode,h.DocumentNo,h.DocumentDate,h.PlanType,h.ExecutionMode,h.Status,h.Priority,
+                h.CustomerCodeSnapshot,h.CustomerNameSnapshot,
+                includeOrders?orders.Count(x=>x.ProductionHeaderId==h.Id):0,
+                includeMaterials?materials.Count(x=>x.Order.ProductionHeaderId==h.Id):0,
+                includeOutputs?outputs.Count(x=>x.Order.ProductionHeaderId==h.Id):0,
+                includeOrders?orders.Where(x=>x.ProductionHeaderId==h.Id).Sum(x=>(decimal?)x.PlannedQuantity)??0:0,
+                includeOrders?orders.Where(x=>x.ProductionHeaderId==h.Id).Sum(x=>(decimal?)x.CompletedQuantity)??0:0,
+                h.PlannedStartAtUtc,h.PlannedEndAtUtc,h.CreatedBy,h.CreatedDate,h.UpdatedBy,h.UpdatedDate));
+    }
+
+    private static bool RequiresForCount(PagedRequest request,IReadOnlySet<string> columns)=>
+        (!string.IsNullOrWhiteSpace(request.EffectiveSearch)&&request.SearchFields.Any(columns.Contains))
+        ||request.Filters.Any(filter=>columns.Contains(filter.Column));
+    private static bool RequiresInMainQuery(PagedRequest request,IReadOnlySet<string> columns)=>
+        RequiresForCount(request,columns)||columns.Contains(request.SortBy??string.Empty);
+
+    private static async Task<IReadOnlyList<ProductionPlanGridRow>> EnrichPlanSummariesAsync(
+        IReadOnlyList<ProductionPlanGridRow> rows,IQueryable<ProductionOrder> orders,
+        IQueryable<ProductionMaterialRequirement> materials,IQueryable<ProductionOutputExpectation> outputs,
+        CancellationToken cancellationToken)
+    {
+        var ids=rows.Select(x=>x.Id).ToArray();
+        var orderTotals=await orders.Where(x=>ids.Contains(x.ProductionHeaderId)).GroupBy(x=>x.ProductionHeaderId)
+            .Select(groupRows=>new{HeaderId=groupRows.Key,Count=groupRows.Count(),Planned=groupRows.Sum(x=>x.PlannedQuantity),Completed=groupRows.Sum(x=>x.CompletedQuantity)})
+            .ToDictionaryAsync(x=>x.HeaderId,cancellationToken);
+        var materialTotals=await materials.Where(x=>ids.Contains(x.Order.ProductionHeaderId)).GroupBy(x=>x.Order.ProductionHeaderId)
+            .Select(groupRows=>new{HeaderId=groupRows.Key,Count=groupRows.Count()}).ToDictionaryAsync(x=>x.HeaderId,cancellationToken);
+        var outputTotals=await outputs.Where(x=>ids.Contains(x.Order.ProductionHeaderId)).GroupBy(x=>x.Order.ProductionHeaderId)
+            .Select(groupRows=>new{HeaderId=groupRows.Key,Count=groupRows.Count()}).ToDictionaryAsync(x=>x.HeaderId,cancellationToken);
+        return rows.Select(row=>
+        {
+            var order=orderTotals.GetValueOrDefault(row.Id);
+            return row with{OrderCount=order?.Count??0,MaterialCount=materialTotals.GetValueOrDefault(row.Id)?.Count??0,
+                OutputCount=outputTotals.GetValueOrDefault(row.Id)?.Count??0,PlannedQuantity=order?.Planned??0,CompletedQuantity=order?.Completed??0};
+        }).ToArray();
     }
 
     public async Task<ProductionPlanDetail> GetDetailAsync(long id,CancellationToken ct=default)
