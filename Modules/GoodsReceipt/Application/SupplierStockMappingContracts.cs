@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using verii_wms_api_v2.Shared;
 
 namespace verii_wms_api_v2.Modules.GoodsReceipt.Application;
@@ -36,6 +37,8 @@ public sealed class SupplierStockMappingRow
     public long? UpdatedBy { get; init; }
     public DateTime? UpdatedDate { get; init; }
     public byte[] RowVersion { get; init; } = [];
+    [JsonIgnore] public string SupplierSearchText { get; init; } = string.Empty;
+    [JsonIgnore] public string SystemStockSearchText { get; init; } = string.Empty;
 }
 
 public sealed record SupplierStockResolution(

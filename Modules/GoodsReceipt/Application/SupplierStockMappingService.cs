@@ -16,11 +16,11 @@ public sealed class SupplierStockMappingService(
     private static readonly IReadOnlyDictionary<string, string> SearchColumns =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
-            ["supplierCode"] = nameof(SupplierStockMappingRow.SupplierCode),
+            ["supplierCode"] = nameof(SupplierStockMappingRow.SupplierSearchText),
             ["supplierName"] = nameof(SupplierStockMappingRow.SupplierName),
             ["supplierStockCode"] = nameof(SupplierStockMappingRow.SupplierStockCode),
             ["supplierStockName"] = nameof(SupplierStockMappingRow.SupplierStockName),
-            ["systemStockCode"] = nameof(SupplierStockMappingRow.SystemStockCode),
+            ["systemStockCode"] = nameof(SupplierStockMappingRow.SystemStockSearchText),
             ["systemStockName"] = nameof(SupplierStockMappingRow.SystemStockName),
             ["supplierUnitCode"] = nameof(SupplierStockMappingRow.SupplierUnitCode),
             ["systemUnitCode"] = nameof(SupplierStockMappingRow.SystemUnitCode),
@@ -166,7 +166,9 @@ public sealed class SupplierStockMappingService(
             CreatedDate = mapping.CreatedDate,
             UpdatedBy = mapping.UpdatedBy,
             UpdatedDate = mapping.UpdatedDate,
-            RowVersion = mapping.RowVersion
+            RowVersion = mapping.RowVersion,
+            SupplierSearchText = supplier.CustomerCode + " " + supplier.CustomerName,
+            SystemStockSearchText = stock.ErpStockCode + " " + stock.StockName
         };
 
     private async Task<NormalizedRequest> ValidateAsync(
