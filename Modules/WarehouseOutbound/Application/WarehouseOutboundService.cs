@@ -31,6 +31,15 @@ public sealed class WarehouseOutboundService(
     IStockTrackingPolicyResolver trackingPolicyResolver) : IWarehouseOutboundService
 {
     private IGenericRepository<WarehouseOutboundHeader> Headers => uow.Repository<WarehouseOutboundHeader>();
+    private static readonly HashSet<string> LineSummaryColumns = new(StringComparer.OrdinalIgnoreCase)
+    {
+        nameof(WarehouseOutboundGridRow.LineCount),
+        nameof(WarehouseOutboundGridRow.RequestedQuantity),
+        nameof(WarehouseOutboundGridRow.PickedQuantity),
+        nameof(WarehouseOutboundGridRow.PackedQuantity),
+        nameof(WarehouseOutboundGridRow.LoadedQuantity),
+        nameof(WarehouseOutboundGridRow.ShippedQuantity)
+    };
 
     public Task<CreateWarehouseOutboundDraftResult> CreateDraftAsync(
         CreateWarehouseOutboundDraftRequest request,
@@ -262,11 +271,69 @@ public sealed class WarehouseOutboundService(
         PagedRequest request,
         CancellationToken ct = default)
     {
-        var search = request.Search?.Trim();
         var warehouses = uow.Repository<WarehouseEntity>().Query(ignoreQueryFilters: true);
         var lines = uow.Repository<WarehouseOutboundLine>().Query();
+        var headers = Headers.Query();
+        var query = BuildPagedQuery(request, headers, warehouses, lines);
+        var countQuery = BuildCountQuery(request, headers, warehouses, lines);
+        var page = await query.ToPagedResponseAsync(countQuery, request, ct);
+        if (RequiresLineSummaryInMainQuery(request) || page.Items.Count == 0) return page;
+
+        return new PagedResponse<WarehouseOutboundGridRow>
+        {
+            Items = await EnrichLineSummaryAsync(page.Items, lines, ct),
+            TotalCount = page.TotalCount,
+            PageNumber = page.PageNumber,
+            PageSize = page.PageSize
+        };
+    }
+
+    internal static IQueryable<WarehouseOutboundGridRow> BuildPagedQuery(
+        PagedRequest request,
+        IQueryable<WarehouseOutboundHeader> headers,
+        IQueryable<WarehouseEntity> warehouses,
+        IQueryable<WarehouseOutboundLine> lines)
+    {
+        var query = BuildGridRows(
+            request,
+            headers,
+            warehouses,
+            lines,
+            RequiresLineSummaryInMainQuery(request));
+        if (request.HasExplicitSearchFields) query = query.ApplySearch(request);
+        return query.ApplyAdvancedFilters(request)
+            .ApplySort(request, nameof(WarehouseOutboundGridRow.CreatedDate))
+            .Select(x => new WarehouseOutboundGridRow(
+                x.Id, x.BranchCode, x.DocumentNo, x.DocumentDate, x.InitiationMode, x.Status,
+                x.ApprovalStatus, x.ErpIntegrationStatus, x.CustomerId, x.CustomerCode, x.CustomerName,
+                x.SourceWarehouseId, x.SourceWarehouseCode, x.SourceWarehouseName, x.LineCount,
+                x.RequestedQuantity, x.PickedQuantity, x.PackedQuantity, x.LoadedQuantity,
+                x.ShippedQuantity, x.Priority, x.PlannedWarehouseOutboundAtUtc, x.CreatedBy,
+                x.CreatedDate, x.UpdatedBy, x.UpdatedDate));
+    }
+
+    internal static IQueryable<long> BuildCountQuery(
+        PagedRequest request,
+        IQueryable<WarehouseOutboundHeader> headers,
+        IQueryable<WarehouseEntity> warehouses,
+        IQueryable<WarehouseOutboundLine> lines)
+    {
+        var includeLineSummary = RequiresLineSummaryForCount(request);
+        var query = BuildGridRows(request, headers, warehouses, lines, includeLineSummary);
+        if (request.HasExplicitSearchFields) query = query.ApplySearch(request);
+        return query.ApplyAdvancedFilters(request).Select(x => x.Id);
+    }
+
+    private static IQueryable<WarehouseOutboundGridProjection> BuildGridRows(
+        PagedRequest request,
+        IQueryable<WarehouseOutboundHeader> headers,
+        IQueryable<WarehouseEntity> warehouses,
+        IQueryable<WarehouseOutboundLine> lines,
+        bool includeLineSummary)
+    {
+        var search = request.Search?.Trim();
         var baseQuery =
-            from header in Headers.Query()
+            from header in headers
             join warehouse in warehouses on header.SourceWarehouseId equals warehouse.Id
             where string.IsNullOrWhiteSpace(search)
                   || header.DocumentNo.Contains(search)
@@ -275,67 +342,151 @@ public sealed class WarehouseOutboundService(
                   || warehouse.WarehouseName.Contains(search)
                   || (header.ExternalReferenceNo != null && header.ExternalReferenceNo.Contains(search))
             select new { Header = header, Warehouse = warehouse };
-        var desc = string.Equals(request.SortDirection, "desc", StringComparison.OrdinalIgnoreCase);
-        var sortBy = request.SortBy?.Trim();
-        var sorted = sortBy?.ToLowerInvariant() switch
-        {
-            "id" => desc ? baseQuery.OrderByDescending(x => x.Header.Id) : baseQuery.OrderBy(x => x.Header.Id),
-            "documentno" => desc ? baseQuery.OrderByDescending(x => x.Header.DocumentNo) : baseQuery.OrderBy(x => x.Header.DocumentNo),
-            "documentdate" => desc ? baseQuery.OrderByDescending(x => x.Header.DocumentDate) : baseQuery.OrderBy(x => x.Header.DocumentDate),
-            "customercode" => desc ? baseQuery.OrderByDescending(x => x.Header.CustomerCodeSnapshot) : baseQuery.OrderBy(x => x.Header.CustomerCodeSnapshot),
-            "customername" => desc ? baseQuery.OrderByDescending(x => x.Header.CustomerNameSnapshot) : baseQuery.OrderBy(x => x.Header.CustomerNameSnapshot),
-            "sourcewarehousecode" => desc ? baseQuery.OrderByDescending(x => x.Warehouse.WarehouseCode) : baseQuery.OrderBy(x => x.Warehouse.WarehouseCode),
-            "linecount" => desc ? baseQuery.OrderByDescending(x => lines.Count(l => l.WarehouseOutboundHeaderId == x.Header.Id)) : baseQuery.OrderBy(x => lines.Count(l => l.WarehouseOutboundHeaderId == x.Header.Id)),
-            "requestedquantity" => desc ? baseQuery.OrderByDescending(x => lines.Where(l => l.WarehouseOutboundHeaderId == x.Header.Id).Sum(l => (decimal?)l.RequestedQuantity) ?? 0) : baseQuery.OrderBy(x => lines.Where(l => l.WarehouseOutboundHeaderId == x.Header.Id).Sum(l => (decimal?)l.RequestedQuantity) ?? 0),
-            "pickedquantity" => desc ? baseQuery.OrderByDescending(x => lines.Where(l => l.WarehouseOutboundHeaderId == x.Header.Id).Sum(l => (decimal?)l.PickedQuantity) ?? 0) : baseQuery.OrderBy(x => lines.Where(l => l.WarehouseOutboundHeaderId == x.Header.Id).Sum(l => (decimal?)l.PickedQuantity) ?? 0),
-            "packedquantity" => desc ? baseQuery.OrderByDescending(x => lines.Where(l => l.WarehouseOutboundHeaderId == x.Header.Id).Sum(l => (decimal?)l.PackedQuantity) ?? 0) : baseQuery.OrderBy(x => lines.Where(l => l.WarehouseOutboundHeaderId == x.Header.Id).Sum(l => (decimal?)l.PackedQuantity) ?? 0),
-            "loadedquantity" => desc ? baseQuery.OrderByDescending(x => lines.Where(l => l.WarehouseOutboundHeaderId == x.Header.Id).Sum(l => (decimal?)l.LoadedQuantity) ?? 0) : baseQuery.OrderBy(x => lines.Where(l => l.WarehouseOutboundHeaderId == x.Header.Id).Sum(l => (decimal?)l.LoadedQuantity) ?? 0),
-            "shippedquantity" => desc ? baseQuery.OrderByDescending(x => lines.Where(l => l.WarehouseOutboundHeaderId == x.Header.Id).Sum(l => (decimal?)l.ShippedQuantity) ?? 0) : baseQuery.OrderBy(x => lines.Where(l => l.WarehouseOutboundHeaderId == x.Header.Id).Sum(l => (decimal?)l.ShippedQuantity) ?? 0),
-            "status" => desc ? baseQuery.OrderByDescending(x => x.Header.Status) : baseQuery.OrderBy(x => x.Header.Status),
-            "priority" => desc ? baseQuery.OrderByDescending(x => x.Header.Priority) : baseQuery.OrderBy(x => x.Header.Priority),
-            "plannedwarehouseoutboundatutc" => desc ? baseQuery.OrderByDescending(x => x.Header.PlannedWarehouseOutboundAtUtc) : baseQuery.OrderBy(x => x.Header.PlannedWarehouseOutboundAtUtc),
-            "createdby" => desc ? baseQuery.OrderByDescending(x => x.Header.CreatedBy) : baseQuery.OrderBy(x => x.Header.CreatedBy),
-            "updatedby" => desc ? baseQuery.OrderByDescending(x => x.Header.UpdatedBy) : baseQuery.OrderBy(x => x.Header.UpdatedBy),
-            "updateddate" => desc ? baseQuery.OrderByDescending(x => x.Header.UpdatedDate) : baseQuery.OrderBy(x => x.Header.UpdatedDate),
-            _ => desc ? baseQuery.OrderByDescending(x => x.Header.CreatedDate) : baseQuery.OrderBy(x => x.Header.CreatedDate)
-        };
-        var stableSorted = desc
-            ? sorted.ThenByDescending(x => x.Header.Id)
-            : sorted.ThenBy(x => x.Header.Id);
-        var query =
-            from item in stableSorted
-            let header = item.Header
-            let warehouse = item.Warehouse
-            select new WarehouseOutboundGridRow(
-                header.Id,
-                header.BranchCode,
-                header.DocumentNo,
-                header.DocumentDate,
-                header.InitiationMode,
-                header.Status,
-                header.ApprovalStatus,
-                header.ErpIntegrationStatus,
-                header.CustomerId,
-                header.CustomerCodeSnapshot,
-                header.CustomerNameSnapshot,
-                header.SourceWarehouseId,
-                warehouse.WarehouseCode,
-                warehouse.WarehouseName,
-                lines.Count(x => x.WarehouseOutboundHeaderId == header.Id),
-                lines.Where(x => x.WarehouseOutboundHeaderId == header.Id).Sum(x => (decimal?)x.RequestedQuantity) ?? 0,
-                lines.Where(x => x.WarehouseOutboundHeaderId == header.Id).Sum(x => (decimal?)x.PickedQuantity) ?? 0,
-                lines.Where(x => x.WarehouseOutboundHeaderId == header.Id).Sum(x => (decimal?)x.PackedQuantity) ?? 0,
-                lines.Where(x => x.WarehouseOutboundHeaderId == header.Id).Sum(x => (decimal?)x.LoadedQuantity) ?? 0,
-                lines.Where(x => x.WarehouseOutboundHeaderId == header.Id).Sum(x => (decimal?)x.ShippedQuantity) ?? 0,
-                header.Priority,
-                header.PlannedWarehouseOutboundAtUtc,
-                header.CreatedBy,
-                header.CreatedDate,
-                header.UpdatedBy,
-                header.UpdatedDate);
 
-        query = query.ApplyAdvancedFilters(request);
-        return await query.ToPagedResponseAsync(request, ct);
+        if (!includeLineSummary)
+            return baseQuery.Select(item => new WarehouseOutboundGridProjection
+            {
+                Id = item.Header.Id,
+                BranchCode = item.Header.BranchCode,
+                DocumentNo = item.Header.DocumentNo,
+                DocumentDate = item.Header.DocumentDate,
+                InitiationMode = item.Header.InitiationMode,
+                Status = item.Header.Status,
+                ApprovalStatus = item.Header.ApprovalStatus,
+                ErpIntegrationStatus = item.Header.ErpIntegrationStatus,
+                CustomerId = item.Header.CustomerId,
+                CustomerCode = item.Header.CustomerCodeSnapshot,
+                CustomerName = item.Header.CustomerNameSnapshot,
+                SourceWarehouseId = item.Header.SourceWarehouseId,
+                SourceWarehouseCode = item.Warehouse.WarehouseCode,
+                SourceWarehouseName = item.Warehouse.WarehouseName,
+                Priority = item.Header.Priority,
+                PlannedWarehouseOutboundAtUtc = item.Header.PlannedWarehouseOutboundAtUtc,
+                CreatedBy = item.Header.CreatedBy,
+                CreatedDate = item.Header.CreatedDate,
+                UpdatedBy = item.Header.UpdatedBy,
+                UpdatedDate = item.Header.UpdatedDate
+            });
+
+        var totals =
+            from line in lines
+            group line by line.WarehouseOutboundHeaderId into groupRows
+            select new
+            {
+                HeaderId = groupRows.Key,
+                LineCount = groupRows.Count(),
+                RequestedQuantity = groupRows.Sum(x => x.RequestedQuantity),
+                PickedQuantity = groupRows.Sum(x => x.PickedQuantity),
+                PackedQuantity = groupRows.Sum(x => x.PackedQuantity),
+                LoadedQuantity = groupRows.Sum(x => x.LoadedQuantity),
+                ShippedQuantity = groupRows.Sum(x => x.ShippedQuantity)
+            };
+        return
+            from item in baseQuery
+            join total in totals on item.Header.Id equals total.HeaderId into totalRows
+            from total in totalRows.DefaultIfEmpty()
+            select new WarehouseOutboundGridProjection
+            {
+                Id = item.Header.Id,
+                BranchCode = item.Header.BranchCode,
+                DocumentNo = item.Header.DocumentNo,
+                DocumentDate = item.Header.DocumentDate,
+                InitiationMode = item.Header.InitiationMode,
+                Status = item.Header.Status,
+                ApprovalStatus = item.Header.ApprovalStatus,
+                ErpIntegrationStatus = item.Header.ErpIntegrationStatus,
+                CustomerId = item.Header.CustomerId,
+                CustomerCode = item.Header.CustomerCodeSnapshot,
+                CustomerName = item.Header.CustomerNameSnapshot,
+                SourceWarehouseId = item.Header.SourceWarehouseId,
+                SourceWarehouseCode = item.Warehouse.WarehouseCode,
+                SourceWarehouseName = item.Warehouse.WarehouseName,
+                LineCount = (int?)total.LineCount ?? 0,
+                RequestedQuantity = (decimal?)total.RequestedQuantity ?? 0,
+                PickedQuantity = (decimal?)total.PickedQuantity ?? 0,
+                PackedQuantity = (decimal?)total.PackedQuantity ?? 0,
+                LoadedQuantity = (decimal?)total.LoadedQuantity ?? 0,
+                ShippedQuantity = (decimal?)total.ShippedQuantity ?? 0,
+                Priority = item.Header.Priority,
+                PlannedWarehouseOutboundAtUtc = item.Header.PlannedWarehouseOutboundAtUtc,
+                CreatedBy = item.Header.CreatedBy,
+                CreatedDate = item.Header.CreatedDate,
+                UpdatedBy = item.Header.UpdatedBy,
+                UpdatedDate = item.Header.UpdatedDate
+            };
+    }
+
+    private static bool RequiresLineSummaryForCount(PagedRequest request) =>
+        (!string.IsNullOrWhiteSpace(request.EffectiveSearch)
+         && request.SearchFields.Any(LineSummaryColumns.Contains))
+        || request.Filters.Any(filter => LineSummaryColumns.Contains(filter.Column));
+
+    private static bool RequiresLineSummaryInMainQuery(PagedRequest request) =>
+        RequiresLineSummaryForCount(request)
+        || LineSummaryColumns.Contains(request.SortBy ?? string.Empty);
+
+    private static async Task<IReadOnlyList<WarehouseOutboundGridRow>> EnrichLineSummaryAsync(
+        IReadOnlyList<WarehouseOutboundGridRow> rows,
+        IQueryable<WarehouseOutboundLine> lines,
+        CancellationToken cancellationToken)
+    {
+        var headerIds = rows.Select(x => x.Id).ToArray();
+        var totals = await lines
+            .Where(x => headerIds.Contains(x.WarehouseOutboundHeaderId))
+            .GroupBy(x => x.WarehouseOutboundHeaderId)
+            .Select(groupRows => new
+            {
+                HeaderId = groupRows.Key,
+                LineCount = groupRows.Count(),
+                RequestedQuantity = groupRows.Sum(x => x.RequestedQuantity),
+                PickedQuantity = groupRows.Sum(x => x.PickedQuantity),
+                PackedQuantity = groupRows.Sum(x => x.PackedQuantity),
+                LoadedQuantity = groupRows.Sum(x => x.LoadedQuantity),
+                ShippedQuantity = groupRows.Sum(x => x.ShippedQuantity)
+            })
+            .ToDictionaryAsync(x => x.HeaderId, cancellationToken);
+
+        return rows.Select(row => totals.TryGetValue(row.Id, out var total)
+            ? row with
+            {
+                LineCount = total.LineCount,
+                RequestedQuantity = total.RequestedQuantity,
+                PickedQuantity = total.PickedQuantity,
+                PackedQuantity = total.PackedQuantity,
+                LoadedQuantity = total.LoadedQuantity,
+                ShippedQuantity = total.ShippedQuantity
+            }
+            : row).ToArray();
+    }
+
+    private sealed class WarehouseOutboundGridProjection
+    {
+        public long Id { get; init; }
+        public required string BranchCode { get; init; }
+        public required string DocumentNo { get; init; }
+        public DateOnly DocumentDate { get; init; }
+        public WarehouseOutboundInitiationMode InitiationMode { get; init; }
+        public WarehouseOutboundStatus Status { get; init; }
+        public OperationApprovalStatus ApprovalStatus { get; init; }
+        public ErpIntegrationStatus ErpIntegrationStatus { get; init; }
+        public long CustomerId { get; init; }
+        public required string CustomerCode { get; init; }
+        public string? CustomerName { get; init; }
+        public long SourceWarehouseId { get; init; }
+        public int SourceWarehouseCode { get; init; }
+        public required string SourceWarehouseName { get; init; }
+        public int LineCount { get; init; }
+        public decimal RequestedQuantity { get; init; }
+        public decimal PickedQuantity { get; init; }
+        public decimal PackedQuantity { get; init; }
+        public decimal LoadedQuantity { get; init; }
+        public decimal ShippedQuantity { get; init; }
+        public byte Priority { get; init; }
+        public DateTimeOffset? PlannedWarehouseOutboundAtUtc { get; init; }
+        public long? CreatedBy { get; init; }
+        public DateTime? CreatedDate { get; init; }
+        public long? UpdatedBy { get; init; }
+        public DateTime? UpdatedDate { get; init; }
     }
 
     public async Task<WarehouseOutboundDetail> GetDetailAsync(long id, CancellationToken ct = default)
