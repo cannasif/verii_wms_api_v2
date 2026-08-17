@@ -420,9 +420,13 @@ public sealed class GoodsReceiptOperationsService(
                 request.ForceQualityControl || request.Lines.Any(x => x.ForceQualityControl));
             foreach (var input in request.Lines)
             {
+                var forceQuality = request.ForceQualityControl || input.ForceQualityControl;
                 var lineRequiresQuality = RequiresQualityForLine(
-                    qualityAlreadyApproved, resolved[input.StockId],
-                    request.ForceQualityControl || input.ForceQualityControl);
+                    qualityAlreadyApproved, resolved[input.StockId], forceQuality);
+                var holdsInventory = ShouldHoldInventoryForQuality(
+                    lineRequiresQuality,
+                    policy.HoldInventoryUntilQualityDecision,
+                    ResolveQualityRoutingSource(resolved[input.StockId], forceQuality, qualityAlreadyApproved));
                 var lineLocationId = input.ReceivingLocationId ?? request.ReceivingLocationId;
                 var locationPolicy = GoodsReceiptLocationPolicy.ResolveSelectionPolicy(
                     policy.BlockPutawayUntilQualityDecision);
@@ -431,17 +435,29 @@ public sealed class GoodsReceiptOperationsService(
                         lineLocations[lineLocationId],
                         warehouse.Id,
                         lineRequiresQuality,
-                        policy.BlockPutawayUntilQualityDecision))
+                        policy.BlockPutawayUntilQualityDecision,
+                        holdsInventory))
                     throw AppException.BadRequest(
-                        $"{stocks[input.StockId].ErpStockCode}: {LocationPolicyError(locationPolicy)}");
+                        $"{stocks[input.StockId].ErpStockCode}: {LocationPolicyError(
+                            holdsInventory
+                                ? GoodsReceiptLocationSelectionPolicy.AnyActiveWarehouseLocation
+                                : locationPolicy)}");
             }
             ValidateQualityReceivingLocations(
                 requiresQuality,
                 policy.BlockPutawayUntilQualityDecision,
                 request.Lines
-                    .Where(input => RequiresQualityForLine(
-                        qualityAlreadyApproved, resolved[input.StockId],
-                        request.ForceQualityControl || input.ForceQualityControl))
+                    .Where(input =>
+                    {
+                        var forceQuality = request.ForceQualityControl || input.ForceQualityControl;
+                        var lineRequiresQuality = RequiresQualityForLine(
+                            qualityAlreadyApproved, resolved[input.StockId], forceQuality);
+                        return lineRequiresQuality
+                            && !ShouldHoldInventoryForQuality(
+                                lineRequiresQuality,
+                                policy.HoldInventoryUntilQualityDecision,
+                                ResolveQualityRoutingSource(resolved[input.StockId], forceQuality, qualityAlreadyApproved));
+                    })
                     .Select(input => lineLocations[
                         input.ReceivingLocationId ?? request.ReceivingLocationId]));
 
@@ -810,10 +826,12 @@ public sealed class GoodsReceiptOperationsService(
     internal static void ValidateQualityReceivingLocations(
         bool requiresQuality,
         bool blockPutawayUntilQualityDecision,
-        IEnumerable<WarehouseLocation> selectedLocations)
+        IEnumerable<WarehouseLocation> selectedLocations,
+        bool holdsInventoryUntilQualityDecision = false)
     {
         if (requiresQuality
             && blockPutawayUntilQualityDecision
+            && !holdsInventoryUntilQualityDecision
             && selectedLocations.Any(location =>
                 location.LocationType is not (LocationTypes.Receiving or LocationTypes.Staging)))
             throw AppException.BadRequest(
@@ -853,11 +871,20 @@ public sealed class GoodsReceiptOperationsService(
     }
 
     internal static bool ShouldHoldInventoryForQuality(
+        bool requireQualityControl,
+        bool holdInventoryUntilQualityDecision,
+        GoodsReceiptQualityRoutingSource routingSource) =>
+        requireQualityControl
+        && (holdInventoryUntilQualityDecision
+            || routingSource == GoodsReceiptQualityRoutingSource.ManualReceipt);
+
+    internal static bool ShouldHoldInventoryForQuality(
         GoodsReceiptLine line,
         GoodsReceiptHeader header) =>
-        line.RequireQualityControl
-        && (header.HoldInventoryUntilQualityDecision
-            || line.QualityRoutingSource == GoodsReceiptQualityRoutingSource.ManualReceipt);
+        ShouldHoldInventoryForQuality(
+            line.RequireQualityControl,
+            header.HoldInventoryUntilQualityDecision,
+            line.QualityRoutingSource);
 
     internal static long ResolveQualityInventoryLocationId(
         GoodsReceiptLine line,

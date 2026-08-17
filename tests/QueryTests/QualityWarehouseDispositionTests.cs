@@ -37,22 +37,19 @@ public sealed class QualityWarehouseDispositionTests
     }
 
     [Theory]
-    [InlineData(11L, 22L, 33L, 44L, 11L)]
-    [InlineData(null, 22L, 33L, 44L, 22L)]
-    [InlineData(null, null, 33L, 44L, 33L)]
-    [InlineData(null, null, null, 44L, 44L)]
-    [InlineData(null, null, null, null, null)]
-    public void Accepted_target_prefers_warehouse_route_then_goods_receipt_defaults(
-        long? routeLocationId,
-        long? putawayLocationId,
+    [InlineData(33L, 22L, 44L, 33L)]
+    [InlineData(null, 22L, 44L, 22L)]
+    [InlineData(null, null, 44L, 44L)]
+    [InlineData(null, null, null, null)]
+    public void Accepted_target_uses_goods_receipt_selected_location(
         long? receivingLocationId,
+        long? putawayLocationId,
         long? headerReceivingLocationId,
         long? expected)
     {
         Assert.Equal(expected, QualityService.ResolveAcceptedLocationId(
-            routeLocationId,
-            putawayLocationId,
             receivingLocationId,
+            putawayLocationId,
             headerReceivingLocationId));
     }
 
@@ -173,7 +170,7 @@ public sealed class QualityWarehouseDispositionTests
     }
 
     [Fact]
-    public void Inspection_accepted_decision_without_matrix_does_not_use_branch_or_receipt_fallback()
+    public void Inspection_accepted_decision_uses_goods_receipt_location()
     {
         var inspectionLine = new QualityInspectionLine
         {
@@ -202,11 +199,12 @@ public sealed class QualityWarehouseDispositionTests
             headerReceivingLocationId: 43,
             []);
 
-        Assert.Empty(required);
+        Assert.Equal([43], required);
+        Assert.DoesNotContain(95, required);
     }
 
     [Fact]
-    public void Inspection_accepted_decision_uses_only_that_warehouse_matrix()
+    public void Inspection_accepted_decision_ignores_warehouse_matrix_accepted_location()
     {
         var inspectionLine = new QualityInspectionLine
         {
@@ -239,9 +237,44 @@ public sealed class QualityWarehouseDispositionTests
             headerReceivingLocationId: 43,
             []);
 
-        Assert.Equal([20], required);
+        Assert.Equal([43], required);
+        Assert.DoesNotContain(20, required);
         Assert.DoesNotContain(95, required);
         Assert.DoesNotContain(99, required);
+    }
+
+    [Fact]
+    public void Inspection_accepted_decision_uses_putaway_then_header_when_receiving_is_missing()
+    {
+        var inspectionLine = new QualityInspectionLine
+        {
+            Id = 1,
+            GoodsReceiptLineId = 10,
+            StockId = 100,
+            StockCodeSnapshot = "STK-1",
+            Quantity = 1
+        };
+        var receiptLine = new GoodsReceiptLine
+        {
+            Id = 10,
+            TargetWarehouseId = 1,
+            DefaultPutawayLocationId = 22
+        };
+
+        var required = QualityService.ResolveRequiredDecisionTargetLocationIds(
+            [new QualityService.QualityDecisionPart(
+                inspectionLine,
+                QualityDecision.Accepted,
+                1)],
+            new Dictionary<long, GoodsReceiptLine> { [receiptLine.Id] = receiptLine },
+            new QualityParameter { DefaultAcceptedLocationId = 95 },
+            new Dictionary<long, QualityWarehouseRoute>(),
+            headerReceivingLocationId: 44,
+            []);
+
+        Assert.Equal([22], required);
+        Assert.DoesNotContain(44, required);
+        Assert.DoesNotContain(95, required);
     }
 
     [Fact]

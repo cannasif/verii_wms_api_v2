@@ -111,7 +111,7 @@ public sealed class GoodsReceiptDocumentValidationTests
     }
 
     [Fact]
-    public void Quality_gated_receipt_line_still_obeys_strict_receiving_policy()
+    public void Quality_gated_receipt_line_still_obeys_strict_receiving_policy_when_stock_lands_there()
     {
         var rack = new WarehouseLocation
         {
@@ -125,7 +125,27 @@ public sealed class GoodsReceiptDocumentValidationTests
             rack,
             warehouseId: 10,
             requiresQuality: true,
-            blockPutawayUntilQualityDecision: true));
+            blockPutawayUntilQualityDecision: true,
+            holdsInventoryUntilQualityDecision: false));
+    }
+
+    [Fact]
+    public void Quality_hold_receipt_line_can_use_rack_as_post_accept_target()
+    {
+        var rack = new WarehouseLocation
+        {
+            WarehouseId = 10,
+            LocationType = LocationTypes.Rack,
+            IsActive = true
+        };
+
+        Assert.True(GoodsReceiptLocationPolicy.IsAllowedForReceiptLine(
+            GoodsReceiptLocationSelectionPolicy.ReceivingOrStagingOnly,
+            rack,
+            warehouseId: 10,
+            requiresQuality: true,
+            blockPutawayUntilQualityDecision: true,
+            holdsInventoryUntilQualityDecision: true));
     }
 
     [Fact]
@@ -241,9 +261,27 @@ public sealed class GoodsReceiptDocumentValidationTests
             GoodsReceiptOperationsService.ValidateQualityReceivingLocations(
                 requiresQuality: true,
                 blockPutawayUntilQualityDecision: true,
-                selectedLocations: [receiving, rack]));
+                selectedLocations: [receiving, rack],
+                holdsInventoryUntilQualityDecision: false));
 
         Assert.Contains("kabul veya staging", exception.Message);
+    }
+
+    [Fact]
+    public void Quality_hold_receipt_can_select_rack_because_stock_waits_on_quality_location()
+    {
+        GoodsReceiptOperationsService.ValidateQualityReceivingLocations(
+            requiresQuality: true,
+            blockPutawayUntilQualityDecision: true,
+            selectedLocations:
+            [
+                new WarehouseLocation
+                {
+                    LocationType = LocationTypes.Rack,
+                    IsPutaway = true
+                }
+            ],
+            holdsInventoryUntilQualityDecision: true);
     }
 
     [Theory]

@@ -28,12 +28,13 @@ internal static class GoodsReceiptLocationPolicy
         WarehouseLocation location,
         long warehouseId,
         bool requiresQuality,
-        bool blockPutawayUntilQualityDecision)
+        bool blockPutawayUntilQualityDecision,
+        bool holdsInventoryUntilQualityDecision = false)
     {
         if (!location.IsActive || location.WarehouseId != warehouseId)
             return false;
 
-        if (!requiresQuality || !blockPutawayUntilQualityDecision)
+        if (!requiresQuality || !blockPutawayUntilQualityDecision || holdsInventoryUntilQualityDecision)
             return true;
 
         return IsAllowed(policy, location, warehouseId);

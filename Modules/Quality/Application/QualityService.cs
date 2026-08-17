@@ -442,8 +442,11 @@ public sealed class QualityService(
             {
                 if (!line.GoodsReceiptLineId.HasValue
                     || !receiptLineDefaults.TryGetValue(line.GoodsReceiptLineId.Value, out var receiptLine))
-                    return routeDefaults.AcceptedLocationId;
-                return ResolveInspectionWarehouseRoute(warehouseRoutes, receiptLine.WarehouseId).AcceptedLocationId;
+                    return ResolveAcceptedLocationId(null, null, receipt?.ReceivingLocationId);
+                return ResolveAcceptedLocationId(
+                    receiptLine.DefaultReceivingLocationId,
+                    receiptLine.DefaultPutawayLocationId,
+                    receipt?.ReceivingLocationId);
             });
         var acceptedLocationIds = acceptedLocationIdByInspectionLineId.Values
             .Where(locationId => locationId.HasValue)
@@ -457,7 +460,6 @@ public sealed class QualityService(
                          on location.WarehouseId equals targetWarehouse.Id
                      where acceptedLocationIds.Contains(location.Id)
                          && location.IsActive
-                         && location.IsPutaway
                          && !location.IsQuarantine
                      select new QualityDecisionDestinationDto(
                          location.Id,
@@ -496,16 +498,13 @@ public sealed class QualityService(
                 parameter, warehouseRoutes, quarantineSourceWarehouseIds, ct),
             inspection.WarehouseId,
             routeDefaults.QuarantineLocationId);
-        var defaultAcceptedDestination = await GetDecisionDestinationAsync(routeDefaults.AcceptedLocationId, ct);
-        if (defaultAcceptedDestination is null)
-        {
-            var lineDefaults = defaultAcceptedDestinationByInspectionLineId.Values
-                .DistinctBy(destination => destination.LocationId)
-                .Take(2)
-                .ToArray();
-            if (lineDefaults.Length == 1)
-                defaultAcceptedDestination = lineDefaults[0];
-        }
+        QualityDecisionDestinationDto? defaultAcceptedDestination = null;
+        var lineDefaults = defaultAcceptedDestinationByInspectionLineId.Values
+            .DistinctBy(destination => destination.LocationId)
+            .Take(2)
+            .ToArray();
+        if (lineDefaults.Length == 1)
+            defaultAcceptedDestination = lineDefaults[0];
         var defaultRejectedDestination = await GetDecisionDestinationAsync(routeDefaults.RejectLocationId, ct);
         var warehouseTransferDocumentSeries = (await documentSeries.GetLookupAsync(
                 WmsDocumentType.InterWarehouseTransfer, inspection.BranchCode, ct))
@@ -827,7 +826,8 @@ public sealed class QualityService(
                 decisionParts,
                 grLines,
                 warehouseRoutes,
-                configuredQuarantineDestinations);
+                configuredQuarantineDestinations,
+                gr.ReceivingLocationId);
             foreach (var line in selected.Where(x =>
                          !string.IsNullOrWhiteSpace(x.SerialNo)
                          || grLines[x.GoodsReceiptLineId!.Value].TrackingType == StockTrackingType.Serial))
@@ -892,13 +892,23 @@ public sealed class QualityService(
                 .Distinct()
                 .ToArray();
             var acceptedFallbackLocationIds = grLines.Values
-                .Select(line => ResolveInspectionWarehouseRoute(warehouseRoutes, line.TargetWarehouseId).AcceptedLocationId)
+                .Select(line => ResolveAcceptedLocationId(
+                    line.DefaultReceivingLocationId,
+                    line.DefaultPutawayLocationId,
+                    gr.ReceivingLocationId))
                 .Where(locationId => locationId.HasValue)
                 .Select(locationId => locationId!.Value)
                 .Distinct()
                 .ToArray();
             var receiptLocationIds = grLines.Values
-                .Select(line => line.DefaultReceivingLocationId ?? gr.ReceivingLocationId)
+                .SelectMany(line => new long?[]
+                {
+                    line.DefaultReceivingLocationId,
+                    line.DefaultPutawayLocationId,
+                    gr.ReceivingLocationId
+                })
+                .Where(locationId => locationId.HasValue)
+                .Select(locationId => locationId!.Value)
                 .Distinct()
                 .ToArray();
             var movementLocationIds = balances.Select(balance => balance.LocationId)
@@ -927,15 +937,18 @@ public sealed class QualityService(
                     part,
                     receiptLine.TargetWarehouseId,
                     warehouseRoutes,
-                    configuredQuarantineDestinations);
+                    configuredQuarantineDestinations,
+                    receiptLine.DefaultReceivingLocationId,
+                    receiptLine.DefaultPutawayLocationId,
+                    gr.ReceivingLocationId);
                 if (!effectiveTargetLocationId.HasValue)
                     continue;
 
                 var target = movementLocations[effectiveTargetLocationId.Value];
                 if (!target.IsActive || !string.Equals(target.BranchCode, inspection.BranchCode, StringComparison.OrdinalIgnoreCase))
                     throw AppException.BadRequest("Seçilen kalite hedefi aktif ve kalite kaydıyla aynı şubede olmalıdır.");
-                if (part.Decision == QualityDecision.Accepted && (!target.IsPutaway || target.IsQuarantine))
-                    throw AppException.BadRequest("Onaylanan miktarın hedef rafı yerleştirmeye açık ve karantina dışı olmalıdır.");
+                if (part.Decision == QualityDecision.Accepted && target.IsQuarantine)
+                    throw AppException.BadRequest("Onaylanan miktarın hedef rafı karantina dışı olmalıdır.");
                 if (part.Decision is QualityDecision.Quarantined or QualityDecision.Rejected && !target.IsQuarantine)
                     throw AppException.BadRequest("Ret ve karantina miktarlarının hedefi karantina tipi raf olmalıdır.");
                 if (part.Decision == QualityDecision.Returned)
@@ -1004,7 +1017,10 @@ public sealed class QualityService(
                         part,
                         receiptLine.TargetWarehouseId,
                         warehouseRoutes,
-                        configuredQuarantineDestinations)
+                        configuredQuarantineDestinations,
+                        receiptLine.DefaultReceivingLocationId,
+                        receiptLine.DefaultPutawayLocationId,
+                        gr.ReceivingLocationId)
                         ?? (part.Decision is QualityDecision.Accepted or QualityDecision.Quarantined or QualityDecision.Rejected
                             ? throw AppException.Conflict(Message(InspectionDestinationMessageKey(part.Decision)))
                             : receiptLocationId);
@@ -1159,10 +1175,15 @@ public sealed class QualityService(
                         CreatedDate = DateTime.UtcNow
                     }, token);
                 }
+                var receiptAcceptLocationId = ResolveAcceptedLocationId(
+                    receiptLine.DefaultReceivingLocationId,
+                    receiptLine.DefaultPutawayLocationId,
+                    gr.ReceivingLocationId);
                 var acceptedIntoPutaway = dispositions
                     .Where(x => x.InspectionLine.Id == line.Id
                         && x.Decision == QualityDecision.Accepted
-                        && movementLocations[x.TargetLocationId].IsPutaway)
+                        && (movementLocations[x.TargetLocationId].IsPutaway
+                            || (receiptAcceptLocationId.HasValue && x.TargetLocationId == receiptAcceptLocationId.Value)))
                     .Sum(x => x.Quantity);
                 if (acceptedIntoPutaway > 0)
                 {
@@ -1787,7 +1808,10 @@ public sealed class QualityService(
         QualityDecisionPart part,
         long sourceWarehouseId,
         IReadOnlyDictionary<long, QualityWarehouseRoute> warehouseRoutes,
-        IReadOnlyCollection<QualityQuarantineDestinationDto> sectionQuarantineDestinations)
+        IReadOnlyCollection<QualityQuarantineDestinationDto> sectionQuarantineDestinations,
+        long? defaultReceivingLocationId,
+        long? defaultPutawayLocationId,
+        long? headerReceivingLocationId)
     {
         if (part.TargetLocationId.HasValue)
         {
@@ -1802,7 +1826,10 @@ public sealed class QualityService(
         var route = ResolveInspectionWarehouseRoute(warehouseRoutes, sourceWarehouseId);
         return part.Decision switch
         {
-            QualityDecision.Accepted => route.AcceptedLocationId,
+            QualityDecision.Accepted => ResolveAcceptedLocationId(
+                defaultReceivingLocationId,
+                defaultPutawayLocationId,
+                headerReceivingLocationId),
             QualityDecision.Rejected => route.RejectLocationId,
             QualityDecision.Quarantined => ResolveInspectionQuarantineLocationId(
                 warehouseRoutes,
@@ -1888,7 +1915,8 @@ public sealed class QualityService(
         IReadOnlyList<QualityDecisionPart> decisionParts,
         IReadOnlyDictionary<long, GoodsReceiptLine> receiptLines,
         IReadOnlyDictionary<long, QualityWarehouseRoute> warehouseRoutes,
-        IReadOnlyCollection<QualityQuarantineDestinationDto> sectionQuarantineDestinations)
+        IReadOnlyCollection<QualityQuarantineDestinationDto> sectionQuarantineDestinations,
+        long headerReceivingLocationId)
     {
         foreach (var part in decisionParts)
         {
@@ -1901,7 +1929,10 @@ public sealed class QualityService(
             var route = ResolveInspectionWarehouseRoute(warehouseRoutes, warehouseId);
             switch (part.Decision)
             {
-                case QualityDecision.Accepted when !route.AcceptedLocationId.HasValue:
+                case QualityDecision.Accepted when !ResolveAcceptedLocationId(
+                    receiptLine.DefaultReceivingLocationId,
+                    receiptLine.DefaultPutawayLocationId,
+                    headerReceivingLocationId).HasValue:
                     throw AppException.Conflict(Message(QualityMessageKeys.InspectionWarehouseAcceptedLocationMissing));
                 case QualityDecision.Rejected when !route.RejectLocationId.HasValue:
                     throw AppException.Conflict(Message(QualityMessageKeys.InspectionWarehouseRejectLocationMissing));
@@ -2297,13 +2328,11 @@ public sealed class QualityService(
     internal static bool IsReceiptReadyForQualityDisposition(WarehouseOperationStatus status) =>
         status is WarehouseOperationStatus.Processed or WarehouseOperationStatus.Completed;
     internal static long? ResolveAcceptedLocationId(
-        long? routeAcceptedLocationId,
-        long? defaultPutawayLocationId,
         long? defaultReceivingLocationId,
+        long? defaultPutawayLocationId,
         long? headerReceivingLocationId) =>
-        routeAcceptedLocationId
+        defaultReceivingLocationId
         ?? defaultPutawayLocationId
-        ?? defaultReceivingLocationId
         ?? headerReceivingLocationId;
     internal static IReadOnlySet<long> ResolveRequiredDecisionTargetLocationIds(
         IReadOnlyList<QualityDecisionPart> decisionParts,
@@ -2314,7 +2343,6 @@ public sealed class QualityService(
         IReadOnlyCollection<QualityQuarantineDestinationDto> globalQuarantineDestinations)
     {
         _ = parameter;
-        _ = headerReceivingLocationId;
         var result = new HashSet<long>();
         foreach (var part in decisionParts)
         {
@@ -2326,7 +2354,10 @@ public sealed class QualityService(
                 part,
                 receiptLine.TargetWarehouseId,
                 warehouseRoutes,
-                globalQuarantineDestinations);
+                globalQuarantineDestinations,
+                receiptLine.DefaultReceivingLocationId,
+                receiptLine.DefaultPutawayLocationId,
+                headerReceivingLocationId);
             if (targetLocationId.HasValue)
                 result.Add(targetLocationId.Value);
         }

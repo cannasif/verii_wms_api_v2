@@ -30,7 +30,7 @@
   <data name="InspectionImageRequired" xml:space="preserve"><value>En az bir kalite görseli seçilmelidir.</value></data>
   <data name="InspectionImagesUploaded" xml:space="preserve"><value>Kalite karar görselleri yüklendi.</value></data>
   <data name="InspectionImageDeleted" xml:space="preserve"><value>Kalite karar görseli silindi.</value></data>
-  <data name="InspectionWarehouseAcceptedLocationMissing" xml:space="preserve"><value>Bu depo için tanımlı bir varsayılan kabul rafı yoktur.</value></data>
+  <data name="InspectionWarehouseAcceptedLocationMissing" xml:space="preserve"><value>Mal kabulde seçilen hedef raf bulunamadı. Kabul için önce mal kabul rafını seçin.</value></data>
   <data name="InspectionWarehouseRejectLocationMissing" xml:space="preserve"><value>Bu depo için tanımlı bir varsayılan ret rafı yoktur.</value></data>
   <data name="InspectionWarehouseQuarantineLocationMissing" xml:space="preserve"><value>Bu depo için tanımlı bir varsayılan karantina rafı yoktur.</value></data>
   <data name="InspectionWarehouseQualityHoldLocationMissing" xml:space="preserve"><value>Bu depo için tanımlı bir varsayılan kalite bekleme rafı yoktur.</value></data>

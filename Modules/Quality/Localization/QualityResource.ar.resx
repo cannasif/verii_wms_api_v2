@@ -30,7 +30,7 @@
   <data name="InspectionImageRequired" xml:space="preserve"><value>حدد صورة جودة واحدة على الأقل.</value></data>
   <data name="InspectionImagesUploaded" xml:space="preserve"><value>تم تحميل صور قرار الجودة.</value></data>
   <data name="InspectionImageDeleted" xml:space="preserve"><value>تم حذف صورة قرار الجودة.</value></data>
-  <data name="InspectionWarehouseAcceptedLocationMissing" xml:space="preserve"><value>لا يوجد موقع قبول افتراضي معرّف لهذا المستودع.</value></data>
+  <data name="InspectionWarehouseAcceptedLocationMissing" xml:space="preserve"><value>لم يتم العثور على موقع الاستلام. اختر موقع استلام قبل القبول.</value></data>
   <data name="InspectionWarehouseRejectLocationMissing" xml:space="preserve"><value>لا يوجد موقع رفض افتراضي معرّف لهذا المستودع.</value></data>
   <data name="InspectionWarehouseQuarantineLocationMissing" xml:space="preserve"><value>لا يوجد موقع حجر افتراضي معرّف لهذا المستودع.</value></data>
   <data name="InspectionWarehouseQualityHoldLocationMissing" xml:space="preserve"><value>لا يوجد موقع انتظار جودة افتراضي معرّف لهذا المستودع.</value></data>

@@ -30,7 +30,7 @@
   <data name="InspectionImageRequired" xml:space="preserve"><value>Select at least one quality image.</value></data>
   <data name="InspectionImagesUploaded" xml:space="preserve"><value>The quality decision images were uploaded.</value></data>
   <data name="InspectionImageDeleted" xml:space="preserve"><value>The quality decision image was deleted.</value></data>
-  <data name="InspectionWarehouseAcceptedLocationMissing" xml:space="preserve"><value>This warehouse has no configured default accept location.</value></data>
+  <data name="InspectionWarehouseAcceptedLocationMissing" xml:space="preserve"><value>The goods receipt location was not found. Select a receiving location before accepting.</value></data>
   <data name="InspectionWarehouseRejectLocationMissing" xml:space="preserve"><value>This warehouse has no configured default reject location.</value></data>
   <data name="InspectionWarehouseQuarantineLocationMissing" xml:space="preserve"><value>This warehouse has no configured default quarantine location.</value></data>
   <data name="InspectionWarehouseQualityHoldLocationMissing" xml:space="preserve"><value>This warehouse has no configured default quality-hold location.</value></data>

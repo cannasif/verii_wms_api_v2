@@ -129,25 +129,42 @@ public sealed class GoodsReceiptService(
                 var stock = stockByCode[item.Source.StockCode!];
                 var locationPolicy = GoodsReceiptLocationPolicy.ResolveSelectionPolicy(
                     receiptPolicy.BlockPutawayUntilQualityDecision);
+                var forceQuality = request.ForceQualityControl || item.Request.ForceQualityControl;
                 var lineRequiresQuality = GoodsReceiptOperationsService.RequiresQualityForLine(
-                    false, qualityPolicies[stock.Id],
-                    request.ForceQualityControl || item.Request.ForceQualityControl);
+                    false, qualityPolicies[stock.Id], forceQuality);
+                var holdsInventory = GoodsReceiptOperationsService.ShouldHoldInventoryForQuality(
+                    lineRequiresQuality,
+                    receiptPolicy.HoldInventoryUntilQualityDecision,
+                    GoodsReceiptOperationsService.ResolveQualityRoutingSource(qualityPolicies[stock.Id], forceQuality));
                 if (!GoodsReceiptLocationPolicy.IsAllowedForReceiptLine(
                         locationPolicy,
                         receivingLocations[item.Request.ReceivingLocationId],
                         item.Request.TargetWarehouseId,
                         lineRequiresQuality,
-                        receiptPolicy.BlockPutawayUntilQualityDecision))
+                        receiptPolicy.BlockPutawayUntilQualityDecision,
+                        holdsInventory))
                     throw AppException.BadRequest(
-                        $"{stock.ErpStockCode}: {GoodsReceiptOperationsService.LocationPolicyError(locationPolicy)}");
+                        $"{stock.ErpStockCode}: {GoodsReceiptOperationsService.LocationPolicyError(
+                            holdsInventory
+                                ? GoodsReceiptLocationSelectionPolicy.AnyActiveWarehouseLocation
+                                : locationPolicy)}");
             }
             GoodsReceiptOperationsService.ValidateQualityReceivingLocations(
                 requiresQuality,
                 receiptPolicy.BlockPutawayUntilQualityDecision,
                 sourceSelected
-                    .Where(item => GoodsReceiptOperationsService.RequiresQualityForLine(
-                        false, qualityPolicies[stockByCode[item.Source.StockCode!].Id],
-                        request.ForceQualityControl || item.Request.ForceQualityControl))
+                    .Where(item =>
+                    {
+                        var stock = stockByCode[item.Source.StockCode!];
+                        var forceQuality = request.ForceQualityControl || item.Request.ForceQualityControl;
+                        var lineRequiresQuality = GoodsReceiptOperationsService.RequiresQualityForLine(
+                            false, qualityPolicies[stock.Id], forceQuality);
+                        return lineRequiresQuality
+                            && !GoodsReceiptOperationsService.ShouldHoldInventoryForQuality(
+                                lineRequiresQuality,
+                                receiptPolicy.HoldInventoryUntilQualityDecision,
+                                GoodsReceiptOperationsService.ResolveQualityRoutingSource(qualityPolicies[stock.Id], forceQuality));
+                    })
                     .Select(item => receivingLocations[item.Request.ReceivingLocationId]));
 
             var yapCodes = sourceSelected.Select(x => x.Source.YapCode).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
