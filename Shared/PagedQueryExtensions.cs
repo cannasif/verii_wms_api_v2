@@ -18,10 +18,6 @@ public static class PagedQueryExtensions
     {
         request ??= new PagedRequest();
         ValidateRequest(request, maxPageSize);
-        var pageNumber = NormalizePageNumber(request.EffectivePageNumber);
-        var pageSize = NormalizePageSize(request.PageSize, maxPageSize);
-        var skipLong = (long)(pageNumber - 1) * pageSize;
-        var skip = skipLong > int.MaxValue ? int.MaxValue : (int)skipLong;
 
         // Yeni grid/dropdown sözleşmesi arama alanlarını açıkça gönderir.
         // Modül özel bir eşleme ile aramayı daha önce uygulamadıysa yalnızca
@@ -34,7 +30,45 @@ public static class PagedQueryExtensions
         // constructor'ın gerçek argümanına indirger; COUNT ve sayfalama sunucuda kalır.
         query = RewriteProjectionMemberAccess(query);
 
-        var totalCount = await query.CountAsync(cancellationToken).ConfigureAwait(false);
+        return await ExecutePagedQueryAsync(
+            query, query, request, cancellationToken, maxPageSize).ConfigureAwait(false);
+    }
+
+    internal static async Task<PagedResponse<T>> ToPagedResponseAsync<T>(
+        this IQueryable<T> query,
+        IQueryable<T> countQuery,
+        PagedRequest request,
+        CancellationToken cancellationToken = default,
+        int maxPageSize = DefaultMaxPageSize)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(countQuery);
+        ArgumentNullException.ThrowIfNull(request);
+        ValidateRequest(request, maxPageSize);
+        if (request.HasExplicitSearchFields && !request.SearchApplied)
+            throw new InvalidOperationException("Ayrı count sorgusunda genel arama her iki sorguya da önceden uygulanmalıdır.");
+
+        return await ExecutePagedQueryAsync(
+            RewriteProjectionMemberAccess(query),
+            RewriteProjectionMemberAccess(countQuery),
+            request,
+            cancellationToken,
+            maxPageSize).ConfigureAwait(false);
+    }
+
+    private static async Task<PagedResponse<T>> ExecutePagedQueryAsync<T>(
+        IQueryable<T> query,
+        IQueryable<T> countQuery,
+        PagedRequest request,
+        CancellationToken cancellationToken,
+        int maxPageSize)
+    {
+        var pageNumber = NormalizePageNumber(request.EffectivePageNumber);
+        var pageSize = NormalizePageSize(request.PageSize, maxPageSize);
+        var skipLong = (long)(pageNumber - 1) * pageSize;
+        var skip = skipLong > int.MaxValue ? int.MaxValue : (int)skipLong;
+
+        var totalCount = await countQuery.CountAsync(cancellationToken).ConfigureAwait(false);
         var items = await query
             .Skip(skip)
             .Take(pageSize)
