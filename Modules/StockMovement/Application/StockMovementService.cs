@@ -38,19 +38,45 @@ public sealed class StockMovementService(
 
     public async Task<PagedResponse<StockMovementGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
-        var search = request.Search?.Trim();
         var entries = Entries.Query();
         var operations = Operations.Query();
-        var filteredOperations = operations.Where(x => string.IsNullOrWhiteSpace(search)
-            || x.OperationCode.ToString().Contains(search) || x.OperationType.Contains(search)
-            || (x.ReferenceNo != null && x.ReferenceNo.Contains(search)) || (x.Reason != null && x.Reason.Contains(search)));
-        var query = filteredOperations
-            .Select(x => new StockMovementGridRow(x.Id, x.OperationCode, x.OperationType,
-                operations.Any(reversal => reversal.ReversalOfOperationId == x.Id) ? StockMovementStatuses.Reversed : x.Status, x.ReferenceType, x.ReferenceNo,
-                x.OccurredAt, entries.Count(e => e.OperationId == x.Id),
-                entries.Where(e => e.OperationId == x.Id && e.QuantityDelta > 0).Sum(e => (decimal?)e.QuantityDelta) ?? 0,
-                -(entries.Where(e => e.OperationId == x.Id && e.QuantityDelta < 0).Sum(e => (decimal?)e.QuantityDelta) ?? 0),
-                x.Reason, x.ReversalOfOperationId, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate))
+        var query = operations
+            .Select(x => new StockMovementGridRow
+            {
+                Id = x.Id,
+                OperationCode = x.OperationCode,
+                OperationType = x.OperationType,
+                Status = operations.Any(reversal => reversal.ReversalOfOperationId == x.Id)
+                    ? StockMovementStatuses.Reversed
+                    : x.Status,
+                ReferenceType = x.ReferenceType,
+                ReferenceNo = x.ReferenceNo,
+                OccurredAt = x.OccurredAt,
+                EntryCount = entries.Count(e => e.OperationId == x.Id),
+                InboundQuantity = entries.Where(e => e.OperationId == x.Id && e.QuantityDelta > 0)
+                    .Sum(e => (decimal?)e.QuantityDelta) ?? 0,
+                OutboundQuantity = -(entries.Where(e => e.OperationId == x.Id && e.QuantityDelta < 0)
+                    .Sum(e => (decimal?)e.QuantityDelta) ?? 0),
+                Reason = x.Reason,
+                ReversalOfOperationId = x.ReversalOfOperationId,
+                CreatedBy = x.CreatedBy,
+                CreatedDate = x.CreatedDate,
+                UpdatedBy = x.UpdatedBy,
+                UpdatedDate = x.UpdatedDate,
+                ReferenceSearchText = (x.ReferenceType ?? "") + " / " + (x.ReferenceNo ?? "")
+            })
+            .ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["id"] = nameof(StockMovementGridRow.Id),
+                ["operationCode"] = nameof(StockMovementGridRow.OperationCode),
+                ["operationType"] = nameof(StockMovementGridRow.OperationType),
+                ["referenceNo"] = nameof(StockMovementGridRow.ReferenceSearchText),
+                ["entryCount"] = nameof(StockMovementGridRow.EntryCount),
+                ["inboundQuantity"] = nameof(StockMovementGridRow.InboundQuantity),
+                ["outboundQuantity"] = nameof(StockMovementGridRow.OutboundQuantity),
+                ["reason"] = nameof(StockMovementGridRow.Reason)
+            }, ["operationCode", "operationType", "referenceNo", "reason"],
+                AdvancedQueryExtensions.TurkishCaseInsensitiveSearchCollation)
             .ApplyAdvancedFilters(request)
             .ApplySort(request, nameof(StockMovementGridRow.OccurredAt));
         return await query.ToPagedResponseAsync(request, cancellationToken);

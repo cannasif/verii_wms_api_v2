@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using verii_wms_api_v2.Shared;
 
 namespace verii_wms_api_v2.Modules.StockMovement.Application;
@@ -31,10 +32,26 @@ public sealed record PostStockMovementRequest(
 public sealed record ReverseStockMovementRequest(string IdempotencyKey, string Reason, DateTime? OccurredAt);
 public sealed record StockMovementPostResult(long OperationId, Guid OperationCode, bool IsReplay, int EntryCount);
 
-public sealed record StockMovementGridRow(
-    long Id, Guid OperationCode, string OperationType, string Status, string? ReferenceType, string? ReferenceNo,
-    DateTime OccurredAt, int EntryCount, decimal InboundQuantity, decimal OutboundQuantity, string? Reason,
-    long? ReversalOfOperationId, long? CreatedBy, DateTime? CreatedDate, long? UpdatedBy, DateTime? UpdatedDate);
+public sealed record StockMovementGridRow
+{
+    public long Id { get; init; }
+    public Guid OperationCode { get; init; }
+    public string OperationType { get; init; } = string.Empty;
+    public string Status { get; init; } = string.Empty;
+    public string? ReferenceType { get; init; }
+    public string? ReferenceNo { get; init; }
+    public DateTime OccurredAt { get; init; }
+    public int EntryCount { get; init; }
+    public decimal InboundQuantity { get; init; }
+    public decimal OutboundQuantity { get; init; }
+    public string? Reason { get; init; }
+    public long? ReversalOfOperationId { get; init; }
+    public long? CreatedBy { get; init; }
+    public DateTime? CreatedDate { get; init; }
+    public long? UpdatedBy { get; init; }
+    public DateTime? UpdatedDate { get; init; }
+    [JsonIgnore] public string ReferenceSearchText { get; init; } = string.Empty;
+}
 
 public sealed record StockMovementEntryRow(
     long Id, int LineNo, long StockId, string StockCode, string StockName, long? YapCodeId, string? YapCode, long WarehouseId, int WarehouseCode,
