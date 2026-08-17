@@ -25,6 +25,13 @@ public sealed class IncomingInvoiceService(
     IIncomingInvoiceOcrClient ocrClient,
     IAuditLogWriter audit) : IIncomingInvoiceService
 {
+    private static readonly IReadOnlyDictionary<string,string> GridSearchColumns=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["id"]=nameof(IncomingInvoiceGridRow.Id),["invoiceNo"]=nameof(IncomingInvoiceGridRow.InvoiceSearchText),
+        ["supplierVknOrTckn"]=nameof(IncomingInvoiceGridRow.SupplierVknOrTckn),["supplierName"]=nameof(IncomingInvoiceGridRow.SupplierName),
+        ["payableAmount"]=nameof(IncomingInvoiceGridRow.PayableSearchText),["lineCount"]=nameof(IncomingInvoiceGridRow.LineProgressSearchText)
+    };
+    private static readonly string[] DefaultGridSearchColumns=["invoiceNo","supplierVknOrTckn","supplierName"];
     private IGenericRepository<IncomingInvoiceHeader> Headers =>
         unitOfWork.Repository<IncomingInvoiceHeader>();
 
@@ -226,8 +233,11 @@ public sealed class IncomingInvoiceService(
                 documents.Any(document => document.IncomingInvoiceId == x.Id
                     && document.Format == IncomingInvoiceDocumentFormat.Pdf),
                 links.Count(link => link.IncomingInvoiceId == x.Id),
-                x.ImportedAtUtc, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate, x.RowVersion));
-        return await query.ApplyAdvancedFilters(request)
+                x.ImportedAtUtc, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate, x.RowVersion,
+                x.InvoiceNo+" "+x.Uuid.ToString()+" "+(x.CaptureSource==IncomingInvoiceCaptureSource.Ocr?"OCR ön inceleme OCR preview":""),
+                x.PayableAmount+" "+x.CurrencyCode,
+                lines.Count(line=>line.IncomingInvoiceId==x.Id&&line.StockId!=null)+"/"+lines.Count(line=>line.IncomingInvoiceId==x.Id)));
+        return await query.ApplySearch(request,GridSearchColumns,DefaultGridSearchColumns).ApplyAdvancedFilters(request)
             .ApplySort(request, nameof(IncomingInvoiceGridRow.ImportedAtUtc))
             .ToPagedResponseAsync(request, ct);
     }

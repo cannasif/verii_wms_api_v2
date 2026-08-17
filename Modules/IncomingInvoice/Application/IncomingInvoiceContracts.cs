@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using verii_wms_api_v2.Modules.IncomingInvoice.Domain;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Shared;
@@ -15,7 +16,8 @@ public sealed record ELogoConnectionRow(
     long Id, string BranchCode, string Key, string DisplayName, string Vkn, string Username,
     string Source, string? EndpointUrl, string? ApplicationName, string? Version, int? TimeoutSeconds,
     bool IsActive, bool IsDefault, bool IsConfigured, string? Description,
-    long? CreatedBy, DateTime? CreatedDate, long? UpdatedBy, DateTime? UpdatedDate, byte[] RowVersion);
+    long? CreatedBy, DateTime? CreatedDate, long? UpdatedBy, DateTime? UpdatedDate, byte[] RowVersion,
+    [property: JsonIgnore] string? DisplaySearchText=null);
 
 public sealed record SaveELogoConnectionRequest(
     string BranchCode, string Key, string DisplayName, string Vkn, string Username, string? Password,
@@ -34,7 +36,10 @@ public sealed record IncomingInvoiceGridRow(
     string CurrencyCode, decimal PayableAmount, int LineCount, int MatchedLineCount,
     IncomingInvoiceArchiveStatus ArchiveStatus, IncomingInvoiceValidationStatus ValidationStatus,
     bool HasUbl, bool HasPdf, int GoodsReceiptCount, DateTimeOffset ImportedAtUtc,
-    long? CreatedBy, DateTime? CreatedDate, long? UpdatedBy, DateTime? UpdatedDate, byte[] RowVersion);
+    long? CreatedBy, DateTime? CreatedDate, long? UpdatedBy, DateTime? UpdatedDate, byte[] RowVersion,
+    [property: JsonIgnore] string? InvoiceSearchText=null,
+    [property: JsonIgnore] string? PayableSearchText=null,
+    [property: JsonIgnore] string? LineProgressSearchText=null);
 
 public sealed record IncomingInvoiceLineRow(
     long Id, int LineNo, string ExternalLineId, string StockCode, string? BuyerStockCode,
