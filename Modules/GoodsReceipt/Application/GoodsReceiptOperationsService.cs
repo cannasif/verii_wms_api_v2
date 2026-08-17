@@ -47,6 +47,20 @@ public sealed class GoodsReceiptOperationsService(
     IGoodsReceiptOrderSource orderSource,
     IQualityWarehouseRoutingResolver? qualityWarehouseRoutingResolver = null) : IGoodsReceiptOperationsService
 {
+    private static readonly IReadOnlyDictionary<string, string> GridSearchColumnMapping =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["id"] = nameof(GoodsReceiptGridRow.Id),
+            ["documentNo"] = nameof(GoodsReceiptGridRow.DocumentNo),
+            ["waybillNo"] = nameof(GoodsReceiptGridRow.WaybillSearchText),
+            ["supplierName"] = nameof(GoodsReceiptGridRow.SupplierSearchText),
+            ["warehouseName"] = nameof(GoodsReceiptGridRow.WarehouseSearchText),
+            ["createdBy"] = nameof(GoodsReceiptGridRow.CreatedBySearchText),
+            ["updatedBy"] = nameof(GoodsReceiptGridRow.UpdatedBySearchText)
+        };
+    private static readonly string[] DefaultGridSearchColumns =
+        ["documentNo", "waybillNo", "supplierName", "warehouseName"];
+
     private IGenericRepository<GoodsReceiptHeader> Headers => unitOfWork.Repository<GoodsReceiptHeader>();
     private IGenericRepository<GoodsReceiptExecution> Executions => unitOfWork.Repository<GoodsReceiptExecution>();
 
@@ -108,18 +122,30 @@ public sealed class GoodsReceiptOperationsService(
 
     public async Task<PagedResponse<GoodsReceiptGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
-        var search = request.Search?.Trim();
         var headers = Headers.Query();
         var warehouses = unitOfWork.Repository<WarehouseEntity>().Query(ignoreQueryFilters: true);
         var lines = unitOfWork.Repository<GoodsReceiptLine>().Query();
+        var users = unitOfWork.Repository<User>().Query();
+        var userDetails = unitOfWork.Repository<UserDetail>().Query();
         var joined = from h in headers
                      join w in warehouses on h.TargetWarehouseId equals w.Id
-                     where string.IsNullOrWhiteSpace(search) || h.DocumentNo.Contains(search)
-                         || (h.SupplierCodeSnapshot != null && h.SupplierCodeSnapshot.Contains(search))
-                         || (h.SupplierNameSnapshot != null && h.SupplierNameSnapshot.Contains(search))
-                         || (h.WaybillNo != null && h.WaybillNo.Contains(search))
-                         || (h.ElectronicWaybillNo != null && h.ElectronicWaybillNo.Contains(search))
-                     select new { Header = h, Warehouse = w };
+                     join createdUser in users on h.CreatedBy equals (long?)createdUser.Id into createdUsers
+                     from createdUser in createdUsers.DefaultIfEmpty()
+                     join createdDetail in userDetails on h.CreatedBy equals (long?)createdDetail.UserId into createdDetails
+                     from createdDetail in createdDetails.DefaultIfEmpty()
+                     join updatedUser in users on h.UpdatedBy equals (long?)updatedUser.Id into updatedUsers
+                     from updatedUser in updatedUsers.DefaultIfEmpty()
+                     join updatedDetail in userDetails on h.UpdatedBy equals (long?)updatedDetail.UserId into updatedDetails
+                     from updatedDetail in updatedDetails.DefaultIfEmpty()
+                     select new
+                     {
+                         Header = h,
+                         Warehouse = w,
+                         CreatedUser = createdUser,
+                         CreatedDetail = createdDetail,
+                         UpdatedUser = updatedUser,
+                         UpdatedDetail = updatedDetail
+                     };
         var query = joined.Select(x => new GoodsReceiptGridRow(x.Header.Id, x.Header.BranchCode, x.Header.DocumentNo, x.Header.DocumentDate,
             x.Header.ReceiptType, x.Header.InitiationMode, x.Header.ProcessType, x.Header.Status, x.Header.ApprovalStatus,
             x.Header.QualityStatus, x.Header.PutawayStatus, x.Header.ErpIntegrationStatus, x.Header.SupplierId, x.Header.SupplierCodeSnapshot,
@@ -130,8 +156,18 @@ public sealed class GoodsReceiptOperationsService(
             x.Header.Priority, x.Header.PlannedArrivalAtUtc, x.Header.ReceivedAtUtc,
             x.Header.CreatedBy, x.Header.CreatedDate, x.Header.UpdatedBy, x.Header.UpdatedDate,
             null, null,
-            x.Header.RowVersion));
+            x.Header.RowVersion,
+            (x.Header.WaybillNo ?? "") + " " + (x.Header.ElectronicWaybillNo ?? ""),
+            (x.Header.SupplierNameSnapshot ?? "") + " " + (x.Header.SupplierCodeSnapshot ?? ""),
+            x.Warehouse.WarehouseName + " " + x.Warehouse.WarehouseCode,
+            (x.Header.CreatedBy == null ? "Sistem System" : x.Header.CreatedBy.GetValueOrDefault().ToString()) + " "
+                + (x.CreatedUser == null ? "" : x.CreatedUser.Username + " " + x.CreatedUser.Email) + " "
+                + (x.CreatedDetail == null ? "" : x.CreatedDetail.FirstName + " " + x.CreatedDetail.LastName),
+            (x.Header.UpdatedBy == null ? "Sistem System" : x.Header.UpdatedBy.GetValueOrDefault().ToString()) + " "
+                + (x.UpdatedUser == null ? "" : x.UpdatedUser.Username + " " + x.UpdatedUser.Email) + " "
+                + (x.UpdatedDetail == null ? "" : x.UpdatedDetail.FirstName + " " + x.UpdatedDetail.LastName)));
         var page = await query
+            .ApplySearch(request, GridSearchColumnMapping, DefaultGridSearchColumns)
             .ApplyAdvancedFilters(request)
             .ApplySort(request, nameof(GoodsReceiptGridRow.CreatedDate))
             .ToPagedResponseAsync(request, cancellationToken);

@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Quality.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
@@ -60,7 +61,12 @@ public sealed record GoodsReceiptGridRow(
     DateTimeOffset? PlannedArrivalAtUtc, DateTimeOffset? ReceivedAtUtc,
     long? CreatedBy, DateTime? CreatedDate, long? UpdatedBy, DateTime? UpdatedDate,
     string? OrderNumbers, string? ProjectCodes,
-    byte[] RowVersion);
+    byte[] RowVersion,
+    [property: JsonIgnore] string? WaybillSearchText = null,
+    [property: JsonIgnore] string? SupplierSearchText = null,
+    [property: JsonIgnore] string? WarehouseSearchText = null,
+    [property: JsonIgnore] string? CreatedBySearchText = null,
+    [property: JsonIgnore] string? UpdatedBySearchText = null);
 
 public sealed record GoodsReceiptDetailLine(
     long Id, int LineNo, long StockId, string StockCode, string? StockName,
