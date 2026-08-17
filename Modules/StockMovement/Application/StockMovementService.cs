@@ -26,6 +26,27 @@ public sealed class StockMovementService(
     IStockBalanceService balanceProjection,
     IStockTrackingPolicyResolver trackingPolicyResolver) : IStockMovementService
 {
+    private static readonly IReadOnlySet<string> EntrySummaryColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "entryCount", "inboundQuantity", "outboundQuantity"
+    };
+    private static readonly IReadOnlySet<string> ReversalSummaryColumns = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "status"
+    };
+    private static readonly IReadOnlyDictionary<string, string> GridSearchColumns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["id"] = nameof(StockMovementGridProjection.Id),
+        ["operationCode"] = nameof(StockMovementGridProjection.OperationCode),
+        ["operationType"] = nameof(StockMovementGridProjection.OperationType),
+        ["referenceNo"] = nameof(StockMovementGridProjection.ReferenceSearchText),
+        ["entryCount"] = nameof(StockMovementGridProjection.EntryCount),
+        ["inboundQuantity"] = nameof(StockMovementGridProjection.InboundQuantity),
+        ["outboundQuantity"] = nameof(StockMovementGridProjection.OutboundQuantity),
+        ["reason"] = nameof(StockMovementGridProjection.Reason)
+    };
+    private static readonly string[] DefaultGridSearchColumns = ["operationCode", "operationType", "referenceNo", "reason"];
+
     private IGenericRepository<StockMovementOperation> Operations => unitOfWork.Repository<StockMovementOperation>();
     private IGenericRepository<StockMovementEntry> Entries => unitOfWork.Repository<StockMovementEntry>();
     private IGenericRepository<StockEntity> Stocks => unitOfWork.Repository<StockEntity>();
@@ -40,46 +61,202 @@ public sealed class StockMovementService(
     {
         var entries = Entries.Query();
         var operations = Operations.Query();
-        var query = operations
-            .Select(x => new StockMovementGridRow
-            {
-                Id = x.Id,
-                OperationCode = x.OperationCode,
-                OperationType = x.OperationType,
-                Status = operations.Any(reversal => reversal.ReversalOfOperationId == x.Id)
-                    ? StockMovementStatuses.Reversed
-                    : x.Status,
-                ReferenceType = x.ReferenceType,
-                ReferenceNo = x.ReferenceNo,
-                OccurredAt = x.OccurredAt,
-                EntryCount = entries.Count(e => e.OperationId == x.Id),
-                InboundQuantity = entries.Where(e => e.OperationId == x.Id && e.QuantityDelta > 0)
-                    .Sum(e => (decimal?)e.QuantityDelta) ?? 0,
-                OutboundQuantity = -(entries.Where(e => e.OperationId == x.Id && e.QuantityDelta < 0)
-                    .Sum(e => (decimal?)e.QuantityDelta) ?? 0),
-                Reason = x.Reason,
-                ReversalOfOperationId = x.ReversalOfOperationId,
-                CreatedBy = x.CreatedBy,
-                CreatedDate = x.CreatedDate,
-                UpdatedBy = x.UpdatedBy,
-                UpdatedDate = x.UpdatedDate,
-                ReferenceSearchText = (x.ReferenceType ?? "") + " / " + (x.ReferenceNo ?? "")
-            })
-            .ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
-            {
-                ["id"] = nameof(StockMovementGridRow.Id),
-                ["operationCode"] = nameof(StockMovementGridRow.OperationCode),
-                ["operationType"] = nameof(StockMovementGridRow.OperationType),
-                ["referenceNo"] = nameof(StockMovementGridRow.ReferenceSearchText),
-                ["entryCount"] = nameof(StockMovementGridRow.EntryCount),
-                ["inboundQuantity"] = nameof(StockMovementGridRow.InboundQuantity),
-                ["outboundQuantity"] = nameof(StockMovementGridRow.OutboundQuantity),
-                ["reason"] = nameof(StockMovementGridRow.Reason)
-            }, ["operationCode", "operationType", "referenceNo", "reason"],
+        var query = BuildPagedQuery(request, operations, entries);
+        var countQuery = BuildCountQuery(request, operations, entries);
+        var page = await query.ToPagedResponseAsync(countQuery, request, cancellationToken);
+        if (page.Items.Count == 0) return page;
+
+        var includeEntrySummary = RequiresInMainQuery(request, EntrySummaryColumns);
+        var includeReversalSummary = RequiresInMainQuery(request, ReversalSummaryColumns);
+        if (includeEntrySummary && includeReversalSummary) return page;
+        return new PagedResponse<StockMovementGridRow>
+        {
+            Items = await EnrichGridRowsAsync(page.Items, entries, operations,
+                !includeEntrySummary, !includeReversalSummary, cancellationToken),
+            TotalCount = page.TotalCount,
+            PageNumber = page.PageNumber,
+            PageSize = page.PageSize
+        };
+    }
+
+    internal static IQueryable<StockMovementGridRow> BuildPagedQuery(
+        PagedRequest request,
+        IQueryable<StockMovementOperation> operations,
+        IQueryable<StockMovementEntry> entries)
+    {
+        var rows = BuildGridRows(operations, entries,
+            RequiresInMainQuery(request, EntrySummaryColumns),
+            RequiresInMainQuery(request, ReversalSummaryColumns));
+        rows = rows.ApplySearch(request, GridSearchColumns, DefaultGridSearchColumns,
+            AdvancedQueryExtensions.TurkishCaseInsensitiveSearchCollation)
+            .ApplyAdvancedFilters(request)
+            .ApplySort(request, nameof(StockMovementGridProjection.OccurredAt));
+        return rows.Select(ToGridRow());
+    }
+
+    internal static IQueryable<long> BuildCountQuery(
+        PagedRequest request,
+        IQueryable<StockMovementOperation> operations,
+        IQueryable<StockMovementEntry> entries)
+    {
+        var rows = BuildGridRows(operations, entries,
+            RequiresForCount(request, EntrySummaryColumns),
+            RequiresForCount(request, ReversalSummaryColumns));
+        return rows.ApplySearch(request, GridSearchColumns, DefaultGridSearchColumns,
                 AdvancedQueryExtensions.TurkishCaseInsensitiveSearchCollation)
             .ApplyAdvancedFilters(request)
-            .ApplySort(request, nameof(StockMovementGridRow.OccurredAt));
-        return await query.ToPagedResponseAsync(request, cancellationToken);
+            .Select(x => x.Id);
+    }
+
+    private static IQueryable<StockMovementGridProjection> BuildGridRows(
+        IQueryable<StockMovementOperation> operations,
+        IQueryable<StockMovementEntry> entries,
+        bool includeEntrySummary,
+        bool includeReversalSummary)
+    {
+        IQueryable<StockMovementGridProjection> rows = operations.Select(x => new StockMovementGridProjection
+        {
+            Id = x.Id,
+            OperationCode = x.OperationCode,
+            OperationType = x.OperationType,
+            Status = x.Status,
+            ReferenceType = x.ReferenceType,
+            ReferenceNo = x.ReferenceNo,
+            OccurredAt = x.OccurredAt,
+            Reason = x.Reason,
+            ReversalOfOperationId = x.ReversalOfOperationId,
+            CreatedBy = x.CreatedBy,
+            CreatedDate = x.CreatedDate,
+            UpdatedBy = x.UpdatedBy,
+            UpdatedDate = x.UpdatedDate,
+            ReferenceSearchText = (x.ReferenceType ?? "") + " / " + (x.ReferenceNo ?? "")
+        });
+
+        if (includeEntrySummary)
+        {
+            var totals = entries.GroupBy(x => x.OperationId).Select(groupRows => new
+            {
+                OperationId = groupRows.Key,
+                EntryCount = groupRows.Count(),
+                InboundQuantity = groupRows.Where(x => x.QuantityDelta > 0).Sum(x => (decimal?)x.QuantityDelta) ?? 0,
+                OutboundQuantity = -(groupRows.Where(x => x.QuantityDelta < 0).Sum(x => (decimal?)x.QuantityDelta) ?? 0)
+            });
+            rows = from row in rows
+                   join total in totals on row.Id equals total.OperationId into totalRows
+                   from total in totalRows.DefaultIfEmpty()
+                   select new StockMovementGridProjection
+                   {
+                       Id = row.Id, OperationCode = row.OperationCode, OperationType = row.OperationType, Status = row.Status,
+                       ReferenceType = row.ReferenceType, ReferenceNo = row.ReferenceNo, OccurredAt = row.OccurredAt,
+                       EntryCount = (int?)total.EntryCount ?? 0, InboundQuantity = (decimal?)total.InboundQuantity ?? 0,
+                       OutboundQuantity = (decimal?)total.OutboundQuantity ?? 0, Reason = row.Reason,
+                       ReversalOfOperationId = row.ReversalOfOperationId, CreatedBy = row.CreatedBy, CreatedDate = row.CreatedDate,
+                       UpdatedBy = row.UpdatedBy, UpdatedDate = row.UpdatedDate, ReferenceSearchText = row.ReferenceSearchText
+                   };
+        }
+
+        if (includeReversalSummary)
+        {
+            var reversals = operations.Where(x => x.ReversalOfOperationId.HasValue);
+            rows = from row in rows
+                   join reversal in reversals on (long?)row.Id equals reversal.ReversalOfOperationId into reversalRows
+                   from reversal in reversalRows.DefaultIfEmpty()
+                   select new StockMovementGridProjection
+                   {
+                       Id = row.Id, OperationCode = row.OperationCode, OperationType = row.OperationType,
+                       Status = reversal != null ? StockMovementStatuses.Reversed : row.Status,
+                       ReferenceType = row.ReferenceType, ReferenceNo = row.ReferenceNo, OccurredAt = row.OccurredAt,
+                       EntryCount = row.EntryCount, InboundQuantity = row.InboundQuantity, OutboundQuantity = row.OutboundQuantity,
+                       Reason = row.Reason, ReversalOfOperationId = row.ReversalOfOperationId, CreatedBy = row.CreatedBy,
+                       CreatedDate = row.CreatedDate, UpdatedBy = row.UpdatedBy, UpdatedDate = row.UpdatedDate,
+                       ReferenceSearchText = row.ReferenceSearchText
+                   };
+        }
+
+        return rows;
+    }
+
+    private static bool RequiresForCount(PagedRequest request, IReadOnlySet<string> columns) =>
+        (!string.IsNullOrWhiteSpace(request.EffectiveSearch) && request.SearchFields.Any(columns.Contains))
+        || request.Filters.Any(filter => columns.Contains(filter.Column));
+
+    private static bool RequiresInMainQuery(PagedRequest request, IReadOnlySet<string> columns) =>
+        RequiresForCount(request, columns) || columns.Contains(request.SortBy ?? string.Empty);
+
+    private static async Task<IReadOnlyList<StockMovementGridRow>> EnrichGridRowsAsync(
+        IReadOnlyList<StockMovementGridRow> rows,
+        IQueryable<StockMovementEntry> entries,
+        IQueryable<StockMovementOperation> operations,
+        bool enrichEntrySummary,
+        bool enrichReversalSummary,
+        CancellationToken cancellationToken)
+    {
+        var ids = rows.Select(x => x.Id).ToArray();
+        var totals = enrichEntrySummary
+            ? await entries.Where(x => ids.Contains(x.OperationId)).GroupBy(x => x.OperationId).Select(groupRows => new
+            {
+                OperationId = groupRows.Key,
+                EntryCount = groupRows.Count(),
+                InboundQuantity = groupRows.Where(x => x.QuantityDelta > 0).Sum(x => (decimal?)x.QuantityDelta) ?? 0,
+                OutboundQuantity = -(groupRows.Where(x => x.QuantityDelta < 0).Sum(x => (decimal?)x.QuantityDelta) ?? 0)
+            }).ToDictionaryAsync(x => x.OperationId, cancellationToken)
+            : null;
+        var reversedIds = enrichReversalSummary
+            ? await operations.Where(x => x.ReversalOfOperationId.HasValue && ids.Contains(x.ReversalOfOperationId.Value))
+                .Select(x => x.ReversalOfOperationId!.Value).ToHashSetAsync(cancellationToken)
+            : null;
+
+        return rows.Select(row =>
+        {
+            var entryCount = row.EntryCount;
+            var inboundQuantity = row.InboundQuantity;
+            var outboundQuantity = row.OutboundQuantity;
+            if (totals is not null && totals.TryGetValue(row.Id, out var total))
+            {
+                entryCount = total.EntryCount;
+                inboundQuantity = total.InboundQuantity;
+                outboundQuantity = total.OutboundQuantity;
+            }
+            return row with
+            {
+                EntryCount = entryCount,
+                InboundQuantity = inboundQuantity,
+                OutboundQuantity = outboundQuantity,
+                Status = reversedIds?.Contains(row.Id) == true ? StockMovementStatuses.Reversed : row.Status
+            };
+        }).ToArray();
+    }
+
+    private static System.Linq.Expressions.Expression<Func<StockMovementGridProjection, StockMovementGridRow>> ToGridRow() => row =>
+        new StockMovementGridRow
+        {
+            Id = row.Id, OperationCode = row.OperationCode, OperationType = row.OperationType, Status = row.Status,
+            ReferenceType = row.ReferenceType, ReferenceNo = row.ReferenceNo, OccurredAt = row.OccurredAt,
+            EntryCount = row.EntryCount, InboundQuantity = row.InboundQuantity, OutboundQuantity = row.OutboundQuantity,
+            Reason = row.Reason, ReversalOfOperationId = row.ReversalOfOperationId, CreatedBy = row.CreatedBy,
+            CreatedDate = row.CreatedDate, UpdatedBy = row.UpdatedBy, UpdatedDate = row.UpdatedDate,
+            ReferenceSearchText = row.ReferenceSearchText
+        };
+
+    private sealed class StockMovementGridProjection
+    {
+        public long Id { get; init; }
+        public Guid OperationCode { get; init; }
+        public string OperationType { get; init; } = string.Empty;
+        public string Status { get; init; } = string.Empty;
+        public string? ReferenceType { get; init; }
+        public string? ReferenceNo { get; init; }
+        public DateTime OccurredAt { get; init; }
+        public int EntryCount { get; init; }
+        public decimal InboundQuantity { get; init; }
+        public decimal OutboundQuantity { get; init; }
+        public string? Reason { get; init; }
+        public long? ReversalOfOperationId { get; init; }
+        public long? CreatedBy { get; init; }
+        public DateTime? CreatedDate { get; init; }
+        public long? UpdatedBy { get; init; }
+        public DateTime? UpdatedDate { get; init; }
+        public string ReferenceSearchText { get; init; } = string.Empty;
     }
 
     public async Task<StockMovementDetail> GetByIdAsync(long id, CancellationToken cancellationToken = default)
