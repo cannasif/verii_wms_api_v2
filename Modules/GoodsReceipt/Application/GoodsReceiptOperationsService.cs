@@ -122,9 +122,11 @@ public sealed class GoodsReceiptOperationsService(
 
     public async Task<PagedResponse<GoodsReceiptGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
-        var headers = Headers.Query();
+        // IgnoreQueryFilters on the warehouse root applies to the composed query,
+        // so keep the business-owned roots explicitly scoped to active records.
+        var headers = Headers.Query().Where(x => !x.IsDeleted);
         var warehouses = unitOfWork.Repository<WarehouseEntity>().Query(ignoreQueryFilters: true);
-        var lines = unitOfWork.Repository<GoodsReceiptLine>().Query();
+        var lines = unitOfWork.Repository<GoodsReceiptLine>().Query().Where(x => !x.IsDeleted);
         var users = unitOfWork.Repository<User>().Query();
         var userDetails = unitOfWork.Repository<UserDetail>().Query();
         var joined = from h in headers
