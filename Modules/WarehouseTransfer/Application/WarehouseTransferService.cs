@@ -22,6 +22,12 @@ namespace verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferPolicyService policyService,IDocumentNumberAllocator numberAllocator,IAuditLogWriter audit,IWarehouseTransferReservationService reservations,IStockTrackingPolicyResolver trackingPolicyResolver):IWarehouseTransferService
 {
     private IGenericRepository<WarehouseTransferHeader> Headers=>uow.Repository<WarehouseTransferHeader>();
+    private static readonly HashSet<string> LineSummaryColumns=new(StringComparer.OrdinalIgnoreCase)
+    {
+        nameof(WarehouseTransferGridRow.LineCount),nameof(WarehouseTransferGridRow.RequestedQuantity),
+        nameof(WarehouseTransferGridRow.PickedQuantity),nameof(WarehouseTransferGridRow.ShippedQuantity),
+        nameof(WarehouseTransferGridRow.ReceivedQuantity),nameof(WarehouseTransferGridRow.PutawayQuantity)
+    };
 
     public Task<CreateWarehouseTransferDraftResult> CreateDraftAsync(CreateWarehouseTransferDraftRequest request,long actor,CancellationToken ct=default) =>
         CreateDraftCoreAsync(request, null, actor, ct);
@@ -201,49 +207,85 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
         CancellationToken ct=default)
     {
         if(contexts.Count==0)throw AppException.BadRequest("En az bir transfer bağlamı seçilmelidir.");
-        var search=request.Search?.Trim();var warehouses=uow.Repository<WarehouseEntity>().Query(ignoreQueryFilters:true);var lines=uow.Repository<WarehouseTransferLine>().Query();
-        var baseQuery=from h in Headers.Query()
-            join sw in warehouses on h.SourceWarehouseId equals sw.Id
-            join tw in warehouses on h.TargetWarehouseId equals tw.Id
-            where contexts.Contains(h.BusinessContext)
-                && (string.IsNullOrWhiteSpace(search)||h.DocumentNo.Contains(search)||(h.ExternalReferenceNo!=null&&h.ExternalReferenceNo.Contains(search))
+        var headers=Headers.Query();
+        var warehouses=uow.Repository<WarehouseEntity>().Query(ignoreQueryFilters:true);
+        var lines=uow.Repository<WarehouseTransferLine>().Query();
+        var query=BuildPagedQuery(request,contexts,headers,warehouses,lines);
+        var countQuery=BuildCountQuery(request,contexts,headers,warehouses,lines);
+        var page=await query.ToPagedResponseAsync(countQuery,request,ct);
+        if(RequiresLineSummaryInMainQuery(request)||page.Items.Count==0)return page;
+        return new PagedResponse<WarehouseTransferGridRow>{Items=await EnrichLineSummaryAsync(page.Items,lines,ct),TotalCount=page.TotalCount,PageNumber=page.PageNumber,PageSize=page.PageSize};
+    }
+
+    internal static IQueryable<WarehouseTransferGridRow> BuildPagedQuery(PagedRequest request,IReadOnlyCollection<WarehouseTransferBusinessContext> contexts,
+        IQueryable<WarehouseTransferHeader> headers,IQueryable<WarehouseEntity> warehouses,IQueryable<WarehouseTransferLine> lines)
+    {
+        var rows=BuildGridRows(request,contexts,headers,warehouses,lines,RequiresLineSummaryInMainQuery(request));
+        if(request.HasExplicitSearchFields)rows=rows.ApplySearch(request);
+        return rows.ApplyAdvancedFilters(request).ApplySort(request,nameof(WarehouseTransferGridRow.CreatedDate))
+            .Select(x=>new WarehouseTransferGridRow(x.Id,x.BranchCode,x.DocumentNo,x.DocumentDate,x.BusinessContext,x.InitiationMode,x.ProcessType,x.Status,x.ApprovalStatus,x.ErpIntegrationStatus,
+                x.SourceWarehouseId,x.SourceWarehouseCode,x.SourceWarehouseName,x.TargetWarehouseId,x.TargetWarehouseCode,x.TargetWarehouseName,x.LineCount,x.RequestedQuantity,
+                x.PickedQuantity,x.ShippedQuantity,x.ReceivedQuantity,x.PutawayQuantity,x.Priority,x.PlannedDispatchAtUtc,x.PlannedArrivalAtUtc,x.CreatedBy,x.CreatedDate,x.UpdatedBy,x.UpdatedDate));
+    }
+
+    internal static IQueryable<long> BuildCountQuery(PagedRequest request,IReadOnlyCollection<WarehouseTransferBusinessContext> contexts,
+        IQueryable<WarehouseTransferHeader> headers,IQueryable<WarehouseEntity> warehouses,IQueryable<WarehouseTransferLine> lines)
+    {
+        var rows=BuildGridRows(request,contexts,headers,warehouses,lines,RequiresLineSummaryForCount(request));
+        if(request.HasExplicitSearchFields)rows=rows.ApplySearch(request);
+        return rows.ApplyAdvancedFilters(request).Select(x=>x.Id);
+    }
+
+    private static IQueryable<WarehouseTransferGridProjection> BuildGridRows(PagedRequest request,IReadOnlyCollection<WarehouseTransferBusinessContext> contexts,
+        IQueryable<WarehouseTransferHeader> headers,IQueryable<WarehouseEntity> warehouses,IQueryable<WarehouseTransferLine> lines,bool includeLineSummary)
+    {
+        var search=request.Search?.Trim();
+        var baseRows=from h in headers join sw in warehouses on h.SourceWarehouseId equals sw.Id join tw in warehouses on h.TargetWarehouseId equals tw.Id
+            where contexts.Contains(h.BusinessContext)&&(string.IsNullOrWhiteSpace(search)||h.DocumentNo.Contains(search)||(h.ExternalReferenceNo!=null&&h.ExternalReferenceNo.Contains(search))
                 ||sw.WarehouseName.Contains(search)||tw.WarehouseName.Contains(search)||h.BranchCode.Contains(search))
-            select new {Header=h,Source=sw,Target=tw};
-        var desc=string.Equals(request.SortDirection,"desc",StringComparison.OrdinalIgnoreCase);
-        var sortBy=request.SortBy?.Trim();
-        var sorted=sortBy?.ToLowerInvariant() switch{
-            "id"=>desc?baseQuery.OrderByDescending(x=>x.Header.Id):baseQuery.OrderBy(x=>x.Header.Id),
-            "documentno"=>desc?baseQuery.OrderByDescending(x=>x.Header.DocumentNo):baseQuery.OrderBy(x=>x.Header.DocumentNo),
-            "documentdate"=>desc?baseQuery.OrderByDescending(x=>x.Header.DocumentDate):baseQuery.OrderBy(x=>x.Header.DocumentDate),
-            "sourcewarehousecode"=>desc?baseQuery.OrderByDescending(x=>x.Source.WarehouseCode):baseQuery.OrderBy(x=>x.Source.WarehouseCode),
-            "targetwarehousecode"=>desc?baseQuery.OrderByDescending(x=>x.Target.WarehouseCode):baseQuery.OrderBy(x=>x.Target.WarehouseCode),
-            "linecount"=>desc?baseQuery.OrderByDescending(x=>lines.Count(l=>l.WtHeaderId==x.Header.Id)):baseQuery.OrderBy(x=>lines.Count(l=>l.WtHeaderId==x.Header.Id)),
-            "requestedquantity"=>desc?baseQuery.OrderByDescending(x=>lines.Where(l=>l.WtHeaderId==x.Header.Id).Sum(l=>(decimal?)l.RequestedQuantity)??0):baseQuery.OrderBy(x=>lines.Where(l=>l.WtHeaderId==x.Header.Id).Sum(l=>(decimal?)l.RequestedQuantity)??0),
-            "pickedquantity"=>desc?baseQuery.OrderByDescending(x=>lines.Where(l=>l.WtHeaderId==x.Header.Id).Sum(l=>(decimal?)l.PickedQuantity)??0):baseQuery.OrderBy(x=>lines.Where(l=>l.WtHeaderId==x.Header.Id).Sum(l=>(decimal?)l.PickedQuantity)??0),
-            "shippedquantity"=>desc?baseQuery.OrderByDescending(x=>lines.Where(l=>l.WtHeaderId==x.Header.Id).Sum(l=>(decimal?)l.ShippedQuantity)??0):baseQuery.OrderBy(x=>lines.Where(l=>l.WtHeaderId==x.Header.Id).Sum(l=>(decimal?)l.ShippedQuantity)??0),
-            "receivedquantity"=>desc?baseQuery.OrderByDescending(x=>lines.Where(l=>l.WtHeaderId==x.Header.Id).Sum(l=>(decimal?)l.ReceivedQuantity)??0):baseQuery.OrderBy(x=>lines.Where(l=>l.WtHeaderId==x.Header.Id).Sum(l=>(decimal?)l.ReceivedQuantity)??0),
-            "putawayquantity"=>desc?baseQuery.OrderByDescending(x=>lines.Where(l=>l.WtHeaderId==x.Header.Id).Sum(l=>(decimal?)l.PutawayQuantity)??0):baseQuery.OrderBy(x=>lines.Where(l=>l.WtHeaderId==x.Header.Id).Sum(l=>(decimal?)l.PutawayQuantity)??0),
-            "status"=>desc?baseQuery.OrderByDescending(x=>x.Header.Status):baseQuery.OrderBy(x=>x.Header.Status),
-            "priority"=>desc?baseQuery.OrderByDescending(x=>x.Header.Priority):baseQuery.OrderBy(x=>x.Header.Priority),
-            "planneddispatchatutc"=>desc?baseQuery.OrderByDescending(x=>x.Header.PlannedDispatchAtUtc):baseQuery.OrderBy(x=>x.Header.PlannedDispatchAtUtc),
-            "plannedarrivalatutc"=>desc?baseQuery.OrderByDescending(x=>x.Header.PlannedArrivalAtUtc):baseQuery.OrderBy(x=>x.Header.PlannedArrivalAtUtc),
-            "createdby"=>desc?baseQuery.OrderByDescending(x=>x.Header.CreatedBy):baseQuery.OrderBy(x=>x.Header.CreatedBy),
-            "updatedby"=>desc?baseQuery.OrderByDescending(x=>x.Header.UpdatedBy):baseQuery.OrderBy(x=>x.Header.UpdatedBy),
-            "updateddate"=>desc?baseQuery.OrderByDescending(x=>x.Header.UpdatedDate):baseQuery.OrderBy(x=>x.Header.UpdatedDate),
-            _=>desc?baseQuery.OrderByDescending(x=>x.Header.CreatedDate):baseQuery.OrderBy(x=>x.Header.CreatedDate)
-        };
-        var stableSorted=desc?sorted.ThenByDescending(x=>x.Header.Id):sorted.ThenBy(x=>x.Header.Id);
-        var query=from item in stableSorted
-            let h=item.Header
-            let sw=item.Source
-            let tw=item.Target
-            select new WarehouseTransferGridRow(h.Id,h.BranchCode,h.DocumentNo,h.DocumentDate,h.BusinessContext,h.InitiationMode,h.ProcessType,h.Status,h.ApprovalStatus,h.ErpIntegrationStatus,
-                h.SourceWarehouseId,sw.WarehouseCode,sw.WarehouseName,h.TargetWarehouseId,tw.WarehouseCode,tw.WarehouseName,
-                lines.Count(x=>x.WtHeaderId==h.Id),lines.Where(x=>x.WtHeaderId==h.Id).Sum(x=>(decimal?)x.RequestedQuantity)??0,
-                lines.Where(x=>x.WtHeaderId==h.Id).Sum(x=>(decimal?)x.PickedQuantity)??0,lines.Where(x=>x.WtHeaderId==h.Id).Sum(x=>(decimal?)x.ShippedQuantity)??0,
-                lines.Where(x=>x.WtHeaderId==h.Id).Sum(x=>(decimal?)x.ReceivedQuantity)??0,lines.Where(x=>x.WtHeaderId==h.Id).Sum(x=>(decimal?)x.PutawayQuantity)??0,
-                h.Priority,h.PlannedDispatchAtUtc,h.PlannedArrivalAtUtc,h.CreatedBy,h.CreatedDate,h.UpdatedBy,h.UpdatedDate);
-        return await query.ApplyAdvancedFilters(request).ToPagedResponseAsync(request,ct);
+            select new{Header=h,Source=sw,Target=tw};
+        if(!includeLineSummary)return baseRows.Select(x=>new WarehouseTransferGridProjection{
+            Id=x.Header.Id,BranchCode=x.Header.BranchCode,DocumentNo=x.Header.DocumentNo,DocumentDate=x.Header.DocumentDate,BusinessContext=x.Header.BusinessContext,
+            InitiationMode=x.Header.InitiationMode,ProcessType=x.Header.ProcessType,Status=x.Header.Status,ApprovalStatus=x.Header.ApprovalStatus,ErpIntegrationStatus=x.Header.ErpIntegrationStatus,
+            SourceWarehouseId=x.Header.SourceWarehouseId,SourceWarehouseCode=x.Source.WarehouseCode,SourceWarehouseName=x.Source.WarehouseName,
+            TargetWarehouseId=x.Header.TargetWarehouseId,TargetWarehouseCode=x.Target.WarehouseCode,TargetWarehouseName=x.Target.WarehouseName,Priority=x.Header.Priority,
+            PlannedDispatchAtUtc=x.Header.PlannedDispatchAtUtc,PlannedArrivalAtUtc=x.Header.PlannedArrivalAtUtc,CreatedBy=x.Header.CreatedBy,CreatedDate=x.Header.CreatedDate,
+            UpdatedBy=x.Header.UpdatedBy,UpdatedDate=x.Header.UpdatedDate});
+        var totals=lines.GroupBy(x=>x.WtHeaderId).Select(g=>new{HeaderId=g.Key,LineCount=g.Count(),RequestedQuantity=g.Sum(x=>x.RequestedQuantity),
+            PickedQuantity=g.Sum(x=>x.PickedQuantity),ShippedQuantity=g.Sum(x=>x.ShippedQuantity),ReceivedQuantity=g.Sum(x=>x.ReceivedQuantity),PutawayQuantity=g.Sum(x=>x.PutawayQuantity)});
+        return from x in baseRows join total in totals on x.Header.Id equals total.HeaderId into totalRows from total in totalRows.DefaultIfEmpty()
+            select new WarehouseTransferGridProjection{Id=x.Header.Id,BranchCode=x.Header.BranchCode,DocumentNo=x.Header.DocumentNo,DocumentDate=x.Header.DocumentDate,
+                BusinessContext=x.Header.BusinessContext,InitiationMode=x.Header.InitiationMode,ProcessType=x.Header.ProcessType,Status=x.Header.Status,ApprovalStatus=x.Header.ApprovalStatus,
+                ErpIntegrationStatus=x.Header.ErpIntegrationStatus,SourceWarehouseId=x.Header.SourceWarehouseId,SourceWarehouseCode=x.Source.WarehouseCode,SourceWarehouseName=x.Source.WarehouseName,
+                TargetWarehouseId=x.Header.TargetWarehouseId,TargetWarehouseCode=x.Target.WarehouseCode,TargetWarehouseName=x.Target.WarehouseName,LineCount=(int?)total.LineCount??0,
+                RequestedQuantity=(decimal?)total.RequestedQuantity??0,PickedQuantity=(decimal?)total.PickedQuantity??0,ShippedQuantity=(decimal?)total.ShippedQuantity??0,
+                ReceivedQuantity=(decimal?)total.ReceivedQuantity??0,PutawayQuantity=(decimal?)total.PutawayQuantity??0,Priority=x.Header.Priority,
+                PlannedDispatchAtUtc=x.Header.PlannedDispatchAtUtc,PlannedArrivalAtUtc=x.Header.PlannedArrivalAtUtc,CreatedBy=x.Header.CreatedBy,CreatedDate=x.Header.CreatedDate,
+                UpdatedBy=x.Header.UpdatedBy,UpdatedDate=x.Header.UpdatedDate};
+    }
+
+    private static bool RequiresLineSummaryForCount(PagedRequest request)=>(!string.IsNullOrWhiteSpace(request.EffectiveSearch)&&request.SearchFields.Any(LineSummaryColumns.Contains))
+        ||request.Filters.Any(x=>LineSummaryColumns.Contains(x.Column));
+    private static bool RequiresLineSummaryInMainQuery(PagedRequest request)=>RequiresLineSummaryForCount(request)||LineSummaryColumns.Contains(request.SortBy??string.Empty);
+    private static async Task<IReadOnlyList<WarehouseTransferGridRow>> EnrichLineSummaryAsync(IReadOnlyList<WarehouseTransferGridRow> rows,IQueryable<WarehouseTransferLine> lines,CancellationToken ct)
+    {
+        var ids=rows.Select(x=>x.Id).ToArray();
+        var totals=await lines.Where(x=>ids.Contains(x.WtHeaderId)).GroupBy(x=>x.WtHeaderId).Select(g=>new{HeaderId=g.Key,LineCount=g.Count(),RequestedQuantity=g.Sum(x=>x.RequestedQuantity),
+            PickedQuantity=g.Sum(x=>x.PickedQuantity),ShippedQuantity=g.Sum(x=>x.ShippedQuantity),ReceivedQuantity=g.Sum(x=>x.ReceivedQuantity),PutawayQuantity=g.Sum(x=>x.PutawayQuantity)}).ToDictionaryAsync(x=>x.HeaderId,ct);
+        return rows.Select(row=>totals.TryGetValue(row.Id,out var total)?row with{LineCount=total.LineCount,RequestedQuantity=total.RequestedQuantity,PickedQuantity=total.PickedQuantity,
+            ShippedQuantity=total.ShippedQuantity,ReceivedQuantity=total.ReceivedQuantity,PutawayQuantity=total.PutawayQuantity}:row).ToArray();
+    }
+
+    private sealed class WarehouseTransferGridProjection
+    {
+        public long Id{get;init;} public required string BranchCode{get;init;} public required string DocumentNo{get;init;} public DateOnly DocumentDate{get;init;}
+        public WarehouseTransferBusinessContext BusinessContext{get;init;} public WarehouseTransferInitiationMode InitiationMode{get;init;} public WarehouseTransferProcessType ProcessType{get;init;}
+        public WarehouseTransferStatus Status{get;init;} public OperationApprovalStatus ApprovalStatus{get;init;} public ErpIntegrationStatus ErpIntegrationStatus{get;init;}
+        public long SourceWarehouseId{get;init;} public int SourceWarehouseCode{get;init;} public required string SourceWarehouseName{get;init;}
+        public long TargetWarehouseId{get;init;} public int TargetWarehouseCode{get;init;} public required string TargetWarehouseName{get;init;}
+        public int LineCount{get;init;} public decimal RequestedQuantity{get;init;} public decimal PickedQuantity{get;init;} public decimal ShippedQuantity{get;init;}
+        public decimal ReceivedQuantity{get;init;} public decimal PutawayQuantity{get;init;} public byte Priority{get;init;} public DateTimeOffset? PlannedDispatchAtUtc{get;init;}
+        public DateTimeOffset? PlannedArrivalAtUtc{get;init;} public long? CreatedBy{get;init;} public DateTime? CreatedDate{get;init;} public long? UpdatedBy{get;init;} public DateTime? UpdatedDate{get;init;}
     }
 
     public async Task<WarehouseTransferDetail> GetDetailAsync(long id,CancellationToken ct=default)
