@@ -42,7 +42,7 @@ public sealed class InventoryCountService(
     public async Task<PagedResponse<InventoryCountGridRow>> GetPagedAsync(PagedRequest request, CancellationToken ct = default)
     {
         var search = request.Search?.Trim();
-        var query = BuildGridQuery().Where(x => string.IsNullOrWhiteSpace(search)
+        var query = BuildGridQuery(request).Where(x => string.IsNullOrWhiteSpace(search)
             || x.DocumentNo.Contains(search)
             || x.WarehouseName.Contains(search)
             || x.WarehouseCode.ToString().Contains(search)
@@ -68,7 +68,7 @@ public sealed class InventoryCountService(
 
     public async Task<InventoryCountDetail> GetDetailAsync(long id, bool revealBookQuantity, CancellationToken ct = default)
     {
-        var header = await BuildGridQuery().FirstOrDefaultAsync(x => x.Id == id, ct)
+        var header = await BuildGridQuery(new PagedRequest()).FirstOrDefaultAsync(x => x.Id == id, ct)
             ?? throw AppException.NotFound(Message(InventoryCountMessageKeys.NotFound));
         var entity = await Headers.FindByIdAsync(id, cancellationToken: ct) ?? throw AppException.NotFound(Message(InventoryCountMessageKeys.NotFound));
 
@@ -369,54 +369,96 @@ public sealed class InventoryCountService(
         return PolicyResponse(entity, branch, request.WarehouseId);
     }
 
-    private IQueryable<InventoryCountGridRow> BuildGridQuery() =>
-        from header in Headers.Query()
-        join warehouse in Warehouses.Query() on header.WarehouseId equals warehouse.Id
-        join createdUser in unitOfWork.Repository<User>().Query() on header.CreatedBy equals (long?)createdUser.Id into createdUsers
-        from createdUser in createdUsers.DefaultIfEmpty()
-        join createdDetail in unitOfWork.Repository<UserDetail>().Query() on header.CreatedBy equals (long?)createdDetail.UserId into createdDetails
-        from createdDetail in createdDetails.DefaultIfEmpty()
-        join updatedUser in unitOfWork.Repository<User>().Query() on header.UpdatedBy equals (long?)updatedUser.Id into updatedUsers
-        from updatedUser in updatedUsers.DefaultIfEmpty()
-        join updatedDetail in unitOfWork.Repository<UserDetail>().Query() on header.UpdatedBy equals (long?)updatedDetail.UserId into updatedDetails
-        from updatedDetail in updatedDetails.DefaultIfEmpty()
-        select new InventoryCountGridRow
+    private IQueryable<InventoryCountGridRow> BuildGridQuery(PagedRequest request) =>
+        BuildGridQuery(
+            request,
+            Headers.Query(),
+            Warehouses.Query(),
+            unitOfWork.Repository<User>().Query(),
+            unitOfWork.Repository<UserDetail>().Query());
+
+    internal static IQueryable<InventoryCountGridRow> BuildGridQuery(
+        PagedRequest request,
+        IQueryable<InventoryCountHeader> headers,
+        IQueryable<WarehouseEntity> warehouses,
+        IQueryable<User> users,
+        IQueryable<UserDetail> userDetails)
+    {
+        var sources = from header in headers
+                      join warehouse in warehouses on header.WarehouseId equals warehouse.Id
+                      select new InventoryCountGridSource { Header = header, Warehouse = warehouse };
+        if (RequiresActorSearch(request))
         {
-            Id = header.Id,
-            CountCode = header.CountCode,
-            DocumentNo = header.DocumentNo,
-            BranchCode = header.BranchCode,
-            WarehouseId = header.WarehouseId,
-            WarehouseCode = warehouse.WarehouseCode,
-            WarehouseName = warehouse.WarehouseName,
-            CountType = header.CountType,
-            CountMode = header.CountMode,
-            MovementPolicy = header.MovementPolicy,
-            Status = header.Status,
-            Priority = header.Priority,
-            PlannedStartUtc = header.PlannedStartUtc,
-            PlannedEndUtc = header.PlannedEndUtc,
-            SnapshotAtUtc = header.SnapshotAtUtc,
-            TaskCount = header.TaskCount,
-            CompletedTaskCount = header.CompletedTaskCount,
-            LineCount = header.LineCount,
-            CountedLineCount = header.CountedLineCount,
-            VarianceLineCount = header.VarianceLineCount,
-            Description = header.Description,
-            CreatedBy = header.CreatedBy,
-            CreatedDate = header.CreatedDate,
-            UpdatedBy = header.UpdatedBy,
-            UpdatedDate = header.UpdatedDate,
-            ConcurrencyToken = Convert.ToBase64String(header.RowVersion),
-            TaskProgressSearchText = header.CompletedTaskCount + " " + header.TaskCount,
-            LineProgressSearchText = header.CountedLineCount + " " + header.LineCount,
-            CreatedBySearchText = (header.CreatedBy == null ? "Sistem System" : header.CreatedBy.GetValueOrDefault().ToString()) + " "
-                + (createdUser == null ? "" : createdUser.Username + " " + createdUser.Email) + " "
-                + (createdDetail == null ? "" : createdDetail.FirstName + " " + createdDetail.LastName),
-            UpdatedBySearchText = (header.UpdatedBy == null ? "Sistem System" : header.UpdatedBy.GetValueOrDefault().ToString()) + " "
-                + (updatedUser == null ? "" : updatedUser.Username + " " + updatedUser.Email) + " "
-                + (updatedDetail == null ? "" : updatedDetail.FirstName + " " + updatedDetail.LastName)
-        };
+            sources = from source in sources
+                      join createdUser in users on source.Header.CreatedBy equals (long?)createdUser.Id into createdUsers
+                      from createdUser in createdUsers.DefaultIfEmpty()
+                      join createdDetail in userDetails on source.Header.CreatedBy equals (long?)createdDetail.UserId into createdDetails
+                      from createdDetail in createdDetails.DefaultIfEmpty()
+                      join updatedUser in users on source.Header.UpdatedBy equals (long?)updatedUser.Id into updatedUsers
+                      from updatedUser in updatedUsers.DefaultIfEmpty()
+                      join updatedDetail in userDetails on source.Header.UpdatedBy equals (long?)updatedDetail.UserId into updatedDetails
+                      from updatedDetail in updatedDetails.DefaultIfEmpty()
+                      select new InventoryCountGridSource
+                      {
+                          Header = source.Header,
+                          Warehouse = source.Warehouse,
+                          CreatedBySearchText = (source.Header.CreatedBy == null ? "Sistem System" : source.Header.CreatedBy.GetValueOrDefault().ToString()) + " "
+                              + (createdUser == null ? "" : createdUser.Username + " " + createdUser.Email) + " "
+                              + (createdDetail == null ? "" : createdDetail.FirstName + " " + createdDetail.LastName),
+                          UpdatedBySearchText = (source.Header.UpdatedBy == null ? "Sistem System" : source.Header.UpdatedBy.GetValueOrDefault().ToString()) + " "
+                              + (updatedUser == null ? "" : updatedUser.Username + " " + updatedUser.Email) + " "
+                              + (updatedDetail == null ? "" : updatedDetail.FirstName + " " + updatedDetail.LastName)
+                      };
+        }
+
+        return sources.Select(source => new InventoryCountGridRow
+        {
+            Id = source.Header.Id,
+            CountCode = source.Header.CountCode,
+            DocumentNo = source.Header.DocumentNo,
+            BranchCode = source.Header.BranchCode,
+            WarehouseId = source.Header.WarehouseId,
+            WarehouseCode = source.Warehouse.WarehouseCode,
+            WarehouseName = source.Warehouse.WarehouseName,
+            CountType = source.Header.CountType,
+            CountMode = source.Header.CountMode,
+            MovementPolicy = source.Header.MovementPolicy,
+            Status = source.Header.Status,
+            Priority = source.Header.Priority,
+            PlannedStartUtc = source.Header.PlannedStartUtc,
+            PlannedEndUtc = source.Header.PlannedEndUtc,
+            SnapshotAtUtc = source.Header.SnapshotAtUtc,
+            TaskCount = source.Header.TaskCount,
+            CompletedTaskCount = source.Header.CompletedTaskCount,
+            LineCount = source.Header.LineCount,
+            CountedLineCount = source.Header.CountedLineCount,
+            VarianceLineCount = source.Header.VarianceLineCount,
+            Description = source.Header.Description,
+            CreatedBy = source.Header.CreatedBy,
+            CreatedDate = source.Header.CreatedDate,
+            UpdatedBy = source.Header.UpdatedBy,
+            UpdatedDate = source.Header.UpdatedDate,
+            ConcurrencyToken = Convert.ToBase64String(source.Header.RowVersion),
+            TaskProgressSearchText = source.Header.CompletedTaskCount + " " + source.Header.TaskCount,
+            LineProgressSearchText = source.Header.CountedLineCount + " " + source.Header.LineCount,
+            CreatedBySearchText = source.CreatedBySearchText,
+            UpdatedBySearchText = source.UpdatedBySearchText
+        });
+    }
+
+    private static bool RequiresActorSearch(PagedRequest request) =>
+        !string.IsNullOrWhiteSpace(request.EffectiveSearch)
+        && request.SearchFields.Any(field =>
+            string.Equals(field, "createdBy", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(field, "updatedBy", StringComparison.OrdinalIgnoreCase));
+
+    private sealed class InventoryCountGridSource
+    {
+        public required InventoryCountHeader Header { get; init; }
+        public required WarehouseEntity Warehouse { get; init; }
+        public string? CreatedBySearchText { get; init; }
+        public string? UpdatedBySearchText { get; init; }
+    }
 
     private async Task ReplaceScopesAsync(InventoryCountHeader header, IReadOnlyList<InventoryCountScopeRequest> requests, long actor, CancellationToken ct)
     {
