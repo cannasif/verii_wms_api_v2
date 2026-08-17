@@ -20,6 +20,14 @@ public sealed partial class StockBalanceService(
     IUnitOfWork unitOfWork,
     IStockTrackingPolicyResolver trackingPolicies) : IStockBalanceService
 {
+    private static readonly IReadOnlyDictionary<string,string> SerialHistorySearchColumns=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["id"]=nameof(SerialMovementHistoryRow.Id),["operationCode"]=nameof(SerialMovementHistoryRow.OperationCode),
+        ["referenceNo"]=nameof(SerialMovementHistoryRow.ReferenceSearchText),["warehouseCode"]=nameof(SerialMovementHistoryRow.WarehouseCode),
+        ["warehouseName"]=nameof(SerialMovementHistoryRow.WarehouseName),["locationCode"]=nameof(SerialMovementHistoryRow.LocationCode),
+        ["locationName"]=nameof(SerialMovementHistoryRow.LocationName),["quantityDelta"]=nameof(SerialMovementHistoryRow.QuantitySearchText)
+    };
+    private static readonly string[] DefaultSerialHistorySearchColumns=["operationCode","referenceNo","warehouseCode","warehouseName","locationCode","locationName"];
     private IGenericRepository<LocationStockBalance> Locations => unitOfWork.Repository<LocationStockBalance>();
     private IGenericRepository<WarehouseStockBalance> Warehouses => unitOfWork.Repository<WarehouseStockBalance>();
     private IGenericRepository<StockBalanceProjectionState> States => unitOfWork.Repository<StockBalanceProjectionState>();
@@ -331,8 +339,10 @@ public sealed partial class StockBalanceService(
             x.Location.Id, x.Location.Code, x.Location.Name, x.Stock.Id, x.Stock.ErpStockCode, x.Stock.StockName,
             x.Entry.YapCodeId, x.Yap != null ? x.Yap.ConfigurationCode : null, x.Entry.UnitCode,
             x.Entry.LotNo, x.Entry.SerialNo!, x.Entry.StockStatus, x.Entry.QuantityDelta, x.Entry.OccurredAt,
-            x.Entry.CreatedBy, x.Entry.CreatedDate, x.Entry.UpdatedBy, x.Entry.UpdatedDate));
-        return await query.ApplyAdvancedFilters(request)
+            x.Entry.CreatedBy, x.Entry.CreatedDate, x.Entry.UpdatedBy, x.Entry.UpdatedDate,
+            (x.Operation.ReferenceType??"")+" / "+(x.Operation.ReferenceNo??""),
+            x.Entry.QuantityDelta+" "+x.Entry.UnitCode));
+        return await query.ApplySearch(request,SerialHistorySearchColumns,DefaultSerialHistorySearchColumns).ApplyAdvancedFilters(request)
             .ApplySort(request, nameof(SerialMovementHistoryRow.OccurredAt))
             .ToPagedResponseAsync(request, cancellationToken);
     }

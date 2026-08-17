@@ -1,4 +1,5 @@
 using verii_wms_api_v2.Modules.StockMovement.Domain;
+using System.Text.Json.Serialization;
 using verii_wms_api_v2.Shared;
 
 namespace verii_wms_api_v2.Modules.StockBalance.Application;
@@ -25,7 +26,9 @@ public sealed record SerialMovementHistoryRow(long Id, long OperationId, Guid Op
     string? ReferenceType, string? ReferenceNo, long WarehouseId, int WarehouseCode, string WarehouseName,
     long LocationId, string LocationCode, string LocationName, long StockId, string StockCode, string StockName,
     long? YapCodeId, string? YapCode, string UnitCode, string? LotNo, string SerialNo, string StockStatus,
-    decimal QuantityDelta, DateTime OccurredAt, long? CreatedBy, DateTime? CreatedDate, long? UpdatedBy, DateTime? UpdatedDate);
+    decimal QuantityDelta, DateTime OccurredAt, long? CreatedBy, DateTime? CreatedDate, long? UpdatedBy, DateTime? UpdatedDate,
+    [property: JsonIgnore] string? ReferenceSearchText=null,
+    [property: JsonIgnore] string? QuantitySearchText=null);
 
 public sealed record StockBalanceDrillDown(WarehouseBalanceRow Summary, IReadOnlyList<LocationBalanceRow> Locations);
 public sealed record ProjectionRebuildResult(int LocationRows, int WarehouseRows, long LastMovementEntryId, DateTime RebuiltAt);
