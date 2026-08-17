@@ -32,6 +32,19 @@ public sealed class IncomingInvoiceService(
         ["payableAmount"]=nameof(IncomingInvoiceGridRow.PayableSearchText),["lineCount"]=nameof(IncomingInvoiceGridRow.LineProgressSearchText)
     };
     private static readonly string[] DefaultGridSearchColumns=["invoiceNo","supplierVknOrTckn","supplierName"];
+    private static readonly HashSet<string> LineSummaryColumns=new(StringComparer.OrdinalIgnoreCase)
+    {
+        nameof(IncomingInvoiceGridRow.LineCount),nameof(IncomingInvoiceGridRow.MatchedLineCount),
+        nameof(IncomingInvoiceGridRow.LineProgressSearchText)
+    };
+    private static readonly HashSet<string> DocumentSummaryColumns=new(StringComparer.OrdinalIgnoreCase)
+    {
+        nameof(IncomingInvoiceGridRow.HasUbl),nameof(IncomingInvoiceGridRow.HasPdf)
+    };
+    private static readonly HashSet<string> LinkSummaryColumns=new(StringComparer.OrdinalIgnoreCase)
+    {
+        nameof(IncomingInvoiceGridRow.GoodsReceiptCount)
+    };
     private IGenericRepository<IncomingInvoiceHeader> Headers =>
         unitOfWork.Repository<IncomingInvoiceHeader>();
 
@@ -210,36 +223,132 @@ public sealed class IncomingInvoiceService(
         string branchCode, PagedRequest request, CancellationToken ct = default)
     {
         var branch = ELogoConnectionService.NormalizeBranch(branchCode);
-        var search = request.Search?.Trim();
         var lines = unitOfWork.Repository<IncomingInvoiceLine>().Query();
         var documents = unitOfWork.Repository<IncomingInvoiceDocument>().Query();
         var links = unitOfWork.Repository<IncomingInvoiceGoodsReceiptLink>().Query();
-        var query = Headers.Query().Where(x => x.BranchCode == branch
-                && (string.IsNullOrWhiteSpace(search)
-                    || x.InvoiceNo.Contains(search)
-                    || x.Uuid.ToString().Contains(search)
-                    || x.SupplierVknOrTckn.Contains(search)
-                    || x.SupplierName.Contains(search)
-                    || (x.OrderReferenceNo != null && x.OrderReferenceNo.Contains(search))
-                    || (x.DespatchReferenceNo != null && x.DespatchReferenceNo.Contains(search))))
-            .Select(x => new IncomingInvoiceGridRow(
-                x.Id, x.BranchCode, x.Uuid, x.DocumentKind, x.CaptureSource, x.InvoiceNo, x.IssueDate,
-                x.SupplierVknOrTckn, x.SupplierName, x.CurrencyCode, x.PayableAmount,
-                lines.Count(line => line.IncomingInvoiceId == x.Id),
-                lines.Count(line => line.IncomingInvoiceId == x.Id && line.StockId != null),
-                x.ArchiveStatus, x.ValidationStatus,
-                documents.Any(document => document.IncomingInvoiceId == x.Id
-                    && document.Format == IncomingInvoiceDocumentFormat.UblXml),
-                documents.Any(document => document.IncomingInvoiceId == x.Id
-                    && document.Format == IncomingInvoiceDocumentFormat.Pdf),
-                links.Count(link => link.IncomingInvoiceId == x.Id),
-                x.ImportedAtUtc, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate, x.RowVersion,
-                x.InvoiceNo+" "+x.Uuid.ToString()+" "+(x.CaptureSource==IncomingInvoiceCaptureSource.Ocr?"OCR ön inceleme OCR preview":""),
-                x.PayableAmount+" "+x.CurrencyCode,
-                lines.Count(line=>line.IncomingInvoiceId==x.Id&&line.StockId!=null)+"/"+lines.Count(line=>line.IncomingInvoiceId==x.Id)));
-        return await query.ApplySearch(request,GridSearchColumns,DefaultGridSearchColumns).ApplyAdvancedFilters(request)
-            .ApplySort(request, nameof(IncomingInvoiceGridRow.ImportedAtUtc))
-            .ToPagedResponseAsync(request, ct);
+        var headers=Headers.Query();
+        var query=BuildPagedQuery(branch,request,headers,lines,documents,links);
+        var countQuery=BuildCountQuery(branch,request,headers,lines,documents,links);
+        var page=await query.ToPagedResponseAsync(countQuery,request,ct);
+        if(page.Items.Count==0)return page;
+        return new PagedResponse<IncomingInvoiceGridRow>
+        {
+            Items=await EnrichSummariesAsync(page.Items,lines,documents,links,ct),
+            TotalCount=page.TotalCount,PageNumber=page.PageNumber,PageSize=page.PageSize
+        };
+    }
+
+    internal static IQueryable<IncomingInvoiceGridRow> BuildPagedQuery(string branch,PagedRequest request,
+        IQueryable<IncomingInvoiceHeader> headers,IQueryable<IncomingInvoiceLine> lines,
+        IQueryable<IncomingInvoiceDocument> documents,IQueryable<IncomingInvoiceGoodsReceiptLink> links)
+    {
+        var query=BuildGridRows(branch,request,headers,lines,documents,links,
+            RequiresInMainQuery(request,LineSummaryColumns),RequiresInMainQuery(request,DocumentSummaryColumns),RequiresInMainQuery(request,LinkSummaryColumns));
+        return query.ApplySearch(request,GridSearchColumns,DefaultGridSearchColumns).ApplyAdvancedFilters(request)
+            .ApplySort(request,nameof(IncomingInvoiceGridRow.ImportedAtUtc))
+            .Select(x=>new IncomingInvoiceGridRow(x.Id,x.BranchCode,x.Uuid,x.DocumentKind,x.CaptureSource,x.InvoiceNo,x.IssueDate,
+                x.SupplierVknOrTckn,x.SupplierName,x.CurrencyCode,x.PayableAmount,x.LineCount,x.MatchedLineCount,x.ArchiveStatus,
+                x.ValidationStatus,x.HasUbl,x.HasPdf,x.GoodsReceiptCount,x.ImportedAtUtc,x.CreatedBy,x.CreatedDate,x.UpdatedBy,
+                x.UpdatedDate,x.RowVersion,x.InvoiceSearchText,x.PayableSearchText,x.LineProgressSearchText));
+    }
+
+    internal static IQueryable<long> BuildCountQuery(string branch,PagedRequest request,
+        IQueryable<IncomingInvoiceHeader> headers,IQueryable<IncomingInvoiceLine> lines,
+        IQueryable<IncomingInvoiceDocument> documents,IQueryable<IncomingInvoiceGoodsReceiptLink> links)
+    {
+        var query=BuildGridRows(branch,request,headers,lines,documents,links,
+            RequiresForCount(request,LineSummaryColumns),RequiresForCount(request,DocumentSummaryColumns),RequiresForCount(request,LinkSummaryColumns));
+        return query.ApplySearch(request,GridSearchColumns,DefaultGridSearchColumns).ApplyAdvancedFilters(request).Select(x=>x.Id);
+    }
+
+    private static IQueryable<IncomingInvoiceGridProjection> BuildGridRows(string branch,PagedRequest request,
+        IQueryable<IncomingInvoiceHeader> headers,IQueryable<IncomingInvoiceLine> lines,
+        IQueryable<IncomingInvoiceDocument> documents,IQueryable<IncomingInvoiceGoodsReceiptLink> links,
+        bool includeLines,bool includeDocuments,bool includeLinks)
+    {
+        var search=request.Search?.Trim();
+        var baseRows=headers.Where(x=>x.BranchCode==branch&&(string.IsNullOrWhiteSpace(search)
+            ||x.InvoiceNo.Contains(search)||x.Uuid.ToString().Contains(search)||x.SupplierVknOrTckn.Contains(search)
+            ||x.SupplierName.Contains(search)||(x.OrderReferenceNo!=null&&x.OrderReferenceNo.Contains(search))
+            ||(x.DespatchReferenceNo!=null&&x.DespatchReferenceNo.Contains(search))));
+        if(!includeLines)return baseRows.Select(x=>new IncomingInvoiceGridProjection
+        {
+            Id=x.Id,BranchCode=x.BranchCode,Uuid=x.Uuid,DocumentKind=x.DocumentKind,CaptureSource=x.CaptureSource,
+            InvoiceNo=x.InvoiceNo,IssueDate=x.IssueDate,SupplierVknOrTckn=x.SupplierVknOrTckn,SupplierName=x.SupplierName,
+            CurrencyCode=x.CurrencyCode,PayableAmount=x.PayableAmount,ArchiveStatus=x.ArchiveStatus,ValidationStatus=x.ValidationStatus,
+            HasUbl=includeDocuments&&documents.Any(document=>document.IncomingInvoiceId==x.Id&&document.Format==IncomingInvoiceDocumentFormat.UblXml),
+            HasPdf=includeDocuments&&documents.Any(document=>document.IncomingInvoiceId==x.Id&&document.Format==IncomingInvoiceDocumentFormat.Pdf),
+            GoodsReceiptCount=includeLinks?links.Count(link=>link.IncomingInvoiceId==x.Id):0,ImportedAtUtc=x.ImportedAtUtc,
+            CreatedBy=x.CreatedBy,CreatedDate=x.CreatedDate,UpdatedBy=x.UpdatedBy,UpdatedDate=x.UpdatedDate,RowVersion=x.RowVersion,
+            InvoiceSearchText=x.InvoiceNo+" "+x.Uuid.ToString()+" "+(x.CaptureSource==IncomingInvoiceCaptureSource.Ocr?"OCR ön inceleme OCR preview":""),
+            PayableSearchText=x.PayableAmount+" "+x.CurrencyCode
+        });
+
+        var lineTotals=lines.GroupBy(line=>line.IncomingInvoiceId).Select(groupRows=>new
+        {
+            InvoiceId=groupRows.Key,LineCount=groupRows.Count(),MatchedLineCount=groupRows.Count(line=>line.StockId!=null)
+        });
+        return from x in baseRows
+               join lineTotal in lineTotals on x.Id equals lineTotal.InvoiceId into lineTotalRows
+               from lineTotal in lineTotalRows.DefaultIfEmpty()
+               select new IncomingInvoiceGridProjection
+               {
+                   Id=x.Id,BranchCode=x.BranchCode,Uuid=x.Uuid,DocumentKind=x.DocumentKind,CaptureSource=x.CaptureSource,
+                   InvoiceNo=x.InvoiceNo,IssueDate=x.IssueDate,SupplierVknOrTckn=x.SupplierVknOrTckn,SupplierName=x.SupplierName,
+                   CurrencyCode=x.CurrencyCode,PayableAmount=x.PayableAmount,LineCount=(int?)lineTotal.LineCount??0,
+                   MatchedLineCount=(int?)lineTotal.MatchedLineCount??0,ArchiveStatus=x.ArchiveStatus,ValidationStatus=x.ValidationStatus,
+                   HasUbl=includeDocuments&&documents.Any(document=>document.IncomingInvoiceId==x.Id&&document.Format==IncomingInvoiceDocumentFormat.UblXml),
+                   HasPdf=includeDocuments&&documents.Any(document=>document.IncomingInvoiceId==x.Id&&document.Format==IncomingInvoiceDocumentFormat.Pdf),
+                   GoodsReceiptCount=includeLinks?links.Count(link=>link.IncomingInvoiceId==x.Id):0,ImportedAtUtc=x.ImportedAtUtc,
+                   CreatedBy=x.CreatedBy,CreatedDate=x.CreatedDate,UpdatedBy=x.UpdatedBy,UpdatedDate=x.UpdatedDate,RowVersion=x.RowVersion,
+                   InvoiceSearchText=x.InvoiceNo+" "+x.Uuid.ToString()+" "+(x.CaptureSource==IncomingInvoiceCaptureSource.Ocr?"OCR ön inceleme OCR preview":""),
+                   PayableSearchText=x.PayableAmount+" "+x.CurrencyCode,
+                   LineProgressSearchText=((int?)lineTotal.MatchedLineCount??0)+"/"+((int?)lineTotal.LineCount??0)
+               };
+    }
+
+    private static bool RequiresForCount(PagedRequest request,IReadOnlySet<string> columns)=>
+        (!string.IsNullOrWhiteSpace(request.EffectiveSearch)&&request.SearchFields.Any(columns.Contains))
+        ||request.Filters.Any(filter=>columns.Contains(filter.Column));
+    private static bool RequiresInMainQuery(PagedRequest request,IReadOnlySet<string> columns)=>
+        RequiresForCount(request,columns)||columns.Contains(request.SortBy??string.Empty);
+
+    private static async Task<IReadOnlyList<IncomingInvoiceGridRow>> EnrichSummariesAsync(IReadOnlyList<IncomingInvoiceGridRow> rows,
+        IQueryable<IncomingInvoiceLine> lines,IQueryable<IncomingInvoiceDocument> documents,
+        IQueryable<IncomingInvoiceGoodsReceiptLink> links,CancellationToken cancellationToken)
+    {
+        var ids=rows.Select(x=>x.Id).ToArray();
+        var lineTotals=await lines.Where(x=>ids.Contains(x.IncomingInvoiceId)).GroupBy(x=>x.IncomingInvoiceId)
+            .Select(groupRows=>new{InvoiceId=groupRows.Key,LineCount=groupRows.Count(),MatchedLineCount=groupRows.Count(x=>x.StockId!=null)})
+            .ToDictionaryAsync(x=>x.InvoiceId,cancellationToken);
+        var documentRows=await documents.Where(x=>ids.Contains(x.IncomingInvoiceId))
+            .Select(x=>new{x.IncomingInvoiceId,x.Format}).ToListAsync(cancellationToken);
+        var documentTotals=documentRows.GroupBy(x=>x.IncomingInvoiceId).ToDictionary(x=>x.Key,x=>new
+        {
+            HasUbl=x.Any(y=>y.Format==IncomingInvoiceDocumentFormat.UblXml),HasPdf=x.Any(y=>y.Format==IncomingInvoiceDocumentFormat.Pdf)
+        });
+        var linkTotals=await links.Where(x=>ids.Contains(x.IncomingInvoiceId)).GroupBy(x=>x.IncomingInvoiceId)
+            .Select(groupRows=>new{InvoiceId=groupRows.Key,Count=groupRows.Count()}).ToDictionaryAsync(x=>x.InvoiceId,cancellationToken);
+        return rows.Select(row=>
+        {
+            var line=lineTotals.GetValueOrDefault(row.Id);var document=documentTotals.GetValueOrDefault(row.Id);var link=linkTotals.GetValueOrDefault(row.Id);
+            return row with{LineCount=line?.LineCount??0,MatchedLineCount=line?.MatchedLineCount??0,HasUbl=document?.HasUbl??false,
+                HasPdf=document?.HasPdf??false,GoodsReceiptCount=link?.Count??0};
+        }).ToArray();
+    }
+
+    private sealed class IncomingInvoiceGridProjection
+    {
+        public long Id{get;init;} public required string BranchCode{get;init;} public Guid Uuid{get;init;}
+        public IncomingInvoiceKind DocumentKind{get;init;} public IncomingInvoiceCaptureSource CaptureSource{get;init;}
+        public required string InvoiceNo{get;init;} public DateOnly IssueDate{get;init;} public required string SupplierVknOrTckn{get;init;}
+        public required string SupplierName{get;init;} public required string CurrencyCode{get;init;} public decimal PayableAmount{get;init;}
+        public int LineCount{get;init;} public int MatchedLineCount{get;init;} public IncomingInvoiceArchiveStatus ArchiveStatus{get;init;}
+        public IncomingInvoiceValidationStatus ValidationStatus{get;init;} public bool HasUbl{get;init;} public bool HasPdf{get;init;}
+        public int GoodsReceiptCount{get;init;} public DateTimeOffset ImportedAtUtc{get;init;} public long? CreatedBy{get;init;}
+        public DateTime? CreatedDate{get;init;} public long? UpdatedBy{get;init;} public DateTime? UpdatedDate{get;init;}
+        public required byte[] RowVersion{get;init;} public string? InvoiceSearchText{get;init;} public string? PayableSearchText{get;init;}
+        public string? LineProgressSearchText{get;init;}
     }
 
     public async Task<IncomingInvoiceDetail> GetAsync(
