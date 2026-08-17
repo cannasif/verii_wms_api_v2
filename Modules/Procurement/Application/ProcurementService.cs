@@ -25,10 +25,14 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
         ["totalAmount"]=nameof(ProcurementGridRow.TotalSearchText)
     };
     private static readonly string[] DefaultGridSearchColumns=["documentNo","subject","counterparty","requestNo","rfqNo","quoteNo"];
+    private static readonly IReadOnlySet<string> QuoteLineSummaryColumns=new HashSet<string>(StringComparer.OrdinalIgnoreCase){"lineCount","totalAmount","dueDate"};
+    private static readonly IReadOnlySet<string> OrderLineSummaryColumns=new HashSet<string>(StringComparer.OrdinalIgnoreCase){"lineCount","totalAmount"};
     private IGenericRepository<ProcurementRequest> Requests=>uow.Repository<ProcurementRequest>();
     private IGenericRepository<ProcurementRfq> Rfqs=>uow.Repository<ProcurementRfq>();
     private IGenericRepository<ProcurementSupplierQuote> Quotes=>uow.Repository<ProcurementSupplierQuote>();
+    private IGenericRepository<ProcurementSupplierQuoteLine> QuoteLines=>uow.Repository<ProcurementSupplierQuoteLine>();
     private IGenericRepository<ProcurementPurchaseOrder> Orders=>uow.Repository<ProcurementPurchaseOrder>();
+    private IGenericRepository<ProcurementPurchaseOrderLine> OrderLines=>uow.Repository<ProcurementPurchaseOrderLine>();
     private IGenericRepository<ProcurementStatusHistory> History=>uow.Repository<ProcurementStatusHistory>();
     private IGenericRepository<ProcurementQuoteInvitation> Invitations=>uow.Repository<ProcurementQuoteInvitation>();
     private IGenericRepository<ProcurementAttachment> Attachments=>uow.Repository<ProcurementAttachment>();
@@ -47,8 +51,8 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
         {
             "request"=>await RequestRows(request).ToPagedResponseAsync(request,ct),
             "rfq"=>await RfqRows(request).ToPagedResponseAsync(request,ct),
-            "quote"=>await QuoteRows(request).ToPagedResponseAsync(request,ct),
-            "order"=>await OrderRows(request).ToPagedResponseAsync(request,ct),
+            "quote"=>await GetQuotePageAsync(request,ct),
+            "order"=>await GetOrderPageAsync(request,ct),
             _=>throw AppException.BadRequest("Geçersiz satınalma belge türü.")
         };
         return await EnrichGridAuditAsync(page,ct);
@@ -432,16 +436,135 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
 
     private IQueryable<ProcurementGridRow> RequestRows(PagedRequest r){var s=r.Search?.Trim();var q=Requests.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.RequestNo.Contains(s)||x.Subject.Contains(s)).Select(x=>new ProcurementGridRow(x.Id,"request",x.RequestNo,x.RequestDate,x.Status.ToString(),x.Subject,null,x.Lines.Count,0,"TRY",x.RequiredDate,x.CreatedDate,x.Id,x.RequestNo,null,null,null,null,x.CreatedBy,null,x.UpdatedDate,x.UpdatedBy,null,x.Subject,"0 TRY"));return GridSearch(q,r).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
     private IQueryable<ProcurementGridRow> RfqRows(PagedRequest r){var s=r.Search?.Trim();var q=Rfqs.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.RfqNo.Contains(s)||x.Subject.Contains(s)||(x.Request!=null&&x.Request.RequestNo.Contains(s))).Select(x=>new ProcurementGridRow(x.Id,"rfq",x.RfqNo,x.RfqDate,x.Status.ToString(),x.Subject,x.Suppliers.OrderBy(y=>y.Id).Select(y=>y.SupplierNameSnapshot).FirstOrDefault(),x.Lines.Count,0,"TRY",x.ResponseDueDate,x.CreatedDate,x.ProcurementRequestId,x.Request!=null?x.Request.RequestNo:null,x.Id,x.RfqNo,null,null,x.CreatedBy,null,x.UpdatedDate,x.UpdatedBy,null,x.Subject,"0 TRY"));return GridSearch(q,r).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
-    private IQueryable<ProcurementGridRow> QuoteRows(PagedRequest r){var s=r.Search?.Trim();var q=Quotes.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.QuoteNo.Contains(s)||x.Rfq.RfqNo.Contains(s)||x.SupplierNameSnapshot.Contains(s)||(x.Rfq.Request!=null&&(x.Rfq.Request.RequestNo.Contains(s)||x.Rfq.Request.Subject.Contains(s)))).Select(x=>new ProcurementGridRow(x.Id,"quote",x.QuoteNo,x.QuoteDate,x.Status.ToString(),x.Rfq.Request!=null?x.Rfq.Request.Subject:x.Rfq.Subject,x.SupplierNameSnapshot,x.Lines.Count,x.Lines.Sum(l=>l.QuotedQuantity*l.UnitPrice*(1-l.DiscountRate/100)*(1+l.VatRate/100)),x.CurrencyCode,x.Lines.Where(l=>l.DeliveryDate.HasValue).Select(l=>l.DeliveryDate).Min()??x.ValidUntil,x.CreatedDate,x.Rfq.ProcurementRequestId,x.Rfq.Request!=null?x.Rfq.Request.RequestNo:null,x.ProcurementRfqId,x.Rfq.RfqNo,x.Id,x.QuoteNo,x.CreatedBy,null,x.UpdatedDate,x.UpdatedBy,null,(x.Rfq.Request!=null?x.Rfq.Request.Subject:x.Rfq.Subject)+" "+(x.Rfq.Request==null?"":x.Rfq.Request.RequestNo),x.Lines.Sum(l=>l.QuotedQuantity*l.UnitPrice*(1-l.DiscountRate/100)*(1+l.VatRate/100))+" "+x.CurrencyCode));return GridSearch(q,r).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
-    private IQueryable<ProcurementGridRow> OrderRows(PagedRequest r)
+    private async Task<PagedResponse<ProcurementGridRow>> GetQuotePageAsync(PagedRequest request,CancellationToken ct)
     {
-        var s=r.Search?.Trim();
-        var rows=from x in Orders.Query()
-            join quote in Quotes.Query() on x.SourceQuoteId equals (long?)quote.Id into quoteGroup
-            from quote in quoteGroup.DefaultIfEmpty()
-            where string.IsNullOrWhiteSpace(s)||x.OrderNo.Contains(s)||x.SupplierNameSnapshot.Contains(s)||(quote!=null&&(quote.QuoteNo.Contains(s)||quote.Rfq.RfqNo.Contains(s)||(quote.Rfq.Request!=null&&quote.Rfq.Request.RequestNo.Contains(s))))
-            select new ProcurementGridRow(x.Id,"order",x.OrderNo,x.OrderDate,x.Status.ToString(),"Satınalma siparişi",x.SupplierNameSnapshot,x.Lines.Count,x.Lines.Sum(l=>l.OrderedQuantity*l.UnitPrice*(1-l.DiscountRate/100)*(1+l.VatRate/100)),x.CurrencyCode,x.DeliveryDate,x.CreatedDate,quote!=null?quote.Rfq.ProcurementRequestId:null,quote!=null&&quote.Rfq.Request!=null?quote.Rfq.Request.RequestNo:null,quote!=null?(long?)quote.ProcurementRfqId:null,quote!=null?quote.Rfq.RfqNo:null,quote!=null?(long?)quote.Id:null,quote!=null?quote.QuoteNo:null,x.CreatedBy,null,x.UpdatedDate,x.UpdatedBy,null,"Satınalma siparişi",x.Lines.Sum(l=>l.OrderedQuantity*l.UnitPrice*(1-l.DiscountRate/100)*(1+l.VatRate/100))+" "+x.CurrencyCode);
-        return GridSearch(rows,r).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));
+        var quotes=Quotes.Query();var lines=QuoteLines.Query();
+        var page=await BuildQuoteRows(request,quotes,lines).ToPagedResponseAsync(BuildQuoteCountQuery(request,quotes,lines),request,ct);
+        return page.Items.Count==0||RequiresInMainQuery(request,QuoteLineSummaryColumns)
+            ?page:await EnrichQuoteSummariesAsync(page,lines,ct);
+    }
+
+    private async Task<PagedResponse<ProcurementGridRow>> GetOrderPageAsync(PagedRequest request,CancellationToken ct)
+    {
+        var orders=Orders.Query();var quotes=Quotes.Query();var lines=OrderLines.Query();
+        var page=await BuildOrderRows(request,orders,quotes,lines).ToPagedResponseAsync(BuildOrderCountQuery(request,orders,quotes,lines),request,ct);
+        return page.Items.Count==0||RequiresInMainQuery(request,OrderLineSummaryColumns)
+            ?page:await EnrichOrderSummariesAsync(page,lines,ct);
+    }
+
+    internal static IQueryable<ProcurementGridRow> BuildQuoteRows(PagedRequest request,IQueryable<ProcurementSupplierQuote> quotes,IQueryable<ProcurementSupplierQuoteLine> lines)
+    {
+        var rows=BuildQuoteProjections(quotes,lines,RequiresInMainQuery(request,QuoteLineSummaryColumns))
+            .ApplySearch(request,GridSearchColumns,DefaultGridSearchColumns)
+            .ApplyAdvancedFilters(request).ApplySort(request,nameof(ProcurementGridRow.DocumentDate));
+        return ToGridRows(rows);
+    }
+
+    internal static IQueryable<long> BuildQuoteCountQuery(PagedRequest request,IQueryable<ProcurementSupplierQuote> quotes,IQueryable<ProcurementSupplierQuoteLine> lines)=>
+        BuildQuoteProjections(quotes,lines,RequiresForCount(request,QuoteLineSummaryColumns))
+            .ApplySearch(request,GridSearchColumns,DefaultGridSearchColumns).ApplyAdvancedFilters(request).Select(x=>x.Id);
+
+    private static IQueryable<ProcurementGridProjection> BuildQuoteProjections(IQueryable<ProcurementSupplierQuote> quotes,IQueryable<ProcurementSupplierQuoteLine> lines,bool includeSummary)
+    {
+        var baseRows=quotes.Select(x=>new ProcurementGridProjection
+        {
+            Id=x.Id,DocumentType="quote",DocumentNo=x.QuoteNo,DocumentDate=x.QuoteDate,Status=x.Status.ToString(),
+            Subject=x.Rfq.Request!=null?x.Rfq.Request.Subject:x.Rfq.Subject,Counterparty=x.SupplierNameSnapshot,CurrencyCode=x.CurrencyCode,
+            DueDate=x.ValidUntil,CreatedDate=x.CreatedDate,RequestId=x.Rfq.ProcurementRequestId,RequestNo=x.Rfq.Request!=null?x.Rfq.Request.RequestNo:null,
+            RfqId=x.ProcurementRfqId,RfqNo=x.Rfq.RfqNo,QuoteId=x.Id,QuoteNo=x.QuoteNo,CreatedBy=x.CreatedBy,UpdatedDate=x.UpdatedDate,UpdatedBy=x.UpdatedBy,
+            SubjectSearchText=(x.Rfq.Request!=null?x.Rfq.Request.Subject:x.Rfq.Subject)+" "+(x.Rfq.Request==null?"":x.Rfq.Request.RequestNo),TotalSearchText="0 "+x.CurrencyCode
+        });
+        if(!includeSummary)return baseRows;
+        var totals=lines.GroupBy(x=>x.ProcurementSupplierQuoteId).Select(g=>new
+        {
+            QuoteId=g.Key,LineCount=g.Count(),TotalAmount=g.Sum(x=>x.QuotedQuantity*x.UnitPrice*(1-x.DiscountRate/100)*(1+x.VatRate/100)),
+            EarliestDeliveryDate=g.Min(x=>x.DeliveryDate)
+        });
+        return from row in baseRows join total in totals on row.Id equals total.QuoteId into totalRows from total in totalRows.DefaultIfEmpty()
+            select new ProcurementGridProjection
+            {
+                Id=row.Id,DocumentType=row.DocumentType,DocumentNo=row.DocumentNo,DocumentDate=row.DocumentDate,Status=row.Status,Subject=row.Subject,
+                Counterparty=row.Counterparty,LineCount=(int?)total.LineCount??0,TotalAmount=(decimal?)total.TotalAmount??0,CurrencyCode=row.CurrencyCode,
+                DueDate=total.EarliestDeliveryDate??row.DueDate,CreatedDate=row.CreatedDate,RequestId=row.RequestId,RequestNo=row.RequestNo,RfqId=row.RfqId,
+                RfqNo=row.RfqNo,QuoteId=row.QuoteId,QuoteNo=row.QuoteNo,CreatedBy=row.CreatedBy,UpdatedDate=row.UpdatedDate,UpdatedBy=row.UpdatedBy,
+                SubjectSearchText=row.SubjectSearchText,TotalSearchText=((decimal?)total.TotalAmount??0)+" "+row.CurrencyCode
+            };
+    }
+
+    internal static IQueryable<ProcurementGridRow> BuildOrderRows(PagedRequest request,IQueryable<ProcurementPurchaseOrder> orders,IQueryable<ProcurementSupplierQuote> quotes,IQueryable<ProcurementPurchaseOrderLine> lines)
+    {
+        var rows=BuildOrderProjections(orders,quotes,lines,RequiresInMainQuery(request,OrderLineSummaryColumns))
+            .ApplySearch(request,GridSearchColumns,DefaultGridSearchColumns)
+            .ApplyAdvancedFilters(request).ApplySort(request,nameof(ProcurementGridRow.DocumentDate));
+        return ToGridRows(rows);
+    }
+
+    internal static IQueryable<long> BuildOrderCountQuery(PagedRequest request,IQueryable<ProcurementPurchaseOrder> orders,IQueryable<ProcurementSupplierQuote> quotes,IQueryable<ProcurementPurchaseOrderLine> lines)=>
+        BuildOrderProjections(orders,quotes,lines,RequiresForCount(request,OrderLineSummaryColumns))
+            .ApplySearch(request,GridSearchColumns,DefaultGridSearchColumns).ApplyAdvancedFilters(request).Select(x=>x.Id);
+
+    private static IQueryable<ProcurementGridProjection> BuildOrderProjections(IQueryable<ProcurementPurchaseOrder> orders,IQueryable<ProcurementSupplierQuote> quotes,IQueryable<ProcurementPurchaseOrderLine> lines,bool includeSummary)
+    {
+        var baseRows=from order in orders join quote in quotes on order.SourceQuoteId equals (long?)quote.Id into quoteRows from quote in quoteRows.DefaultIfEmpty()
+            select new ProcurementGridProjection
+            {
+                Id=order.Id,DocumentType="order",DocumentNo=order.OrderNo,DocumentDate=order.OrderDate,Status=order.Status.ToString(),Subject="Satınalma siparişi",
+                Counterparty=order.SupplierNameSnapshot,CurrencyCode=order.CurrencyCode,DueDate=order.DeliveryDate,CreatedDate=order.CreatedDate,
+                RequestId=quote!=null?quote.Rfq.ProcurementRequestId:null,RequestNo=quote!=null&&quote.Rfq.Request!=null?quote.Rfq.Request.RequestNo:null,
+                RfqId=quote!=null?(long?)quote.ProcurementRfqId:null,RfqNo=quote!=null?quote.Rfq.RfqNo:null,QuoteId=quote!=null?(long?)quote.Id:null,
+                QuoteNo=quote!=null?quote.QuoteNo:null,CreatedBy=order.CreatedBy,UpdatedDate=order.UpdatedDate,UpdatedBy=order.UpdatedBy,
+                SubjectSearchText="Satınalma siparişi",TotalSearchText="0 "+order.CurrencyCode
+            };
+        if(!includeSummary)return baseRows;
+        var totals=lines.GroupBy(x=>x.ProcurementPurchaseOrderId).Select(g=>new
+        {
+            OrderId=g.Key,LineCount=g.Count(),TotalAmount=g.Sum(x=>x.OrderedQuantity*x.UnitPrice*(1-x.DiscountRate/100)*(1+x.VatRate/100))
+        });
+        return from row in baseRows join total in totals on row.Id equals total.OrderId into totalRows from total in totalRows.DefaultIfEmpty()
+            select new ProcurementGridProjection
+            {
+                Id=row.Id,DocumentType=row.DocumentType,DocumentNo=row.DocumentNo,DocumentDate=row.DocumentDate,Status=row.Status,Subject=row.Subject,
+                Counterparty=row.Counterparty,LineCount=(int?)total.LineCount??0,TotalAmount=(decimal?)total.TotalAmount??0,CurrencyCode=row.CurrencyCode,
+                DueDate=row.DueDate,CreatedDate=row.CreatedDate,RequestId=row.RequestId,RequestNo=row.RequestNo,RfqId=row.RfqId,RfqNo=row.RfqNo,
+                QuoteId=row.QuoteId,QuoteNo=row.QuoteNo,CreatedBy=row.CreatedBy,UpdatedDate=row.UpdatedDate,UpdatedBy=row.UpdatedBy,
+                SubjectSearchText=row.SubjectSearchText,TotalSearchText=((decimal?)total.TotalAmount??0)+" "+row.CurrencyCode
+            };
+    }
+
+    private static bool RequiresForCount(PagedRequest request,IReadOnlySet<string> columns)=>(!string.IsNullOrWhiteSpace(request.EffectiveSearch)&&request.SearchFields.Any(columns.Contains))||request.Filters.Any(x=>columns.Contains(x.Column));
+    private static bool RequiresInMainQuery(PagedRequest request,IReadOnlySet<string> columns)=>RequiresForCount(request,columns)||columns.Contains(request.SortBy??string.Empty);
+
+    private static IQueryable<ProcurementGridRow> ToGridRows(IQueryable<ProcurementGridProjection> rows)=>rows.Select(x=>new ProcurementGridRow(
+        x.Id,x.DocumentType,x.DocumentNo,x.DocumentDate,x.Status,x.Subject,x.Counterparty,x.LineCount,x.TotalAmount,x.CurrencyCode,x.DueDate,x.CreatedDate,
+        x.RequestId,x.RequestNo,x.RfqId,x.RfqNo,x.QuoteId,x.QuoteNo,x.CreatedBy,null,x.UpdatedDate,x.UpdatedBy,null,x.SubjectSearchText,x.TotalSearchText));
+
+    private static async Task<PagedResponse<ProcurementGridRow>> EnrichQuoteSummariesAsync(PagedResponse<ProcurementGridRow> page,IQueryable<ProcurementSupplierQuoteLine> lines,CancellationToken ct)
+    {
+        var ids=page.Items.Select(x=>x.Id).ToArray();
+        var totals=await lines.Where(x=>ids.Contains(x.ProcurementSupplierQuoteId)).GroupBy(x=>x.ProcurementSupplierQuoteId).Select(g=>new
+        {Id=g.Key,LineCount=g.Count(),TotalAmount=g.Sum(x=>x.QuotedQuantity*x.UnitPrice*(1-x.DiscountRate/100)*(1+x.VatRate/100)),DueDate=g.Min(x=>x.DeliveryDate)}).ToDictionaryAsync(x=>x.Id,ct);
+        return CopyPage(page,page.Items.Select(row=>totals.TryGetValue(row.Id,out var total)?row with{LineCount=total.LineCount,TotalAmount=total.TotalAmount,DueDate=total.DueDate??row.DueDate}:row).ToArray());
+    }
+
+    private static async Task<PagedResponse<ProcurementGridRow>> EnrichOrderSummariesAsync(PagedResponse<ProcurementGridRow> page,IQueryable<ProcurementPurchaseOrderLine> lines,CancellationToken ct)
+    {
+        var ids=page.Items.Select(x=>x.Id).ToArray();
+        var totals=await lines.Where(x=>ids.Contains(x.ProcurementPurchaseOrderId)).GroupBy(x=>x.ProcurementPurchaseOrderId).Select(g=>new
+        {Id=g.Key,LineCount=g.Count(),TotalAmount=g.Sum(x=>x.OrderedQuantity*x.UnitPrice*(1-x.DiscountRate/100)*(1+x.VatRate/100))}).ToDictionaryAsync(x=>x.Id,ct);
+        return CopyPage(page,page.Items.Select(row=>totals.TryGetValue(row.Id,out var total)?row with{LineCount=total.LineCount,TotalAmount=total.TotalAmount}:row).ToArray());
+    }
+
+    private static PagedResponse<ProcurementGridRow> CopyPage(PagedResponse<ProcurementGridRow> page,IReadOnlyList<ProcurementGridRow> items)=>new()
+    {Items=items,TotalCount=page.TotalCount,PageNumber=page.PageNumber,PageSize=page.PageSize};
+
+    private sealed class ProcurementGridProjection
+    {
+        public long Id{get;init;} public string DocumentType{get;init;}=""; public string DocumentNo{get;init;}=""; public DateOnly DocumentDate{get;init;}
+        public string Status{get;init;}=""; public string Subject{get;init;}=""; public string? Counterparty{get;init;} public int LineCount{get;init;}
+        public decimal TotalAmount{get;init;} public string CurrencyCode{get;init;}=""; public DateOnly? DueDate{get;init;} public DateTime? CreatedDate{get;init;}
+        public long? RequestId{get;init;} public string? RequestNo{get;init;} public long? RfqId{get;init;} public string? RfqNo{get;init;}
+        public long? QuoteId{get;init;} public string? QuoteNo{get;init;} public long? CreatedBy{get;init;} public DateTime? UpdatedDate{get;init;}
+        public long? UpdatedBy{get;init;} public string? SubjectSearchText{get;init;} public string? TotalSearchText{get;init;}
     }
 
     private static IQueryable<ProcurementGridRow> GridSearch(IQueryable<ProcurementGridRow> rows,PagedRequest request)=>
