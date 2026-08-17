@@ -21,6 +21,30 @@ namespace verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 
 public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferPolicyService policyService,IDocumentNumberAllocator numberAllocator,IAuditLogWriter audit,IWarehouseTransferReservationService reservations,IStockTrackingPolicyResolver trackingPolicyResolver):IWarehouseTransferService
 {
+    private static readonly IReadOnlyDictionary<string, string> GridSearchColumnMapping =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["id"] = nameof(WarehouseTransferGridRow.Id),
+            ["branchCode"] = nameof(WarehouseTransferGridRow.BranchCode),
+            ["documentNo"] = nameof(WarehouseTransferGridRow.DocumentNo),
+            ["sourceWarehouseCode"] = nameof(WarehouseTransferGridRow.SourceWarehouseCode),
+            ["sourceWarehouseName"] = nameof(WarehouseTransferGridRow.SourceWarehouseName),
+            ["targetWarehouseCode"] = nameof(WarehouseTransferGridRow.TargetWarehouseCode),
+            ["targetWarehouseName"] = nameof(WarehouseTransferGridRow.TargetWarehouseName),
+            ["initiationMode"] = nameof(WarehouseTransferGridRow.InitiationMode),
+            ["status"] = nameof(WarehouseTransferGridRow.Status),
+            ["lineCount"] = nameof(WarehouseTransferGridRow.LineCount),
+            ["requestedQuantity"] = nameof(WarehouseTransferGridRow.RequestedQuantity),
+            ["pickedQuantity"] = nameof(WarehouseTransferGridRow.PickedQuantity),
+            ["shippedQuantity"] = nameof(WarehouseTransferGridRow.ShippedQuantity),
+            ["receivedQuantity"] = nameof(WarehouseTransferGridRow.ReceivedQuantity),
+            ["putawayQuantity"] = nameof(WarehouseTransferGridRow.PutawayQuantity),
+            ["createdBy"] = nameof(WarehouseTransferGridRow.CreatedBySearchText),
+            ["updatedBy"] = nameof(WarehouseTransferGridRow.UpdatedBySearchText),
+        };
+    private static readonly string[] DefaultGridSearchColumns =
+        ["documentNo", "sourceWarehouseName", "targetWarehouseName", "sourceWarehouseCode", "targetWarehouseCode", "createdBy", "updatedBy"];
+
     private IGenericRepository<WarehouseTransferHeader> Headers=>uow.Repository<WarehouseTransferHeader>();
 
     public Task<CreateWarehouseTransferDraftResult> CreateDraftAsync(CreateWarehouseTransferDraftRequest request,long actor,CancellationToken ct=default) =>
@@ -201,14 +225,23 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
         CancellationToken ct=default)
     {
         if(contexts.Count==0)throw AppException.BadRequest("En az bir transfer bağlamı seçilmelidir.");
-        var search=request.Search?.Trim();var warehouses=uow.Repository<WarehouseEntity>().Query(ignoreQueryFilters:true);var lines=uow.Repository<WarehouseTransferLine>().Query();
+        var warehouses=uow.Repository<WarehouseEntity>().Query(ignoreQueryFilters:true);
+        var lines=uow.Repository<WarehouseTransferLine>().Query();
+        var users=uow.Repository<User>().Query();
+        var userDetails=uow.Repository<UserDetail>().Query();
         var baseQuery=from h in Headers.Query()
             join sw in warehouses on h.SourceWarehouseId equals sw.Id
             join tw in warehouses on h.TargetWarehouseId equals tw.Id
+            join createdUser in users on h.CreatedBy equals (long?)createdUser.Id into createdUsers
+            from createdUser in createdUsers.DefaultIfEmpty()
+            join createdDetail in userDetails on h.CreatedBy equals (long?)createdDetail.UserId into createdDetails
+            from createdDetail in createdDetails.DefaultIfEmpty()
+            join updatedUser in users on h.UpdatedBy equals (long?)updatedUser.Id into updatedUsers
+            from updatedUser in updatedUsers.DefaultIfEmpty()
+            join updatedDetail in userDetails on h.UpdatedBy equals (long?)updatedDetail.UserId into updatedDetails
+            from updatedDetail in updatedDetails.DefaultIfEmpty()
             where contexts.Contains(h.BusinessContext)
-                && (string.IsNullOrWhiteSpace(search)||h.DocumentNo.Contains(search)||(h.ExternalReferenceNo!=null&&h.ExternalReferenceNo.Contains(search))
-                ||sw.WarehouseName.Contains(search)||tw.WarehouseName.Contains(search)||h.BranchCode.Contains(search))
-            select new {Header=h,Source=sw,Target=tw};
+            select new {Header=h,Source=sw,Target=tw,CreatedUser=createdUser,CreatedDetail=createdDetail,UpdatedUser=updatedUser,UpdatedDetail=updatedDetail};
         var desc=string.Equals(request.SortDirection,"desc",StringComparison.OrdinalIgnoreCase);
         var sortBy=request.SortBy?.Trim();
         var sorted=sortBy?.ToLowerInvariant() switch{
@@ -242,8 +275,17 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
                 lines.Count(x=>x.WtHeaderId==h.Id),lines.Where(x=>x.WtHeaderId==h.Id).Sum(x=>(decimal?)x.RequestedQuantity)??0,
                 lines.Where(x=>x.WtHeaderId==h.Id).Sum(x=>(decimal?)x.PickedQuantity)??0,lines.Where(x=>x.WtHeaderId==h.Id).Sum(x=>(decimal?)x.ShippedQuantity)??0,
                 lines.Where(x=>x.WtHeaderId==h.Id).Sum(x=>(decimal?)x.ReceivedQuantity)??0,lines.Where(x=>x.WtHeaderId==h.Id).Sum(x=>(decimal?)x.PutawayQuantity)??0,
-                h.Priority,h.PlannedDispatchAtUtc,h.PlannedArrivalAtUtc,h.CreatedBy,h.CreatedDate,h.UpdatedBy,h.UpdatedDate);
-        return await query.ApplyAdvancedFilters(request).ToPagedResponseAsync(request,ct);
+                h.Priority,h.PlannedDispatchAtUtc,h.PlannedArrivalAtUtc,h.CreatedBy,h.CreatedDate,h.UpdatedBy,h.UpdatedDate,
+                (h.CreatedBy==null?"Sistem System":h.CreatedBy.GetValueOrDefault().ToString())+" "
+                    +(item.CreatedUser==null?"":item.CreatedUser.Username+" "+item.CreatedUser.Email)+" "
+                    +(item.CreatedDetail==null?"":item.CreatedDetail.FirstName+" "+item.CreatedDetail.LastName),
+                (h.UpdatedBy==null?"Sistem System":h.UpdatedBy.GetValueOrDefault().ToString())+" "
+                    +(item.UpdatedUser==null?"":item.UpdatedUser.Username+" "+item.UpdatedUser.Email)+" "
+                    +(item.UpdatedDetail==null?"":item.UpdatedDetail.FirstName+" "+item.UpdatedDetail.LastName));
+        return await query
+            .ApplySearch(request, GridSearchColumnMapping, DefaultGridSearchColumns)
+            .ApplyAdvancedFilters(request)
+            .ToPagedResponseAsync(request, ct);
     }
 
     public async Task<WarehouseTransferDetail> GetDetailAsync(long id,CancellationToken ct=default)

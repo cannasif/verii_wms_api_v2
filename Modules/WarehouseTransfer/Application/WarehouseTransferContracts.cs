@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared;
@@ -136,7 +137,9 @@ public sealed record WarehouseTransferGridRow(
     long TargetWarehouseId,int TargetWarehouseCode,string TargetWarehouseName,
     int LineCount,decimal RequestedQuantity,decimal PickedQuantity,decimal ShippedQuantity,decimal ReceivedQuantity,decimal PutawayQuantity,
     byte Priority,DateTimeOffset? PlannedDispatchAtUtc,DateTimeOffset? PlannedArrivalAtUtc,
-    long? CreatedBy,DateTime? CreatedDate,long? UpdatedBy,DateTime? UpdatedDate);
+    long? CreatedBy,DateTime? CreatedDate,long? UpdatedBy,DateTime? UpdatedDate,
+    [property: JsonIgnore] string? CreatedBySearchText = null,
+    [property: JsonIgnore] string? UpdatedBySearchText = null);
 
 public sealed record WarehouseTransferTrackingLineDto(
     long Id,string? HandlingUnitNo,string? LotNo,string? SerialNo,DateOnly? ManufacturingDate,DateOnly? ExpirationDate,
