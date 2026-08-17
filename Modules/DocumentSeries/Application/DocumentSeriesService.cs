@@ -25,7 +25,7 @@ public sealed partial class DocumentSeriesService(
             ["code"] = nameof(DocumentSeriesGridRow.Code),
             ["name"] = nameof(DocumentSeriesGridRow.Name),
             ["prefix"] = nameof(DocumentSeriesGridRow.Prefix),
-            ["documentType"] = nameof(DocumentSeriesGridRow.DocumentType),
+            ["documentType"] = nameof(DocumentSeriesGridRow.DocumentTypeSearchText),
             ["nextNumber"] = nameof(DocumentSeriesGridRow.NextNumber),
             ["createdBy"] = nameof(DocumentSeriesGridRow.CreatedBySearchText),
             ["updatedBy"] = nameof(DocumentSeriesGridRow.UpdatedBySearchText)
@@ -131,7 +131,27 @@ public sealed partial class DocumentSeriesService(
                        : item.DocumentType == WmsDocumentType.ProductionOrder ? "ProductionOrder"
                        : item.DocumentType == WmsDocumentType.ProductionTransfer ? "ProductionTransfer"
                        : item.DocumentType == WmsDocumentType.SubcontractingIssue ? "SubcontractingIssue"
-                       : "SubcontractingReceipt",
+                       : item.DocumentType == WmsDocumentType.SubcontractingReceipt ? "SubcontractingReceipt"
+                       : "InventoryCount",
+                   DocumentTypeSearchText = item.DocumentType == WmsDocumentType.GoodsReceipt
+                       ? "GoodsReceipt Goods Receipt Mal Kabul Wareneingang Recepción de mercancías Entrée de marchandises Ricevuta Merci استلام البضائع"
+                       : item.DocumentType == WmsDocumentType.InterWarehouseTransfer
+                           ? "InterWarehouseTransfer Inter-warehouse Transfer Depolar Arası Transfer Transfer zwischen Lagern Traslado entre almacenes Transfert inter-entrepôts Trasferimento tra magazzini النقل بين المستودعات"
+                       : item.DocumentType == WmsDocumentType.Shipment
+                           ? "Shipment Sevk Versand Envío Expédition Spedizione شحنة"
+                       : item.DocumentType == WmsDocumentType.WarehouseReceipt
+                           ? "WarehouseReceipt Warehouse Receipt Ambar Giriş Lagerbeleg Recibo de almacén Récépissé d'entrepôt Ricevuta di magazzino إيصال المستودع"
+                       : item.DocumentType == WmsDocumentType.WarehouseIssue
+                           ? "WarehouseIssue Warehouse Issue Ambar Çıkış Lagerproblem Problema de almacén Problème d'entrepôt Problema del magazzino قضية المستودع"
+                       : item.DocumentType == WmsDocumentType.ProductionOrder
+                           ? "ProductionOrder Production Order Üretim Emri Produktionsauftrag Orden de producción Ordre de production Ordine di produzione أمر إنتاج"
+                       : item.DocumentType == WmsDocumentType.ProductionTransfer
+                           ? "ProductionTransfer Production Transfer Üretime Transfer Produktionstransfer Transferencia a producción Transfert vers la production Trasferimento alla produzione نقل إلى الإنتاج"
+                       : item.DocumentType == WmsDocumentType.SubcontractingIssue
+                           ? "SubcontractingIssue Subcontracting Issue Fasona Çıkış Beistellungsentnahme Salida a subcontratista Sortie vers sous-traitant Uscita al terzista صرف إلى المقاول"
+                       : item.DocumentType == WmsDocumentType.SubcontractingReceipt
+                           ? "SubcontractingReceipt Subcontracting Receipt Fasondan Dönüş Lohnbearbeitungseingang Recepción de subcontratista Retour de sous-traitance Rientro dal terzista استلام من المقاول"
+                       : "InventoryCount Inventory Count Depo Sayımı Inventur Inventario Inventaire جرد المستودع",
                    Prefix = item.Prefix,
                    YearFormat = item.YearFormat == DocumentYearFormat.None ? "None"
                        : item.YearFormat == DocumentYearFormat.TwoDigit ? "TwoDigit" : "FourDigit",

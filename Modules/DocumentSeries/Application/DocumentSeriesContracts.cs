@@ -53,6 +53,7 @@ public sealed class DocumentSeriesGridRow
     public DateTime? UpdatedDate { get; init; }
     [JsonIgnore] public string? CreatedBySearchText { get; init; }
     [JsonIgnore] public string? UpdatedBySearchText { get; init; }
+    [JsonIgnore] public string? DocumentTypeSearchText { get; init; }
 }
 
 public sealed record DocumentSeriesLookupRow(long Id, string Code, string Name, string PreviewDocumentNumber, bool IsDefault);
