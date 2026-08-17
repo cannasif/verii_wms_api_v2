@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Shared;
 
@@ -10,7 +11,8 @@ public sealed record GoodsReceiptLabelBatchRow(long Id, long GoodsReceiptId, str
     string? WaybillNo, string? ElectronicWaybillNo, long? TaskId,
     string? TaskNo, string BatchNo, GoodsReceiptLabelBatchStatus Status, int TotalLabelCount,
     int PrintedLabelCount, int ConsumedLabelCount, int VoidLabelCount, DateTimeOffset? LastPrintedAtUtc,
-    long? CreatedBy, DateTime? CreatedDate, byte[] RowVersion);
+    long? CreatedBy, DateTime? CreatedDate, byte[] RowVersion,
+    [property: JsonIgnore] string? WaybillSearchText = null);
 public sealed record GoodsReceiptLabelRow(long Id, long BatchId, long GoodsReceiptId, long? GoodsReceiptLineId,
     long? TaskLineId, long? StockId, string StockCode, string? StockName, string? YapCode,
     decimal Quantity, string UnitCode, string? LotNo, string? SerialNo, DateOnly? ManufacturingDate,
