@@ -41,6 +41,23 @@ public sealed class QualityService(
     IStringLocalizer<QualityResource> localizer,
     IStockTrackingPolicyResolver? stockTrackingPolicyResolver = null) : IQualityService, IQualityPolicyResolver, IQualityWarehouseRoutingResolver
 {
+    private static readonly IReadOnlySet<string> InspectionLineSummaryColumns =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "lineCount", "totalQuantity", "requiredInspectionQuantity", "inspectedQuantity"
+        };
+    private static readonly IReadOnlySet<string> InspectionWorkAggregateColumns =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "workState", "recordedWorkSeconds", "workSessionCount", "participantCount"
+        };
+    private static readonly IReadOnlySet<string> InspectionWorkActorColumns =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "workStartedByName", "workActorSearchText", "workStoppedByUserId" };
+    private static readonly IReadOnlySet<string> InspectionActiveWorkColumns =
+        new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "activeWorkerUserId", "activeWorkerName", "activeWorkStartedAtUtc"
+        };
     private IGenericRepository<QualityParameter> Parameters => uow.Repository<QualityParameter>();
     private IGenericRepository<QualityQuarantineDestination> QuarantineDestinations =>
         uow.Repository<QualityQuarantineDestination>();
@@ -325,6 +342,11 @@ public sealed class QualityService(
         var usersQuery = uow.Repository<User>().Query();
         var userDetailsQuery = uow.Repository<UserDetail>().Query();
         var workSessionsQuery = uow.Repository<QualityInspectionWorkSession>().Query();
+        var includeLineSummary = RequiresInspectionRelation(request, InspectionLineSummaryColumns);
+        var includeWorkAggregate = RequiresInspectionRelation(request, InspectionWorkAggregateColumns);
+        var includeWorkActor = !string.IsNullOrWhiteSpace(request.Search)
+            || RequiresInspectionRelation(request, InspectionWorkActorColumns);
+        var includeActiveWork = RequiresInspectionRelation(request, InspectionActiveWorkColumns);
         var joined=from i in Inspections.Query()
                    join w in uow.Repository<WarehouseEntity>().Query() on i.WarehouseId equals w.Id into ws
                    from w in ws.DefaultIfEmpty()
@@ -344,26 +366,28 @@ public sealed class QualityService(
             SourceWaybillNo=x.Receipt==null?null:(x.Receipt.ElectronicWaybillNo??x.Receipt.WaybillNo),
             CreatedByName=x.User==null?null:(x.Detail==null?x.User.Username:(x.Detail.FirstName+" "+x.Detail.LastName)),
             IsPriority=x.Inspection.IsPriority,PriorityAssignedAtUtc=x.Inspection.PriorityAssignedAtUtc,
-            Status=x.Inspection.Status.ToString(),LineCount=x.Inspection.Lines.Count,TotalQuantity=x.Inspection.Lines.Sum(line=>line.Quantity),
-            RequiredInspectionQuantity=x.Inspection.Lines.Sum(line=>line.SampleQuantity),InspectedQuantity=x.Inspection.Lines.Sum(line=>line.InspectedQuantity),
+            Status=x.Inspection.Status.ToString(),LineCount=includeLineSummary?x.Inspection.Lines.Count:0,
+            TotalQuantity=includeLineSummary?x.Inspection.Lines.Sum(line=>line.Quantity):0,
+            RequiredInspectionQuantity=includeLineSummary?x.Inspection.Lines.Sum(line=>line.SampleQuantity):0,
+            InspectedQuantity=includeLineSummary?x.Inspection.Lines.Sum(line=>line.InspectedQuantity):0,
             CreatedAtUtc=x.Inspection.CreatedAtUtc,QueuedAtUtc=x.Inspection.QueuedAtUtc,DecidedAtUtc=x.Inspection.DecidedAtUtc,InspectorUserId=x.Inspection.InspectorUserId,
-            WorkState=x.Inspection.Status==QualityInspectionStatus.Passed||x.Inspection.Status==QualityInspectionStatus.Failed
+            WorkState=includeWorkAggregate?(x.Inspection.Status==QualityInspectionStatus.Passed||x.Inspection.Status==QualityInspectionStatus.Failed
                 ||x.Inspection.Status==QualityInspectionStatus.Released||x.Inspection.Status==QualityInspectionStatus.Cancelled
                 ? QualityInspectionWorkState.Completed.ToString()
                 : x.Inspection.WorkSessions.Any(session=>session.EndedAtUtc==null)
                     ? QualityInspectionWorkState.Running.ToString()
                     : x.Inspection.WorkSessions.Any()
                         ? QualityInspectionWorkState.Paused.ToString()
-                        : QualityInspectionWorkState.NotStarted.ToString(),
-            RecordedWorkSeconds=x.Inspection.WorkSessions.Sum(session=>(long?)session.DurationSeconds)??0,
-            WorkSessionCount=x.Inspection.WorkSessions.Count,
-            ParticipantCount=x.Inspection.WorkSessions.Select(session=>session.WorkerUserId).Distinct().Count(),
-            ActiveWorkerUserId=x.Inspection.WorkSessions.Where(session=>session.EndedAtUtc==null).Select(session=>(long?)session.WorkerUserId).FirstOrDefault(),
-            ActiveWorkerName=x.Inspection.WorkSessions.Where(session=>session.EndedAtUtc==null).Select(session=>session.WorkerNameSnapshot).FirstOrDefault(),
-            ActiveWorkStartedAtUtc=x.Inspection.WorkSessions.Where(session=>session.EndedAtUtc==null).Select(session=>(DateTimeOffset?)session.StartedAtUtc).FirstOrDefault(),
-            WorkStartedByName=x.Inspection.WorkSessions.OrderByDescending(session=>session.SequenceNo).Select(session=>session.WorkerNameSnapshot).FirstOrDefault(),
-            WorkStoppedByUserId=x.Inspection.WorkSessions.OrderByDescending(session=>session.SequenceNo).Select(session=>session.EndedAtUtc==null?null:session.EndedByUserId).FirstOrDefault(),
-            WorkActorSearchText=(from session in workSessionsQuery
+                        : QualityInspectionWorkState.NotStarted.ToString()):QualityInspectionWorkState.NotStarted.ToString(),
+            RecordedWorkSeconds=includeWorkAggregate?(x.Inspection.WorkSessions.Sum(session=>(long?)session.DurationSeconds)??0):0,
+            WorkSessionCount=includeWorkAggregate?x.Inspection.WorkSessions.Count:0,
+            ParticipantCount=includeWorkAggregate?x.Inspection.WorkSessions.Select(session=>session.WorkerUserId).Distinct().Count():0,
+            ActiveWorkerUserId=includeActiveWork?x.Inspection.WorkSessions.Where(session=>session.EndedAtUtc==null).Select(session=>(long?)session.WorkerUserId).FirstOrDefault():null,
+            ActiveWorkerName=includeActiveWork?x.Inspection.WorkSessions.Where(session=>session.EndedAtUtc==null).Select(session=>session.WorkerNameSnapshot).FirstOrDefault():null,
+            ActiveWorkStartedAtUtc=includeActiveWork?x.Inspection.WorkSessions.Where(session=>session.EndedAtUtc==null).Select(session=>(DateTimeOffset?)session.StartedAtUtc).FirstOrDefault():null,
+            WorkStartedByName=includeWorkActor?x.Inspection.WorkSessions.OrderByDescending(session=>session.SequenceNo).Select(session=>session.WorkerNameSnapshot).FirstOrDefault():null,
+            WorkStoppedByUserId=includeWorkActor?x.Inspection.WorkSessions.OrderByDescending(session=>session.SequenceNo).Select(session=>session.EndedAtUtc==null?null:session.EndedByUserId).FirstOrDefault():null,
+            WorkActorSearchText=includeWorkActor?(from session in workSessionsQuery
                 join stoppedBy in usersQuery on session.EndedByUserId equals (long?)stoppedBy.Id into stoppedByUsers
                 from stoppedBy in stoppedByUsers.DefaultIfEmpty()
                 join stoppedByDetail in userDetailsQuery on session.EndedByUserId equals (long?)stoppedByDetail.UserId into stoppedByDetails
@@ -371,7 +395,7 @@ public sealed class QualityService(
                 where session.QualityInspectionId==x.Inspection.Id
                 orderby session.SequenceNo descending
                 select session.WorkerNameSnapshot+" "+(stoppedBy==null?"":stoppedBy.Username+" "+stoppedBy.Email)+" "
-                    +(stoppedByDetail==null?"":stoppedByDetail.FirstName+" "+stoppedByDetail.LastName)).FirstOrDefault(),
+                    +(stoppedByDetail==null?"":stoppedByDetail.FirstName+" "+stoppedByDetail.LastName)).FirstOrDefault():null,
             CreatedBy=x.Inspection.CreatedBy,CreatedDate=x.Inspection.CreatedDate,UpdatedBy=x.Inspection.UpdatedBy,UpdatedDate=x.Inspection.UpdatedDate });
         var search=request.Search?.Trim(); q=q.Where(x=>string.IsNullOrWhiteSpace(search)||x.InspectionNo.Contains(search)||x.SourceDocumentNo.Contains(search)
             ||(x.SourceWaybillNo!=null&&x.SourceWaybillNo.Contains(search))||(x.CreatedByName!=null&&x.CreatedByName.Contains(search))
@@ -394,10 +418,11 @@ public sealed class QualityService(
             });
         var filtered = q.ApplyAdvancedFilters(request);
         var page = await ApplyInspectionListSort(filtered, request).ToPagedResponseAsync(request, ct);
+        var summarizedItems = await AttachInspectionListSummariesAsync(page.Items, ct);
         return new PagedResponse<QualityInspectionGridRow>
         {
             Items = await AttachPriorityRanksAsync(
-                await AttachWorkStoppedByNamesAsync(await AttachProjectCodesAsync(page.Items, ct), ct), ct),
+                await AttachWorkStoppedByNamesAsync(await AttachProjectCodesAsync(summarizedItems, ct), ct), ct),
             TotalCount = page.TotalCount,
             PageNumber = page.PageNumber,
             PageSize = page.PageSize,
@@ -2732,6 +2757,12 @@ public sealed class QualityService(
             .ThenBy(row => row.PriorityAssignedAtUtc)
             .ApplyThenSort(request, nameof(QualityInspectionGridRow.QueuedAtUtc));
 
+    private static bool RequiresInspectionRelation(PagedRequest request, IReadOnlySet<string> columns) =>
+        (!string.IsNullOrWhiteSpace(request.EffectiveSearch)
+            && request.SearchFields.Any(columns.Contains))
+        || request.Filters.Any(filter => columns.Contains(filter.Column))
+        || columns.Contains(request.SortBy ?? string.Empty);
+
     internal static IReadOnlyDictionary<long, int> BuildPriorityRanks(
         IEnumerable<(long Id, string BranchCode, string Status, DateTimeOffset? PriorityAssignedAtUtc, DateTimeOffset? QueuedAtUtc)> rows) =>
         rows.GroupBy(row => (row.BranchCode, row.Status))
@@ -3114,6 +3145,77 @@ public sealed class QualityService(
         catch { throw AppException.Conflict("Kalite karar kodu güncellik bilgisi geçersiz. Sayfayı yenileyin."); }
     }
     private static void ApplyVersion(QualityInspection entity,string? supplied){if(string.IsNullOrWhiteSpace(supplied))return;try{entity.RowVersion=Convert.FromBase64String(supplied);}catch{throw AppException.Conflict("Kalite kaydı güncellik bilgisi geçersiz. Sayfayı yenileyin.");}}
+
+    private async Task<IReadOnlyList<QualityInspectionGridRow>> AttachInspectionListSummariesAsync(
+        IReadOnlyList<QualityInspectionGridRow> rows, CancellationToken ct)
+    {
+        var ids = rows.Select(row => row.Id).ToArray();
+        if (ids.Length == 0) return rows;
+
+        var lineTotals = await uow.Repository<QualityInspectionLine>().Query()
+            .Where(line => ids.Contains(line.QualityInspectionId))
+            .GroupBy(line => line.QualityInspectionId)
+            .Select(group => new
+            {
+                InspectionId = group.Key,
+                LineCount = group.Count(),
+                TotalQuantity = group.Sum(line => line.Quantity),
+                RequiredInspectionQuantity = group.Sum(line => line.SampleQuantity),
+                InspectedQuantity = group.Sum(line => line.InspectedQuantity)
+            })
+            .ToDictionaryAsync(total => total.InspectionId, ct);
+        var sessions = await WorkSessions.Query()
+            .Where(session => ids.Contains(session.QualityInspectionId))
+            .OrderBy(session => session.QualityInspectionId)
+            .ThenBy(session => session.SequenceNo)
+            .ToListAsync(ct);
+        var sessionsByInspection = sessions
+            .GroupBy(session => session.QualityInspectionId)
+            .ToDictionary(group => group.Key, group => group.ToArray());
+
+        foreach (var row in rows)
+        {
+            if (lineTotals.TryGetValue(row.Id, out var total))
+            {
+                row.LineCount = total.LineCount;
+                row.TotalQuantity = total.TotalQuantity;
+                row.RequiredInspectionQuantity = total.RequiredInspectionQuantity;
+                row.InspectedQuantity = total.InspectedQuantity;
+            }
+            else
+            {
+                row.LineCount = 0;
+                row.TotalQuantity = 0;
+                row.RequiredInspectionQuantity = 0;
+                row.InspectedQuantity = 0;
+            }
+
+            var related = sessionsByInspection.GetValueOrDefault(row.Id) ?? [];
+            var active = related.FirstOrDefault(session => session.EndedAtUtc == null);
+            var last = related.LastOrDefault();
+            var terminal = row.Status is nameof(QualityInspectionStatus.Passed)
+                or nameof(QualityInspectionStatus.Failed)
+                or nameof(QualityInspectionStatus.Released)
+                or nameof(QualityInspectionStatus.Cancelled);
+            row.WorkState = terminal
+                ? QualityInspectionWorkState.Completed.ToString()
+                : active is not null
+                    ? QualityInspectionWorkState.Running.ToString()
+                    : related.Length > 0
+                        ? QualityInspectionWorkState.Paused.ToString()
+                        : QualityInspectionWorkState.NotStarted.ToString();
+            row.RecordedWorkSeconds = related.Sum(session => session.DurationSeconds);
+            row.WorkSessionCount = related.Length;
+            row.ParticipantCount = related.Select(session => session.WorkerUserId).Distinct().Count();
+            row.ActiveWorkerUserId = active?.WorkerUserId;
+            row.ActiveWorkerName = active?.WorkerNameSnapshot;
+            row.ActiveWorkStartedAtUtc = active?.StartedAtUtc;
+            row.WorkStartedByName = last?.WorkerNameSnapshot;
+            row.WorkStoppedByUserId = last?.EndedAtUtc is null ? null : last.EndedByUserId;
+        }
+
+        return rows;
+    }
 
     private async Task<IReadOnlyList<QualityInspectionGridRow>> AttachPriorityRanksAsync(
         IReadOnlyList<QualityInspectionGridRow> rows, CancellationToken ct)

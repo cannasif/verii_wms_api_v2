@@ -152,18 +152,18 @@ public sealed class QualityInspectionGridRow
     public bool IsPriority { get; init; }
     public DateTimeOffset? PriorityAssignedAtUtc { get; init; }
     public int? PriorityRank { get; set; }
-    public string Status { get; init; } = string.Empty; public int LineCount { get; init; } public decimal TotalQuantity { get; init; }
-    public decimal RequiredInspectionQuantity { get; set; } public decimal InspectedQuantity { get; init; }
+    public string Status { get; init; } = string.Empty; public int LineCount { get; set; } public decimal TotalQuantity { get; set; }
+    public decimal RequiredInspectionQuantity { get; set; } public decimal InspectedQuantity { get; set; }
     public DateTimeOffset CreatedAtUtc { get; init; } public DateTimeOffset? QueuedAtUtc { get; init; } public DateTimeOffset? DecidedAtUtc { get; init; } public long? InspectorUserId { get; init; }
-    public string WorkState { get; init; } = QualityInspectionWorkState.NotStarted.ToString();
-    public long RecordedWorkSeconds { get; init; }
-    public int WorkSessionCount { get; init; }
-    public int ParticipantCount { get; init; }
-    public long? ActiveWorkerUserId { get; init; }
-    public string? ActiveWorkerName { get; init; }
-    public DateTimeOffset? ActiveWorkStartedAtUtc { get; init; }
-    public string? WorkStartedByName { get; init; }
-    public long? WorkStoppedByUserId { get; init; }
+    public string WorkState { get; set; } = QualityInspectionWorkState.NotStarted.ToString();
+    public long RecordedWorkSeconds { get; set; }
+    public int WorkSessionCount { get; set; }
+    public int ParticipantCount { get; set; }
+    public long? ActiveWorkerUserId { get; set; }
+    public string? ActiveWorkerName { get; set; }
+    public DateTimeOffset? ActiveWorkStartedAtUtc { get; set; }
+    public string? WorkStartedByName { get; set; }
+    public long? WorkStoppedByUserId { get; set; }
     public string? WorkStoppedByName { get; set; }
     [JsonIgnore] public string? WorkActorSearchText { get; init; }
     public long? CreatedBy { get; init; } public DateTime? CreatedDate { get; init; } public long? UpdatedBy { get; init; } public DateTime? UpdatedDate { get; init; }
