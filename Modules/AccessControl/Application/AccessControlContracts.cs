@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using verii_wms_api_v2.Shared;
 
 namespace verii_wms_api_v2.Modules.AccessControl.Application;
@@ -7,7 +8,8 @@ public sealed record GroupRequest(string Name, string? Description, bool IsSyste
 public sealed record CopyGroupRequest(string Name, string? Description);
 public sealed record IdListRequest(IReadOnlyList<long> Ids);
 public sealed record PermissionGridRow(long Id, string Code, string Name, string? Description, bool IsActive, bool AvailableOnWeb, bool AvailableOnMobile, long? CreatedBy, DateTime? CreatedDate, long? UpdatedBy, DateTime? UpdatedDate);
-public sealed record GroupGridRow(long Id, string Name, string? Description, bool IsSystemAdmin, bool IsProtected, string? TemplateKey, bool IsActive, int PermissionCount, long? CreatedBy, DateTime? CreatedDate, long? UpdatedBy, DateTime? UpdatedDate);
+public sealed record GroupGridRow(long Id, string Name, string? Description, bool IsSystemAdmin, bool IsProtected, string? TemplateKey, bool IsActive, int PermissionCount, long? CreatedBy, DateTime? CreatedDate, long? UpdatedBy, DateTime? UpdatedDate,
+    [property: JsonIgnore] string? NameSearchText=null);
 public sealed record GroupDetail(long Id, string Name, string? Description, bool IsSystemAdmin, bool IsProtected, string? TemplateKey, bool IsActive, IReadOnlyList<long> PermissionIds, IReadOnlyList<string> PermissionCodes);
 public sealed record GroupStats(int Total, int Active, int SystemAdmin);
 public sealed record MyPermissionsResponse(bool IsSystemAdmin, IReadOnlyList<string> Permissions);
