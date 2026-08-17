@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using verii_wms_api_v2.Modules.BarcodeDesigner.Domain;
 using verii_wms_api_v2.Shared;
 
@@ -25,6 +26,7 @@ public sealed class BarcodeTemplateGridRow
     public DateTime? CreatedDate { get; init; }
     public long? UpdatedBy { get; init; }
     public DateTime? UpdatedDate { get; init; }
+    [JsonIgnore] public string? DimensionsSearchText { get; init; }
 }
 
 public sealed record BarcodeTemplateVersionRow(long Id, long BarcodeTemplateId, int VersionNo, bool IsPublished, DateTime? PublishedAt, string? Notes, string TemplateJson, DateTime? CreatedDate, long? CreatedBy);

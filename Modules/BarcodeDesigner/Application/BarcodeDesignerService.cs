@@ -15,6 +15,14 @@ namespace verii_wms_api_v2.Modules.BarcodeDesigner.Application;
 public sealed partial class BarcodeDesignerService(IUnitOfWork unitOfWork, IAuditLogWriter audit, IStringLocalizer<BarcodeDesignerResource> localizer) : IBarcodeDesignerService
 {
     private const int MaxTemplateBytes = 262_144;
+    private static readonly IReadOnlyDictionary<string,string> SearchColumns=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["id"]=nameof(BarcodeTemplateGridRow.Id),["templateCode"]=nameof(BarcodeTemplateGridRow.TemplateCode),
+        ["displayName"]=nameof(BarcodeTemplateGridRow.DisplayName),["widthMm"]=nameof(BarcodeTemplateGridRow.DimensionsSearchText),
+        ["dpi"]=nameof(BarcodeTemplateGridRow.Dpi),["draftVersionId"]=nameof(BarcodeTemplateGridRow.DraftVersionId),
+        ["publishedVersionId"]=nameof(BarcodeTemplateGridRow.PublishedVersionId)
+    };
+    private static readonly string[] DefaultSearchColumns=["templateCode","displayName"];
     private IGenericRepository<BarcodeTemplate> Templates => unitOfWork.Repository<BarcodeTemplate>();
     private IGenericRepository<BarcodeTemplateVersion> Versions => unitOfWork.Repository<BarcodeTemplateVersion>();
 
@@ -22,7 +30,7 @@ public sealed partial class BarcodeDesignerService(IUnitOfWork unitOfWork, IAudi
     {
         var search = request.Search?.Trim();
         var query = Grid().Where(x => string.IsNullOrWhiteSpace(search) || x.TemplateCode.Contains(search) || x.DisplayName.Contains(search) || x.LabelType.Contains(search));
-        return await query.ApplyAdvancedFilters(request).ApplySort(request, nameof(BarcodeTemplateGridRow.TemplateCode)).ToPagedResponseAsync(request, cancellationToken);
+        return await query.ApplySearch(request,SearchColumns,DefaultSearchColumns).ApplyAdvancedFilters(request).ApplySort(request, nameof(BarcodeTemplateGridRow.TemplateCode)).ToPagedResponseAsync(request, cancellationToken);
     }
 
     public async Task<BarcodeTemplateGridRow> GetByIdAsync(long id, CancellationToken cancellationToken = default) =>
@@ -107,7 +115,8 @@ public sealed partial class BarcodeDesignerService(IUnitOfWork unitOfWork, IAudi
         Id = x.Id, BranchCode = x.BranchCode, TemplateCode = x.TemplateCode, DisplayName = x.DisplayName,
         LabelType = x.LabelType == BarcodeLabelType.Product ? "Product" : x.LabelType == BarcodeLabelType.SerialLot ? "SerialLot" : x.LabelType == BarcodeLabelType.Location ? "Location" : x.LabelType == BarcodeLabelType.Logistics ? "Logistics" : "Sscc",
         WidthMm = x.WidthMm, HeightMm = x.HeightMm, Dpi = x.Dpi, EngineType = x.EngineType, IsActive = x.IsActive,
-        DraftVersionId = x.DraftVersionId, PublishedVersionId = x.PublishedVersionId, CreatedBy = x.CreatedBy, CreatedDate = x.CreatedDate, UpdatedBy = x.UpdatedBy, UpdatedDate = x.UpdatedDate
+        DraftVersionId = x.DraftVersionId, PublishedVersionId = x.PublishedVersionId, CreatedBy = x.CreatedBy, CreatedDate = x.CreatedDate, UpdatedBy = x.UpdatedBy, UpdatedDate = x.UpdatedDate,
+        DimensionsSearchText=x.WidthMm+" × "+x.HeightMm+" mm"
     });
 
     private async Task<BarcodeTemplate> EnsureTemplateAsync(long id, bool tracking, CancellationToken cancellationToken) => await Templates.FindByIdAsync(id, tracking, cancellationToken) ?? throw AppException.NotFound(Message(BarcodeDesignerMessageKeys.NotFound));
