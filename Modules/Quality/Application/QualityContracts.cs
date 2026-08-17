@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using verii_wms_api_v2.Modules.Quality.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Shared;
@@ -134,6 +135,7 @@ public sealed class QualityRuleGridRow
 {
     public long Id { get; init; } public string BranchCode { get; init; } = "0"; public string ScopeType { get; init; } = string.Empty;
     public long? StockId { get; init; } public string? StockCode { get; init; } public string? StockName { get; init; } public string? StockGroupCode { get; init; }
+    [JsonIgnore] public string StockSearchText { get; init; } = string.Empty;
     public string InspectionMode { get; init; } = string.Empty; public string SamplingMode { get; init; } = string.Empty; public decimal SamplingValue { get; init; }
     public string FailAction { get; init; } = string.Empty; public bool AutoQuarantine { get; init; } public bool RequireLot { get; init; }
     public bool RequireSerial { get; init; } public bool RequireExpiryDate { get; init; } public int? MinimumRemainingShelfLifeDays { get; init; }
@@ -163,6 +165,7 @@ public sealed class QualityInspectionGridRow
     public string? WorkStartedByName { get; init; }
     public long? WorkStoppedByUserId { get; init; }
     public string? WorkStoppedByName { get; set; }
+    [JsonIgnore] public string? WorkActorSearchText { get; init; }
     public long? CreatedBy { get; init; } public DateTime? CreatedDate { get; init; } public long? UpdatedBy { get; init; } public DateTime? UpdatedDate { get; init; }
 }
 

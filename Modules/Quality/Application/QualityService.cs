@@ -151,11 +151,17 @@ public sealed class QualityService(
                      select new { Rule=rule, Stock=stock };
         var q = joined.Select(x => new QualityRuleGridRow { Id=x.Rule.Id, BranchCode=x.Rule.BranchCode, ScopeType=x.Rule.ScopeType, StockId=x.Rule.StockId,
             StockCode=x.Stock==null?null:x.Stock.ErpStockCode, StockName=x.Stock==null?null:x.Stock.StockName, StockGroupCode=x.Rule.StockGroupCode,
+            StockSearchText=(x.Stock==null?"":x.Stock.ErpStockCode)+" "+(x.Stock==null?"":x.Stock.StockName)+" "+(x.Rule.StockGroupCode??""),
             InspectionMode=x.Rule.InspectionMode.ToString(), SamplingMode=x.Rule.SamplingMode.ToString(), SamplingValue=x.Rule.SamplingValue,
             FailAction=x.Rule.FailAction.ToString(), AutoQuarantine=x.Rule.AutoQuarantine, RequireLot=x.Rule.RequireLot, RequireSerial=x.Rule.RequireSerial,
             RequireExpiryDate=x.Rule.RequireExpiryDate, MinimumRemainingShelfLifeDays=x.Rule.MinimumRemainingShelfLifeDays, IsActive=x.Rule.IsActive,
             Description=x.Rule.Description, CreatedBy=x.Rule.CreatedBy, CreatedDate=x.Rule.CreatedDate, UpdatedBy=x.Rule.UpdatedBy, UpdatedDate=x.Rule.UpdatedDate });
-        var search=request.Search?.Trim(); q=q.Where(x=>string.IsNullOrWhiteSpace(search)||(x.StockCode!=null&&x.StockCode.Contains(search))||(x.StockName!=null&&x.StockName.Contains(search))||(x.StockGroupCode!=null&&x.StockGroupCode.Contains(search)));
+        q = q.ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["id"] = nameof(QualityRuleGridRow.Id),
+            // The grid deliberately renders stock code, stock name and group in one cell.
+            ["stockCode"] = nameof(QualityRuleGridRow.StockSearchText)
+        }, ["stockCode"], AdvancedQueryExtensions.TurkishCaseInsensitiveSearchCollation);
         return await q.ApplyAdvancedFilters(request).ApplySort(request,nameof(QualityRuleGridRow.Id)).ToPagedResponseAsync(request,ct);
     }
 
@@ -202,7 +208,8 @@ public sealed class QualityService(
         {
             ["code"] = nameof(QualityDecisionCodeGridRow.Code),
             ["name"] = nameof(QualityDecisionCodeGridRow.Name),
-            ["description"] = nameof(QualityDecisionCodeGridRow.Description)
+            ["description"] = nameof(QualityDecisionCodeGridRow.Description),
+            ["sortOrder"] = nameof(QualityDecisionCodeGridRow.SortOrder)
         }, ["code", "name"]);
         return await query.ApplyAdvancedFilters(request)
             .ApplySort(request, nameof(QualityDecisionCodeGridRow.SortOrder))
@@ -313,13 +320,16 @@ public sealed class QualityService(
 
     public async Task<PagedResponse<QualityInspectionGridRow>> GetInspectionsPagedAsync(PagedRequest request,CancellationToken ct=default)
     {
+        var usersQuery = uow.Repository<User>().Query();
+        var userDetailsQuery = uow.Repository<UserDetail>().Query();
+        var workSessionsQuery = uow.Repository<QualityInspectionWorkSession>().Query();
         var joined=from i in Inspections.Query()
                    join w in uow.Repository<WarehouseEntity>().Query() on i.WarehouseId equals w.Id into ws
                    from w in ws.DefaultIfEmpty()
                    join g in uow.Repository<GoodsReceiptHeader>().Query() on new { Type=i.SourceDocumentType, Id=i.SourceDocumentId }
                        equals new { Type="GoodsReceipt", Id=g.Id } into gs
                    from g in gs.DefaultIfEmpty()
-                   join u in uow.Repository<User>().Query() on i.CreatedBy equals (long?)u.Id into users
+                   join u in usersQuery on i.CreatedBy equals (long?)u.Id into users
                    from u in users.DefaultIfEmpty()
                    join d in uow.Repository<UserDetail>().Query() on u.Id equals d.UserId into details
                    from d in details.DefaultIfEmpty()
@@ -351,6 +361,15 @@ public sealed class QualityService(
             ActiveWorkStartedAtUtc=x.Inspection.WorkSessions.Where(session=>session.EndedAtUtc==null).Select(session=>(DateTimeOffset?)session.StartedAtUtc).FirstOrDefault(),
             WorkStartedByName=x.Inspection.WorkSessions.OrderByDescending(session=>session.SequenceNo).Select(session=>session.WorkerNameSnapshot).FirstOrDefault(),
             WorkStoppedByUserId=x.Inspection.WorkSessions.OrderByDescending(session=>session.SequenceNo).Select(session=>session.EndedAtUtc==null?null:session.EndedByUserId).FirstOrDefault(),
+            WorkActorSearchText=(from session in workSessionsQuery
+                join stoppedBy in usersQuery on session.EndedByUserId equals (long?)stoppedBy.Id into stoppedByUsers
+                from stoppedBy in stoppedByUsers.DefaultIfEmpty()
+                join stoppedByDetail in userDetailsQuery on session.EndedByUserId equals (long?)stoppedByDetail.UserId into stoppedByDetails
+                from stoppedByDetail in stoppedByDetails.DefaultIfEmpty()
+                where session.QualityInspectionId==x.Inspection.Id
+                orderby session.SequenceNo descending
+                select session.WorkerNameSnapshot+" "+(stoppedBy==null?"":stoppedBy.Username+" "+stoppedBy.Email)+" "
+                    +(stoppedByDetail==null?"":stoppedByDetail.FirstName+" "+stoppedByDetail.LastName)).FirstOrDefault(),
             CreatedBy=x.Inspection.CreatedBy,CreatedDate=x.Inspection.CreatedDate,UpdatedBy=x.Inspection.UpdatedBy,UpdatedDate=x.Inspection.UpdatedDate });
         var search=request.Search?.Trim(); q=q.Where(x=>string.IsNullOrWhiteSpace(search)||x.InspectionNo.Contains(search)||x.SourceDocumentNo.Contains(search)
             ||(x.SourceWaybillNo!=null&&x.SourceWaybillNo.Contains(search))||(x.CreatedByName!=null&&x.CreatedByName.Contains(search))
@@ -363,6 +382,14 @@ public sealed class QualityService(
                     && source.ProjectCodeSnapshot!=null
                     && source.ProjectCodeSnapshot.Contains(search)
                 select source).Any()));
+        if(request.HasExplicitSearchFields)
+            q=q.ApplySearch(request,new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["inspectionNo"]=nameof(QualityInspectionGridRow.InspectionNo),
+                ["sourceWaybillNo"]=nameof(QualityInspectionGridRow.SourceWaybillNo),
+                ["createdByName"]=nameof(QualityInspectionGridRow.CreatedByName),
+                ["workStartedByName"]=nameof(QualityInspectionGridRow.WorkActorSearchText)
+            });
         var filtered = q.ApplyAdvancedFilters(request);
         var page = await ApplyInspectionListSort(filtered, request).ToPagedResponseAsync(request, ct);
         return new PagedResponse<QualityInspectionGridRow>
