@@ -6,6 +6,7 @@ using verii_wms_api_v2.Modules.DocumentSeries.Application;
 using verii_wms_api_v2.Modules.DocumentSeries.Domain;
 using verii_wms_api_v2.Modules.InventoryCount.Domain;
 using verii_wms_api_v2.Modules.InventoryCount.Localization;
+using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.StockMovement.Domain;
@@ -48,11 +49,19 @@ public sealed class InventoryCountService(
             || (x.Description != null && x.Description.Contains(search)));
         query = query.ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
+            ["id"] = nameof(InventoryCountGridRow.Id),
             ["documentNo"] = nameof(InventoryCountGridRow.DocumentNo),
+            ["warehouseCode"] = nameof(InventoryCountGridRow.WarehouseCode),
             ["warehouseName"] = nameof(InventoryCountGridRow.WarehouseName),
             ["description"] = nameof(InventoryCountGridRow.Description),
-            ["branchCode"] = nameof(InventoryCountGridRow.BranchCode)
-        }, ["documentNo", "warehouseName"]);
+            ["branchCode"] = nameof(InventoryCountGridRow.BranchCode),
+            ["priority"] = nameof(InventoryCountGridRow.Priority),
+            ["taskCount"] = nameof(InventoryCountGridRow.TaskProgressSearchText),
+            ["lineCount"] = nameof(InventoryCountGridRow.LineProgressSearchText),
+            ["varianceLineCount"] = nameof(InventoryCountGridRow.VarianceLineCount),
+            ["createdBy"] = nameof(InventoryCountGridRow.CreatedBySearchText),
+            ["updatedBy"] = nameof(InventoryCountGridRow.UpdatedBySearchText)
+        }, ["documentNo", "warehouseCode", "warehouseName"]);
         query = query.ApplyAdvancedFilters(request).ApplySort(request, nameof(InventoryCountGridRow.CreatedDate));
         return await query.ToPagedResponseAsync(request, ct);
     }
@@ -363,13 +372,51 @@ public sealed class InventoryCountService(
     private IQueryable<InventoryCountGridRow> BuildGridQuery() =>
         from header in Headers.Query()
         join warehouse in Warehouses.Query() on header.WarehouseId equals warehouse.Id
-        select new InventoryCountGridRow(
-            header.Id, header.CountCode, header.DocumentNo, header.BranchCode, header.WarehouseId,
-            warehouse.WarehouseCode, warehouse.WarehouseName, header.CountType, header.CountMode, header.MovementPolicy,
-            header.Status, header.Priority, header.PlannedStartUtc, header.PlannedEndUtc, header.SnapshotAtUtc,
-            header.TaskCount, header.CompletedTaskCount, header.LineCount, header.CountedLineCount,
-            header.VarianceLineCount, header.Description, header.CreatedBy, header.CreatedDate, header.UpdatedBy, header.UpdatedDate,
-            Convert.ToBase64String(header.RowVersion));
+        join createdUser in unitOfWork.Repository<User>().Query() on header.CreatedBy equals (long?)createdUser.Id into createdUsers
+        from createdUser in createdUsers.DefaultIfEmpty()
+        join createdDetail in unitOfWork.Repository<UserDetail>().Query() on header.CreatedBy equals (long?)createdDetail.UserId into createdDetails
+        from createdDetail in createdDetails.DefaultIfEmpty()
+        join updatedUser in unitOfWork.Repository<User>().Query() on header.UpdatedBy equals (long?)updatedUser.Id into updatedUsers
+        from updatedUser in updatedUsers.DefaultIfEmpty()
+        join updatedDetail in unitOfWork.Repository<UserDetail>().Query() on header.UpdatedBy equals (long?)updatedDetail.UserId into updatedDetails
+        from updatedDetail in updatedDetails.DefaultIfEmpty()
+        select new InventoryCountGridRow
+        {
+            Id = header.Id,
+            CountCode = header.CountCode,
+            DocumentNo = header.DocumentNo,
+            BranchCode = header.BranchCode,
+            WarehouseId = header.WarehouseId,
+            WarehouseCode = warehouse.WarehouseCode,
+            WarehouseName = warehouse.WarehouseName,
+            CountType = header.CountType,
+            CountMode = header.CountMode,
+            MovementPolicy = header.MovementPolicy,
+            Status = header.Status,
+            Priority = header.Priority,
+            PlannedStartUtc = header.PlannedStartUtc,
+            PlannedEndUtc = header.PlannedEndUtc,
+            SnapshotAtUtc = header.SnapshotAtUtc,
+            TaskCount = header.TaskCount,
+            CompletedTaskCount = header.CompletedTaskCount,
+            LineCount = header.LineCount,
+            CountedLineCount = header.CountedLineCount,
+            VarianceLineCount = header.VarianceLineCount,
+            Description = header.Description,
+            CreatedBy = header.CreatedBy,
+            CreatedDate = header.CreatedDate,
+            UpdatedBy = header.UpdatedBy,
+            UpdatedDate = header.UpdatedDate,
+            ConcurrencyToken = Convert.ToBase64String(header.RowVersion),
+            TaskProgressSearchText = header.CompletedTaskCount + " " + header.TaskCount,
+            LineProgressSearchText = header.CountedLineCount + " " + header.LineCount,
+            CreatedBySearchText = (header.CreatedBy == null ? "Sistem System" : header.CreatedBy.GetValueOrDefault().ToString()) + " "
+                + (createdUser == null ? "" : createdUser.Username + " " + createdUser.Email) + " "
+                + (createdDetail == null ? "" : createdDetail.FirstName + " " + createdDetail.LastName),
+            UpdatedBySearchText = (header.UpdatedBy == null ? "Sistem System" : header.UpdatedBy.GetValueOrDefault().ToString()) + " "
+                + (updatedUser == null ? "" : updatedUser.Username + " " + updatedUser.Email) + " "
+                + (updatedDetail == null ? "" : updatedDetail.FirstName + " " + updatedDetail.LastName)
+        };
 
     private async Task ReplaceScopesAsync(InventoryCountHeader header, IReadOnlyList<InventoryCountScopeRequest> requests, long actor, CancellationToken ct)
     {

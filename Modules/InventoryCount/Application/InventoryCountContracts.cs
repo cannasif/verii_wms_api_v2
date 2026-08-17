@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using verii_wms_api_v2.Modules.InventoryCount.Domain;
 using verii_wms_api_v2.Shared;
 
@@ -49,33 +50,39 @@ public sealed record UpdateInventoryCountDraftRequest(
     IReadOnlyList<InventoryCountScopeRequest> Scopes,
     string ConcurrencyToken);
 
-public sealed record InventoryCountGridRow(
-    long Id,
-    Guid CountCode,
-    string DocumentNo,
-    string BranchCode,
-    long WarehouseId,
-    int WarehouseCode,
-    string WarehouseName,
-    InventoryCountType CountType,
-    InventoryCountMode CountMode,
-    InventoryCountMovementPolicy MovementPolicy,
-    InventoryCountStatus Status,
-    int Priority,
-    DateTime? PlannedStartUtc,
-    DateTime? PlannedEndUtc,
-    DateTime? SnapshotAtUtc,
-    int TaskCount,
-    int CompletedTaskCount,
-    int LineCount,
-    int CountedLineCount,
-    int VarianceLineCount,
-    string? Description,
-    long? CreatedBy,
-    DateTime? CreatedDate,
-    long? UpdatedBy,
-    DateTime? UpdatedDate,
-    string ConcurrencyToken);
+public sealed record InventoryCountGridRow
+{
+    public long Id { get; init; }
+    public Guid CountCode { get; init; }
+    public string DocumentNo { get; init; } = string.Empty;
+    public string BranchCode { get; init; } = string.Empty;
+    public long WarehouseId { get; init; }
+    public int WarehouseCode { get; init; }
+    public string WarehouseName { get; init; } = string.Empty;
+    public InventoryCountType CountType { get; init; }
+    public InventoryCountMode CountMode { get; init; }
+    public InventoryCountMovementPolicy MovementPolicy { get; init; }
+    public InventoryCountStatus Status { get; init; }
+    public int Priority { get; init; }
+    public DateTime? PlannedStartUtc { get; init; }
+    public DateTime? PlannedEndUtc { get; init; }
+    public DateTime? SnapshotAtUtc { get; init; }
+    public int TaskCount { get; init; }
+    public int CompletedTaskCount { get; init; }
+    public int LineCount { get; init; }
+    public int CountedLineCount { get; init; }
+    public int VarianceLineCount { get; init; }
+    public string? Description { get; init; }
+    public long? CreatedBy { get; init; }
+    public DateTime? CreatedDate { get; init; }
+    public long? UpdatedBy { get; init; }
+    public DateTime? UpdatedDate { get; init; }
+    public string ConcurrencyToken { get; init; } = string.Empty;
+    [JsonIgnore] public string TaskProgressSearchText { get; init; } = string.Empty;
+    [JsonIgnore] public string LineProgressSearchText { get; init; } = string.Empty;
+    [JsonIgnore] public string? CreatedBySearchText { get; init; }
+    [JsonIgnore] public string? UpdatedBySearchText { get; init; }
+}
 
 public sealed record InventoryCountScopeRow(
     long Id,
