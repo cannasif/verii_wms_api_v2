@@ -11,17 +11,18 @@
   <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>يمكن إعطاء الأولوية فقط لفحوصات الجودة المفتوحة التي تنتظر قرارًا.</value></data>
   <data name="ControlQuantityRequired" xml:space="preserve"><value>أدخل الكمية التي تم فحصها فعليًا في هذه العملية لكل سطر GKK سيتم اتخاذ قرار بشأنه.</value></data>
   <data name="ControlQuantityMustBePositive" xml:space="preserve"><value>لا يمكن أن تكون كمية فحص GKK للصنف '{0}' سالبة.</value></data>
+  <data name="ControlQuantityMustBeInteger" xml:space="preserve"><value>يجب أن تكون كمية فحص GKK للصنف '{0}' عددًا صحيحًا.</value></data>
   <data name="ControlQuantityExceedsLot" xml:space="preserve"><value>لا يمكن أن تتجاوز الكمية المفحوصة في هذه العملية {1:0.######} للصنف '{0}' الكمية غير المفحوصة فعليًا في الدفعة وهي {2:0.######}.</value></data>
   <data name="ControlQuantityBelowMinimum" xml:space="preserve"><value>الكمية المفحوصة {1:0.######} للصنف '{0}' غير كافية. يجب فحص ما لا يقل عن {2:0.######} فعليًا وفقًا لقاعدة الجودة.</value></data>
   <data name="WorkIdempotencyKeyRequired" xml:space="preserve"><value>يلزم مفتاح عملية فريد لطلب عمل فحص الجودة.</value></data>
   <data name="WorkCannotStartForClosedInspection" xml:space="preserve"><value>لا يمكن إعادة تشغيل فحص جودة مكتمل أو ملغى.</value></data>
   <data name="ReceiptMustBeCompletedBeforeWork" xml:space="preserve"><value>يجب إكمال الاستلام الفعلي المرتبط قبل بدء عمل فحص الجودة.</value></data>
-  <data name="WorkAlreadyActiveByAnotherUser" xml:space="preserve"><value>{0} يعمل على فحص الجودة هذا. يجب إيقاف الجلسة النشطة قبل التسليم.</value></data>
+  <data name="WorkAlreadyActiveByAnotherUser" xml:space="preserve"><value>{0} يعمل على فحص الجودة هذا. يمكن للمستخدم الذي بدأ الجلسة فقط إيقافها.</value></data>
   <data name="WorkStopReasonRequired" xml:space="preserve"><value>اختر سبب التوقف.</value></data>
   <data name="WorkOtherStopNoteRequired" xml:space="preserve"><value>يلزم إدخال شرح عندما يكون سبب التوقف «أخرى».</value></data>
   <data name="WorkHasNoActiveSession" xml:space="preserve"><value>لا توجد جلسة عمل فحص جودة نشطة لإيقافها.</value></data>
-  <data name="WorkPauseRequiresOwnerOrSupervisor" xml:space="preserve"><value>يمكن للمشغل النشط أو مشرف الجودة فقط إيقاف هذه الجلسة.</value></data>
-  <data name="WorkMustBeActiveForCurrentUser" xml:space="preserve"><value>ابدأ فحص الجودة باستخدام حسابك قبل تطبيق القرار. يجب أولاً إيقاف جلسة المستخدم الآخر أو تسليمها.</value></data>
+  <data name="WorkPauseRequiresOwnerOrSupervisor" xml:space="preserve"><value>يمكن للمستخدم الذي بدأ جلسة فحص الجودة هذه فقط إيقافها.</value></data>
+  <data name="WorkMustBeActiveForCurrentUser" xml:space="preserve"><value>ابدأ فحص الجودة باستخدام حسابك قبل تطبيق القرار. إذا كان مستخدم آخر يعمل، يمكن لذلك المستخدم فقط إيقاف الجلسة.</value></data>
   <data name="ImageUploadBatchLimit" xml:space="preserve"><value>يمكنك تحميل من 1 إلى {0} صور جودة في المرة الواحدة.</value></data>
   <data name="ImageCaptionLengthLimit" xml:space="preserve"><value>يجب ألا يتجاوز وصف الصورة {0} حرفًا.</value></data>
   <data name="ImageLineLimit" xml:space="preserve"><value>يمكن أن يحتوي سطر الجودة على {0} صورة كحد أقصى.</value></data>

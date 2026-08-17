@@ -32,6 +32,11 @@ public sealed class QualityRuleResolutionTests
 
         Assert.Equal("StockRule", resolved.Source);
         Assert.Equal(QualityInspectionMode.InspectionRequired, resolved.InspectionMode);
+        Assert.Equal(QualitySamplingMode.All, resolved.SamplingMode);
+        Assert.Equal(100m, resolved.SamplingValue);
+        Assert.Equal(
+            40m,
+            QualitySamplingCalculator.Calculate(40m, resolved.SamplingMode, resolved.SamplingValue));
     }
 
     [Fact]
@@ -85,6 +90,11 @@ public sealed class QualityRuleResolutionTests
         Assert.Equal("NoRule", resolved.Source);
         Assert.Null(resolved.RuleId);
         Assert.Equal(QualityInspectionMode.NoCheck, resolved.InspectionMode);
+        Assert.Equal(QualitySamplingMode.FixedQuantity, resolved.SamplingMode);
+        Assert.Equal(0m, resolved.SamplingValue);
+        Assert.Equal(
+            0m,
+            QualitySamplingCalculator.Calculate(50m, resolved.SamplingMode, resolved.SamplingValue));
     }
 
     [Fact]

@@ -434,7 +434,8 @@ public sealed class QualityService(
                     line.Id,
                     line.TargetWarehouseId,
                     line.DefaultPutawayLocationId,
-                    line.DefaultReceivingLocationId))
+                    line.DefaultReceivingLocationId,
+                    line.QualityRoutingSource))
                 .ToDictionaryAsync(line => line.LineId, ct);
         var acceptedLocationIdByInspectionLineId = inspection.Lines.ToDictionary(
             line => line.Id,
@@ -479,15 +480,20 @@ public sealed class QualityService(
                 && lineSourceSummaries.TryGetValue(goodsReceiptLineId, out var found)
                 ? found
                 : (ProjectCodes: (string?)null, OrderNumbers: (string?)null);
+            var routing = x.GoodsReceiptLineId is long receiptLineId
+                && receiptLineDefaults.TryGetValue(receiptLineId, out var receiptLine)
+                ? receiptLine.QualityRoutingSource
+                : (GoodsReceiptQualityRoutingSource?)null;
             return new QualityInspectionLineDto(x.Id, x.GoodsReceiptLineId,
             x.StockId, x.StockCodeSnapshot, x.StockNameSnapshot, x.YapCodeSnapshot, x.LotNo, x.SerialNo, x.ExpiryDate,
-            x.Quantity, x.SampleQuantity, x.InspectedQuantity, x.AcceptedQuantity, x.RejectedQuantity, x.QuarantineQuantity,
+            x.Quantity, EffectiveSampleQuantity(x, routing), x.InspectedQuantity, x.AcceptedQuantity, x.RejectedQuantity, x.QuarantineQuantity,
             x.QuarantineLocationId, x.Decision,
             x.DecisionCodeId, x.ReasonCode, x.ReasonNote, x.DecisionBy, x.DecisionAtUtc,
             defaultAcceptedDestinationByInspectionLineId.GetValueOrDefault(x.Id),
             summary.ProjectCodes,
             summary.OrderNumbers);
         }).ToList();
+        header.RequiredInspectionQuantity = lines.Sum(line => line.SampleQuantity);
         var quarantineSourceWarehouseIds = receiptLineDefaults.Values
             .Select(line => line.WarehouseId)
             .Append(inspection.WarehouseId)
@@ -687,7 +693,7 @@ public sealed class QualityService(
             ApplyVersion(inspection, request.RowVersion);
             var active = inspection.WorkSessions.FirstOrDefault(x => x.EndedAtUtc == null)
                 ?? throw AppException.Conflict(Message(QualityMessageKeys.WorkHasNoActiveSession));
-            if (active.WorkerUserId != actor && !canSupervise)
+            if (active.WorkerUserId != actor)
                 throw AppException.Forbidden(Message(QualityMessageKeys.WorkPauseRequiresOwnerOrSupervisor));
 
             await ApplyProgressControlsAsync(inspection, request.ControlQuantities, request.IdempotencyKey, actor, now, token);
@@ -808,7 +814,13 @@ public sealed class QualityService(
                 request.DecisionCodeId,
                 request.Note,
                 token);
-            var controlQuantities = ValidateControlQuantities(selected, request.ControlQuantities);
+            var routingByGoodsReceiptLineId = gr.Lines.ToDictionary(x => x.Id, x => x.QualityRoutingSource);
+            var controlQuantities = ValidateControlQuantities(selected, request.ControlQuantities, routingByGoodsReceiptLineId);
+            foreach (var line in selected)
+            {
+                if (!SamplingRuleApplies(line, routingByGoodsReceiptLineId))
+                    line.SampleQuantity = 0;
+            }
             var releasesQuarantine = decisionParts.Any(x =>
                 x.Decision == QualityDecision.Accepted
                 && x.Line.Decision == QualityDecision.Quarantined);
@@ -1321,7 +1333,7 @@ public sealed class QualityService(
                     &&x.StockGroupCode!=null&&x.StockGroupCode.Trim().ToUpper()==normalizedGroup)
                 .OrderByDescending(x=>x.Id)
                 .FirstOrDefaultAsync(ct);
-        return rule is null ? new("NoRule",null,QualityInspectionMode.NoCheck,QualitySamplingMode.All,100,parameter.DefaultFailAction,false,false,false,false,null,parameter.HoldInventoryUntilDecision,parameter.BlockPutawayUntilDecision,parameter.BlockErpPostingUntilDecision)
+        return rule is null ? new("NoRule",null,QualityInspectionMode.NoCheck,QualitySamplingMode.FixedQuantity,0,parameter.DefaultFailAction,false,false,false,false,null,parameter.HoldInventoryUntilDecision,parameter.BlockPutawayUntilDecision,parameter.BlockErpPostingUntilDecision)
             : new(rule.StockId.HasValue?"StockRule":"StockGroupRule",rule.Id,rule.InspectionMode,rule.SamplingMode,rule.SamplingValue,rule.FailAction,rule.AutoQuarantine,rule.RequireLot,rule.RequireSerial,rule.RequireExpiryDate,rule.MinimumRemainingShelfLifeDays,parameter.HoldInventoryUntilDecision,parameter.BlockPutawayUntilDecision,parameter.BlockErpPostingUntilDecision);
     }
 
@@ -2213,7 +2225,8 @@ public sealed class QualityService(
         decision is QualityDecision.Rejected or QualityDecision.Quarantined or QualityDecision.Returned;
     private IReadOnlyDictionary<long, QualityInspectionControlSnapshot> ValidateControlQuantities(
         IReadOnlyCollection<QualityInspectionLine> selected,
-        IReadOnlyList<QualityInspectionControlQuantityRequest>? requests)
+        IReadOnlyList<QualityInspectionControlQuantityRequest>? requests,
+        IReadOnlyDictionary<long, GoodsReceiptQualityRoutingSource>? routingByGoodsReceiptLineId = null)
     {
         var groups = requests?.GroupBy(request => request.LineId).ToArray() ?? [];
         if (groups.Length != selected.Count
@@ -2226,10 +2239,16 @@ public sealed class QualityService(
         {
             var inspected = groups.Single(group => group.Key == line.Id).Single().InspectedQuantity;
             var lotQuantity = line.Quantity;
-            var required = RequiredControlQuantityForDecision(line);
+            var required = RequiredControlQuantityForDecision(
+                line,
+                SamplingRuleApplies(line, routingByGoodsReceiptLineId));
             if (inspected < 0)
                 throw AppException.BadRequest(Message(
                     QualityMessageKeys.ControlQuantityMustBePositive,
+                    line.StockCodeSnapshot));
+            if (!IsWholeControlQuantity(inspected))
+                throw AppException.BadRequest(Message(
+                    QualityMessageKeys.ControlQuantityMustBeInteger,
                     line.StockCodeSnapshot));
             var remainingInspectable = RemainingInspectableQuantity(line);
             inspected = NormalizeAdditionalControlQuantity(inspected, remainingInspectable);
@@ -2254,12 +2273,38 @@ public sealed class QualityService(
             ? line.QuarantineQuantity
             : Math.Max(0, line.Quantity - DecidedQuantity(line));
     internal static decimal RequiredControlQuantityForDecision(QualityInspectionLine line) =>
-        Math.Max(0, Math.Min(line.SampleQuantity, line.Quantity) - line.InspectedQuantity);
+        RequiredControlQuantityForDecision(line, samplingRuleApplies: true);
+
+    internal static decimal RequiredControlQuantityForDecision(
+        QualityInspectionLine line,
+        bool samplingRuleApplies)
+    {
+        var sample = samplingRuleApplies ? line.SampleQuantity : 0;
+        return Math.Max(0, Math.Min(sample, line.Quantity) - line.InspectedQuantity);
+    }
+
+    internal static decimal EffectiveSampleQuantity(
+        QualityInspectionLine line,
+        GoodsReceiptQualityRoutingSource? routingSource) =>
+        routingSource == GoodsReceiptQualityRoutingSource.ManualReceipt
+            ? 0
+            : Math.Max(0, line.SampleQuantity);
+
+    private static bool SamplingRuleApplies(
+        QualityInspectionLine line,
+        IReadOnlyDictionary<long, GoodsReceiptQualityRoutingSource>? routingByGoodsReceiptLineId) =>
+        line.GoodsReceiptLineId is not long goodsReceiptLineId
+        || routingByGoodsReceiptLineId is null
+        || !routingByGoodsReceiptLineId.TryGetValue(goodsReceiptLineId, out var routing)
+        || routing != GoodsReceiptQualityRoutingSource.ManualReceipt;
     internal static decimal RemainingInspectableQuantity(QualityInspectionLine line) =>
         Math.Max(0, line.Quantity - line.InspectedQuantity);
 
     internal static decimal NormalizeAdditionalControlQuantity(decimal requested, decimal remainingInspectable) =>
         remainingInspectable <= 0.000001m ? 0 : requested;
+
+    internal static bool IsWholeControlQuantity(decimal value) =>
+        value == decimal.Truncate(value);
 
     private IReadOnlyList<(QualityInspectionLine Line, decimal InspectedQuantity)> ResolveProgressControls(
         IEnumerable<QualityInspectionLine> lines,
@@ -2273,6 +2318,10 @@ public sealed class QualityService(
             if (!byId.TryGetValue(request.LineId, out var line))
                 throw AppException.BadRequest(Message(QualityMessageKeys.InspectionLineNotFound));
             if (request.InspectedQuantity <= 0) continue;
+            if (!IsWholeControlQuantity(request.InspectedQuantity))
+                throw AppException.BadRequest(Message(
+                    QualityMessageKeys.ControlQuantityMustBeInteger,
+                    line.StockCodeSnapshot));
             var remaining = RemainingInspectableQuantity(line);
             if (request.InspectedQuantity - remaining > 0.000001m)
                 throw AppException.BadRequest(Message(
@@ -2456,7 +2505,7 @@ public sealed class QualityService(
             active?.WorkerNameSnapshot,
             active?.StartedAtUtc,
             canExecute && receiptReady && !terminal && active is null,
-            canExecute && active is not null && (active.WorkerUserId == actor || canSupervise),
+            canExecute && active is not null && active.WorkerUserId == actor,
             canDecide && receiptReady && active?.WorkerUserId == actor);
     }
 
@@ -2713,7 +2762,8 @@ public sealed class QualityService(
         long LineId,
         long WarehouseId,
         long? DefaultPutawayLocationId,
-        long? DefaultReceivingLocationId);
+        long? DefaultReceivingLocationId,
+        GoodsReceiptQualityRoutingSource QualityRoutingSource);
     internal sealed record QualityInventorySourceCandidate(
         long BalanceId,
         long WarehouseId,

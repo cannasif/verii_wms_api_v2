@@ -11,17 +11,18 @@
   <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>Seuls les contrôles qualité ouverts en attente de décision peuvent être prioritaires.</value></data>
   <data name="ControlQuantityRequired" xml:space="preserve"><value>Saisissez la quantité physiquement contrôlée lors de cette opération pour chaque ligne GKK à décider.</value></data>
   <data name="ControlQuantityMustBePositive" xml:space="preserve"><value>La quantité contrôlée GKK pour « {0} » ne peut pas être négative.</value></data>
+  <data name="ControlQuantityMustBeInteger" xml:space="preserve"><value>La quantité contrôlée GKK pour « {0} » doit être un nombre entier.</value></data>
   <data name="ControlQuantityExceedsLot" xml:space="preserve"><value>La quantité contrôlée dans cette opération, {1:0.######}, pour « {0} » ne peut pas dépasser les {2:0.######} restant à contrôler physiquement dans le lot.</value></data>
   <data name="ControlQuantityBelowMinimum" xml:space="preserve"><value>La quantité contrôlée {1:0.######} pour « {0} » est insuffisante. Au moins {2:0.######} doivent être physiquement contrôlés selon la règle qualité.</value></data>
   <data name="WorkIdempotencyKeyRequired" xml:space="preserve"><value>Une clé d’opération unique est requise pour la demande de travail GKK.</value></data>
   <data name="WorkCannotStartForClosedInspection" xml:space="preserve"><value>Un contrôle GKK terminé ou annulé ne peut pas être redémarré.</value></data>
   <data name="ReceiptMustBeCompletedBeforeWork" xml:space="preserve"><value>La réception physique associée doit être terminée avant de démarrer le travail GKK.</value></data>
-  <data name="WorkAlreadyActiveByAnotherUser" xml:space="preserve"><value>{0} travaille sur ce contrôle GKK. La session active doit être arrêtée avant le transfert.</value></data>
+  <data name="WorkAlreadyActiveByAnotherUser" xml:space="preserve"><value>{0} travaille sur ce contrôle GKK. Seul l’utilisateur qui a démarré la session peut l’arrêter.</value></data>
   <data name="WorkStopReasonRequired" xml:space="preserve"><value>Sélectionnez un motif d’arrêt.</value></data>
   <data name="WorkOtherStopNoteRequired" xml:space="preserve"><value>Une explication est obligatoire lorsque le motif est Autre.</value></data>
   <data name="WorkHasNoActiveSession" xml:space="preserve"><value>Aucune session de travail GKK active ne peut être arrêtée.</value></data>
-  <data name="WorkPauseRequiresOwnerOrSupervisor" xml:space="preserve"><value>Seul l’opérateur actif ou un responsable qualité peut arrêter cette session.</value></data>
-  <data name="WorkMustBeActiveForCurrentUser" xml:space="preserve"><value>Démarrez le contrôle GKK avec votre utilisateur avant d’appliquer la décision. La session d’un autre utilisateur doit d’abord être arrêtée ou transférée.</value></data>
+  <data name="WorkPauseRequiresOwnerOrSupervisor" xml:space="preserve"><value>Seul l’utilisateur qui a démarré cette session GKK peut l’arrêter.</value></data>
+  <data name="WorkMustBeActiveForCurrentUser" xml:space="preserve"><value>Démarrez le contrôle GKK avec votre utilisateur avant d’appliquer la décision. Si un autre utilisateur travaille, seul celui-ci peut arrêter la session.</value></data>
   <data name="ImageUploadBatchLimit" xml:space="preserve"><value>Vous pouvez charger entre 1 et {0} images qualité à la fois.</value></data>
   <data name="ImageCaptionLengthLimit" xml:space="preserve"><value>La description de l’image ne peut pas dépasser {0} caractères.</value></data>
   <data name="ImageLineLimit" xml:space="preserve"><value>Une ligne de contrôle qualité peut contenir au maximum {0} images.</value></data>

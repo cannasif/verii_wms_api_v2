@@ -49,7 +49,7 @@ public sealed class QualityInspectionWorkSessionTests
     }
 
     [Fact]
-    public void Another_operator_cannot_apply_decision_but_supervisor_can_stop_active_session()
+    public void Another_operator_or_supervisor_cannot_stop_active_session()
     {
         var now = DateTimeOffset.UtcNow;
         var inspection = new QualityInspection
@@ -70,7 +70,7 @@ public sealed class QualityInspectionWorkSessionTests
             inspection, 22, canExecute: true, canSupervise: true, canDecide: true,
             receiptReady: true, now);
 
-        Assert.True(result.CanPause);
+        Assert.False(result.CanPause);
         Assert.False(result.CanApplyDecision);
         Assert.False(result.CanStart);
     }

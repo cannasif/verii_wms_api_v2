@@ -4,6 +4,7 @@ namespace verii_wms_api_v2.Modules.Quality.Domain;
 /// Single source of truth for the minimum physical GKK sample quantity.
 /// The result is capped by the lot quantity and percentage results are rounded up so that
 /// a fractional sample can never weaken the configured minimum.
+/// A stock/stock-group rule is required for a floor; FixedQuantity 0 means no minimum.
 /// </summary>
 public static class QualitySamplingCalculator
 {

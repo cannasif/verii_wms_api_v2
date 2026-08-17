@@ -11,17 +11,18 @@
   <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>Only open quality inspections awaiting a decision can be prioritized.</value></data>
   <data name="ControlQuantityRequired" xml:space="preserve"><value>Enter the quantity physically inspected in this operation for every GKK line being decided.</value></data>
   <data name="ControlQuantityMustBePositive" xml:space="preserve"><value>The GKK inspected quantity for '{0}' cannot be negative.</value></data>
+  <data name="ControlQuantityMustBeInteger" xml:space="preserve"><value>The GKK inspected quantity for '{0}' must be a whole number.</value></data>
   <data name="ControlQuantityExceedsLot" xml:space="preserve"><value>The quantity inspected in this operation, {1:0.######}, for '{0}' cannot exceed the {2:0.######} quantity not yet physically inspected in the lot.</value></data>
   <data name="ControlQuantityBelowMinimum" xml:space="preserve"><value>The inspected quantity {1:0.######} for '{0}' is insufficient. At least {2:0.######} must be physically inspected according to the quality rule.</value></data>
   <data name="WorkIdempotencyKeyRequired" xml:space="preserve"><value>A unique operation key is required for the GKK work request.</value></data>
   <data name="WorkCannotStartForClosedInspection" xml:space="preserve"><value>A completed or cancelled GKK inspection cannot be restarted.</value></data>
   <data name="ReceiptMustBeCompletedBeforeWork" xml:space="preserve"><value>The related physical goods receipt must be completed before GKK work can start.</value></data>
-  <data name="WorkAlreadyActiveByAnotherUser" xml:space="preserve"><value>{0} is working on this GKK inspection. The active session must be stopped before handover.</value></data>
+  <data name="WorkAlreadyActiveByAnotherUser" xml:space="preserve"><value>{0} is working on this GKK inspection. Only the user who started the session can stop it.</value></data>
   <data name="WorkStopReasonRequired" xml:space="preserve"><value>Select a stop reason.</value></data>
   <data name="WorkOtherStopNoteRequired" xml:space="preserve"><value>An explanation is required when the stop reason is Other.</value></data>
   <data name="WorkHasNoActiveSession" xml:space="preserve"><value>There is no active GKK work session to stop.</value></data>
-  <data name="WorkPauseRequiresOwnerOrSupervisor" xml:space="preserve"><value>Only the active operator or a quality supervisor can stop this GKK session.</value></data>
-  <data name="WorkMustBeActiveForCurrentUser" xml:space="preserve"><value>Start the GKK inspection with your own user before applying the decision. If another user is working, stop or hand over that session first.</value></data>
+  <data name="WorkPauseRequiresOwnerOrSupervisor" xml:space="preserve"><value>Only the user who started this GKK session can stop it.</value></data>
+  <data name="WorkMustBeActiveForCurrentUser" xml:space="preserve"><value>Start the GKK inspection with your own user before applying the decision. If another user is working, only that user can stop the session.</value></data>
   <data name="ImageUploadBatchLimit" xml:space="preserve"><value>You can upload between 1 and {0} quality images at a time.</value></data>
   <data name="ImageCaptionLengthLimit" xml:space="preserve"><value>The image caption can contain at most {0} characters.</value></data>
   <data name="ImageLineLimit" xml:space="preserve"><value>A quality line can contain at most {0} images.</value></data>

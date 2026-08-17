@@ -151,7 +151,7 @@ public sealed class QualityInspectionGridRow
     public DateTimeOffset? PriorityAssignedAtUtc { get; init; }
     public int? PriorityRank { get; set; }
     public string Status { get; init; } = string.Empty; public int LineCount { get; init; } public decimal TotalQuantity { get; init; }
-    public decimal RequiredInspectionQuantity { get; init; } public decimal InspectedQuantity { get; init; }
+    public decimal RequiredInspectionQuantity { get; set; } public decimal InspectedQuantity { get; init; }
     public DateTimeOffset CreatedAtUtc { get; init; } public DateTimeOffset? QueuedAtUtc { get; init; } public DateTimeOffset? DecidedAtUtc { get; init; } public long? InspectorUserId { get; init; }
     public string WorkState { get; init; } = QualityInspectionWorkState.NotStarted.ToString();
     public long RecordedWorkSeconds { get; init; }

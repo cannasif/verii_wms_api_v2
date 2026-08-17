@@ -1,3 +1,4 @@
+using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Quality.Domain;
 using verii_wms_api_v2.Modules.Quality.Application;
 using Xunit;
@@ -46,6 +47,34 @@ public sealed class QualitySamplingCalculatorTests
         Assert.Equal(
             37m,
             QualitySamplingCalculator.Calculate(37m, QualitySamplingMode.All, 100m));
+    }
+
+    [Fact]
+    public void Fixed_zero_sampling_has_no_minimum()
+    {
+        Assert.Equal(
+            0m,
+            QualitySamplingCalculator.Calculate(37m, QualitySamplingMode.FixedQuantity, 0m));
+    }
+
+    [Fact]
+    public void Manual_quality_without_a_rule_does_not_require_the_entire_lot()
+    {
+        var line = new QualityInspectionLine
+        {
+            Quantity = 100m,
+            SampleQuantity = 100m,
+            InspectedQuantity = 0m
+        };
+
+        Assert.Equal(0m, QualityService.RequiredControlQuantityForDecision(line, samplingRuleApplies: false));
+        Assert.Equal(100m, QualityService.RequiredControlQuantityForDecision(line, samplingRuleApplies: true));
+        Assert.Equal(
+            0m,
+            QualityService.EffectiveSampleQuantity(line, GoodsReceiptQualityRoutingSource.ManualReceipt));
+        Assert.Equal(
+            100m,
+            QualityService.EffectiveSampleQuantity(line, GoodsReceiptQualityRoutingSource.StockRule));
     }
 
     [Fact]
@@ -124,4 +153,18 @@ public sealed class QualitySamplingCalculatorTests
         Assert.Equal(0m, QualityService.NormalizeAdditionalControlQuantity(5m, 0m));
         Assert.Equal(7m, QualityService.NormalizeAdditionalControlQuantity(7m, 95m));
     }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(1)]
+    [InlineData(12)]
+    public void Whole_control_quantities_are_accepted(decimal value) =>
+        Assert.True(QualityService.IsWholeControlQuantity(value));
+
+    [Theory]
+    [InlineData(0.1)]
+    [InlineData(12.5)]
+    [InlineData(1.000001)]
+    public void Fractional_control_quantities_are_rejected(decimal value) =>
+        Assert.False(QualityService.IsWholeControlQuantity(value));
 }

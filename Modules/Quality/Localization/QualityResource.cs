@@ -11,6 +11,7 @@ public static class QualityMessageKeys
     public const string PriorityOnlyForOpenInspection = nameof(PriorityOnlyForOpenInspection);
     public const string ControlQuantityRequired = nameof(ControlQuantityRequired);
     public const string ControlQuantityMustBePositive = nameof(ControlQuantityMustBePositive);
+    public const string ControlQuantityMustBeInteger = nameof(ControlQuantityMustBeInteger);
     public const string ControlQuantityExceedsLot = nameof(ControlQuantityExceedsLot);
     public const string ControlQuantityBelowMinimum = nameof(ControlQuantityBelowMinimum);
     public const string WorkIdempotencyKeyRequired = nameof(WorkIdempotencyKeyRequired);
