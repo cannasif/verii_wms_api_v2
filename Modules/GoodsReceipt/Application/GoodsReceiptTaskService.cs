@@ -17,13 +17,29 @@ public sealed class GoodsReceiptTaskService(
     IAuditLogWriter audit,
     IQualityPolicyResolver qualityPolicyResolver) : IGoodsReceiptTaskService
 {
+    private static readonly IReadOnlyDictionary<string, string> GridSearchColumns =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["id"] = nameof(GoodsReceiptTaskGridRow.Id),
+            ["taskNo"] = nameof(GoodsReceiptTaskGridRow.TaskNo),
+            ["documentNo"] = nameof(GoodsReceiptTaskGridRow.DocumentNo),
+            ["waybillNo"] = nameof(GoodsReceiptTaskGridRow.WaybillSearchText),
+            ["supplierCode"] = nameof(GoodsReceiptTaskGridRow.SupplierCode),
+            ["supplierName"] = nameof(GoodsReceiptTaskGridRow.SupplierName),
+            ["warehouseCode"] = nameof(GoodsReceiptTaskGridRow.WarehouseCode),
+            ["warehouseName"] = nameof(GoodsReceiptTaskGridRow.WarehouseName),
+            ["plannedQuantity"] = nameof(GoodsReceiptTaskGridRow.PlannedQuantity),
+            ["processedQuantity"] = nameof(GoodsReceiptTaskGridRow.ProcessedQuantity)
+        };
+    private static readonly string[] DefaultGridSearchColumns =
+        ["taskNo", "documentNo", "waybillNo", "supplierCode", "supplierName", "warehouseCode", "warehouseName"];
+
     private IGenericRepository<GoodsReceiptTask> Tasks => unitOfWork.Repository<GoodsReceiptTask>();
     private IGenericRepository<GoodsReceiptTaskAssignment> Assignments => unitOfWork.Repository<GoodsReceiptTaskAssignment>();
 
     public async Task<PagedResponse<GoodsReceiptTaskGridRow>> GetPagedAsync(PagedRequest request, long? currentUserId, bool assignedOnly, CancellationToken cancellationToken = default)
     {
         if (assignedOnly && currentUserId is null) throw AppException.Unauthorized("Geçersiz kullanıcı oturumu.");
-        var search = request.Search?.Trim();
         var tasks = Tasks.Query();
         if (assignedOnly)
         {
@@ -48,13 +64,6 @@ public sealed class GoodsReceiptTaskService(
         var joined = from task in tasks
                      join header in headers on task.GrHeaderId equals header.Id
                      join warehouse in warehouses on task.WarehouseId equals warehouse.Id
-                     where string.IsNullOrWhiteSpace(search)
-                         || task.TaskNo.Contains(search)
-                         || header.DocumentNo.Contains(search)
-                         || (header.WaybillNo != null && header.WaybillNo.Contains(search))
-                         || (header.ElectronicWaybillNo != null && header.ElectronicWaybillNo.Contains(search))
-                         || (header.SupplierCodeSnapshot != null && header.SupplierCodeSnapshot.Contains(search))
-                         || (header.SupplierNameSnapshot != null && header.SupplierNameSnapshot.Contains(search))
                      select new { Task = task, Header = header, Warehouse = warehouse };
         var query = joined.Select(x => new GoodsReceiptTaskGridRow(
             x.Task.Id, x.Header.Id, x.Task.BranchCode, x.Task.TaskNo, x.Header.DocumentNo,
@@ -75,9 +84,11 @@ public sealed class GoodsReceiptTaskService(
                     .Select(assignment => (GoodsReceiptAssignmentStatus?)assignment.Status).FirstOrDefault()
                 : null,
             x.Task.PlannedStartAtUtc, x.Task.DueAtUtc, x.Task.StartedAtUtc, x.Task.CompletedAtUtc,
-            x.Task.CreatedBy, x.Task.CreatedDate, x.Task.UpdatedBy, x.Task.UpdatedDate, x.Task.RowVersion));
+            x.Task.CreatedBy, x.Task.CreatedDate, x.Task.UpdatedBy, x.Task.UpdatedDate, x.Task.RowVersion,
+            (x.Header.WaybillNo ?? "") + " " + (x.Header.ElectronicWaybillNo ?? "")));
 
-        return await query.ApplyAdvancedFilters(request).ApplySort(request, nameof(GoodsReceiptTaskGridRow.CreatedDate))
+        return await query.ApplySearch(request, GridSearchColumns, DefaultGridSearchColumns)
+            .ApplyAdvancedFilters(request).ApplySort(request, nameof(GoodsReceiptTaskGridRow.CreatedDate))
             .ToPagedResponseAsync(request, cancellationToken);
     }
 

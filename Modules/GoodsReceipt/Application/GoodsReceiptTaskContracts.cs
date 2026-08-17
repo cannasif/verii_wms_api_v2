@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Shared;
@@ -17,7 +18,8 @@ public sealed record GoodsReceiptTaskGridRow(
     DateTimeOffset? PlannedStartAtUtc, DateTimeOffset? DueAtUtc,
     DateTimeOffset? StartedAtUtc, DateTimeOffset? CompletedAtUtc,
     long? CreatedBy, DateTime? CreatedDate, long? UpdatedBy, DateTime? UpdatedDate,
-    byte[] RowVersion);
+    byte[] RowVersion,
+    [property: JsonIgnore] string? WaybillSearchText = null);
 
 public sealed record GoodsReceiptTaskAssignmentDto(
     long Id, long UserId, string Username, string DisplayName,
