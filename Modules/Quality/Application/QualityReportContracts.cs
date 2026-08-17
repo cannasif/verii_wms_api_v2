@@ -14,15 +14,15 @@ public sealed class QualityInspectionReportRow
     public int? WarehouseCode { get; init; }
     public string? WarehouseName { get; init; }
     public QualityInspectionStatus Status { get; init; }
-    public int LineCount { get; init; }
-    public decimal TotalQuantity { get; init; }
-    public decimal RequiredInspectionQuantity { get; init; }
-    public decimal InspectedQuantity { get; init; }
-    public decimal AcceptedQuantity { get; init; }
-    public decimal RejectedQuantity { get; init; }
-    public decimal QuarantineQuantity { get; init; }
-    public int ControlCount { get; init; }
-    public int ImageCount { get; init; }
+    public int LineCount { get; set; }
+    public decimal TotalQuantity { get; set; }
+    public decimal RequiredInspectionQuantity { get; set; }
+    public decimal InspectedQuantity { get; set; }
+    public decimal AcceptedQuantity { get; set; }
+    public decimal RejectedQuantity { get; set; }
+    public decimal QuarantineQuantity { get; set; }
+    public int ControlCount { get; set; }
+    public int ImageCount { get; set; }
     public DateTimeOffset CreatedAtUtc { get; init; }
     public DateTimeOffset? StartedAtUtc { get; set; }
     public DateTimeOffset? DecidedAtUtc { get; init; }
