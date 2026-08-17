@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Modules.Warehouse.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
@@ -50,6 +51,21 @@ public sealed class WarehouseTransferSearchQueryTests
 
         Assert.Contains("LIKE", sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("RII_WT_LINE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("RII_USERS", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("RII_USER_DETAILS", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Created_by_search_joins_only_the_requested_actor_sources()
+    {
+        using var db = SqlServerContext();
+        var request = new PagedRequest { Search = "admin", SearchFields = ["createdBy"] };
+
+        var sql = BuildCountQuery(db, request).ToQueryString();
+
+        Assert.Equal(1, CountOccurrences(sql, "RII_USERS"));
+        Assert.Equal(1, CountOccurrences(sql, "RII_USER_DETAILS"));
+        Assert.DoesNotContain("RII_WT_LINE", sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
@@ -69,11 +85,11 @@ public sealed class WarehouseTransferSearchQueryTests
 
     private static IQueryable<WarehouseTransferGridRow> BuildQuery(WmsDbContext db, PagedRequest request) =>
         WarehouseTransferService.BuildPagedQuery(request, Contexts, db.Set<WarehouseTransferHeader>(),
-            db.Set<Warehouse>().IgnoreQueryFilters(), db.Set<WarehouseTransferLine>());
+            db.Set<Warehouse>().IgnoreQueryFilters(), db.Set<WarehouseTransferLine>(),db.Set<User>(),db.Set<UserDetail>());
 
     private static IQueryable<long> BuildCountQuery(WmsDbContext db, PagedRequest request) =>
         WarehouseTransferService.BuildCountQuery(request, Contexts, db.Set<WarehouseTransferHeader>(),
-            db.Set<Warehouse>().IgnoreQueryFilters(), db.Set<WarehouseTransferLine>());
+            db.Set<Warehouse>().IgnoreQueryFilters(), db.Set<WarehouseTransferLine>(),db.Set<User>(),db.Set<UserDetail>());
 
     private static WmsDbContext SqlServerContext()
     {

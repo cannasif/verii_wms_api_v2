@@ -21,6 +21,31 @@ namespace verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 
 public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferPolicyService policyService,IDocumentNumberAllocator numberAllocator,IAuditLogWriter audit,IWarehouseTransferReservationService reservations,IStockTrackingPolicyResolver trackingPolicyResolver):IWarehouseTransferService
 {
+    private static readonly IReadOnlyDictionary<string, string> GridSearchColumnMapping =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["id"] = nameof(WarehouseTransferGridRow.Id),
+            ["branchCode"] = nameof(WarehouseTransferGridRow.BranchCode),
+            ["documentNo"] = nameof(WarehouseTransferGridRow.DocumentNo),
+            ["externalReferenceNo"] = nameof(WarehouseTransferGridRow.ExternalReferenceSearchText),
+            ["sourceWarehouseCode"] = nameof(WarehouseTransferGridRow.SourceWarehouseCode),
+            ["sourceWarehouseName"] = nameof(WarehouseTransferGridRow.SourceWarehouseName),
+            ["targetWarehouseCode"] = nameof(WarehouseTransferGridRow.TargetWarehouseCode),
+            ["targetWarehouseName"] = nameof(WarehouseTransferGridRow.TargetWarehouseName),
+            ["initiationMode"] = nameof(WarehouseTransferGridRow.InitiationMode),
+            ["status"] = nameof(WarehouseTransferGridRow.Status),
+            ["lineCount"] = nameof(WarehouseTransferGridRow.LineCount),
+            ["requestedQuantity"] = nameof(WarehouseTransferGridRow.RequestedQuantity),
+            ["pickedQuantity"] = nameof(WarehouseTransferGridRow.PickedQuantity),
+            ["shippedQuantity"] = nameof(WarehouseTransferGridRow.ShippedQuantity),
+            ["receivedQuantity"] = nameof(WarehouseTransferGridRow.ReceivedQuantity),
+            ["putawayQuantity"] = nameof(WarehouseTransferGridRow.PutawayQuantity),
+            ["createdBy"] = nameof(WarehouseTransferGridRow.CreatedBySearchText),
+            ["updatedBy"] = nameof(WarehouseTransferGridRow.UpdatedBySearchText),
+        };
+    private static readonly string[] DefaultGridSearchColumns =
+        ["documentNo", "externalReferenceNo", "sourceWarehouseName", "targetWarehouseName", "sourceWarehouseCode", "targetWarehouseCode", "branchCode", "createdBy", "updatedBy"];
+
     private IGenericRepository<WarehouseTransferHeader> Headers=>uow.Repository<WarehouseTransferHeader>();
     private static readonly HashSet<string> LineSummaryColumns=new(StringComparer.OrdinalIgnoreCase)
     {
@@ -210,39 +235,51 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
         var headers=Headers.Query();
         var warehouses=uow.Repository<WarehouseEntity>().Query(ignoreQueryFilters:true);
         var lines=uow.Repository<WarehouseTransferLine>().Query();
-        var query=BuildPagedQuery(request,contexts,headers,warehouses,lines);
-        var countQuery=BuildCountQuery(request,contexts,headers,warehouses,lines);
+        var users=uow.Repository<User>().Query();
+        var userDetails=uow.Repository<UserDetail>().Query();
+        var query=BuildPagedQuery(request,contexts,headers,warehouses,lines,users,userDetails);
+        var countQuery=BuildCountQuery(request,contexts,headers,warehouses,lines,users,userDetails);
         var page=await query.ToPagedResponseAsync(countQuery,request,ct);
         if(RequiresLineSummaryInMainQuery(request)||page.Items.Count==0)return page;
         return new PagedResponse<WarehouseTransferGridRow>{Items=await EnrichLineSummaryAsync(page.Items,lines,ct),TotalCount=page.TotalCount,PageNumber=page.PageNumber,PageSize=page.PageSize};
     }
 
     internal static IQueryable<WarehouseTransferGridRow> BuildPagedQuery(PagedRequest request,IReadOnlyCollection<WarehouseTransferBusinessContext> contexts,
-        IQueryable<WarehouseTransferHeader> headers,IQueryable<WarehouseEntity> warehouses,IQueryable<WarehouseTransferLine> lines)
+        IQueryable<WarehouseTransferHeader> headers,IQueryable<WarehouseEntity> warehouses,IQueryable<WarehouseTransferLine> lines,
+        IQueryable<User>? users=null,IQueryable<UserDetail>? userDetails=null)
     {
-        var rows=BuildGridRows(request,contexts,headers,warehouses,lines,RequiresLineSummaryInMainQuery(request));
-        if(request.HasExplicitSearchFields)rows=rows.ApplySearch(request);
-        return rows.ApplyAdvancedFilters(request).ApplySort(request,nameof(WarehouseTransferGridRow.CreatedDate))
-            .Select(x=>new WarehouseTransferGridRow(x.Id,x.BranchCode,x.DocumentNo,x.DocumentDate,x.BusinessContext,x.InitiationMode,x.ProcessType,x.Status,x.ApprovalStatus,x.ErpIntegrationStatus,
-                x.SourceWarehouseId,x.SourceWarehouseCode,x.SourceWarehouseName,x.TargetWarehouseId,x.TargetWarehouseCode,x.TargetWarehouseName,x.LineCount,x.RequestedQuantity,
-                x.PickedQuantity,x.ShippedQuantity,x.ReceivedQuantity,x.PutawayQuantity,x.Priority,x.PlannedDispatchAtUtc,x.PlannedArrivalAtUtc,x.CreatedBy,x.CreatedDate,x.UpdatedBy,x.UpdatedDate));
+        var rows=BuildFilteredGridRows(request,contexts,headers,warehouses,lines,users,userDetails,RequiresLineSummaryInMainQuery(request));
+        return rows.ApplySort(request,nameof(WarehouseTransferGridRow.CreatedDate));
     }
 
     internal static IQueryable<long> BuildCountQuery(PagedRequest request,IReadOnlyCollection<WarehouseTransferBusinessContext> contexts,
-        IQueryable<WarehouseTransferHeader> headers,IQueryable<WarehouseEntity> warehouses,IQueryable<WarehouseTransferLine> lines)
+        IQueryable<WarehouseTransferHeader> headers,IQueryable<WarehouseEntity> warehouses,IQueryable<WarehouseTransferLine> lines,
+        IQueryable<User>? users=null,IQueryable<UserDetail>? userDetails=null)
     {
-        var rows=BuildGridRows(request,contexts,headers,warehouses,lines,RequiresLineSummaryForCount(request));
-        if(request.HasExplicitSearchFields)rows=rows.ApplySearch(request);
-        return rows.ApplyAdvancedFilters(request).Select(x=>x.Id);
+        return BuildFilteredGridRows(request,contexts,headers,warehouses,lines,users,userDetails,RequiresLineSummaryForCount(request)).Select(x=>x.Id);
     }
 
-    private static IQueryable<WarehouseTransferGridProjection> BuildGridRows(PagedRequest request,IReadOnlyCollection<WarehouseTransferBusinessContext> contexts,
+    private static IQueryable<WarehouseTransferGridRow> BuildFilteredGridRows(PagedRequest request,IReadOnlyCollection<WarehouseTransferBusinessContext> contexts,
+        IQueryable<WarehouseTransferHeader> headers,IQueryable<WarehouseEntity> warehouses,IQueryable<WarehouseTransferLine> lines,
+        IQueryable<User>? users,IQueryable<UserDetail>? userDetails,bool includeLineSummary)
+    {
+        var rows=BuildGridRows(contexts,headers,warehouses,lines,includeLineSummary);
+        var searchRows=BuildActorSearchRows(request,rows,users,userDetails);
+        return searchRows.Select(x=>new WarehouseTransferGridRow(
+                x.Row.Id,x.Row.BranchCode,x.Row.DocumentNo,x.Row.DocumentDate,x.Row.BusinessContext,x.Row.InitiationMode,x.Row.ProcessType,x.Row.Status,x.Row.ApprovalStatus,x.Row.ErpIntegrationStatus,
+                x.Row.SourceWarehouseId,x.Row.SourceWarehouseCode,x.Row.SourceWarehouseName,x.Row.TargetWarehouseId,x.Row.TargetWarehouseCode,x.Row.TargetWarehouseName,
+                x.Row.LineCount,x.Row.RequestedQuantity,x.Row.PickedQuantity,x.Row.ShippedQuantity,x.Row.ReceivedQuantity,x.Row.PutawayQuantity,x.Row.Priority,
+                x.Row.PlannedDispatchAtUtc,x.Row.PlannedArrivalAtUtc,x.Row.CreatedBy,x.Row.CreatedDate,x.Row.UpdatedBy,x.Row.UpdatedDate,
+                x.CreatedBySearchText,x.UpdatedBySearchText,x.Row.ExternalReferenceNo))
+            .ApplySearch(request,GridSearchColumnMapping,DefaultGridSearchColumns)
+            .ApplyAdvancedFilters(request);
+    }
+
+    private static IQueryable<WarehouseTransferGridProjection> BuildGridRows(IReadOnlyCollection<WarehouseTransferBusinessContext> contexts,
         IQueryable<WarehouseTransferHeader> headers,IQueryable<WarehouseEntity> warehouses,IQueryable<WarehouseTransferLine> lines,bool includeLineSummary)
     {
-        var search=request.Search?.Trim();
         var baseRows=from h in headers join sw in warehouses on h.SourceWarehouseId equals sw.Id join tw in warehouses on h.TargetWarehouseId equals tw.Id
-            where contexts.Contains(h.BusinessContext)&&(string.IsNullOrWhiteSpace(search)||h.DocumentNo.Contains(search)||(h.ExternalReferenceNo!=null&&h.ExternalReferenceNo.Contains(search))
-                ||sw.WarehouseName.Contains(search)||tw.WarehouseName.Contains(search)||h.BranchCode.Contains(search))
+            where contexts.Contains(h.BusinessContext)
             select new{Header=h,Source=sw,Target=tw};
         if(!includeLineSummary)return baseRows.Select(x=>new WarehouseTransferGridProjection{
             Id=x.Header.Id,BranchCode=x.Header.BranchCode,DocumentNo=x.Header.DocumentNo,DocumentDate=x.Header.DocumentDate,BusinessContext=x.Header.BusinessContext,
@@ -250,7 +287,7 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
             SourceWarehouseId=x.Header.SourceWarehouseId,SourceWarehouseCode=x.Source.WarehouseCode,SourceWarehouseName=x.Source.WarehouseName,
             TargetWarehouseId=x.Header.TargetWarehouseId,TargetWarehouseCode=x.Target.WarehouseCode,TargetWarehouseName=x.Target.WarehouseName,Priority=x.Header.Priority,
             PlannedDispatchAtUtc=x.Header.PlannedDispatchAtUtc,PlannedArrivalAtUtc=x.Header.PlannedArrivalAtUtc,CreatedBy=x.Header.CreatedBy,CreatedDate=x.Header.CreatedDate,
-            UpdatedBy=x.Header.UpdatedBy,UpdatedDate=x.Header.UpdatedDate});
+            UpdatedBy=x.Header.UpdatedBy,UpdatedDate=x.Header.UpdatedDate,ExternalReferenceNo=x.Header.ExternalReferenceNo});
         var totals=lines.GroupBy(x=>x.WtHeaderId).Select(g=>new{HeaderId=g.Key,LineCount=g.Count(),RequestedQuantity=g.Sum(x=>x.RequestedQuantity),
             PickedQuantity=g.Sum(x=>x.PickedQuantity),ShippedQuantity=g.Sum(x=>x.ShippedQuantity),ReceivedQuantity=g.Sum(x=>x.ReceivedQuantity),PutawayQuantity=g.Sum(x=>x.PutawayQuantity)});
         return from x in baseRows join total in totals on x.Header.Id equals total.HeaderId into totalRows from total in totalRows.DefaultIfEmpty()
@@ -261,12 +298,52 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
                 RequestedQuantity=(decimal?)total.RequestedQuantity??0,PickedQuantity=(decimal?)total.PickedQuantity??0,ShippedQuantity=(decimal?)total.ShippedQuantity??0,
                 ReceivedQuantity=(decimal?)total.ReceivedQuantity??0,PutawayQuantity=(decimal?)total.PutawayQuantity??0,Priority=x.Header.Priority,
                 PlannedDispatchAtUtc=x.Header.PlannedDispatchAtUtc,PlannedArrivalAtUtc=x.Header.PlannedArrivalAtUtc,CreatedBy=x.Header.CreatedBy,CreatedDate=x.Header.CreatedDate,
-                UpdatedBy=x.Header.UpdatedBy,UpdatedDate=x.Header.UpdatedDate};
+                UpdatedBy=x.Header.UpdatedBy,UpdatedDate=x.Header.UpdatedDate,ExternalReferenceNo=x.Header.ExternalReferenceNo};
+    }
+
+    private static IQueryable<WarehouseTransferGridSearchProjection> BuildActorSearchRows(PagedRequest request,IQueryable<WarehouseTransferGridProjection> rows,
+        IQueryable<User>? users,IQueryable<UserDetail>? userDetails)
+    {
+        var includeCreatedBy=RequiresActorSearch(request,"createdBy");
+        var includeUpdatedBy=RequiresActorSearch(request,"updatedBy");
+        var searchRows=rows.Select(row=>new WarehouseTransferGridSearchProjection{Row=row});
+        if(!includeCreatedBy&&!includeUpdatedBy)return searchRows;
+        var requiredUsers=users??throw new InvalidOperationException("Kullanıcı araması için kullanıcı sorgusu zorunludur.");
+        var requiredDetails=userDetails??throw new InvalidOperationException("Kullanıcı araması için kullanıcı detay sorgusu zorunludur.");
+        if(includeCreatedBy)searchRows=from source in searchRows
+            join createdUser in requiredUsers on source.Row.CreatedBy equals (long?)createdUser.Id into createdUsers
+            from createdUser in createdUsers.DefaultIfEmpty()
+            join createdDetail in requiredDetails on source.Row.CreatedBy equals (long?)createdDetail.UserId into createdDetails
+            from createdDetail in createdDetails.DefaultIfEmpty()
+            select new WarehouseTransferGridSearchProjection{
+                Row=source.Row,
+                CreatedBySearchText=(source.Row.CreatedBy==null?"Sistem System":source.Row.CreatedBy.GetValueOrDefault().ToString())+" "
+                    +(createdUser==null?"":createdUser.Username+" "+createdUser.Email)+" "
+                    +(createdDetail==null?"":createdDetail.FirstName+" "+createdDetail.LastName),
+                UpdatedBySearchText=source.UpdatedBySearchText};
+        if(includeUpdatedBy)searchRows=from source in searchRows
+            join updatedUser in requiredUsers on source.Row.UpdatedBy equals (long?)updatedUser.Id into updatedUsers
+            from updatedUser in updatedUsers.DefaultIfEmpty()
+            join updatedDetail in requiredDetails on source.Row.UpdatedBy equals (long?)updatedDetail.UserId into updatedDetails
+            from updatedDetail in updatedDetails.DefaultIfEmpty()
+            select new WarehouseTransferGridSearchProjection{
+                Row=source.Row,
+                CreatedBySearchText=source.CreatedBySearchText,
+                UpdatedBySearchText=(source.Row.UpdatedBy==null?"Sistem System":source.Row.UpdatedBy.GetValueOrDefault().ToString())+" "
+                    +(updatedUser==null?"":updatedUser.Username+" "+updatedUser.Email)+" "
+                    +(updatedDetail==null?"":updatedDetail.FirstName+" "+updatedDetail.LastName)};
+        return searchRows;
     }
 
     private static bool RequiresLineSummaryForCount(PagedRequest request)=>(!string.IsNullOrWhiteSpace(request.EffectiveSearch)&&request.SearchFields.Any(LineSummaryColumns.Contains))
         ||request.Filters.Any(x=>LineSummaryColumns.Contains(x.Column));
     private static bool RequiresLineSummaryInMainQuery(PagedRequest request)=>RequiresLineSummaryForCount(request)||LineSummaryColumns.Contains(request.SortBy??string.Empty);
+    private static bool RequiresActorSearch(PagedRequest request,string column)
+    {
+        if(string.IsNullOrWhiteSpace(request.EffectiveSearch))return false;
+        var fields=request.HasExplicitSearchFields?request.SearchFields:DefaultGridSearchColumns;
+        return fields.Any(x=>string.Equals(x,column,StringComparison.OrdinalIgnoreCase));
+    }
     private static async Task<IReadOnlyList<WarehouseTransferGridRow>> EnrichLineSummaryAsync(IReadOnlyList<WarehouseTransferGridRow> rows,IQueryable<WarehouseTransferLine> lines,CancellationToken ct)
     {
         var ids=rows.Select(x=>x.Id).ToArray();
@@ -286,6 +363,14 @@ public sealed class WarehouseTransferService(IUnitOfWork uow,IWarehouseTransferP
         public int LineCount{get;init;} public decimal RequestedQuantity{get;init;} public decimal PickedQuantity{get;init;} public decimal ShippedQuantity{get;init;}
         public decimal ReceivedQuantity{get;init;} public decimal PutawayQuantity{get;init;} public byte Priority{get;init;} public DateTimeOffset? PlannedDispatchAtUtc{get;init;}
         public DateTimeOffset? PlannedArrivalAtUtc{get;init;} public long? CreatedBy{get;init;} public DateTime? CreatedDate{get;init;} public long? UpdatedBy{get;init;} public DateTime? UpdatedDate{get;init;}
+        public string? ExternalReferenceNo{get;init;}
+    }
+
+    private sealed class WarehouseTransferGridSearchProjection
+    {
+        public required WarehouseTransferGridProjection Row{get;init;}
+        public string? CreatedBySearchText{get;init;}
+        public string? UpdatedBySearchText{get;init;}
     }
 
     public async Task<WarehouseTransferDetail> GetDetailAsync(long id,CancellationToken ct=default)
