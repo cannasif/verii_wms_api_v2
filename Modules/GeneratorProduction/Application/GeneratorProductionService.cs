@@ -31,11 +31,39 @@ public sealed partial class GeneratorProductionService(IUnitOfWork uow, IAuditLo
 
     public async Task<PagedResponse<GeneratorProjectRow>> GetProjectsAsync(PagedRequest request, CancellationToken ct = default)
     {
-        var query = Projects.Query()
+        var operations = uow.Repository<GeneratorProductionOperation>().Query();
+        var query = BuildProjectsQuery(request, Projects.Query());
+        var page = await query.ToPagedResponseAsync(request, ct, 200);
+        if (page.Items.Count == 0) return page;
+
+        var projectIds = page.Items.Select(x => x.Id).ToArray();
+        var totals = await operations.Where(x => projectIds.Contains(x.ProjectId)).GroupBy(x => x.ProjectId)
+            .Select(groupRows => new
+            {
+                ProjectId = groupRows.Key,
+                OperationCount = groupRows.Count(),
+                CompletedOperationCount = groupRows.Count(x => x.Status == GeneratorOperationStatus.Completed)
+            }).ToDictionaryAsync(x => x.ProjectId, ct);
+        return new PagedResponse<GeneratorProjectRow>
+        {
+            Items = page.Items.Select(row => totals.TryGetValue(row.Id, out var total)
+                ? row with { OperationCount = total.OperationCount, CompletedOperationCount = total.CompletedOperationCount }
+                : row).ToArray(),
+            TotalCount = page.TotalCount,
+            PageNumber = page.PageNumber,
+            PageSize = page.PageSize
+        };
+    }
+
+    internal static IQueryable<GeneratorProjectRow> BuildProjectsQuery(
+        PagedRequest request,
+        IQueryable<GeneratorProductionProject> projects)
+    {
+        var rows = projects
             .Select(x => new GeneratorProjectRow(
                 x.Id, x.ProjectCode, x.ProjectName, x.ProductId, x.Product == null ? null : x.Product.Code, x.GeneratorType, x.SerialNumber, x.CustomerNameSnapshot,
                 x.Status, x.Priority, x.Quantity, x.PlannedStartAtUtc, x.PlannedDeliveryAtUtc,
-                x.PlanningOrder, x.Operations.Count, x.Operations.Count(o => o.Status == GeneratorOperationStatus.Completed),
+                x.PlanningOrder, 0, 0,
                 Convert.ToBase64String(x.RowVersion)))
             .ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
@@ -46,9 +74,10 @@ public sealed partial class GeneratorProductionService(IUnitOfWork uow, IAuditLo
                 ["serialNumber"] = nameof(GeneratorProjectRow.SerialNumber),
                 ["customerName"] = nameof(GeneratorProjectRow.CustomerName)
             }, ["projectCode", "projectName"]);
-
-        return await query.OrderBy(x => x.Status).ThenByDescending(x => x.Priority).ThenBy(x => x.PlannedDeliveryAtUtc)
-            .ToPagedResponseAsync(request, ct, 200);
+        return PagedQueryExtensions.RewriteProjectionMemberAccess(rows
+            .OrderBy(x => x.Status)
+            .ThenByDescending(x => x.Priority)
+            .ThenBy(x => x.PlannedDeliveryAtUtc));
     }
 
     public async Task<GeneratorProjectDetail> GetProjectAsync(long id, CancellationToken ct = default)
