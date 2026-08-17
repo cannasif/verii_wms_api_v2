@@ -12,6 +12,7 @@ public interface INetsisReadService
         int branchCode,
         CancellationToken cancellationToken);
     Task<IReadOnlyList<NetsisStockBalanceDto>> GetStockBalancesAsync(short? warehouseCode, string? stockCode, CancellationToken cancellationToken);
+    Task<IReadOnlyList<NetsisImportOpenFileDto>> GetImportOpenFilesAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<CustomerDto>> GetCustomersAsync(string? customerCode, int? branchCode, CancellationToken cancellationToken);
     Task<IReadOnlyList<ConfigurationCodeDto>> GetConfigurationCodesAsync(string? search, int? branchCode, CancellationToken cancellationToken);
     Task<IReadOnlyList<GoodsReceiptOpenOrderHeaderDto>> GetGoodsReceiptOpenOrderHeadersAsync(string customerCode, string? branchCode, CancellationToken cancellationToken);

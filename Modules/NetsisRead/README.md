@@ -13,3 +13,10 @@ Both filters are optional:
 - `stockCode`: exact Netsis stock code.
 
 Omitting both filters executes `dbo.RII_FN_STOCK_BALANCE(NULL, NULL)` and returns all rows.
+
+## Import open files
+
+`GET /api/netsis-read/imports/open-files` reads `dbo.RII_FN_ITHALAT_ACIK_DOSYALAR()`.
+The response is a read-only ERP projection; it is not tracked as a WMS EF entity.
+File and customer codes are required by the source schema, while customer names and
+delivery-customer fields are nullable.

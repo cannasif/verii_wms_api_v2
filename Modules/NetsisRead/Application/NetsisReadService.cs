@@ -95,6 +95,22 @@ public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INet
             });
     }
 
+    public async Task<IReadOnlyList<NetsisImportOpenFileDto>> GetImportOpenFilesAsync(CancellationToken ct) =>
+        await queryExecutor.QueryAsync<NetsisImportOpenFileDto>(
+            "RII_FN_ITHALAT_ACIK_DOSYALAR",
+            """
+            SELECT DOSYANO, CARI_KOD, CARI_ISIM, TESLIM_CARI_KOD, TESLIM_CARI_ISIM
+            FROM dbo.RII_FN_ITHALAT_ACIK_DOSYALAR()
+            ORDER BY DOSYANO
+            """,
+            r => new NetsisImportOpenFileDto(
+                String(r, "DOSYANO"),
+                String(r, "CARI_KOD"),
+                NullableString(r, "CARI_ISIM"),
+                NullableString(r, "TESLIM_CARI_KOD"),
+                NullableString(r, "TESLIM_CARI_ISIM")),
+            ct);
+
     public async Task<IReadOnlyList<CustomerDto>> GetCustomersAsync(string? customerCode, int? branchCode, CancellationToken ct)
     {
         var rows = await queryExecutor.QueryAsync<CustomerDto>(

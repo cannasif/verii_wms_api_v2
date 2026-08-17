@@ -49,6 +49,17 @@ public sealed record NetsisStockBalanceDto(
     string StockCode,
     decimal Balance);
 
+/// <summary>
+/// Read-only projection returned by dbo.RII_FN_ITHALAT_ACIK_DOSYALAR.
+/// The first two columns are non-null in Netsis; delivery customer data is optional.
+/// </summary>
+public sealed record NetsisImportOpenFileDto(
+    string FileNumber,
+    string CustomerCode,
+    string? CustomerName,
+    string? DeliveryCustomerCode,
+    string? DeliveryCustomerName);
+
 public sealed record CustomerDto(
     short SubeKodu,
     short IsletmeKodu,

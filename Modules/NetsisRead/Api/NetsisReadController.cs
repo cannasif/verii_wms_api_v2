@@ -35,6 +35,13 @@ public sealed class NetsisReadController(INetsisReadService service, ILogger<Net
         return await Execute(() => service.GetStockBalancesAsync(warehouseCode, stockCode, ct));
     }
 
+    [HttpGet("imports/open-files")]
+    public async Task<ActionResult<ApiResponse<IReadOnlyList<NetsisImportOpenFileDto>>>> ImportOpenFiles(CancellationToken ct)
+    {
+        await Require(ct);
+        return await Execute(() => service.GetImportOpenFilesAsync(ct));
+    }
+
     [HttpGet("customers"), HttpGet("getCustomers")]
     public async Task<ActionResult<ApiResponse<IReadOnlyList<CustomerDto>>>> Customers([FromQuery] string? customerCode, [FromQuery] int? branchCode, CancellationToken ct) { await Require(ct); return await Execute(() => service.GetCustomersAsync(customerCode, branchCode, ct)); }
 
