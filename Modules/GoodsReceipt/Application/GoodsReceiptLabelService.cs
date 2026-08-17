@@ -144,27 +144,145 @@ public sealed class GoodsReceiptLabelService(
         var labels = uow.Repository<GoodsReceiptLabel>().Query();
         var taskLines = uow.Repository<GoodsReceiptTaskLine>().Query();
         var tasks = uow.Repository<GoodsReceiptTask>().Query();
-        var joined = from batch in Batches.Query()
+        var query = BuildPagedQuery(request, Batches.Query(), headers, labels, taskLines, tasks);
+        var countQuery = BuildCountQuery(request, Batches.Query(), headers, labels, taskLines, tasks);
+        var page = await query.ToPagedResponseAsync(countQuery, request, ct);
+        if (page.Items.Count == 0) return page;
+
+        return new PagedResponse<GoodsReceiptLabelBatchRow>
+        {
+            Items = await EnrichTaskReferencesAsync(page.Items, labels, taskLines, tasks, ct),
+            TotalCount = page.TotalCount,
+            PageNumber = page.PageNumber,
+            PageSize = page.PageSize
+        };
+    }
+
+    internal static IQueryable<GoodsReceiptLabelBatchRow> BuildPagedQuery(
+        PagedRequest request,
+        IQueryable<GoodsReceiptLabelBatch> batches,
+        IQueryable<GoodsReceiptHeader> headers,
+        IQueryable<GoodsReceiptLabel> labels,
+        IQueryable<GoodsReceiptTaskLine> taskLines,
+        IQueryable<GoodsReceiptTask> tasks)
+    {
+        var query = BuildGridRows(batches, headers, labels, taskLines, tasks, RequiresTaskNoInMainQuery(request));
+        return query.ApplySearch(request, GridSearchColumns, DefaultGridSearchColumns)
+            .ApplyAdvancedFilters(request).ApplySort(request, nameof(GoodsReceiptLabelBatchRow.CreatedDate))
+            .Select(x => new GoodsReceiptLabelBatchRow(x.Id, x.GoodsReceiptId, x.DocumentNo,
+                x.WaybillNo, x.ElectronicWaybillNo, x.TaskId, x.TaskNo, x.BatchNo, x.Status,
+                x.TotalLabelCount, x.PrintedLabelCount, x.ConsumedLabelCount, x.VoidLabelCount,
+                x.LastPrintedAtUtc, x.CreatedBy, x.CreatedDate, x.RowVersion, x.WaybillSearchText));
+    }
+
+    internal static IQueryable<long> BuildCountQuery(
+        PagedRequest request,
+        IQueryable<GoodsReceiptLabelBatch> batches,
+        IQueryable<GoodsReceiptHeader> headers,
+        IQueryable<GoodsReceiptLabel> labels,
+        IQueryable<GoodsReceiptTaskLine> taskLines,
+        IQueryable<GoodsReceiptTask> tasks)
+    {
+        var query = BuildGridRows(batches, headers, labels, taskLines, tasks, RequiresTaskNoForCount(request));
+        return query.ApplySearch(request, GridSearchColumns, DefaultGridSearchColumns)
+            .ApplyAdvancedFilters(request).Select(x => x.Id);
+    }
+
+    private static IQueryable<GoodsReceiptLabelGridProjection> BuildGridRows(
+        IQueryable<GoodsReceiptLabelBatch> batches,
+        IQueryable<GoodsReceiptHeader> headers,
+        IQueryable<GoodsReceiptLabel> labels,
+        IQueryable<GoodsReceiptTaskLine> taskLines,
+        IQueryable<GoodsReceiptTask> tasks,
+        bool includeTaskNo)
+    {
+        var joined = from batch in batches
                      join header in headers on batch.GrHeaderId equals header.Id
                      select new { Batch = batch, Header = header };
-        var query = joined.Select(x => new GoodsReceiptLabelBatchRow(x.Batch.Id, x.Header.Id, x.Header.DocumentNo,
-            x.Header.WaybillNo, x.Header.ElectronicWaybillNo,
-            (from label in labels
-             join taskLine in taskLines on label.GrTaskLineId equals (long?)taskLine.Id
-             where label.BatchId == x.Batch.Id
-             select (long?)taskLine.GrTaskId).FirstOrDefault(),
-            (from label in labels
-             join taskLine in taskLines on label.GrTaskLineId equals (long?)taskLine.Id
-             join task in tasks on taskLine.GrTaskId equals task.Id
-             where label.BatchId == x.Batch.Id
-             select task.TaskNo).FirstOrDefault(),
-            x.Batch.BatchNo, x.Batch.Status, x.Batch.TotalLabelCount, x.Batch.PrintedLabelCount,
-            x.Batch.ConsumedLabelCount, x.Batch.VoidLabelCount, x.Batch.LastPrintedAtUtc,
-            x.Batch.CreatedBy, x.Batch.CreatedDate, x.Batch.RowVersion,
-            (x.Header.WaybillNo ?? "") + " " + (x.Header.ElectronicWaybillNo ?? "")));
-        return await query.ApplySearch(request, GridSearchColumns, DefaultGridSearchColumns)
-            .ApplyAdvancedFilters(request).ApplySort(request, nameof(GoodsReceiptLabelBatchRow.CreatedDate))
-            .ToPagedResponseAsync(request, ct);
+        if (!includeTaskNo)
+            return joined.Select(x => new GoodsReceiptLabelGridProjection
+            {
+                Id = x.Batch.Id, GoodsReceiptId = x.Header.Id, DocumentNo = x.Header.DocumentNo,
+                WaybillNo = x.Header.WaybillNo, ElectronicWaybillNo = x.Header.ElectronicWaybillNo,
+                BatchNo = x.Batch.BatchNo, Status = x.Batch.Status, TotalLabelCount = x.Batch.TotalLabelCount,
+                PrintedLabelCount = x.Batch.PrintedLabelCount, ConsumedLabelCount = x.Batch.ConsumedLabelCount,
+                VoidLabelCount = x.Batch.VoidLabelCount, LastPrintedAtUtc = x.Batch.LastPrintedAtUtc,
+                CreatedBy = x.Batch.CreatedBy, CreatedDate = x.Batch.CreatedDate, RowVersion = x.Batch.RowVersion,
+                WaybillSearchText = (x.Header.WaybillNo ?? "") + " " + (x.Header.ElectronicWaybillNo ?? "")
+            });
+
+        var taskReferences = from label in labels
+                             join taskLine in taskLines on label.GrTaskLineId equals (long?)taskLine.Id
+                             join task in tasks on taskLine.GrTaskId equals task.Id
+                             group label by new { label.BatchId, TaskId = task.Id, task.TaskNo } into grouped
+                             select grouped.Key;
+        return from x in joined
+               join taskReference in taskReferences on x.Batch.Id equals taskReference.BatchId into taskReferenceRows
+               from taskReference in taskReferenceRows.DefaultIfEmpty()
+               select new GoodsReceiptLabelGridProjection
+               {
+                   Id = x.Batch.Id, GoodsReceiptId = x.Header.Id, DocumentNo = x.Header.DocumentNo,
+                   WaybillNo = x.Header.WaybillNo, ElectronicWaybillNo = x.Header.ElectronicWaybillNo,
+                   TaskId = taskReference == null ? null : taskReference.TaskId,
+                   TaskNo = taskReference == null ? null : taskReference.TaskNo,
+                   BatchNo = x.Batch.BatchNo, Status = x.Batch.Status, TotalLabelCount = x.Batch.TotalLabelCount,
+                   PrintedLabelCount = x.Batch.PrintedLabelCount, ConsumedLabelCount = x.Batch.ConsumedLabelCount,
+                   VoidLabelCount = x.Batch.VoidLabelCount, LastPrintedAtUtc = x.Batch.LastPrintedAtUtc,
+                   CreatedBy = x.Batch.CreatedBy, CreatedDate = x.Batch.CreatedDate, RowVersion = x.Batch.RowVersion,
+                   WaybillSearchText = (x.Header.WaybillNo ?? "") + " " + (x.Header.ElectronicWaybillNo ?? "")
+               };
+    }
+
+    private static bool RequiresTaskNoForCount(PagedRequest request) =>
+        (!string.IsNullOrWhiteSpace(request.EffectiveSearch)
+         && request.SearchFields.Contains("taskNo", StringComparer.OrdinalIgnoreCase))
+        || request.Filters.Any(filter => filter.Column.Equals("taskNo", StringComparison.OrdinalIgnoreCase));
+
+    private static bool RequiresTaskNoInMainQuery(PagedRequest request) =>
+        RequiresTaskNoForCount(request)
+        || string.Equals(request.SortBy, "taskNo", StringComparison.OrdinalIgnoreCase);
+
+    private static async Task<IReadOnlyList<GoodsReceiptLabelBatchRow>> EnrichTaskReferencesAsync(
+        IReadOnlyList<GoodsReceiptLabelBatchRow> rows,
+        IQueryable<GoodsReceiptLabel> labels,
+        IQueryable<GoodsReceiptTaskLine> taskLines,
+        IQueryable<GoodsReceiptTask> tasks,
+        CancellationToken cancellationToken)
+    {
+        var batchIds = rows.Select(x => x.Id).ToArray();
+        var references = await (from label in labels
+                                join taskLine in taskLines on label.GrTaskLineId equals (long?)taskLine.Id
+                                join task in tasks on taskLine.GrTaskId equals task.Id
+                                where batchIds.Contains(label.BatchId)
+                                select new { label.BatchId, LabelId = label.Id, TaskId = task.Id, task.TaskNo })
+            .ToListAsync(cancellationToken);
+        var referenceByBatch = references.OrderBy(x => x.LabelId).GroupBy(x => x.BatchId)
+            .ToDictionary(x => x.Key, x => x.First());
+        return rows.Select(row => referenceByBatch.TryGetValue(row.Id, out var reference)
+            ? row with { TaskId = reference.TaskId, TaskNo = reference.TaskNo }
+            : row).ToArray();
+    }
+
+    private sealed class GoodsReceiptLabelGridProjection
+    {
+        public long Id { get; init; }
+        public long GoodsReceiptId { get; init; }
+        public required string DocumentNo { get; init; }
+        public string? WaybillNo { get; init; }
+        public string? ElectronicWaybillNo { get; init; }
+        public long? TaskId { get; init; }
+        public string? TaskNo { get; init; }
+        public required string BatchNo { get; init; }
+        public GoodsReceiptLabelBatchStatus Status { get; init; }
+        public int TotalLabelCount { get; init; }
+        public int PrintedLabelCount { get; init; }
+        public int ConsumedLabelCount { get; init; }
+        public int VoidLabelCount { get; init; }
+        public DateTimeOffset? LastPrintedAtUtc { get; init; }
+        public long? CreatedBy { get; init; }
+        public DateTime? CreatedDate { get; init; }
+        public required byte[] RowVersion { get; init; }
+        public string? WaybillSearchText { get; init; }
     }
 
     public async Task<GoodsReceiptLabelBatchDetail> GetAsync(long batchId, CancellationToken ct = default)
