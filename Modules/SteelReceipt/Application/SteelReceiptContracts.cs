@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using verii_wms_api_v2.Modules.SteelReceipt.Domain;
 using verii_wms_api_v2.Shared;
 
@@ -16,14 +17,18 @@ public sealed record CommitSteelReceiptImportRequest(Guid IdempotencyKey,Preview
 public sealed record SteelReceiptPlanGridRow(long Id,string BranchCode,string ImportReferenceNo,string SourceFileName,string? ExportReferenceNo,
     long? VehicleCheckInId,string? VehiclePlateNo,string? DriverName,long SupplierId,string SupplierCode,string SupplierName,long TargetWarehouseId,int WarehouseCode,string WarehouseName,
     SteelReceiptPlanStatus Status,int TotalLineCount,decimal TotalExpectedQuantity,DateTimeOffset ImportedAtUtc,
-    long? CreatedBy,DateTime? CreatedDate,long? UpdatedBy,DateTime? UpdatedDate);
+    long? CreatedBy,DateTime? CreatedDate,long? UpdatedBy,DateTime? UpdatedDate,
+    [property: JsonIgnore] string? VehicleSearchText=null);
 public sealed record SteelReceiptLineGridRow(long Id,long PlanId,string ImportReferenceNo,int LineNo,string DCode,string? NetsisOrderNo,
     string StockCode,string? StockName,string SupplierSerialNo,string? SecondarySerialNo,string? CombinedSize,string? MaterialGrade,
     string? HeatNumber,string? CertificateNumber,decimal ExpectedQuantity,decimal ArrivedQuantity,decimal ApprovedQuantity,
     decimal RejectedQuantity,string UnitCode,SteelArrivalStatus ArrivalStatus,SteelInspectionStatus InspectionStatus,
     SteelReceiptConversionStatus ConversionStatus,SteelPutawayStatus PutawayStatus,string? GoodsReceiptNo,long? GoodsReceiptId,
     string? ErpIntegrationStatus,long TargetWarehouseId,long ReceivingLocationId,long? GoodsReceiptLineId,long? CreatedBy,DateTime? CreatedDate,long? UpdatedBy,DateTime? UpdatedDate,
-    string? VehiclePlateNo,string? DriverName,string? ConversionWaybillNo,DateTimeOffset? ConvertedAtUtc,string RowVersion);
+    string? VehiclePlateNo,string? DriverName,string? ConversionWaybillNo,DateTimeOffset? ConvertedAtUtc,string RowVersion,
+    [property: JsonIgnore] string? SupplierSerialSearchText=null,
+    [property: JsonIgnore] string? CombinedSearchText=null,
+    [property: JsonIgnore] string? ExpectedQuantitySearchText=null);
 public sealed record SteelReceiptSourceRow(long PlanId,string ImportReferenceNo,string SourceFileName,string? WaybillNo,DateOnly? WaybillDate,
     long SupplierId,string SupplierCode,string SupplierName,SteelReceiptPlanStatus Status,int TotalLineCount,decimal TotalExpectedQuantity,
     IReadOnlyList<SteelReceiptLineGridRow> Lines);

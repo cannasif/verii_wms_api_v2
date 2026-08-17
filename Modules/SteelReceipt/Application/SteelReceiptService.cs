@@ -29,6 +29,30 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
     IGoodsReceiptErpPostingCoordinator erpPosting,
     IStockMovementService stockMovement,IAuditLogWriter audit,ISteelReceiptAttachmentStorage attachmentStorage):ISteelReceiptService
 {
+    private static readonly IReadOnlyDictionary<string,string> PlanSearchColumns=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["id"]=nameof(SteelReceiptPlanGridRow.Id),["importReferenceNo"]=nameof(SteelReceiptPlanGridRow.ImportReferenceNo),
+        ["vehiclePlateNo"]=nameof(SteelReceiptPlanGridRow.VehicleSearchText),["supplierCode"]=nameof(SteelReceiptPlanGridRow.SupplierCode),
+        ["supplierName"]=nameof(SteelReceiptPlanGridRow.SupplierName),["warehouseCode"]=nameof(SteelReceiptPlanGridRow.WarehouseCode),
+        ["warehouseName"]=nameof(SteelReceiptPlanGridRow.WarehouseName),["status"]=nameof(SteelReceiptPlanGridRow.Status),
+        ["totalLineCount"]=nameof(SteelReceiptPlanGridRow.TotalLineCount),["totalExpectedQuantity"]=nameof(SteelReceiptPlanGridRow.TotalExpectedQuantity)
+    };
+    private static readonly string[] DefaultPlanSearchColumns=["importReferenceNo","vehiclePlateNo","supplierCode","supplierName","warehouseCode","warehouseName"];
+    private static readonly IReadOnlyDictionary<string,string> LineSearchColumns=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["id"]=nameof(SteelReceiptLineGridRow.Id),["dCode"]=nameof(SteelReceiptLineGridRow.DCode),
+        ["supplierSerialNo"]=nameof(SteelReceiptLineGridRow.SupplierSerialSearchText),["secondarySerialNo"]=nameof(SteelReceiptLineGridRow.SecondarySerialNo),
+        ["stockCode"]=nameof(SteelReceiptLineGridRow.StockCode),["stockName"]=nameof(SteelReceiptLineGridRow.StockName),
+        ["importReferenceNo"]=nameof(SteelReceiptLineGridRow.ImportReferenceNo),["netsisOrderNo"]=nameof(SteelReceiptLineGridRow.NetsisOrderNo),
+        ["materialGrade"]=nameof(SteelReceiptLineGridRow.MaterialGrade),["combinedSize"]=nameof(SteelReceiptLineGridRow.CombinedSearchText),
+        ["heatNumber"]=nameof(SteelReceiptLineGridRow.HeatNumber),["certificateNumber"]=nameof(SteelReceiptLineGridRow.CertificateNumber),
+        ["expectedQuantity"]=nameof(SteelReceiptLineGridRow.ExpectedQuantitySearchText),["arrivedQuantity"]=nameof(SteelReceiptLineGridRow.ArrivedQuantity),
+        ["approvedQuantity"]=nameof(SteelReceiptLineGridRow.ApprovedQuantity),["rejectedQuantity"]=nameof(SteelReceiptLineGridRow.RejectedQuantity),
+        ["arrivalStatus"]=nameof(SteelReceiptLineGridRow.ArrivalStatus),["inspectionStatus"]=nameof(SteelReceiptLineGridRow.InspectionStatus),
+        ["conversionStatus"]=nameof(SteelReceiptLineGridRow.ConversionStatus),["putawayStatus"]=nameof(SteelReceiptLineGridRow.PutawayStatus),
+        ["goodsReceiptNo"]=nameof(SteelReceiptLineGridRow.GoodsReceiptNo)
+    };
+    private static readonly string[] DefaultLineSearchColumns=["dCode","supplierSerialNo","stockCode","stockName","importReferenceNo","netsisOrderNo","materialGrade","combinedSize","heatNumber","certificateNumber","goodsReceiptNo"];
     private IGenericRepository<SteelReceiptPlan> Plans=>uow.Repository<SteelReceiptPlan>();
     private IGenericRepository<SteelReceiptPlanLine> Lines=>uow.Repository<SteelReceiptPlanLine>();
 
@@ -152,9 +176,18 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             x.Vehicle==null?null:((x.Vehicle.DriverFirstName??"")+" "+(x.Vehicle.DriverLastName??"")).Trim(),x.Plan.SupplierId,
             x.Plan.SupplierCodeSnapshot,x.Plan.SupplierNameSnapshot,x.Plan.TargetWarehouseId,x.Warehouse.WarehouseCode,
             x.Warehouse.WarehouseName,x.Status,x.Plan.TotalLineCount,x.Plan.TotalExpectedQuantity,x.Plan.ImportedAtUtc,
-            x.Plan.CreatedBy,x.Plan.CreatedDate,x.Plan.UpdatedBy,x.Plan.UpdatedDate));
+            x.Plan.CreatedBy,x.Plan.CreatedDate,x.Plan.UpdatedBy,x.Plan.UpdatedDate,
+            x.Vehicle!=null
+                ?x.Vehicle.PlateNo+" "+(x.Vehicle.DriverFirstName??"")+" "+(x.Vehicle.DriverLastName??"")
+                :(from line in planLines
+                  where line.PlanId==x.Plan.Id&&line.VehicleAcceptanceId!=null
+                  join acceptance in acceptances on line.VehicleAcceptanceId equals acceptance.Id
+                  join vehicle in vehicleHeaders on acceptance.VehicleCheckInId equals vehicle.Id
+                  orderby acceptance.AcceptedAtUtc descending
+                  select vehicle.PlateNo+" "+(vehicle.DriverFirstName??"")+" "+(vehicle.DriverLastName??"")).FirstOrDefault()));
         var s=request.Search?.Trim();q=q.Where(x=>string.IsNullOrWhiteSpace(s)||x.ImportReferenceNo.Contains(s)||x.SupplierCode.Contains(s)
             ||x.SupplierName.Contains(s)||(x.ExportReferenceNo!=null&&x.ExportReferenceNo.Contains(s)));
+        q=q.ApplySearch(request,PlanSearchColumns,DefaultPlanSearchColumns);
         var response=await q.ApplyAdvancedFilters(request).ApplySort(request,nameof(SteelReceiptPlanGridRow.ImportedAtUtc)).ToPagedResponseAsync(request,ct);
         return await EnrichLinkedPlanVehiclesAsync(response,vehicleHeaders,acceptances,planLines,ct);
     }
@@ -206,6 +239,7 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
     {
         var q=GridQuery();var s=request.Search?.Trim();q=q.Where(x=>string.IsNullOrWhiteSpace(s)||x.DCode.Contains(s)||x.StockCode.Contains(s)
             ||x.SupplierSerialNo.Contains(s)||(x.NetsisOrderNo!=null&&x.NetsisOrderNo.Contains(s))||x.ImportReferenceNo.Contains(s));
+        q=q.ApplySearch(request,LineSearchColumns,DefaultLineSearchColumns);
         return await q.ApplyAdvancedFilters(request).ApplySort(request,nameof(SteelReceiptLineGridRow.Id)).ToPagedResponseAsync(request,ct);
     }
 
@@ -477,7 +511,10 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             x.Vehicle==null?null:((x.Vehicle.DriverFirstName??"")+" "+(x.Vehicle.DriverLastName??"")).Trim(),
             x.Receipt==null?null:(x.Receipt.ElectronicWaybillNo??x.Receipt.WaybillNo),
             x.Receipt==null?null:(x.Receipt.ReceivedAtUtc??(x.Receipt.CreatedDate.HasValue?new DateTimeOffset(DateTime.SpecifyKind(x.Receipt.CreatedDate.Value,DateTimeKind.Utc)):(DateTimeOffset?)null)),
-            Convert.ToBase64String(x.Line.RowVersion)));
+            Convert.ToBase64String(x.Line.RowVersion),
+            x.Line.SupplierSerialNo+" "+(x.Line.SecondarySerialNo??""),
+            (x.Line.CombinedSize??"")+" "+(x.Line.MaterialGrade??"")+" "+(x.Line.HeatNumber??""),
+            x.Line.ExpectedQuantity+" "+x.Line.UnitCode));
     }
 
     public async Task<IReadOnlyList<SteelReceiptAttachmentRow>> GetAttachmentsAsync(long lineId,CancellationToken ct=default)
@@ -530,6 +567,7 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
     {
         var s=request.Search?.Trim();query=query.Where(x=>string.IsNullOrWhiteSpace(s)||x.DCode.Contains(s)||x.StockCode.Contains(s)
             ||x.SupplierSerialNo.Contains(s)||(x.NetsisOrderNo!=null&&x.NetsisOrderNo.Contains(s))||x.ImportReferenceNo.Contains(s));
+        query=query.ApplySearch(request,LineSearchColumns,DefaultLineSearchColumns);
         return await query.ApplyAdvancedFilters(request).ApplySort(request,nameof(SteelReceiptLineGridRow.Id)).ToPagedResponseAsync(request,ct);
     }
 
