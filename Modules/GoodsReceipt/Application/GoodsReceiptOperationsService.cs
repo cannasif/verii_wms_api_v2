@@ -122,73 +122,219 @@ public sealed class GoodsReceiptOperationsService(
 
     public async Task<PagedResponse<GoodsReceiptGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
-        // IgnoreQueryFilters on the warehouse root applies to the composed query,
-        // so keep the business-owned roots explicitly scoped to active records.
-        var headers = Headers.Query().Where(x => !x.IsDeleted);
+        var includeLineSummary = RequiresLineSummaryInMainQuery(request);
+        var headers = Headers.Query();
         var warehouses = unitOfWork.Repository<WarehouseEntity>().Query(ignoreQueryFilters: true);
-        var lines = unitOfWork.Repository<GoodsReceiptLine>().Query().Where(x => !x.IsDeleted);
+        var lines = unitOfWork.Repository<GoodsReceiptLine>().Query();
         var users = unitOfWork.Repository<User>().Query();
         var userDetails = unitOfWork.Repository<UserDetail>().Query();
-        var joined = from h in headers
-                     join w in warehouses on h.TargetWarehouseId equals w.Id
-                     join createdUser in users on h.CreatedBy equals (long?)createdUser.Id into createdUsers
-                     from createdUser in createdUsers.DefaultIfEmpty()
-                     join createdDetail in userDetails on h.CreatedBy equals (long?)createdDetail.UserId into createdDetails
-                     from createdDetail in createdDetails.DefaultIfEmpty()
-                     join updatedUser in users on h.UpdatedBy equals (long?)updatedUser.Id into updatedUsers
-                     from updatedUser in updatedUsers.DefaultIfEmpty()
-                     join updatedDetail in userDetails on h.UpdatedBy equals (long?)updatedDetail.UserId into updatedDetails
-                     from updatedDetail in updatedDetails.DefaultIfEmpty()
-                     select new
-                     {
-                         Header = h,
-                         Warehouse = w,
-                         CreatedUser = createdUser,
-                         CreatedDetail = createdDetail,
-                         UpdatedUser = updatedUser,
-                         UpdatedDetail = updatedDetail
-                     };
-        var query = joined.Select(x => new GoodsReceiptGridRow(x.Header.Id, x.Header.BranchCode, x.Header.DocumentNo, x.Header.DocumentDate,
-            x.Header.ReceiptType, x.Header.InitiationMode, x.Header.ProcessType, x.Header.Status, x.Header.ApprovalStatus,
-            x.Header.QualityStatus, x.Header.PutawayStatus, x.Header.ErpIntegrationStatus, x.Header.SupplierId, x.Header.SupplierCodeSnapshot,
-            x.Header.SupplierNameSnapshot, x.Header.TargetWarehouseId, x.Warehouse.WarehouseCode, x.Warehouse.WarehouseName,
-            x.Header.WaybillNo, x.Header.ElectronicWaybillNo, x.Header.WaybillDate, lines.Count(line => line.GrHeaderId == x.Header.Id),
-            lines.Where(line => line.GrHeaderId == x.Header.Id).Sum(line => (decimal?)line.ExpectedQuantity) ?? 0,
-            lines.Where(line => line.GrHeaderId == x.Header.Id).Sum(line => (decimal?)line.ReceivedQuantity) ?? 0,
-            x.Header.Priority, x.Header.PlannedArrivalAtUtc, x.Header.ReceivedAtUtc,
-            x.Header.CreatedBy, x.Header.CreatedDate, x.Header.UpdatedBy, x.Header.UpdatedDate,
-            null, null,
-            x.Header.RowVersion,
-            (x.Header.WaybillNo ?? "") + " " + (x.Header.ElectronicWaybillNo ?? ""),
-            (x.Header.SupplierNameSnapshot ?? "") + " " + (x.Header.SupplierCodeSnapshot ?? ""),
-            x.Warehouse.WarehouseName + " " + x.Warehouse.WarehouseCode,
-            (x.Header.CreatedBy == null ? "Sistem System" : x.Header.CreatedBy.GetValueOrDefault().ToString()) + " "
-                + (x.CreatedUser == null ? "" : x.CreatedUser.Username + " " + x.CreatedUser.Email) + " "
-                + (x.CreatedDetail == null ? "" : x.CreatedDetail.FirstName + " " + x.CreatedDetail.LastName),
-            (x.Header.UpdatedBy == null ? "Sistem System" : x.Header.UpdatedBy.GetValueOrDefault().ToString()) + " "
-                + (x.UpdatedUser == null ? "" : x.UpdatedUser.Username + " " + x.UpdatedUser.Email) + " "
-                + (x.UpdatedDetail == null ? "" : x.UpdatedDetail.FirstName + " " + x.UpdatedDetail.LastName)));
-        var page = await query
-            .ApplySearch(request, GridSearchColumnMapping, DefaultGridSearchColumns)
-            .ApplyAdvancedFilters(request)
-            .ApplySort(request, nameof(GoodsReceiptGridRow.CreatedDate))
-            .ToPagedResponseAsync(request, cancellationToken);
+        var query = BuildPagedQuery(request, headers, warehouses, lines, users, userDetails);
+        var countQuery = BuildCountQuery(request, headers, warehouses, lines, users, userDetails);
+        var page = await query.ToPagedResponseAsync(countQuery, request, cancellationToken);
         return new PagedResponse<GoodsReceiptGridRow>
         {
-            Items = await EnrichGridRowsAsync(page.Items, cancellationToken),
+            Items = await EnrichGridRowsAsync(page.Items, loadLineSummary: !includeLineSummary, cancellationToken),
             TotalCount = page.TotalCount,
             PageNumber = page.PageNumber,
             PageSize = page.PageSize,
         };
     }
 
+    internal static IQueryable<GoodsReceiptGridRow> BuildPagedQuery(
+        PagedRequest request,
+        IQueryable<GoodsReceiptHeader> headers,
+        IQueryable<WarehouseEntity> warehouses,
+        IQueryable<GoodsReceiptLine> lines,
+        IQueryable<User> users,
+        IQueryable<UserDetail> userDetails)
+    {
+        // IgnoreQueryFilters on the warehouse root applies to the whole composed query.
+        // Keep business-owned roots explicitly active while retaining historical warehouse names.
+        headers = headers.Where(x => !x.IsDeleted);
+        lines = lines.Where(x => !x.IsDeleted);
+
+        var sources = BuildGridSourceQuery(request, headers, warehouses, lines);
+        IQueryable<GoodsReceiptActorGridSource> actorSources;
+        if (RequiresActorSearch(request))
+        {
+            actorSources = from source in sources
+                      join createdUser in users on source.Base.CreatedBy equals (long?)createdUser.Id into createdUsers
+                      from createdUser in createdUsers.DefaultIfEmpty()
+                      join createdDetail in userDetails on source.Base.CreatedBy equals (long?)createdDetail.UserId into createdDetails
+                      from createdDetail in createdDetails.DefaultIfEmpty()
+                      join updatedUser in users on source.Base.UpdatedBy equals (long?)updatedUser.Id into updatedUsers
+                      from updatedUser in updatedUsers.DefaultIfEmpty()
+                      join updatedDetail in userDetails on source.Base.UpdatedBy equals (long?)updatedDetail.UserId into updatedDetails
+                      from updatedDetail in updatedDetails.DefaultIfEmpty()
+                      select new GoodsReceiptActorGridSource
+                      {
+                          Source = source,
+                          CreatedBySearchText = (source.Base.CreatedBy == null
+                                  ? "Sistem System"
+                                  : source.Base.CreatedBy.GetValueOrDefault().ToString()) + " "
+                              + (createdUser == null ? "" : createdUser.Username + " " + createdUser.Email) + " "
+                              + (createdDetail == null ? "" : createdDetail.FirstName + " " + createdDetail.LastName),
+                          UpdatedBySearchText = (source.Base.UpdatedBy == null
+                                  ? "Sistem System"
+                                  : source.Base.UpdatedBy.GetValueOrDefault().ToString()) + " "
+                              + (updatedUser == null ? "" : updatedUser.Username + " " + updatedUser.Email) + " "
+                              + (updatedDetail == null ? "" : updatedDetail.FirstName + " " + updatedDetail.LastName)
+                      };
+        }
+        else
+        {
+            actorSources = sources.Select(source => new GoodsReceiptActorGridSource { Source = source });
+        }
+
+        return actorSources
+            .Select(x => new GoodsReceiptGridRow(
+                x.Source.Base.Id, x.Source.Base.BranchCode, x.Source.Base.DocumentNo, x.Source.Base.DocumentDate,
+                x.Source.Base.ReceiptType, x.Source.Base.InitiationMode, x.Source.Base.ProcessType,
+                x.Source.Base.Status, x.Source.Base.ApprovalStatus, x.Source.Base.QualityStatus,
+                x.Source.Base.PutawayStatus, x.Source.Base.ErpIntegrationStatus,
+                x.Source.Base.SupplierId, x.Source.Base.SupplierCode, x.Source.Base.SupplierName,
+                x.Source.Base.TargetWarehouseId, x.Source.Base.WarehouseCode, x.Source.Base.WarehouseName,
+                x.Source.Base.WaybillNo, x.Source.Base.ElectronicWaybillNo, x.Source.Base.WaybillDate,
+                x.Source.LineCount, x.Source.ExpectedQuantity, x.Source.ReceivedQuantity,
+                x.Source.Base.Priority, x.Source.Base.PlannedArrivalAtUtc, x.Source.Base.ReceivedAtUtc,
+                x.Source.Base.CreatedBy, x.Source.Base.CreatedDate, x.Source.Base.UpdatedBy, x.Source.Base.UpdatedDate,
+                null, null, x.Source.Base.RowVersion,
+                (x.Source.Base.WaybillNo ?? "") + " " + (x.Source.Base.ElectronicWaybillNo ?? ""),
+                (x.Source.Base.SupplierName ?? "") + " " + (x.Source.Base.SupplierCode ?? ""),
+                x.Source.Base.WarehouseName + " " + x.Source.Base.WarehouseCode,
+                x.CreatedBySearchText, x.UpdatedBySearchText))
+            .ApplySearch(request, GridSearchColumnMapping, DefaultGridSearchColumns)
+            .ApplyAdvancedFilters(request)
+            .ApplySort(request, nameof(GoodsReceiptGridRow.CreatedDate));
+    }
+
+    internal static IQueryable<GoodsReceiptGridRow> BuildCountQuery(
+        PagedRequest request,
+        IQueryable<GoodsReceiptHeader> headers,
+        IQueryable<WarehouseEntity> warehouses,
+        IQueryable<GoodsReceiptLine> lines,
+        IQueryable<User> users,
+        IQueryable<UserDetail> userDetails) =>
+        BuildPagedQuery(
+            new PagedRequest
+            {
+                PageNumber = request.PageNumber,
+                Page = request.Page,
+                PageSize = request.PageSize,
+                Search = request.EffectiveSearch,
+                SearchFields = request.SearchFields,
+                FilterLogic = request.FilterLogic,
+                Filters = request.Filters
+            },
+            headers,
+            warehouses,
+            lines,
+            users,
+            userDetails);
+
+    private static IQueryable<GoodsReceiptGridSource> BuildGridSourceQuery(
+        PagedRequest request,
+        IQueryable<GoodsReceiptHeader> headers,
+        IQueryable<WarehouseEntity> warehouses,
+        IQueryable<GoodsReceiptLine> lines)
+    {
+        var baseSources = from header in headers
+                          join warehouse in warehouses on header.TargetWarehouseId equals warehouse.Id
+                          select new GoodsReceiptGridBaseSource
+                          {
+                              Id = header.Id,
+                              BranchCode = header.BranchCode,
+                              DocumentNo = header.DocumentNo,
+                              DocumentDate = header.DocumentDate,
+                              ReceiptType = header.ReceiptType,
+                              InitiationMode = header.InitiationMode,
+                              ProcessType = header.ProcessType,
+                              Status = header.Status,
+                              ApprovalStatus = header.ApprovalStatus,
+                              QualityStatus = header.QualityStatus,
+                              PutawayStatus = header.PutawayStatus,
+                              ErpIntegrationStatus = header.ErpIntegrationStatus,
+                              SupplierId = header.SupplierId,
+                              SupplierCode = header.SupplierCodeSnapshot,
+                              SupplierName = header.SupplierNameSnapshot,
+                              TargetWarehouseId = header.TargetWarehouseId,
+                              WarehouseCode = warehouse.WarehouseCode,
+                              WarehouseName = warehouse.WarehouseName,
+                              WaybillNo = header.WaybillNo,
+                              ElectronicWaybillNo = header.ElectronicWaybillNo,
+                              WaybillDate = header.WaybillDate,
+                              Priority = header.Priority,
+                              PlannedArrivalAtUtc = header.PlannedArrivalAtUtc,
+                              ReceivedAtUtc = header.ReceivedAtUtc,
+                              CreatedBy = header.CreatedBy,
+                              CreatedDate = header.CreatedDate,
+                              UpdatedBy = header.UpdatedBy,
+                              UpdatedDate = header.UpdatedDate,
+                              RowVersion = header.RowVersion
+                          };
+        if (!RequiresLineSummaryInMainQuery(request))
+            return baseSources.Select(source => new GoodsReceiptGridSource { Base = source });
+
+        var lineSummaries = lines
+            .GroupBy(x => x.GrHeaderId)
+            .Select(group => new
+            {
+                HeaderId = group.Key,
+                LineCount = group.Count(),
+                ExpectedQuantity = group.Sum(x => x.ExpectedQuantity),
+                ReceivedQuantity = group.Sum(x => x.ReceivedQuantity)
+            });
+        return from source in baseSources
+               join summary in lineSummaries on source.Id equals summary.HeaderId into summaries
+               from summary in summaries.DefaultIfEmpty()
+               select new GoodsReceiptGridSource
+               {
+                   Base = source,
+                   LineCount = (int?)summary.LineCount ?? 0,
+                   ExpectedQuantity = (decimal?)summary.ExpectedQuantity ?? 0,
+                   ReceivedQuantity = (decimal?)summary.ReceivedQuantity ?? 0
+               };
+    }
+
+    private static bool RequiresActorSearch(PagedRequest request) =>
+        !string.IsNullOrWhiteSpace(request.EffectiveSearch)
+        && request.SearchFields.Any(x => IsColumn(x, "createdBy") || IsColumn(x, "updatedBy"));
+
+    private static bool RequiresLineSummaryInMainQuery(PagedRequest request) =>
+        IsLineSummaryColumn(request.SortBy)
+        || request.Filters.Any(x => IsLineSummaryColumn(x.Column));
+
+    private static bool IsLineSummaryColumn(string? column) =>
+        IsColumn(column, "lineCount")
+        || IsColumn(column, "expectedQuantity")
+        || IsColumn(column, "receivedQuantity");
+
+    private static bool IsColumn(string? value, string expected) =>
+        string.Equals(value?.Trim(), expected, StringComparison.OrdinalIgnoreCase);
+
     private async Task<IReadOnlyList<GoodsReceiptGridRow>> EnrichGridRowsAsync(
         IReadOnlyList<GoodsReceiptGridRow> rows,
+        bool loadLineSummary,
         CancellationToken cancellationToken)
     {
         if (rows.Count == 0) return rows;
 
         var headerIds = rows.Select(x => x.Id).ToArray();
+        Dictionary<long, GoodsReceiptLineSummary> lineSummariesByHeader = [];
+        if (loadLineSummary)
+        {
+            lineSummariesByHeader = await unitOfWork.Repository<GoodsReceiptLine>().Query()
+                .Where(x => headerIds.Contains(x.GrHeaderId))
+                .GroupBy(x => x.GrHeaderId)
+                .Select(group => new GoodsReceiptLineSummary
+                {
+                    HeaderId = group.Key,
+                    LineCount = group.Count(),
+                    ExpectedQuantity = group.Sum(x => x.ExpectedQuantity),
+                    ReceivedQuantity = group.Sum(x => x.ReceivedQuantity)
+                })
+                .ToDictionaryAsync(x => x.HeaderId, cancellationToken);
+        }
         var orderRows = await unitOfWork.Repository<GoodsReceiptSourceDocument>().Query()
             .Where(x => headerIds.Contains(x.GrHeaderId)
                 && x.SourceDocumentType == GoodsReceiptSourceDocumentType.PurchaseOrder)
@@ -211,12 +357,75 @@ public sealed class GoodsReceiptOperationsService(
             .ToDictionary(x => x.Key, x => JoinDistinctValues(x.Select(row => row.ProjectCodeSnapshot)));
 
         return rows
-            .Select(row => row with
+            .Select(row =>
             {
-                OrderNumbers = ordersByHeader.GetValueOrDefault(row.Id),
-                ProjectCodes = projectsByHeader.GetValueOrDefault(row.Id),
+                lineSummariesByHeader.TryGetValue(row.Id, out var lineSummary);
+                return row with
+                {
+                    LineCount = loadLineSummary ? lineSummary?.LineCount ?? 0 : row.LineCount,
+                    ExpectedQuantity = loadLineSummary ? lineSummary?.ExpectedQuantity ?? 0 : row.ExpectedQuantity,
+                    ReceivedQuantity = loadLineSummary ? lineSummary?.ReceivedQuantity ?? 0 : row.ReceivedQuantity,
+                    OrderNumbers = ordersByHeader.GetValueOrDefault(row.Id),
+                    ProjectCodes = projectsByHeader.GetValueOrDefault(row.Id),
+                };
             })
             .ToArray();
+    }
+
+    private sealed class GoodsReceiptGridBaseSource
+    {
+        public long Id { get; init; }
+        public required string BranchCode { get; init; }
+        public required string DocumentNo { get; init; }
+        public DateOnly DocumentDate { get; init; }
+        public GoodsReceiptType ReceiptType { get; init; }
+        public GoodsReceiptInitiationMode InitiationMode { get; init; }
+        public GoodsReceiptProcessType ProcessType { get; init; }
+        public WarehouseOperationStatus Status { get; init; }
+        public OperationApprovalStatus ApprovalStatus { get; init; }
+        public OperationQualityStatus QualityStatus { get; init; }
+        public OperationPutawayStatus PutawayStatus { get; init; }
+        public ErpIntegrationStatus ErpIntegrationStatus { get; init; }
+        public long? SupplierId { get; init; }
+        public string? SupplierCode { get; init; }
+        public string? SupplierName { get; init; }
+        public long TargetWarehouseId { get; init; }
+        public int WarehouseCode { get; init; }
+        public required string WarehouseName { get; init; }
+        public string? WaybillNo { get; init; }
+        public string? ElectronicWaybillNo { get; init; }
+        public DateOnly? WaybillDate { get; init; }
+        public byte Priority { get; init; }
+        public DateTimeOffset? PlannedArrivalAtUtc { get; init; }
+        public DateTimeOffset? ReceivedAtUtc { get; init; }
+        public long? CreatedBy { get; init; }
+        public DateTime? CreatedDate { get; init; }
+        public long? UpdatedBy { get; init; }
+        public DateTime? UpdatedDate { get; init; }
+        public required byte[] RowVersion { get; init; }
+    }
+
+    private sealed class GoodsReceiptGridSource
+    {
+        public required GoodsReceiptGridBaseSource Base { get; init; }
+        public int LineCount { get; init; }
+        public decimal ExpectedQuantity { get; init; }
+        public decimal ReceivedQuantity { get; init; }
+    }
+
+    private sealed class GoodsReceiptActorGridSource
+    {
+        public required GoodsReceiptGridSource Source { get; init; }
+        public string? CreatedBySearchText { get; init; }
+        public string? UpdatedBySearchText { get; init; }
+    }
+
+    private sealed class GoodsReceiptLineSummary
+    {
+        public long HeaderId { get; init; }
+        public int LineCount { get; init; }
+        public decimal ExpectedQuantity { get; init; }
+        public decimal ReceivedQuantity { get; init; }
     }
 
     private static string? JoinDistinctValues(IEnumerable<string?> values)
