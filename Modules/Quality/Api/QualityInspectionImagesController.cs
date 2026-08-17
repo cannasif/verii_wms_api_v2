@@ -18,14 +18,14 @@ public sealed class QualityInspectionImagesController(
     IStringLocalizer<QualityResource> localizer):ControllerBase
 {
     [HttpGet]
-    public async Task<IActionResult> List(long inspectionId,long lineId,CancellationToken ct)
+    public async Task<IActionResult> List(long inspectionId,long lineId,[FromQuery]string? draftDispositionKey,CancellationToken ct)
     {
         await Require("WMS.QUALITY.INSPECTIONS.IMAGES.VIEW",ct);
-        return Ok(ApiResponse<IReadOnlyList<QualityInspectionImageDto>>.Ok(await service.ListAsync(inspectionId,lineId,Branch(),ct)));
+        return Ok(ApiResponse<IReadOnlyList<QualityInspectionImageDto>>.Ok(await service.ListAsync(inspectionId,lineId,Branch(),draftDispositionKey,ct)));
     }
 
     [HttpPost,Consumes("multipart/form-data"),RequestSizeLimit(105_000_000),RequestFormLimits(MultipartBodyLengthLimit=105_000_000)]
-    public async Task<IActionResult> Upload(long inspectionId,long lineId,List<IFormFile>? files,[FromForm]List<string>? captions,CancellationToken ct)
+    public async Task<IActionResult> Upload(long inspectionId,long lineId,List<IFormFile>? files,[FromForm]List<string>? captions,[FromForm]string? draftDispositionKey,CancellationToken ct)
     {
         await Require("WMS.QUALITY.INSPECTIONS.IMAGES.UPLOAD",ct);
         if(files is null||files.Count==0)throw AppException.BadRequest(Message(QualityMessageKeys.InspectionImageRequired));
@@ -33,7 +33,7 @@ public sealed class QualityInspectionImagesController(
         for(var index=0;index<files.Count;index++)
         {
             var file=files[index];
-            uploads.Add(new(file.OpenReadStream(),file.FileName,file.ContentType,file.Length,captions is not null&&index<captions.Count?captions[index]:null));
+            uploads.Add(new(file.OpenReadStream(),file.FileName,file.ContentType,file.Length,captions is not null&&index<captions.Count?captions[index]:null,draftDispositionKey));
         }
         try
         {

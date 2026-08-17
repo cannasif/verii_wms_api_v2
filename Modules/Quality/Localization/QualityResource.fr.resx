@@ -26,6 +26,9 @@
   <data name="ImageUploadBatchLimit" xml:space="preserve"><value>Vous pouvez charger entre 1 et {0} images qualité à la fois.</value></data>
   <data name="ImageCaptionLengthLimit" xml:space="preserve"><value>La description de l’image ne peut pas dépasser {0} caractères.</value></data>
   <data name="ImageLineLimit" xml:space="preserve"><value>Une ligne de contrôle qualité peut contenir au maximum {0} images.</value></data>
+  <data name="DraftDispositionKeyRequired" xml:space="preserve"><value>Chaque image qualité doit être téléversée avec une clé de cible de distribution.</value></data>
+  <data name="DraftDispositionImageOrphan" xml:space="preserve"><value>L'image de distribution '{1}' sur la ligne '{0}' ne correspond pas au plan de décision actuel.</value></data>
+  <data name="InspectionImageLockedAfterDecision" xml:space="preserve"><value>Les images liées à une distribution qualité enregistrée ne peuvent pas être supprimées.</value></data>
   <data name="InspectionLineNotFound" xml:space="preserve"><value>La ligne de contrôle qualité est introuvable.</value></data>
   <data name="InspectionImageNotFound" xml:space="preserve"><value>L’image de contrôle qualité est introuvable.</value></data>
   <data name="InspectionImageRequired" xml:space="preserve"><value>Sélectionnez au moins une image qualité.</value></data>

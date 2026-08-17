@@ -4,6 +4,8 @@ public sealed record QualityInspectionImageDto(
     long Id,
     long QualityInspectionId,
     long QualityInspectionLineId,
+    long? QualityInspectionDispositionId,
+    string? DraftDispositionKey,
     string ContentUrl,
     string OriginalFileName,
     string ContentType,
@@ -17,7 +19,8 @@ public sealed record QualityInspectionImageUpload(
     string FileName,
     string? ContentType,
     long Length,
-    string? Caption);
+    string? Caption,
+    string? DraftDispositionKey = null);
 
 public sealed record QualityInspectionImageContent(
     Stream Content,
@@ -27,7 +30,7 @@ public sealed record QualityInspectionImageContent(
 
 public interface IQualityInspectionImageService
 {
-    Task<IReadOnlyList<QualityInspectionImageDto>> ListAsync(long inspectionId,long lineId,string branchCode,CancellationToken ct=default);
+    Task<IReadOnlyList<QualityInspectionImageDto>> ListAsync(long inspectionId,long lineId,string branchCode,string? draftDispositionKey=null,CancellationToken ct=default);
     Task<IReadOnlyList<QualityInspectionImageDto>> UploadAsync(long inspectionId,long lineId,string branchCode,long actorId,IReadOnlyList<QualityInspectionImageUpload> uploads,CancellationToken ct=default);
     Task<QualityInspectionImageContent> OpenAsync(long inspectionId,long lineId,long imageId,string branchCode,CancellationToken ct=default);
     Task DeleteAsync(long inspectionId,long lineId,long imageId,string branchCode,long actorId,CancellationToken ct=default);

@@ -62,20 +62,51 @@ public sealed class QualityInspectionPriorityTests
     }
 
     [Fact]
-    public void Priority_ranks_follow_assignment_order_per_branch()
+    public void Priority_ranks_follow_assignment_order_per_branch_and_status()
     {
         var first = DateTimeOffset.Parse("2026-08-15T10:00:00Z");
         var second = DateTimeOffset.Parse("2026-08-15T12:00:00Z");
         var ranks = QualityService.BuildPriorityRanks(
         [
-            (3, "7", second, DateTimeOffset.Parse("2026-08-01T08:00:00Z")),
-            (1, "7", first, DateTimeOffset.Parse("2026-08-14T08:00:00Z")),
-            (9, "8", first, null),
+            (3, "7", QualityInspectionStatus.Pending.ToString(), second, DateTimeOffset.Parse("2026-08-01T08:00:00Z")),
+            (1, "7", QualityInspectionStatus.Pending.ToString(), first, DateTimeOffset.Parse("2026-08-14T08:00:00Z")),
+            (9, "8", QualityInspectionStatus.Quarantined.ToString(), first, null),
+            (5, "7", QualityInspectionStatus.Quarantined.ToString(), first, null),
         ]);
 
         Assert.Equal(1, ranks[1]);
         Assert.Equal(2, ranks[3]);
         Assert.Equal(1, ranks[9]);
+        Assert.Equal(1, ranks[5]);
+    }
+
+    [Fact]
+    public void Reorder_priority_ids_moves_item_to_target_rank()
+    {
+        var reordered = QualityService.ReorderPriorityIds([10L, 20L, 30L, 40L], 30L, 1);
+        Assert.Equal([30L, 10L, 20L, 40L], reordered);
+
+        reordered = QualityService.ReorderPriorityIds([10L, 20L, 30L, 40L], 10L, 4);
+        Assert.Equal([20L, 30L, 40L, 10L], reordered);
+    }
+
+    [Fact]
+    public void Apply_priority_order_rewrites_assignment_times_in_sequence()
+    {
+        var assignedAt = DateTimeOffset.Parse("2026-08-15T10:00:00Z");
+        var inspections = new[]
+        {
+            new QualityInspection { Id = 1, IsPriority = true },
+            new QualityInspection { Id = 2, IsPriority = true },
+            new QualityInspection { Id = 3, IsPriority = true },
+        };
+
+        QualityService.ApplyPriorityOrder(inspections, [3, 1, 2], 77, assignedAt);
+
+        Assert.Equal(assignedAt, inspections.Single(x => x.Id == 3).PriorityAssignedAtUtc);
+        Assert.Equal(assignedAt.AddMinutes(1), inspections.Single(x => x.Id == 1).PriorityAssignedAtUtc);
+        Assert.Equal(assignedAt.AddMinutes(2), inspections.Single(x => x.Id == 2).PriorityAssignedAtUtc);
+        Assert.All(inspections, inspection => Assert.Equal(77, inspection.UpdatedBy));
     }
 
     [Theory]

@@ -10204,20 +10204,6 @@ namespace verii_wms_api_v2.Migrations
                         .HasColumnType("nvarchar(40)")
                         .HasDefaultValue("rack-scanner");
 
-                    b.Property<string>("NavbarCenterMode")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(16)
-                        .HasColumnType("nvarchar(16)")
-                        .HasDefaultValue("search");
-
-                    b.Property<string>("NavbarKpiKeys")
-                        .IsRequired()
-                        .ValueGeneratedOnAdd()
-                        .HasMaxLength(128)
-                        .HasColumnType("nvarchar(128)")
-                        .HasDefaultValue("myTasks,qualityQueue,pendingApproval,erpIssues");
-
                     b.Property<DateTime?>("CreatedDate")
                         .HasColumnType("datetime2");
 
@@ -10240,6 +10226,20 @@ namespace verii_wms_api_v2.Migrations
                         .IsRequired()
                         .HasMaxLength(100)
                         .HasColumnType("nvarchar(100)");
+
+                    b.Property<string>("NavbarCenterMode")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(16)
+                        .HasColumnType("nvarchar(16)")
+                        .HasDefaultValue("search");
+
+                    b.Property<string>("NavbarKpiKeys")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(128)
+                        .HasColumnType("nvarchar(128)")
+                        .HasDefaultValue("myTasks,qualityQueue,pendingApproval,erpIssues");
 
                     b.Property<string>("Phone")
                         .HasMaxLength(40)
@@ -18387,12 +18387,12 @@ namespace verii_wms_api_v2.Migrations
                         .HasColumnType("bit")
                         .HasDefaultValue(false);
 
-                    b.Property<DateTimeOffset?>("PriorityAssignedAtUtc")
-                        .HasColumnType("datetimeoffset");
-
                     b.Property<string>("Note")
                         .HasMaxLength(1000)
                         .HasColumnType("nvarchar(1000)");
+
+                    b.Property<DateTimeOffset?>("PriorityAssignedAtUtc")
+                        .HasColumnType("datetimeoffset");
 
                     b.Property<DateTimeOffset?>("QueuedAtUtc")
                         .HasColumnType("datetimeoffset");
@@ -18446,13 +18446,13 @@ namespace verii_wms_api_v2.Migrations
 
                     b.HasIndex("IsDeleted");
 
+                    b.HasIndex("BranchCode", "IsPriority", "PriorityAssignedAtUtc");
+
                     b.HasIndex("BranchCode", "QueuedAtUtc", "Status");
 
                     b.HasIndex("BranchCode", "Status", "CreatedAtUtc");
 
                     b.HasIndex("BranchCode", "IsPriority", "Status", "QueuedAtUtc");
-
-                    b.HasIndex("BranchCode", "IsPriority", "PriorityAssignedAtUtc");
 
                     b.ToTable("RII_QUALITY_INSPECTIONS", (string)null);
                 });
@@ -18592,6 +18592,10 @@ namespace verii_wms_api_v2.Migrations
                     b.Property<DateTime?>("DeletedDate")
                         .HasColumnType("datetime2");
 
+                    b.Property<string>("DraftDispositionKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
                     b.Property<Guid>("IdempotencyKey")
                         .HasColumnType("uniqueidentifier");
 
@@ -18691,6 +18695,8 @@ namespace verii_wms_api_v2.Migrations
 
                     b.HasIndex("WarehouseTransferId");
 
+                    b.HasIndex("QualityInspectionLineId", "DraftDispositionKey");
+
                     b.HasIndex("QualityInspectionId", "IdempotencyKey", "SequenceNo")
                         .IsUnique()
                         .HasFilter("[IsDeleted] = 0");
@@ -18741,6 +18747,10 @@ namespace verii_wms_api_v2.Migrations
                     b.Property<DateTime?>("DeletedDate")
                         .HasColumnType("datetime2");
 
+                    b.Property<string>("DraftDispositionKey")
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
                     b.Property<long>("FileLength")
                         .HasColumnType("bigint");
 
@@ -18753,6 +18763,9 @@ namespace verii_wms_api_v2.Migrations
                         .IsRequired()
                         .HasMaxLength(240)
                         .HasColumnType("nvarchar(240)");
+
+                    b.Property<long?>("QualityInspectionDispositionId")
+                        .HasColumnType("bigint");
 
                     b.Property<long>("QualityInspectionId")
                         .HasColumnType("bigint");
@@ -18781,9 +18794,11 @@ namespace verii_wms_api_v2.Migrations
 
                     b.HasIndex("IsDeleted");
 
-                    b.HasIndex("QualityInspectionLineId");
+                    b.HasIndex("QualityInspectionDispositionId");
 
                     b.HasIndex("QualityInspectionId", "QualityInspectionLineId");
+
+                    b.HasIndex("QualityInspectionLineId", "DraftDispositionKey");
 
                     b.HasIndex("BranchCode", "QualityInspectionLineId", "CreatedDate");
 
@@ -29631,6 +29646,11 @@ namespace verii_wms_api_v2.Migrations
 
             modelBuilder.Entity("verii_wms_api_v2.Modules.Quality.Domain.QualityInspectionImage", b =>
                 {
+                    b.HasOne("verii_wms_api_v2.Modules.Quality.Domain.QualityInspectionDisposition", "QualityInspectionDisposition")
+                        .WithMany("Images")
+                        .HasForeignKey("QualityInspectionDispositionId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
                     b.HasOne("verii_wms_api_v2.Modules.Quality.Domain.QualityInspection", "QualityInspection")
                         .WithMany("Images")
                         .HasForeignKey("QualityInspectionId")
@@ -29644,6 +29664,8 @@ namespace verii_wms_api_v2.Migrations
                         .IsRequired();
 
                     b.Navigation("QualityInspection");
+
+                    b.Navigation("QualityInspectionDisposition");
 
                     b.Navigation("QualityInspectionLine");
                 });
@@ -31102,6 +31124,11 @@ namespace verii_wms_api_v2.Migrations
                     b.Navigation("Lines");
 
                     b.Navigation("WorkSessions");
+                });
+
+            modelBuilder.Entity("verii_wms_api_v2.Modules.Quality.Domain.QualityInspectionDisposition", b =>
+                {
+                    b.Navigation("Images");
                 });
 
             modelBuilder.Entity("verii_wms_api_v2.Modules.Quality.Domain.QualityInspectionLine", b =>

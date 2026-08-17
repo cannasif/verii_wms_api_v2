@@ -9,6 +9,8 @@ public static class QualityMessageKeys
     public const string DatDocumentSeriesInvalid = nameof(DatDocumentSeriesInvalid);
     public const string InspectionNotFound = nameof(InspectionNotFound);
     public const string PriorityOnlyForOpenInspection = nameof(PriorityOnlyForOpenInspection);
+    public const string PriorityReorderNotPrioritized = nameof(PriorityReorderNotPrioritized);
+    public const string PriorityReorderInvalidRank = nameof(PriorityReorderInvalidRank);
     public const string ControlQuantityRequired = nameof(ControlQuantityRequired);
     public const string ControlQuantityMustBePositive = nameof(ControlQuantityMustBePositive);
     public const string ControlQuantityMustBeInteger = nameof(ControlQuantityMustBeInteger);
@@ -26,6 +28,10 @@ public static class QualityMessageKeys
     public const string ImageUploadBatchLimit = nameof(ImageUploadBatchLimit);
     public const string ImageCaptionLengthLimit = nameof(ImageCaptionLengthLimit);
     public const string ImageLineLimit = nameof(ImageLineLimit);
+    public const string DraftDispositionKeyRequired = nameof(DraftDispositionKeyRequired);
+    public const string DraftDispositionImageOrphan = nameof(DraftDispositionImageOrphan);
+    public const string DraftDispositionKeyDuplicate = nameof(DraftDispositionKeyDuplicate);
+    public const string InspectionImageLockedAfterDecision = nameof(InspectionImageLockedAfterDecision);
     public const string InspectionLineNotFound = nameof(InspectionLineNotFound);
     public const string InspectionImageNotFound = nameof(InspectionImageNotFound);
     public const string InspectionImageRequired = nameof(InspectionImageRequired);

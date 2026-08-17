@@ -168,9 +168,14 @@ public sealed class QualityInspectionImageConfiguration : BaseEntityConfiguratio
         b.Property(x => x.OriginalFileName).HasMaxLength(240).IsRequired();
         b.Property(x => x.ContentType).HasMaxLength(100).IsRequired();
         b.Property(x => x.Caption).HasMaxLength(500);
+        b.Property(x => x.DraftDispositionKey).HasMaxLength(64);
         b.Property(x => x.RowVersion).IsRowVersion();
         b.HasIndex(x => new { x.BranchCode, x.QualityInspectionLineId, x.CreatedDate });
         b.HasIndex(x => new { x.QualityInspectionId, x.QualityInspectionLineId });
+        b.HasIndex(x => new { x.QualityInspectionLineId, x.DraftDispositionKey });
+        b.HasIndex(x => x.QualityInspectionDispositionId);
+        b.HasOne(x => x.QualityInspectionDisposition).WithMany(x => x.Images)
+            .HasForeignKey(x => x.QualityInspectionDispositionId).OnDelete(DeleteBehavior.Restrict);
     }
 }
 
@@ -214,6 +219,8 @@ public sealed class QualityInspectionDispositionConfiguration : BaseEntityConfig
         b.Property(x => x.TargetStockStatus).HasMaxLength(30).IsRequired();
         b.Property(x => x.ReasonCode).HasMaxLength(100);
         b.Property(x => x.ReasonNote).HasMaxLength(1000);
+        b.Property(x => x.DraftDispositionKey).HasMaxLength(64);
+        b.HasIndex(x => new { x.QualityInspectionLineId, x.DraftDispositionKey });
         b.HasIndex(x => new { x.QualityInspectionId, x.IdempotencyKey, x.SequenceNo })
             .IsUnique().HasFilter("[IsDeleted] = 0");
         b.HasIndex(x => new { x.QualityInspectionLineId, x.Decision, x.DecisionAtUtc });

@@ -9,6 +9,8 @@
   <data name="DatDocumentSeriesInvalid" xml:space="preserve"><value>The selected inter-warehouse transfer document series is inactive, belongs to another branch, or cannot be used for inter-warehouse transfers.</value></data>
   <data name="InspectionNotFound" xml:space="preserve"><value>Quality inspection was not found.</value></data>
   <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>Only open quality inspections awaiting a decision can be prioritized.</value></data>
+  <data name="PriorityReorderNotPrioritized" xml:space="preserve"><value>Only prioritized quality inspections can be reordered.</value></data>
+  <data name="PriorityReorderInvalidRank" xml:space="preserve"><value>Invalid priority rank.</value></data>
   <data name="ControlQuantityRequired" xml:space="preserve"><value>Enter the quantity physically inspected in this operation for every GKK line being decided.</value></data>
   <data name="ControlQuantityMustBePositive" xml:space="preserve"><value>The GKK inspected quantity for '{0}' cannot be negative.</value></data>
   <data name="ControlQuantityMustBeInteger" xml:space="preserve"><value>The GKK inspected quantity for '{0}' must be a whole number.</value></data>
@@ -26,6 +28,10 @@
   <data name="ImageUploadBatchLimit" xml:space="preserve"><value>You can upload between 1 and {0} quality images at a time.</value></data>
   <data name="ImageCaptionLengthLimit" xml:space="preserve"><value>The image caption can contain at most {0} characters.</value></data>
   <data name="ImageLineLimit" xml:space="preserve"><value>A quality line can contain at most {0} images.</value></data>
+  <data name="DraftDispositionKeyRequired" xml:space="preserve"><value>Each quality image must be uploaded with a distribution target key.</value></data>
+  <data name="DraftDispositionImageOrphan" xml:space="preserve"><value>The distribution image '{1}' on line '{0}' does not match the current decision plan.</value></data>
+  <data name="DraftDispositionKeyDuplicate" xml:space="preserve"><value>The same distribution key cannot be used more than once on line '{0}'.</value></data>
+  <data name="InspectionImageLockedAfterDecision" xml:space="preserve"><value>Images linked to a saved quality distribution cannot be deleted.</value></data>
   <data name="InspectionLineNotFound" xml:space="preserve"><value>The quality inspection line was not found.</value></data>
   <data name="InspectionImageNotFound" xml:space="preserve"><value>The quality inspection image was not found.</value></data>
   <data name="InspectionImageRequired" xml:space="preserve"><value>Select at least one quality image.</value></data>

@@ -9,6 +9,8 @@
   <data name="DatDocumentSeriesInvalid" xml:space="preserve"><value>Seçilen DAT belge serisi aktif değil, bu şubeye ait değil veya depolar arası transfer için kullanılamaz.</value></data>
   <data name="InspectionNotFound" xml:space="preserve"><value>Kalite kontrolü bulunamadı.</value></data>
   <data name="PriorityOnlyForOpenInspection" xml:space="preserve"><value>Yalnızca karar bekleyen açık GKK kayıtlarına öncelik verilebilir.</value></data>
+  <data name="PriorityReorderNotPrioritized" xml:space="preserve"><value>Yalnızca öncelikli GKK kayıtlarının sırası değiştirilebilir.</value></data>
+  <data name="PriorityReorderInvalidRank" xml:space="preserve"><value>Geçersiz öncelik sırası.</value></data>
   <data name="ControlQuantityRequired" xml:space="preserve"><value>Karar verilen her GKK satırı için bu işlemde fiziksel olarak kontrol edilen miktarı girin.</value></data>
   <data name="ControlQuantityMustBePositive" xml:space="preserve"><value>'{0}' için GKK kontrol miktarı negatif olamaz.</value></data>
   <data name="ControlQuantityMustBeInteger" xml:space="preserve"><value>'{0}' için GKK kontrol miktarı tam sayı olmalıdır.</value></data>
@@ -26,6 +28,10 @@
   <data name="ImageUploadBatchLimit" xml:space="preserve"><value>Tek seferde 1-{0} kalite görseli yükleyebilirsiniz.</value></data>
   <data name="ImageCaptionLengthLimit" xml:space="preserve"><value>Görsel açıklaması en fazla {0} karakter olabilir.</value></data>
   <data name="ImageLineLimit" xml:space="preserve"><value>Bir kalite satırında en fazla {0} görsel bulunabilir.</value></data>
+  <data name="DraftDispositionKeyRequired" xml:space="preserve"><value>Her kalite görseli bir dağıtım hedefi anahtarı ile yüklenmelidir.</value></data>
+  <data name="DraftDispositionImageOrphan" xml:space="preserve"><value>'{0}' satırındaki '{1}' dağıtım görseli mevcut karar planıyla eşleşmiyor.</value></data>
+  <data name="DraftDispositionKeyDuplicate" xml:space="preserve"><value>'{0}' satırında aynı dağıtım anahtarı birden fazla kez kullanılamaz.</value></data>
+  <data name="InspectionImageLockedAfterDecision" xml:space="preserve"><value>Kaydedilmiş kalite dağıtımına bağlı görseller silinemez.</value></data>
   <data name="InspectionLineNotFound" xml:space="preserve"><value>Kalite inceleme satırı bulunamadı.</value></data>
   <data name="InspectionImageNotFound" xml:space="preserve"><value>Kalite inceleme görseli bulunamadı.</value></data>
   <data name="InspectionImageRequired" xml:space="preserve"><value>En az bir kalite görseli seçilmelidir.</value></data>

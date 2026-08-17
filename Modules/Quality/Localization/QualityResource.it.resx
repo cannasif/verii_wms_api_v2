@@ -26,6 +26,9 @@
   <data name="ImageUploadBatchLimit" xml:space="preserve"><value>È possibile caricare da 1 a {0} immagini qualità alla volta.</value></data>
   <data name="ImageCaptionLengthLimit" xml:space="preserve"><value>La descrizione dell’immagine può contenere al massimo {0} caratteri.</value></data>
   <data name="ImageLineLimit" xml:space="preserve"><value>Una riga qualità può contenere al massimo {0} immagini.</value></data>
+  <data name="DraftDispositionKeyRequired" xml:space="preserve"><value>Ogni immagine qualità deve essere caricata con una chiave di destinazione di distribuzione.</value></data>
+  <data name="DraftDispositionImageOrphan" xml:space="preserve"><value>L'immagine di distribuzione '{1}' sulla riga '{0}' non corrisponde al piano decisionale attuale.</value></data>
+  <data name="InspectionImageLockedAfterDecision" xml:space="preserve"><value>Le immagini collegate a una distribuzione qualità salvata non possono essere eliminate.</value></data>
   <data name="InspectionLineNotFound" xml:space="preserve"><value>La riga dell’ispezione qualità non è stata trovata.</value></data>
   <data name="InspectionImageNotFound" xml:space="preserve"><value>L’immagine dell’ispezione qualità non è stata trovata.</value></data>
   <data name="InspectionImageRequired" xml:space="preserve"><value>Selezionare almeno un’immagine qualità.</value></data>

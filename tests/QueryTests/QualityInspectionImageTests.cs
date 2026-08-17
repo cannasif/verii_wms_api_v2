@@ -29,7 +29,7 @@ public sealed class QualityInspectionImageTests
         var entity=context.Model.FindEntityType(typeof(QualityInspectionImage));
         Assert.NotNull(entity);
         Assert.Equal("RII_QUALITY_INSPECTION_IMAGES",entity.GetTableName());
-        Assert.Equal(2,entity.GetForeignKeys().Count());
+        Assert.Equal(3,entity.GetForeignKeys().Count());
         Assert.DoesNotContain(entity.GetProperties(),property=>property.Name.Contains("StockImage",StringComparison.OrdinalIgnoreCase));
         Assert.Contains(entity.GetProperties(),property=>property.Name==nameof(QualityInspectionImage.StoragePath));
     }
@@ -62,7 +62,7 @@ public sealed class QualityInspectionImageTests
             await using var uploadStream=new MemoryStream(PngBytes);
 
             var result=await service.UploadAsync(inspection.Id,line.Id,"7",42,
-                [new QualityInspectionImageUpload(uploadStream,"kanıt.png","image/png",PngBytes.Length,"Ambalaj kontrolü")]);
+                [new QualityInspectionImageUpload(uploadStream,"kanıt.png","image/png",PngBytes.Length,"Ambalaj kontrolü","route-a")]);
 
             var image=Assert.Single(result);
             Assert.Equal(line.Id,image.QualityInspectionLineId);

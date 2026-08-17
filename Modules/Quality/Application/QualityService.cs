@@ -53,6 +53,8 @@ public sealed class QualityService(
         uow.Repository<QualityInspectionDisposition>();
     private IGenericRepository<QualityInspectionControl> Controls =>
         uow.Repository<QualityInspectionControl>();
+    private IGenericRepository<QualityInspectionImage> InspectionImages =>
+        uow.Repository<QualityInspectionImage>();
     private IGenericRepository<QualityInspectionWorkSession> WorkSessions =>
         uow.Repository<QualityInspectionWorkSession>();
 
@@ -548,13 +550,14 @@ public sealed class QualityService(
                 series.PreviewDocumentNumber,
                 series.IsDefault))
             .ToArray();
-        var dispositionHistory = await Dispositions.Query()
+        var dispositionHistoryRows = await Dispositions.Query()
             .Where(x => x.QualityInspectionId == inspection.Id)
             .OrderBy(x => x.DecisionAtUtc)
             .ThenBy(x => x.SequenceNo)
-            .Select(x => new QualityInspectionDispositionDto(
+            .Select(x => new
+            {
                 x.Id,
-                x.QualityInspectionLineId,
+                LineId = x.QualityInspectionLineId,
                 x.IdempotencyKey,
                 x.SequenceNo,
                 x.Decision,
@@ -563,10 +566,10 @@ public sealed class QualityService(
                 x.SourceLocationId,
                 x.TargetWarehouseId,
                 x.TargetLocationId,
-                x.SourceWarehouseCodeSnapshot,
-                x.SourceLocationCodeSnapshot,
-                x.TargetWarehouseCodeSnapshot,
-                x.TargetLocationCodeSnapshot,
+                SourceWarehouseCode = x.SourceWarehouseCodeSnapshot,
+                SourceLocationCode = x.SourceLocationCodeSnapshot,
+                TargetWarehouseCode = x.TargetWarehouseCodeSnapshot,
+                TargetLocationCode = x.TargetLocationCodeSnapshot,
                 x.SourceStockStatus,
                 x.TargetStockStatus,
                 x.StockMovementOperationId,
@@ -575,8 +578,76 @@ public sealed class QualityService(
                 x.ReasonCode,
                 x.ReasonNote,
                 x.DecisionBy,
-                x.DecisionAtUtc))
+                x.DecisionAtUtc,
+                x.DraftDispositionKey
+            })
             .ToListAsync(ct);
+        var dispositionImageRows = await InspectionImages.Query()
+            .Where(x => x.QualityInspectionId == inspection.Id && x.DraftDispositionKey != null)
+            .OrderByDescending(x => x.CreatedDate)
+            .ThenByDescending(x => x.Id)
+            .Select(x => new
+            {
+                x.Id,
+                x.QualityInspectionId,
+                x.QualityInspectionLineId,
+                x.QualityInspectionDispositionId,
+                x.DraftDispositionKey,
+                x.OriginalFileName,
+                x.ContentType,
+                x.FileLength,
+                x.Caption,
+                UploadedBy = x.CreatedBy,
+                UploadedAtUtc = x.CreatedDate
+            })
+            .ToListAsync(ct);
+        var dispositionImagesById = dispositionImageRows
+            .Where(x => x.QualityInspectionDispositionId.HasValue)
+            .GroupBy(x => x.QualityInspectionDispositionId!.Value)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<QualityInspectionImageDto>)group
+                    .Select(image => MapInspectionImage(
+                        inspection.Id,
+                        image.QualityInspectionLineId,
+                        image.Id,
+                        image.QualityInspectionDispositionId,
+                        image.DraftDispositionKey,
+                        image.OriginalFileName,
+                        image.ContentType,
+                        image.FileLength,
+                        image.Caption,
+                        image.UploadedBy,
+                        image.UploadedAtUtc))
+                    .ToArray());
+        var dispositionHistory = dispositionHistoryRows
+            .Select(x => new QualityInspectionDispositionDto(
+                x.Id,
+                x.LineId,
+                x.IdempotencyKey,
+                x.SequenceNo,
+                x.Decision,
+                x.Quantity,
+                x.SourceWarehouseId,
+                x.SourceLocationId,
+                x.TargetWarehouseId,
+                x.TargetLocationId,
+                x.SourceWarehouseCode,
+                x.SourceLocationCode,
+                x.TargetWarehouseCode,
+                x.TargetLocationCode,
+                x.SourceStockStatus,
+                x.TargetStockStatus,
+                x.StockMovementOperationId,
+                x.WarehouseTransferId,
+                x.DecisionCodeId,
+                x.ReasonCode,
+                x.ReasonNote,
+                x.DecisionBy,
+                x.DecisionAtUtc,
+                x.DraftDispositionKey,
+                dispositionImagesById.GetValueOrDefault(x.Id) ?? Array.Empty<QualityInspectionImageDto>()))
+            .ToList();
         var controlHistory = await Controls.Query()
             .Where(x => x.QualityInspectionId == inspection.Id)
             .OrderBy(x => x.InspectedAtUtc)
@@ -768,6 +839,52 @@ public sealed class QualityService(
                 NewValues: new { IsPriority = current },
                 ChangedFields: [nameof(QualityInspection.IsPriority)]), token);
             return new QualityInspectionPriorityResult(id, current);
+        }, ct, IsolationLevel.Serializable);
+
+    public Task<QualityInspectionPriorityReorderResult> ReorderInspectionPriorityAsync(
+        ReorderQualityInspectionPriorityRequest request,
+        long actor,
+        CancellationToken ct = default) =>
+        uow.ExecuteInTransactionAsync(async token =>
+        {
+            if (request.InspectionId <= 0)
+                throw AppException.BadRequest(Message(QualityMessageKeys.InspectionNotFound));
+            if (request.TargetRank <= 0)
+                throw AppException.BadRequest(Message(QualityMessageKeys.PriorityReorderInvalidRank));
+
+            var inspection = await Inspections.Query(true)
+                .FirstOrDefaultAsync(value => value.Id == request.InspectionId, token)
+                ?? throw AppException.NotFound(Message(QualityMessageKeys.InspectionNotFound));
+            if (!inspection.IsPriority)
+                throw AppException.Conflict(Message(QualityMessageKeys.PriorityReorderNotPrioritized));
+            if (!CanPrioritize(inspection.Status))
+                throw AppException.Conflict(Message(QualityMessageKeys.PriorityOnlyForOpenInspection));
+
+            var group = await Inspections.Query(true)
+                .Where(value => value.IsPriority
+                    && value.BranchCode == inspection.BranchCode
+                    && value.Status == inspection.Status)
+                .OrderBy(value => value.PriorityAssignedAtUtc)
+                .ThenBy(value => value.QueuedAtUtc)
+                .ThenBy(value => value.Id)
+                .ToListAsync(token);
+
+            if (request.TargetRank > group.Count)
+                throw AppException.BadRequest(Message(QualityMessageKeys.PriorityReorderInvalidRank));
+
+            var orderedIds = ReorderPriorityIds(group.Select(value => value.Id).ToList(), request.InspectionId, request.TargetRank);
+            var assignedAt = DateTimeOffset.UtcNow;
+            ApplyPriorityOrder(group, orderedIds, actor, assignedAt);
+            await uow.SaveChangesAsync(token);
+            await audit.WriteAsync(new(
+                "quality.inspection.priority.reorder",
+                nameof(QualityInspection),
+                request.InspectionId.ToString(),
+                "Succeeded",
+                "quality",
+                NewValues: new { request.InspectionId, request.TargetRank, OrderedIds = orderedIds },
+                ChangedFields: [nameof(QualityInspection.PriorityAssignedAtUtc)]), token);
+            return new QualityInspectionPriorityReorderResult(request.InspectionId, request.TargetRank);
         }, ct, IsolationLevel.Serializable);
 
     public async Task<QualityDecisionResult> DecideInspectionAsync(long id, DecideQualityInspectionRequest request, long actor,
@@ -1083,7 +1200,8 @@ public sealed class QualityService(
                         allocation.Quantity,
                         part.DecisionCodeId,
                         part.ReasonCode,
-                        part.Note));
+                        part.Note,
+                        part.DraftDispositionKey));
                 }
             }
 
@@ -1232,14 +1350,21 @@ public sealed class QualityService(
                 }
             }
 
+            await ValidateDispositionDraftImagesAsync(
+                inspection.Id,
+                selected,
+                request.Dispositions ?? [],
+                token);
+
             var dispositionSequence = 0;
+            var persistedDispositions = new List<QualityInspectionDisposition>();
             foreach (var disposition in dispositions)
             {
                 var isDat = RequiresDat(disposition.SourceWarehouseId, disposition.TargetWarehouseId);
                 datIdByRoute.TryGetValue(
                     (disposition.SourceWarehouseId, disposition.TargetWarehouseId),
                     out var warehouseTransferId);
-                await Dispositions.AddAsync(new QualityInspectionDisposition
+                var entity = new QualityInspectionDisposition
                 {
                     BranchCode = inspection.BranchCode,
                     QualityInspectionId = inspection.Id,
@@ -1267,12 +1392,18 @@ public sealed class QualityService(
                     DecisionCodeId = disposition.DecisionCodeId,
                     ReasonCode = disposition.ReasonCode,
                     ReasonNote = disposition.Note ?? Clean(request.Note, 1000),
+                    DraftDispositionKey = disposition.DraftDispositionKey,
                     DecisionBy = actor,
                     DecisionAtUtc = now,
                     CreatedBy = actor,
                     CreatedDate = DateTime.UtcNow
-                }, token);
+                };
+                await Dispositions.AddAsync(entity, token);
+                persistedDispositions.Add(entity);
             }
+
+            await uow.SaveChangesAsync(token);
+            await FinalizeDispositionDraftImagesAsync(persistedDispositions, token);
             var decisionState = ResolveDecisionState(
                 inspection.Lines,
                 releasesQuarantine);
@@ -2101,8 +2232,17 @@ public sealed class QualityService(
                 throw AppException.BadRequest(
                     $"'{line.StockCodeSnapshot}' için dağıtılan toplam {allocated:0.######}, karar bekleyen {actionable:0.######} miktara eşit olmalıdır.");
 
+            if (lineParts.Any(part => string.IsNullOrWhiteSpace(part.DraftDispositionKey)))
+                throw AppException.BadRequest("Her kalite dağıtım satırı bir görsel hedef anahtarı ile gönderilmelidir.");
+            if (lineParts
+                    .Select(part => QualityInspectionImageService.NormalizeDraftDispositionKey(part.DraftDispositionKey!))
+                    .Distinct(StringComparer.Ordinal)
+                    .Count() != lineParts.Length)
+                throw AppException.BadRequest($"'{line.StockCodeSnapshot}' satırında aynı dağıtım anahtarı birden fazla kez kullanılamaz.");
+
             foreach (var part in lineParts)
             {
+                var normalizedDraftKey = QualityInspectionImageService.NormalizeDraftDispositionKey(part.DraftDispositionKey!);
                 result.Add(new QualityDecisionPart(
                     line,
                     part.Decision,
@@ -2111,7 +2251,8 @@ public sealed class QualityService(
                     part.DecisionCodeId,
                     Clean(part.ReasonCode, 100),
                     Clean(part.Note, 1000),
-                    ++sequence));
+                    ++sequence,
+                    normalizedDraftKey));
             }
         }
         return result;
@@ -2592,8 +2733,8 @@ public sealed class QualityService(
             .ApplyThenSort(request, nameof(QualityInspectionGridRow.QueuedAtUtc));
 
     internal static IReadOnlyDictionary<long, int> BuildPriorityRanks(
-        IEnumerable<(long Id, string BranchCode, DateTimeOffset? PriorityAssignedAtUtc, DateTimeOffset? QueuedAtUtc)> rows) =>
-        rows.GroupBy(row => row.BranchCode, StringComparer.Ordinal)
+        IEnumerable<(long Id, string BranchCode, string Status, DateTimeOffset? PriorityAssignedAtUtc, DateTimeOffset? QueuedAtUtc)> rows) =>
+        rows.GroupBy(row => (row.BranchCode, row.Status))
             .SelectMany(group => group
                 .OrderBy(row => row.PriorityAssignedAtUtc ?? DateTimeOffset.MinValue)
                 .ThenBy(row => row.QueuedAtUtc ?? DateTimeOffset.MinValue)
@@ -2609,6 +2750,33 @@ public sealed class QualityService(
         inspection.UpdatedBy = actor;
         inspection.UpdatedDate = assignedAt.UtcDateTime;
         return inspection.IsPriority;
+    }
+
+    internal static IReadOnlyList<long> ReorderPriorityIds(
+        IReadOnlyList<long> orderedIds,
+        long movedId,
+        int targetRank)
+    {
+        var list = orderedIds.ToList();
+        list.Remove(movedId);
+        list.Insert(targetRank - 1, movedId);
+        return list;
+    }
+
+    internal static void ApplyPriorityOrder(
+        IReadOnlyList<QualityInspection> inspections,
+        IReadOnlyList<long> orderedIds,
+        long actor,
+        DateTimeOffset assignedAt)
+    {
+        var lookup = inspections.ToDictionary(inspection => inspection.Id);
+        for (var index = 0; index < orderedIds.Count; index++)
+        {
+            var inspection = lookup[orderedIds[index]];
+            inspection.PriorityAssignedAtUtc = assignedAt.AddMinutes(index);
+            inspection.UpdatedBy = actor;
+            inspection.UpdatedDate = assignedAt.UtcDateTime;
+        }
     }
     internal static void SynchronizeGoodsReceiptStatus(GoodsReceiptHeader receipt, long actor) =>
         GoodsReceiptExecutionService.RefreshHeaderStatus(receipt, actor);
@@ -2766,6 +2934,77 @@ public sealed class QualityService(
     private static string DisplayDimension(string? value) =>
         string.IsNullOrWhiteSpace(value) ? "yok" : value.Trim();
 
+    private static QualityInspectionImageDto MapInspectionImage(
+        long inspectionId,
+        long lineId,
+        long imageId,
+        long? dispositionId,
+        string? draftDispositionKey,
+        string originalFileName,
+        string contentType,
+        long fileLength,
+        string? caption,
+        long? uploadedBy,
+        DateTime? uploadedAtUtc) => new(
+        imageId,
+        inspectionId,
+        lineId,
+        dispositionId,
+        draftDispositionKey,
+        $"/api/quality/inspections/{inspectionId}/lines/{lineId}/images/{imageId}/content",
+        originalFileName,
+        contentType,
+        fileLength,
+        caption,
+        uploadedBy,
+        uploadedAtUtc);
+
+    private Task ValidateDispositionDraftImagesAsync(
+        long inspectionId,
+        IReadOnlyList<QualityInspectionLine> selected,
+        IReadOnlyList<QualityInspectionDispositionRequest> dispositionRequests,
+        CancellationToken ct)
+    {
+        // Orphan draft images from earlier sessions are ignored; only keys in the
+        // current request are bound during FinalizeDispositionDraftImagesAsync.
+        _ = inspectionId;
+        _ = selected;
+        _ = dispositionRequests;
+        _ = ct;
+        return Task.CompletedTask;
+    }
+
+    private async Task FinalizeDispositionDraftImagesAsync(
+        IReadOnlyList<QualityInspectionDisposition> persistedDispositions,
+        CancellationToken ct)
+    {
+        if (persistedDispositions.Count == 0)
+            return;
+
+        var inspectionId = persistedDispositions[0].QualityInspectionId;
+        var lineIds = persistedDispositions.Select(x => x.QualityInspectionLineId).Distinct().ToArray();
+        var pendingImages = await InspectionImages.Query(true)
+            .Where(image => image.QualityInspectionId == inspectionId
+                && lineIds.Contains(image.QualityInspectionLineId)
+                && image.QualityInspectionDispositionId == null
+                && image.DraftDispositionKey != null)
+            .ToListAsync(ct);
+        if (pendingImages.Count == 0)
+            return;
+
+        var primaryDispositionByKey = persistedDispositions
+            .Where(x => !string.IsNullOrWhiteSpace(x.DraftDispositionKey))
+            .GroupBy(x => (x.QualityInspectionLineId, x.DraftDispositionKey!))
+            .ToDictionary(group => group.Key, group => group.OrderBy(x => x.SequenceNo).First());
+
+        foreach (var image in pendingImages)
+        {
+            if (!primaryDispositionByKey.TryGetValue((image.QualityInspectionLineId, image.DraftDispositionKey!), out var disposition))
+                continue;
+            image.QualityInspectionDispositionId = disposition.Id;
+        }
+    }
+
     private sealed record QualityInventoryDisposition(
         QualityInspectionLine InspectionLine,
         GoodsReceiptLine ReceiptLine,
@@ -2779,7 +3018,8 @@ public sealed class QualityService(
         decimal Quantity,
         long? DecisionCodeId,
         string? ReasonCode,
-        string? Note);
+        string? Note,
+        string? DraftDispositionKey);
     private sealed record QualityReceiptExecutionSource(
         long QualityInspectionLineId,
         long WarehouseId,
@@ -2814,7 +3054,8 @@ public sealed class QualityService(
         long? DecisionCodeId = null,
         string? ReasonCode = null,
         string? Note = null,
-        int SequenceNo = 0);
+        int SequenceNo = 0,
+        string? DraftDispositionKey = null);
     internal sealed record QualityDecisionState(
         QualityInspectionStatus InspectionStatus,
         OperationQualityStatus ReceiptStatus,
@@ -2887,13 +3128,14 @@ public sealed class QualityService(
             {
                 inspection.Id,
                 inspection.BranchCode,
+                Status = inspection.Status.ToString(),
                 inspection.PriorityAssignedAtUtc,
                 inspection.QueuedAtUtc,
             })
             .ToListAsync(ct);
 
         var ranks = BuildPriorityRanks(keys.Select(key =>
-            (key.Id, key.BranchCode, key.PriorityAssignedAtUtc, key.QueuedAtUtc)));
+            (key.Id, key.BranchCode, key.Status, key.PriorityAssignedAtUtc, key.QueuedAtUtc)));
         foreach (var row in rows)
         {
             if (row.IsPriority && ranks.TryGetValue(row.Id, out var rank))

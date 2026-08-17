@@ -144,6 +144,7 @@ public sealed class QualityRuleImportServiceTests
         public Task<QualityInspectionWorkSummaryDto> StartInspectionWorkAsync(long id, StartQualityInspectionWorkRequest request, long actor, bool canExecute, bool canSupervise, bool canDecide, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<QualityInspectionWorkSummaryDto> PauseInspectionWorkAsync(long id, PauseQualityInspectionWorkRequest request, long actor, bool canExecute, bool canSupervise, bool canDecide, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<QualityInspectionPriorityResult> ToggleInspectionPriorityAsync(long id, long actor, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<QualityInspectionPriorityReorderResult> ReorderInspectionPriorityAsync(ReorderQualityInspectionPriorityRequest request, long actor, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<QualityDecisionResult> DecideInspectionAsync(long id, DecideQualityInspectionRequest request, long actor, bool canReleaseQuarantine, CancellationToken ct = default) => throw new NotSupportedException();
     }
 }

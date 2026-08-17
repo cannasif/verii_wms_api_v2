@@ -215,6 +215,13 @@ public sealed class QualityInspectionImage : BaseEntity
     public QualityInspection QualityInspection { get; set; } = null!;
     public long QualityInspectionLineId { get; set; }
     public QualityInspectionLine QualityInspectionLine { get; set; } = null!;
+    public long? QualityInspectionDispositionId { get; set; }
+    public QualityInspectionDisposition? QualityInspectionDisposition { get; set; }
+    /// <summary>
+    /// Temporary or persisted link to one GKK distribution target. Images uploaded before the
+    /// disposition row exists keep this key until the decision is applied; history cards join on it.
+    /// </summary>
+    public string? DraftDispositionKey { get; set; }
     public string StoragePath { get; set; } = string.Empty;
     public string OriginalFileName { get; set; } = string.Empty;
     public string ContentType { get; set; } = string.Empty;
@@ -275,4 +282,10 @@ public sealed class QualityInspectionDisposition : BaseEntity
     public string? ReasonNote { get; set; }
     public long DecisionBy { get; set; }
     public DateTimeOffset DecisionAtUtc { get; set; }
+    /// <summary>
+    /// Client-side draft key captured at decision time. Multiple immutable disposition rows created
+    /// from inventory allocation can share the same key and therefore the same visual evidence.
+    /// </summary>
+    public string? DraftDispositionKey { get; set; }
+    public ICollection<QualityInspectionImage> Images { get; set; } = [];
 }

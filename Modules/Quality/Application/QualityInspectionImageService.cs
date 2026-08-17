@@ -17,9 +17,9 @@ public sealed class QualityInspectionImageService(
     IStringLocalizer<QualityResource> localizer,
     ILogger<QualityInspectionImageService> logger):IQualityInspectionImageService
 {
-    public const int MaximumImagesPerLine=20;
     public const int MaximumUploadBatch=10;
     public const long MaximumFileLength=10*1024*1024;
+    public const int MaximumDraftDispositionKeyLength=64;
     private static readonly PrivateUploadPolicy ImagePolicy=new(MaximumFileLength,new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase)
     {
         ["image/jpeg"]=".jpg",
@@ -27,18 +27,40 @@ public sealed class QualityInspectionImageService(
         ["image/webp"]=".webp"
     });
 
-    public async Task<IReadOnlyList<QualityInspectionImageDto>> ListAsync(long inspectionId,long lineId,string branchCode,CancellationToken ct=default)
+    public async Task<IReadOnlyList<QualityInspectionImageDto>> ListAsync(
+        long inspectionId,
+        long lineId,
+        string branchCode,
+        string? draftDispositionKey=null,
+        CancellationToken ct=default)
     {
         await EnsureLineAsync(inspectionId,lineId,branchCode,ct);
-        return await Query(inspectionId,lineId,branchCode).Select(x=>ToDto(x)).ToListAsync(ct);
+        var query=Query(inspectionId,lineId,branchCode);
+        if(!string.IsNullOrWhiteSpace(draftDispositionKey))
+        {
+            var normalized=NormalizeDraftDispositionKey(draftDispositionKey);
+            query=query.Where(x=>x.DraftDispositionKey==normalized);
+        }
+        return await query.Select(x=>ToDto(x)).ToListAsync(ct);
     }
 
-    public async Task<IReadOnlyList<QualityInspectionImageDto>> UploadAsync(long inspectionId,long lineId,string branchCode,long actorId,IReadOnlyList<QualityInspectionImageUpload> uploads,CancellationToken ct=default)
+    public async Task<IReadOnlyList<QualityInspectionImageDto>> UploadAsync(
+        long inspectionId,
+        long lineId,
+        string branchCode,
+        long actorId,
+        IReadOnlyList<QualityInspectionImageUpload> uploads,
+        CancellationToken ct=default)
     {
         if(uploads.Count is 0 or >MaximumUploadBatch)
             throw AppException.BadRequest(Message(QualityMessageKeys.ImageUploadBatchLimit,MaximumUploadBatch));
         if(uploads.Any(x=>(x.Caption?.Length??0)>500))
             throw AppException.BadRequest(Message(QualityMessageKeys.ImageCaptionLengthLimit,500));
+        if(uploads.Any(x=>string.IsNullOrWhiteSpace(x.DraftDispositionKey)))
+            throw AppException.BadRequest(Message(QualityMessageKeys.DraftDispositionKeyRequired));
+        var normalizedKeys=uploads
+            .Select(x=>NormalizeDraftDispositionKey(x.DraftDispositionKey!))
+            .ToArray();
 
         await EnsureLineAsync(inspectionId,lineId,branchCode,ct);
         var savedPaths=new List<string>(uploads.Count);
@@ -49,10 +71,6 @@ public sealed class QualityInspectionImageService(
 
             return await unitOfWork.ExecuteInTransactionAsync<IReadOnlyList<QualityInspectionImageDto>>(async token=>
             {
-                var currentCount=await Query(inspectionId,lineId,branchCode).CountAsync(token);
-                if(currentCount+savedPaths.Count>MaximumImagesPerLine)
-                    throw AppException.BadRequest(Message(QualityMessageKeys.ImageLineLimit,MaximumImagesPerLine));
-
                 var now=DateTime.UtcNow;
                 for(var index=0;index<uploads.Count;index++)
                 {
@@ -62,6 +80,7 @@ public sealed class QualityInspectionImageService(
                         BranchCode=branchCode,
                         QualityInspectionId=inspectionId,
                         QualityInspectionLineId=lineId,
+                        DraftDispositionKey=normalizedKeys[index],
                         StoragePath=savedPaths[index],
                         OriginalFileName=PrivateUploadFileName.ForDisplay(upload.FileName),
                         ContentType=NormalizeContentType(upload.ContentType),
@@ -72,7 +91,11 @@ public sealed class QualityInspectionImageService(
                     },token);
                 }
                 await db.SaveChangesAsync(token);
-                return await Query(inspectionId,lineId,branchCode).Select(x=>ToDto(x)).ToListAsync(token);
+                var keys=normalizedKeys.Distinct(StringComparer.Ordinal).ToArray();
+                return await Query(inspectionId,lineId,branchCode)
+                    .Where(x=>x.DraftDispositionKey!=null&&keys.Contains(x.DraftDispositionKey))
+                    .Select(x=>ToDto(x))
+                    .ToListAsync(token);
             },ct,IsolationLevel.Serializable);
         }
         catch
@@ -96,6 +119,8 @@ public sealed class QualityInspectionImageService(
         await unitOfWork.ExecuteInTransactionAsync(async token=>
         {
             var image=await FindAsync(inspectionId,lineId,imageId,branchCode,tracking:true,token);
+            if(image.QualityInspectionDispositionId.HasValue)
+                throw AppException.Conflict(Message(QualityMessageKeys.InspectionImageLockedAfterDecision));
             path=image.StoragePath;
             image.IsDeleted=true;
             image.DeletedBy=actorId;
@@ -107,6 +132,14 @@ public sealed class QualityInspectionImageService(
         if(path is null)return;
         try{storage.Delete(PrivateUploadArea.QualityInspection,path);}
         catch(Exception error){logger.LogWarning(error,"Silinen kalite görseli diskten kaldırılamadı: {Path}",path);}
+    }
+
+    internal static string NormalizeDraftDispositionKey(string value)
+    {
+        var normalized=Clean(value,MaximumDraftDispositionKeyLength);
+        if(string.IsNullOrWhiteSpace(normalized))
+            throw AppException.BadRequest(QualityMessageKeys.DraftDispositionKeyRequired);
+        return normalized;
     }
 
     private IQueryable<QualityInspectionImage> Query(long inspectionId,long lineId,string branchCode)=>
@@ -128,11 +161,18 @@ public sealed class QualityInspectionImageService(
     }
 
     private static QualityInspectionImageDto ToDto(QualityInspectionImage image)=>new(
-        image.Id,image.QualityInspectionId,image.QualityInspectionLineId,
+        image.Id,image.QualityInspectionId,image.QualityInspectionLineId,image.QualityInspectionDispositionId,
+        image.DraftDispositionKey,
         $"/api/quality/inspections/{image.QualityInspectionId}/lines/{image.QualityInspectionLineId}/images/{image.Id}/content",
         image.OriginalFileName,image.ContentType,image.FileLength,image.Caption,image.CreatedBy,image.CreatedDate);
     private static string NormalizeContentType(string? value)=>(value??string.Empty).Split(';',2)[0].Trim().ToLowerInvariant();
-    private static string? Clean(string? value)=>string.IsNullOrWhiteSpace(value)?null:value.Trim();
+    private static string? Clean(string? value,int maxLength)
+    {
+        if(string.IsNullOrWhiteSpace(value))return null;
+        var trimmed=value.Trim();
+        return trimmed.Length<=maxLength?trimmed:trimmed[..maxLength];
+    }
+    private static string? Clean(string? value)=>Clean(value,500);
     private string Message(string key,params object[] arguments)=>
         arguments.Length==0?localizer[key].Value:localizer[key,arguments].Value;
 }

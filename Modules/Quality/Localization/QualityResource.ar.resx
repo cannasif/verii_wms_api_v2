@@ -26,6 +26,9 @@
   <data name="ImageUploadBatchLimit" xml:space="preserve"><value>يمكنك تحميل من 1 إلى {0} صور جودة في المرة الواحدة.</value></data>
   <data name="ImageCaptionLengthLimit" xml:space="preserve"><value>يجب ألا يتجاوز وصف الصورة {0} حرفًا.</value></data>
   <data name="ImageLineLimit" xml:space="preserve"><value>يمكن أن يحتوي سطر الجودة على {0} صورة كحد أقصى.</value></data>
+  <data name="DraftDispositionKeyRequired" xml:space="preserve"><value>يجب رفع كل صورة جودة مع مفتاح هدف توزيع.</value></data>
+  <data name="DraftDispositionImageOrphan" xml:space="preserve"><value>صورة التوزيع '{1}' في السطر '{0}' لا تطابق خطة القرار الحالية.</value></data>
+  <data name="InspectionImageLockedAfterDecision" xml:space="preserve"><value>لا يمكن حذف الصور المرتبطة بتوزيع جودة محفوظ.</value></data>
   <data name="InspectionLineNotFound" xml:space="preserve"><value>لم يتم العثور على سطر فحص الجودة.</value></data>
   <data name="InspectionImageNotFound" xml:space="preserve"><value>لم يتم العثور على صورة فحص الجودة.</value></data>
   <data name="InspectionImageRequired" xml:space="preserve"><value>حدد صورة جودة واحدة على الأقل.</value></data>

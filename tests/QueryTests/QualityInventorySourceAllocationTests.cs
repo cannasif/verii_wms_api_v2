@@ -238,15 +238,16 @@ public sealed class QualityInventorySourceAllocationTests
         var line = InspectionLine(100, 3);
         var request = new[]
         {
-            new QualityInspectionDispositionRequest(line.Id, QualityDecision.Accepted, 1, 11),
-            new QualityInspectionDispositionRequest(line.Id, QualityDecision.Accepted, 1, 22),
+            new QualityInspectionDispositionRequest(line.Id, QualityDecision.Accepted, 1, 11, DraftDispositionKey: "draft-a"),
+            new QualityInspectionDispositionRequest(line.Id, QualityDecision.Accepted, 1, 22, DraftDispositionKey: "draft-b"),
             new QualityInspectionDispositionRequest(
                 line.Id,
                 QualityDecision.Rejected,
                 1,
                 33,
                 "HASAR",
-                DecisionCodeId: 901)
+                DecisionCodeId: 901,
+                DraftDispositionKey: "draft-c")
         };
 
         var parts = QualityService.BuildDecisionParts(

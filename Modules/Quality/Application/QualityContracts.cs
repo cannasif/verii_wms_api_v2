@@ -188,7 +188,8 @@ public sealed record QualityInspectionDispositionRequest(
     long? TargetLocationId = null,
     string? ReasonCode = null,
     string? Note = null,
-    long? DecisionCodeId = null);
+    long? DecisionCodeId = null,
+    string? DraftDispositionKey = null);
 
 public sealed record QualityInspectionControlQuantityRequest(
     long LineId,
@@ -257,7 +258,9 @@ public sealed record QualityInspectionDispositionDto(
     string? ReasonCode,
     string? ReasonNote,
     long DecisionBy,
-    DateTimeOffset DecisionAtUtc);
+    DateTimeOffset DecisionAtUtc,
+    string? DraftDispositionKey,
+    IReadOnlyList<QualityInspectionImageDto> Images);
 
 public sealed record StartQualityInspectionWorkRequest(Guid IdempotencyKey, string? RowVersion);
 
@@ -310,6 +313,10 @@ public sealed record QualityInspectionDetail(QualityInspectionGridRow Header,
 
 public sealed record QualityInspectionPriorityResult(long InspectionId, bool IsPriority);
 
+public sealed record ReorderQualityInspectionPriorityRequest(long InspectionId, int TargetRank);
+
+public sealed record QualityInspectionPriorityReorderResult(long InspectionId, int TargetRank);
+
 public sealed record QualityInspectionStatusOptionDto(
     string Value,
     bool IsDefault,
@@ -343,6 +350,10 @@ public interface IQualityService
     Task<QualityInspectionWorkSummaryDto> PauseInspectionWorkAsync(long id, PauseQualityInspectionWorkRequest request,
         long actor, bool canExecute, bool canSupervise, bool canDecide, CancellationToken ct = default);
     Task<QualityInspectionPriorityResult> ToggleInspectionPriorityAsync(long id, long actor, CancellationToken ct = default);
+    Task<QualityInspectionPriorityReorderResult> ReorderInspectionPriorityAsync(
+        ReorderQualityInspectionPriorityRequest request,
+        long actor,
+        CancellationToken ct = default);
     Task<QualityDecisionResult> DecideInspectionAsync(long id, DecideQualityInspectionRequest request, long actor,
         bool canReleaseQuarantine, CancellationToken ct = default);
 }
