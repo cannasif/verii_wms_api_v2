@@ -14,6 +14,13 @@ public sealed class ELogoConnectionService(
     IDataProtectionProvider dataProtectionProvider,
     IAuditLogWriter audit) : IELogoConnectionService
 {
+    private static readonly IReadOnlyDictionary<string,string> SearchColumns=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["id"]=nameof(ELogoConnectionRow.Id),["displayName"]=nameof(ELogoConnectionRow.DisplaySearchText),
+        ["vkn"]=nameof(ELogoConnectionRow.Vkn),["username"]=nameof(ELogoConnectionRow.Username),
+        ["source"]=nameof(ELogoConnectionRow.Source)
+    };
+    private static readonly string[] DefaultSearchColumns=["displayName","vkn","username","source"];
     internal const string ProtectorPurpose = "V3RII.WmsV2.IncomingInvoice.ELogoConnection.Password.v1";
     private readonly IDataProtector protector = dataProtectionProvider.CreateProtector(ProtectorPurpose);
     private IGenericRepository<ELogoConnection> Connections => unitOfWork.Repository<ELogoConnection>();
@@ -44,9 +51,10 @@ public sealed class ELogoConnectionService(
                 x.Id, x.BranchCode, x.Key, x.DisplayName, x.Vkn, x.Username, x.Source,
                 x.EndpointUrl, x.ApplicationName, x.Version, x.TimeoutSeconds, x.IsActive,
                 x.IsDefault, x.PasswordCipherText != null && x.PasswordCipherText != "",
-                x.Description, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate, x.RowVersion));
+                x.Description, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate, x.RowVersion,
+                x.DisplayName+" "+x.Key));
 
-        return await query.ApplyAdvancedFilters(request)
+        return await query.ApplySearch(request,SearchColumns,DefaultSearchColumns).ApplyAdvancedFilters(request)
             .ApplySort(request, nameof(ELogoConnectionRow.DisplayName))
             .ToPagedResponseAsync(request, ct);
     }
