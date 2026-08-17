@@ -1,4 +1,5 @@
 using System.Data;
+using System.Globalization;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using verii_wms_api_v2.Modules.Audit.Application;
@@ -26,7 +27,8 @@ public sealed class KkdRequestService(
     private static readonly HashSet<string> AllowedSearchFields = new(StringComparer.OrdinalIgnoreCase)
     {
         "id", "requestNo", "employeeCode", "employeeName", "externalRequestNo",
-        "groupCode", "groupName", "stockCode", "stockName", "createdBy", "updatedBy"
+        "groupCode", "groupName", "stockCode", "stockName", "createdBy", "updatedBy",
+        "totalLineCount", "unresolvedLineCount", "requestedQuantity", "allocatedQuantity", "deliveredQuantity"
     };
 
     private static readonly string[] DefaultSearchFields =
@@ -723,6 +725,7 @@ public sealed class KkdRequestService(
         {
             var value = term;
             var numeric = long.TryParse(value, out var id);
+            var quantity = decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var decimalValue);
             query = query.Where(x =>
                 (selected.Contains("id") && numeric && x.Id == id)
                 || (selected.Contains("requestNo") && x.RequestNo.Contains(value))
@@ -734,7 +737,13 @@ public sealed class KkdRequestService(
                 || (selected.Contains("stockCode") && x.Lines.Any(line => line.StockCodeSnapshot != null && line.StockCodeSnapshot.Contains(value)))
                 || (selected.Contains("stockName") && x.Lines.Any(line => line.StockNameSnapshot != null && line.StockNameSnapshot.Contains(value)))
                 || (selected.Contains("createdBy") && numeric && x.CreatedBy == id)
-                || (selected.Contains("updatedBy") && numeric && x.UpdatedBy == id));
+                || (selected.Contains("updatedBy") && numeric && x.UpdatedBy == id)
+                || (selected.Contains("totalLineCount") && numeric && x.Lines.Count == id)
+                || (selected.Contains("unresolvedLineCount") && numeric
+                    && x.Lines.Count(line => line.StockId == null && line.Status != KkdRequestLineStatus.Cancelled) == id)
+                || (selected.Contains("requestedQuantity") && quantity && x.Lines.Sum(line => line.RequestedQuantity) == decimalValue)
+                || (selected.Contains("allocatedQuantity") && quantity && x.Lines.Sum(line => line.AllocatedQuantity) == decimalValue)
+                || (selected.Contains("deliveredQuantity") && quantity && x.Lines.Sum(line => line.DeliveredQuantity) == decimalValue));
         }
         request.MarkSearchApplied();
         return query;
