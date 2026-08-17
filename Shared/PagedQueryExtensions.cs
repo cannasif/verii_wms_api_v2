@@ -34,9 +34,9 @@ public static class PagedQueryExtensions
             query, query, request, cancellationToken, maxPageSize).ConfigureAwait(false);
     }
 
-    internal static async Task<PagedResponse<T>> ToPagedResponseAsync<T>(
+    internal static async Task<PagedResponse<T>> ToPagedResponseAsync<T, TCount>(
         this IQueryable<T> query,
-        IQueryable<T> countQuery,
+        IQueryable<TCount> countQuery,
         PagedRequest request,
         CancellationToken cancellationToken = default,
         int maxPageSize = DefaultMaxPageSize)
@@ -56,9 +56,9 @@ public static class PagedQueryExtensions
             maxPageSize).ConfigureAwait(false);
     }
 
-    private static async Task<PagedResponse<T>> ExecutePagedQueryAsync<T>(
+    private static async Task<PagedResponse<T>> ExecutePagedQueryAsync<T, TCount>(
         IQueryable<T> query,
-        IQueryable<T> countQuery,
+        IQueryable<TCount> countQuery,
         PagedRequest request,
         CancellationToken cancellationToken,
         int maxPageSize)

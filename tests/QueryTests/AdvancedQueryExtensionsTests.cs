@@ -439,6 +439,28 @@ public sealed class AdvancedQueryExtensionsTests
         Assert.Contains("WHERE", sql, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public async Task Paging_accepts_a_lean_count_query_with_a_different_projection()
+    {
+        var options = new DbContextOptionsBuilder<WmsDbContext>()
+            .UseInMemoryDatabase($"paged-count-{Guid.NewGuid():N}")
+            .Options;
+        await using var db = new WmsDbContext(options);
+        var items = db.Warehouses.Select(x => new SearchRow(
+            x.Id,
+            x.WarehouseCode.ToString(),
+            x.WarehouseName,
+            x.BranchCode));
+        var count = db.Warehouses.Select(x => x.Id);
+
+        var page = await items.ToPagedResponseAsync(
+            count,
+            new PagedRequest { PageNumber = 1, PageSize = 20 });
+
+        Assert.Empty(page.Items);
+        Assert.Equal(0, page.TotalCount);
+    }
+
     private static PagedRequest Request(string column, string operation, string? value) => new()
     {
         Filters = [new AdvancedFilterRequest(column, operation, value)]
