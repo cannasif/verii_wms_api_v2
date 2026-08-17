@@ -13,6 +13,15 @@ namespace verii_wms_api_v2.Modules.VehicleCheckIn.Application;
 
 public sealed class VehicleCheckInService(IUnitOfWork uow,IProjectSettingsService projectSettings,IVehicleCheckInImageStorage storage,IAuditLogWriter audit):IVehicleCheckInService
 {
+    private static readonly IReadOnlyDictionary<string,string> GridSearchColumns=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase)
+    {
+        ["id"]=nameof(VehicleCheckInRow.Id),["plateNo"]=nameof(VehicleCheckInRow.PlateNo),
+        ["trailerPlateNo"]=nameof(VehicleCheckInRow.TrailerPlateNo),["driverFirstName"]=nameof(VehicleCheckInRow.DriverSearchText),
+        ["driverPhone"]=nameof(VehicleCheckInRow.DriverPhone),["steelSheetCount"]=nameof(VehicleCheckInRow.SteelSheetCount),
+        ["customerCode"]=nameof(VehicleCheckInRow.CustomerCode),["customerName"]=nameof(VehicleCheckInRow.CustomerName),
+        ["status"]=nameof(VehicleCheckInRow.Status),["imageCount"]=nameof(VehicleCheckInRow.ImageCount)
+    };
+    private static readonly string[] DefaultGridSearchColumns=["plateNo","trailerPlateNo","driverFirstName","driverPhone","customerCode","customerName"];
     private IGenericRepository<VehicleCheckInHeader> Headers=>uow.Repository<VehicleCheckInHeader>();
     private IGenericRepository<VehicleCheckInImage> Images=>uow.Repository<VehicleCheckInImage>();
 
@@ -93,7 +102,9 @@ public sealed class VehicleCheckInService(IUnitOfWork uow,IProjectSettingsServic
             ||(x.CustomerNameSnapshot!=null&&x.CustomerNameSnapshot.Contains(s)));
         var projected=q.Select(x=>new VehicleCheckInRow(x.Id,x.BranchCode,x.PlateNo,x.TrailerPlateNo,x.DriverFirstName,x.DriverLastName,
             x.DriverPhone,x.CarrierName,x.SteelSheetCount,x.CustomerId,x.CustomerCodeSnapshot,x.CustomerNameSnapshot,x.CheckedInAtUtc,x.BusinessDate,
-            x.Status.ToString(),x.Note,x.Images.Count,x.CreatedBy,x.CreatedDate,x.UpdatedBy,x.UpdatedDate,Convert.ToBase64String(x.RowVersion)));
+            x.Status.ToString(),x.Note,x.Images.Count,x.CreatedBy,x.CreatedDate,x.UpdatedBy,x.UpdatedDate,Convert.ToBase64String(x.RowVersion),
+            ((x.DriverFirstName??"")+" "+(x.DriverLastName??"")).Trim()));
+        projected=projected.ApplySearch(request,GridSearchColumns,DefaultGridSearchColumns);
         return await projected.ApplyAdvancedFilters(request).ApplySort(request,nameof(VehicleCheckInRow.CheckedInAtUtc)).ToPagedResponseAsync(request,ct);
     }
 
