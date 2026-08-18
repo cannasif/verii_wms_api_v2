@@ -229,8 +229,7 @@ public sealed class ErpMirrorService(IUnitOfWork unitOfWork, INetsisReadService 
             .ApplySearch(
                 request,
                 CustomerSearchColumns,
-                CustomerDefaultSearchColumns,
-                AdvancedQueryExtensions.TurkishCaseInsensitiveSearchCollation)
+                CustomerDefaultSearchColumns)
             .ApplyAdvancedFilters(request).ApplySort(request, nameof(CustomerMirrorDto.CustomerCode));
         return PageAsync(query, request, ct);
     }

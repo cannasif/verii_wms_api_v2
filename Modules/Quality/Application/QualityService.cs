@@ -180,7 +180,7 @@ public sealed class QualityService(
             ["id"] = nameof(QualityRuleGridRow.Id),
             // The grid deliberately renders stock code, stock name and group in one cell.
             ["stockCode"] = nameof(QualityRuleGridRow.StockSearchText)
-        }, ["stockCode"], AdvancedQueryExtensions.TurkishCaseInsensitiveSearchCollation);
+        }, ["stockCode"]);
         return await q.ApplyAdvancedFilters(request).ApplySort(request,nameof(QualityRuleGridRow.Id)).ToPagedResponseAsync(request,ct);
     }
 

@@ -87,8 +87,7 @@ public sealed class StockMovementService(
         var rows = BuildGridRows(operations, entries,
             RequiresInMainQuery(request, EntrySummaryColumns),
             RequiresInMainQuery(request, ReversalSummaryColumns));
-        rows = rows.ApplySearch(request, GridSearchColumns, DefaultGridSearchColumns,
-            AdvancedQueryExtensions.TurkishCaseInsensitiveSearchCollation)
+        rows = rows.ApplySearch(request, GridSearchColumns, DefaultGridSearchColumns)
             .ApplyAdvancedFilters(request)
             .ApplySort(request, nameof(StockMovementGridProjection.OccurredAt));
         return rows.Select(ToGridRow());
@@ -102,8 +101,7 @@ public sealed class StockMovementService(
         var rows = BuildGridRows(operations, entries,
             RequiresForCount(request, EntrySummaryColumns),
             RequiresForCount(request, ReversalSummaryColumns));
-        return rows.ApplySearch(request, GridSearchColumns, DefaultGridSearchColumns,
-                AdvancedQueryExtensions.TurkishCaseInsensitiveSearchCollation)
+        return rows.ApplySearch(request, GridSearchColumns, DefaultGridSearchColumns)
             .ApplyAdvancedFilters(request)
             .Select(x => x.Id);
     }

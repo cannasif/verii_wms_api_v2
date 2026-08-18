@@ -288,8 +288,7 @@ public sealed class QualityReportService(IUnitOfWork uow) : IQualityReportServic
         query = query.ApplySearch(
             request,
             InspectionColumns,
-            InspectionDefaultSearchColumns,
-            AdvancedQueryExtensions.TurkishCaseInsensitiveSearchCollation);
+            InspectionDefaultSearchColumns);
         query = query.ApplyAdvancedFilters(request, InspectionColumns);
 
         if (applySort)
@@ -443,8 +442,7 @@ public sealed class QualityReportService(IUnitOfWork uow) : IQualityReportServic
         query = query.ApplySearch(
             request,
             StockColumns,
-            ["stockCode", "stockName"],
-            AdvancedQueryExtensions.TurkishCaseInsensitiveSearchCollation);
+            ["stockCode", "stockName"]);
         query = query.ApplyAdvancedFilters(request, StockColumns);
         var page = string.IsNullOrWhiteSpace(request.SortBy)
             ? await query.OrderByDescending(row => row.LastInspectionAtUtc)
