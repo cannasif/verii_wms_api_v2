@@ -246,6 +246,29 @@ public sealed class AdvancedQueryExtensionsTests
         Assert.Single(rows);
     }
 
+    [Theory]
+    [InlineData("İşlemci", "TSMC A19 Islemci Çip")]
+    [InlineData("Monitor", "DELL UltraSharp U2723QE 27\" 4K IPS Monitör")]
+    [InlineData("Endustriyel", "Endüstriyel Otomasyon Sistemleri Ltd. Sti.")]
+    [InlineData("Sertunc", "Sertunç direkçi")]
+    [InlineData("direkci", "Sertunç direkçi")]
+    [InlineData("Oner", "Öner kaya")]
+    [InlineData("Gokce", "Gülçin Gökçe")]
+    [InlineData("Ozcimen", "Dilara Özçimen")]
+    [InlineData("Yurt-Ici", "Yurt-Içi Lojistik ve Gümrükleme Hizmetleri")]
+    [InlineData("İçin", "Bu Cari Uzun Isimli Carilerin Testi Için Kullanilacaktir")]
+    public void Production_stock_and_customer_names_match_ascii_turkish_frontend_input(
+        string search,
+        string stored)
+    {
+        var request = new PagedRequest { Search = search, SearchFields = ["name"] };
+        var rows = new[] { new SearchRow(1, "REAL-DATA", stored, "") }.AsQueryable()
+            .ApplySearch(request, SearchColumns(), ["name"])
+            .ToList();
+
+        Assert.Single(rows);
+    }
+
     [Fact]
     public void Frontend_paged_payload_preserves_selected_field_and_turkish_pattern()
     {
