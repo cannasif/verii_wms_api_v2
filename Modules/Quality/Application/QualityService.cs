@@ -2840,6 +2840,8 @@ public sealed class QualityService(
         return new(
             receipt.Id,
             receipt.DocumentNo,
+            receipt.WaybillNo,
+            receipt.ElectronicWaybillNo,
             receipt.Status,
             receipt.QualityStatus,
             receipt.ApprovalStatus,

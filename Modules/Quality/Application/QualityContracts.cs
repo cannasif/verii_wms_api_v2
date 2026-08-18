@@ -207,6 +207,8 @@ public sealed record DecideQualityInspectionRequest(Guid IdempotencyKey, Quality
 public sealed record QualityDecisionResult(
     long GoodsReceiptId,
     string GoodsReceiptDocumentNo,
+    string? GoodsReceiptWaybillNo,
+    string? GoodsReceiptElectronicWaybillNo,
     WarehouseOperationStatus GoodsReceiptStatus,
     OperationQualityStatus QualityStatus,
     OperationApprovalStatus ApprovalStatus,

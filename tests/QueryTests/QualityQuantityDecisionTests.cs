@@ -63,6 +63,8 @@ public sealed class QualityQuantityDecisionTests
         {
             Id = 16,
             DocumentNo = "GR1202600000016",
+            WaybillNo = "IRS202600000001",
+            ElectronicWaybillNo = "GIB2026AB000001",
             Status = WarehouseOperationStatus.Completed,
             QualityStatus = OperationQualityStatus.Passed,
             ApprovalStatus = OperationApprovalStatus.Approved,
@@ -73,6 +75,8 @@ public sealed class QualityQuantityDecisionTests
         var result = QualityService.BuildDecisionResult(receipt, null);
 
         Assert.Equal(ErpIntegrationStatus.Succeeded, result.ErpIntegrationStatus);
+        Assert.Equal("IRS202600000001", result.GoodsReceiptWaybillNo);
+        Assert.Equal("GIB2026AB000001", result.GoodsReceiptElectronicWaybillNo);
         Assert.False(result.ErpDocumentCreatedNow);
         Assert.Contains("daha önce oluşturulmuş", result.Message);
     }
