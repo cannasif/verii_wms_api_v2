@@ -99,6 +99,80 @@ public static class AdvancedQueryExtensions
                 query.Where(Expression.Lambda<Func<T, bool>>(allTerms, parameter)));
     }
 
+    internal static IQueryable<T> ApplySearchPredicates<T>(
+        this IQueryable<T> query,
+        PagedRequest request,
+        IReadOnlyDictionary<string, Func<string, bool, Expression<Func<T, bool>>>> predicateFactories,
+        IReadOnlyCollection<string>? defaultColumns = null)
+    {
+        ArgumentNullException.ThrowIfNull(query);
+        ArgumentNullException.ThrowIfNull(request);
+        ArgumentNullException.ThrowIfNull(predicateFactories);
+
+        request.MarkSearchApplied();
+        var search = request.EffectiveSearch?.Trim();
+        if (string.IsNullOrWhiteSpace(search)) return query;
+        if (predicateFactories.Count == 0)
+            throw new InvalidOperationException("En az bir aranabilir kolon tanımlanmalıdır.");
+
+        var requestedColumns = request.SearchFields
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (requestedColumns.Length == 0)
+            requestedColumns = (defaultColumns is { Count: > 0 } ? defaultColumns : predicateFactories.Keys)
+                .Where(x => !string.IsNullOrWhiteSpace(x))
+                .Select(x => x.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        if (requestedColumns.Length > MaximumSearchFieldCount)
+            throw AppException.BadRequest($"En fazla {MaximumSearchFieldCount} arama alanı seçilebilir.");
+
+        var factories = requestedColumns.Select(column =>
+        {
+            if (column.Length > MaximumColumnLength)
+                throw AppException.BadRequest($"Arama alanı en fazla {MaximumColumnLength} karakter olabilir.");
+
+            var match = predicateFactories.FirstOrDefault(x =>
+                x.Key.Equals(column, StringComparison.OrdinalIgnoreCase));
+            return match.Value
+                ?? throw AppException.BadRequest($"'{column}' aranabilir bir kolon değildir.");
+        }).ToArray();
+
+        var terms = search
+            .Split([' ', '\t', '\r', '\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (terms.Length > MaximumSearchTermCount)
+            throw AppException.BadRequest($"Arama metni en fazla {MaximumSearchTermCount} kelime içerebilir.");
+
+        var useSqlPattern = query.Provider is IAsyncQueryProvider;
+        var parameter = Expression.Parameter(typeof(T), "x");
+        Expression? allTerms = null;
+        foreach (var term in terms)
+        {
+            Expression? anyColumn = null;
+            foreach (var factory in factories)
+            {
+                var predicate = factory(term, useSqlPattern);
+                if (predicate.Parameters.Count != 1)
+                    throw new InvalidOperationException("Arama predicate'i tek parametreli olmalıdır.");
+                var current = new ReplaceParameterVisitor(predicate.Parameters[0], parameter)
+                    .Visit(predicate.Body) ?? predicate.Body;
+                anyColumn = anyColumn is null ? current : Expression.OrElse(anyColumn, current);
+            }
+
+            anyColumn ??= Expression.Constant(false);
+            allTerms = allTerms is null ? anyColumn : Expression.AndAlso(allTerms, anyColumn);
+        }
+
+        return allTerms is null
+            ? query
+            : PagedQueryExtensions.RewriteProjectionMemberAccess(
+                query.Where(Expression.Lambda<Func<T, bool>>(allTerms, parameter)));
+    }
+
     private static IReadOnlyDictionary<string, string> CreatePublicSearchColumnMapping<T>() =>
         typeof(T)
             .GetProperties(BindingFlags.Public | BindingFlags.Instance)
@@ -504,6 +578,12 @@ public static class AdvancedQueryExtensions
 
     private static AppException InvalidFilter(int index, string message) =>
         AppException.BadRequest($"{index + 1}. gelişmiş filtre geçersiz: {message}.");
+
+    private sealed class ReplaceParameterVisitor(ParameterExpression source, ParameterExpression target) : ExpressionVisitor
+    {
+        protected override Expression VisitParameter(ParameterExpression node) =>
+            node == source ? target : base.VisitParameter(node);
+    }
 
     private enum FilterLogic { And, Or }
     private enum FilterOperation

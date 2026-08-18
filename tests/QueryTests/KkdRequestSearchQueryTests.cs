@@ -55,8 +55,14 @@ public sealed class KkdRequestSearchQueryTests
     public void Selected_header_search_does_not_add_request_lines()
     {
         using var db = SqlServerContext();
-        var request = new PagedRequest { SortBy = "id", SortDirection = "desc" };
-        var searched = db.Set<KkdRequest>().Where(x => x.RequestNo.Contains("KKD"));
+        var request = new PagedRequest
+        {
+            Search = "KKD",
+            SearchFields = ["requestNo"],
+            SortBy = "id",
+            SortDirection = "desc"
+        };
+        var searched = KkdRequestService.ApplyPagedSearch(db.Set<KkdRequest>(), request);
 
         var sql = BuildQuery(db, request, searched).ToQueryString();
 
@@ -64,12 +70,39 @@ public sealed class KkdRequestSearchQueryTests
         Assert.DoesNotContain("RII_KKD_REQUEST_LINE", sql, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Theory]
+    [InlineData("Nasif")]
+    [InlineData("Nasıf")]
+    [InlineData("MUTI")]
+    [InlineData("MUTİ")]
+    public void Employee_name_search_uses_the_shared_ascii_turkish_pattern(string search)
+    {
+        using var db = SqlServerContext();
+        var request = new PagedRequest
+        {
+            Search = search,
+            SearchFields = ["employeeName"]
+        };
+
+        var sql = KkdRequestService.ApplyPagedSearch(db.Set<KkdRequest>(), request).ToQueryString();
+
+        Assert.Contains("LIKE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("[iıî]", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("RII_KKD_REQUEST_LINE", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public void Selected_line_count_search_uses_only_its_required_subquery()
     {
         using var db = SqlServerContext();
-        var request = new PagedRequest { SortBy = "id", SortDirection = "desc" };
-        var searched = db.Set<KkdRequest>().Where(x => x.Lines.Count == 2);
+        var request = new PagedRequest
+        {
+            Search = "2",
+            SearchFields = ["totalLineCount"],
+            SortBy = "id",
+            SortDirection = "desc"
+        };
+        var searched = KkdRequestService.ApplyPagedSearch(db.Set<KkdRequest>(), request);
 
         var sql = BuildQuery(db, request, searched).ToQueryString();
 

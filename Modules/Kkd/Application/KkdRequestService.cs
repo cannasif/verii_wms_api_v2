@@ -1,5 +1,6 @@
 using System.Data;
 using System.Globalization;
+using System.Linq.Expressions;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using verii_wms_api_v2.Modules.Audit.Application;
@@ -24,12 +25,19 @@ public sealed class KkdRequestService(
     IKkdEntitlementService entitlements,
     IStringLocalizer<KkdRequestResource> localizer) : IKkdRequestService
 {
-    private static readonly HashSet<string> AllowedSearchFields = new(StringComparer.OrdinalIgnoreCase)
-    {
+    private static readonly string[] SearchFieldNames =
+    [
         "id", "requestNo", "employeeCode", "employeeName", "externalRequestNo",
         "groupCode", "groupName", "stockCode", "stockName", "createdBy", "updatedBy",
         "totalLineCount", "unresolvedLineCount", "requestedQuantity", "allocatedQuantity", "deliveredQuantity"
-    };
+    ];
+
+    private static readonly IReadOnlyDictionary<string, Func<string, bool, Expression<Func<KkdRequest, bool>>>> SearchPredicates =
+        SearchFieldNames.ToDictionary(
+            field => field,
+            field => new Func<string, bool, Expression<Func<KkdRequest, bool>>>(
+                (term, useSqlPattern) => BuildSearchPredicate(field, term, useSqlPattern)),
+            StringComparer.OrdinalIgnoreCase);
 
     private static readonly string[] DefaultSearchFields =
         ["requestNo", "employeeCode", "employeeName", "externalRequestNo", "groupCode", "groupName", "stockCode", "stockName"];
@@ -51,7 +59,7 @@ public sealed class KkdRequestService(
     {
         var warehouseScope = await ActorWarehouseScopeAsync(actor, ct);
         var query = ApplyTabFilter(await AuthorizedRequestsAsync(actor, warehouseScope, ct), tab, actor, warehouseScope);
-        var searched = ApplySearch(query, request);
+        var searched = ApplyPagedSearch(query, request);
         var lines = uow.Repository<KkdRequestLine>().Query();
         var rows = BuildPagedQuery(request, searched, lines);
         var countQuery = BuildCountQuery(request, searched, lines);
@@ -827,46 +835,77 @@ public sealed class KkdRequestService(
         return Task.FromResult(query.Where(x => x.WarehouseId == null || warehouseIds.Contains(x.WarehouseId.Value)));
     }
 
-    private IQueryable<KkdRequest> ApplySearch(IQueryable<KkdRequest> query, PagedRequest request)
-    {
-        var search = request.EffectiveSearch?.Trim();
-        if (string.IsNullOrWhiteSpace(search))
-        {
-            request.MarkSearchApplied();
-            return query;
-        }
-        var fields = request.SearchFields.Count == 0 ? DefaultSearchFields : request.SearchFields;
-        foreach (var field in fields)
-            if (!AllowedSearchFields.Contains(field))
-                throw AppException.BadRequest(Message(KkdRequestMessageKeys.InvalidSearchField, field));
+    internal static IQueryable<KkdRequest> ApplyPagedSearch(IQueryable<KkdRequest> query, PagedRequest request) =>
+        query.ApplySearchPredicates(request, SearchPredicates, DefaultSearchFields);
 
-        var selected = fields.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        foreach (var term in search.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+    private static Expression<Func<KkdRequest, bool>> BuildSearchPredicate(
+        string field,
+        string term,
+        bool useSqlPattern)
+    {
+        if (field is "id" or "createdBy" or "updatedBy" or "totalLineCount" or "unresolvedLineCount")
         {
-            var value = term;
-            var numeric = long.TryParse(value, out var id);
-            var quantity = decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out var decimalValue);
-            query = query.Where(x =>
-                (selected.Contains("id") && numeric && x.Id == id)
-                || (selected.Contains("requestNo") && x.RequestNo.Contains(value))
-                || (selected.Contains("employeeCode") && x.Employee.EmployeeCode.Contains(value))
-                || (selected.Contains("employeeName") && (x.Employee.FirstName.Contains(value) || x.Employee.LastName.Contains(value)))
-                || (selected.Contains("externalRequestNo") && x.ExternalRequestNo != null && x.ExternalRequestNo.Contains(value))
-                || (selected.Contains("groupCode") && x.Lines.Any(line => line.GroupCode.Contains(value)))
-                || (selected.Contains("groupName") && x.Lines.Any(line => line.GroupName != null && line.GroupName.Contains(value)))
-                || (selected.Contains("stockCode") && x.Lines.Any(line => line.StockCodeSnapshot != null && line.StockCodeSnapshot.Contains(value)))
-                || (selected.Contains("stockName") && x.Lines.Any(line => line.StockNameSnapshot != null && line.StockNameSnapshot.Contains(value)))
-                || (selected.Contains("createdBy") && numeric && x.CreatedBy == id)
-                || (selected.Contains("updatedBy") && numeric && x.UpdatedBy == id)
-                || (selected.Contains("totalLineCount") && numeric && x.Lines.Count == id)
-                || (selected.Contains("unresolvedLineCount") && numeric
-                    && x.Lines.Count(line => line.StockId == null && line.Status != KkdRequestLineStatus.Cancelled) == id)
-                || (selected.Contains("requestedQuantity") && quantity && x.Lines.Sum(line => line.RequestedQuantity) == decimalValue)
-                || (selected.Contains("allocatedQuantity") && quantity && x.Lines.Sum(line => line.AllocatedQuantity) == decimalValue)
-                || (selected.Contains("deliveredQuantity") && quantity && x.Lines.Sum(line => line.DeliveredQuantity) == decimalValue));
+            if (!long.TryParse(term, out var value)) return _ => false;
+            return field switch
+            {
+                "id" => x => x.Id == value,
+                "createdBy" => x => x.CreatedBy == value,
+                "updatedBy" => x => x.UpdatedBy == value,
+                "totalLineCount" => x => x.Lines.Count == value,
+                "unresolvedLineCount" => x => x.Lines.Count(line =>
+                    line.StockId == null && line.Status != KkdRequestLineStatus.Cancelled) == value,
+                _ => throw new InvalidOperationException($"Desteklenmeyen KKD arama alanı: {field}")
+            };
         }
-        request.MarkSearchApplied();
-        return query;
+
+        if (field is "requestedQuantity" or "allocatedQuantity" or "deliveredQuantity")
+        {
+            if (!decimal.TryParse(term, NumberStyles.Number, CultureInfo.InvariantCulture, out var value))
+                return _ => false;
+            return field switch
+            {
+                "requestedQuantity" => x => x.Lines.Sum(line => line.RequestedQuantity) == value,
+                "allocatedQuantity" => x => x.Lines.Sum(line => line.AllocatedQuantity) == value,
+                "deliveredQuantity" => x => x.Lines.Sum(line => line.DeliveredQuantity) == value,
+                _ => throw new InvalidOperationException($"Desteklenmeyen KKD arama alanı: {field}")
+            };
+        }
+
+        var pattern = AsciiTurkishSearch.BuildContainsPattern(term);
+        if (useSqlPattern)
+            return field switch
+            {
+                "requestNo" => x => EF.Functions.Like(x.RequestNo, pattern, AsciiTurkishSearch.LikeEscapeCharacter),
+                "employeeCode" => x => EF.Functions.Like(x.Employee.EmployeeCode, pattern, AsciiTurkishSearch.LikeEscapeCharacter),
+                "employeeName" => x =>
+                    EF.Functions.Like(x.Employee.FirstName, pattern, AsciiTurkishSearch.LikeEscapeCharacter)
+                    || EF.Functions.Like(x.Employee.LastName, pattern, AsciiTurkishSearch.LikeEscapeCharacter),
+                "externalRequestNo" => x => x.ExternalRequestNo != null
+                    && EF.Functions.Like(x.ExternalRequestNo, pattern, AsciiTurkishSearch.LikeEscapeCharacter),
+                "groupCode" => x => x.Lines.Any(line =>
+                    EF.Functions.Like(line.GroupCode, pattern, AsciiTurkishSearch.LikeEscapeCharacter)),
+                "groupName" => x => x.Lines.Any(line => line.GroupName != null
+                    && EF.Functions.Like(line.GroupName, pattern, AsciiTurkishSearch.LikeEscapeCharacter)),
+                "stockCode" => x => x.Lines.Any(line => line.StockCodeSnapshot != null
+                    && EF.Functions.Like(line.StockCodeSnapshot, pattern, AsciiTurkishSearch.LikeEscapeCharacter)),
+                "stockName" => x => x.Lines.Any(line => line.StockNameSnapshot != null
+                    && EF.Functions.Like(line.StockNameSnapshot, pattern, AsciiTurkishSearch.LikeEscapeCharacter)),
+                _ => throw new InvalidOperationException($"Desteklenmeyen KKD arama alanı: {field}")
+            };
+
+        return field switch
+        {
+            "requestNo" => x => AsciiTurkishSearch.Contains(x.RequestNo, term),
+            "employeeCode" => x => AsciiTurkishSearch.Contains(x.Employee.EmployeeCode, term),
+            "employeeName" => x => AsciiTurkishSearch.Contains(x.Employee.FirstName, term)
+                || AsciiTurkishSearch.Contains(x.Employee.LastName, term),
+            "externalRequestNo" => x => AsciiTurkishSearch.Contains(x.ExternalRequestNo, term),
+            "groupCode" => x => x.Lines.Any(line => AsciiTurkishSearch.Contains(line.GroupCode, term)),
+            "groupName" => x => x.Lines.Any(line => AsciiTurkishSearch.Contains(line.GroupName, term)),
+            "stockCode" => x => x.Lines.Any(line => AsciiTurkishSearch.Contains(line.StockCodeSnapshot, term)),
+            "stockName" => x => x.Lines.Any(line => AsciiTurkishSearch.Contains(line.StockNameSnapshot, term)),
+            _ => throw new InvalidOperationException($"Desteklenmeyen KKD arama alanı: {field}")
+        };
     }
 
     private IQueryable<KkdRequest> DetailQuery(bool tracking) => Requests.Query(tracking)
