@@ -269,6 +269,69 @@ public sealed class AdvancedQueryExtensionsTests
         Assert.Equal("%[cç]el[iıî]k%", AsciiTurkishSearch.BuildContainsPattern("celik"));
     }
 
+    [Fact]
+    public void Turkish_ascii_and_case_variants_return_identical_local_result_sets()
+    {
+        var groups = new[]
+        {
+            new
+            {
+                Searches = new[] { "ust", "üst", "ÜST" },
+                Stored = new[] { "ÜST KAT DEPO", "UST KAT DEPO" }
+            },
+            new
+            {
+                Searches = new[] { "celik", "çelik", "ÇELİK" },
+                Stored = new[] { "Fırat Çelik", "Firat Celik" }
+            },
+            new
+            {
+                Searches = new[] { "tugrul", "tuğrul", "TUĞRUL" },
+                Stored = new[] { "Mustafa Tuğrul", "Mustafa Tugrul" }
+            }
+        };
+
+        foreach (var group in groups)
+        {
+            var source = group.Stored
+                .Select((name, index) => new SearchRow(index + 1, $"TR-{index + 1}", name, ""))
+                .AsQueryable();
+            var expectedIds = source.Select(row => row.Id).ToArray();
+
+            foreach (var search in group.Searches)
+            {
+                var request = new PagedRequest { Search = search, SearchFields = ["name"] };
+                var actualIds = source
+                    .ApplySearch(request, SearchColumns(), ["name"])
+                    .Select(row => row.Id)
+                    .ToArray();
+
+                Assert.Equal(expectedIds.Length, actualIds.Length);
+                Assert.Equal(expectedIds, actualIds);
+            }
+        }
+    }
+
+    [Theory]
+    [InlineData("ust", "üst", "ÜST", "%[uüû][sş]t%")]
+    [InlineData("celik", "çelik", "ÇELİK", "%[cç]el[iıî]k%")]
+    [InlineData("tugrul", "tuğrul", "TUĞRUL", "%t[uüû][gğ]r[uüû]l%")]
+    public void Turkish_ascii_and_case_variants_build_equivalent_sql_patterns(
+        string ascii,
+        string turkish,
+        string upper,
+        string expected)
+    {
+        var patterns = new[]
+        {
+            AsciiTurkishSearch.BuildContainsPattern(ascii),
+            AsciiTurkishSearch.BuildContainsPattern(turkish),
+            AsciiTurkishSearch.BuildContainsPattern(upper)
+        };
+
+        Assert.All(patterns, pattern => Assert.Equal(expected, pattern, ignoreCase: true));
+    }
+
     [Theory]
     [InlineData("İşlemci", "TSMC A19 Islemci Çip")]
     [InlineData("Monitor", "DELL UltraSharp U2723QE 27\" 4K IPS Monitör")]
