@@ -19,24 +19,41 @@ public sealed class StockTrackingPolicyService(IUnitOfWork uow, IAuditLogWriter 
 
     public async Task<PagedResponse<StockTrackingPolicyRow>> GetPagedAsync(PagedRequest request, CancellationToken ct = default)
     {
-        var query =
-            from policy in Policies.Query()
-            join stock in uow.Repository<StockEntity>().Query() on policy.StockId equals stock.Id into stockJoin
-            from stock in stockJoin.DefaultIfEmpty()
-            select new StockTrackingPolicyRow(
-                policy.Id, policy.BranchCode, policy.PolicyCode, policy.DisplayName, policy.Scope,
-                policy.StockId, stock == null ? null : stock.ErpStockCode, stock == null ? null : stock.StockName,
-                policy.StockGroupCode, policy.Version, policy.Priority, policy.TrackingType, policy.RequireSerial,
-                policy.SerialQuantityRule, policy.AutoGenerateSerials, policy.RequireLot, policy.RequireManufacturingDate,
-                policy.RequireExpirationDate, policy.MinimumRemainingShelfLifeDays, policy.IsActive,
-                policy.EffectiveFromUtc, policy.EffectiveToUtc, policy.Description,
-                policy.RowVersion, policy.CreatedBy, policy.CreatedDate);
+        return await BuildPagedQuery(
+                request,
+                Policies.Query(),
+                uow.Repository<StockEntity>().Query())
+            .ToPagedResponseAsync(request, ct);
+    }
 
-        return await query
+    internal static IQueryable<StockTrackingPolicyRow> BuildPagedQuery(
+        PagedRequest request,
+        IQueryable<StockTrackingPolicy> policies,
+        IQueryable<StockEntity> stocks)
+    {
+        var joined =
+            from policy in policies
+            join stock in stocks on policy.StockId equals stock.Id into stockJoin
+            from stock in stockJoin.DefaultIfEmpty()
+            select new { Policy = policy, Stock = stock };
+
+        // Keep the DTO projection as an explicit final Select. This lets the
+        // shared paging rewriter push search/filter/sort operations to entity
+        // columns while preserving a single LEFT JOIN in SQL.
+        return joined
+            .Select(row => new StockTrackingPolicyRow(
+                row.Policy.Id, row.Policy.BranchCode, row.Policy.PolicyCode, row.Policy.DisplayName, row.Policy.Scope,
+                row.Policy.StockId, row.Stock == null ? null : row.Stock.ErpStockCode,
+                row.Stock == null ? null : row.Stock.StockName, row.Policy.StockGroupCode, row.Policy.Version,
+                row.Policy.Priority, row.Policy.TrackingType, row.Policy.RequireSerial,
+                row.Policy.SerialQuantityRule, row.Policy.AutoGenerateSerials, row.Policy.RequireLot,
+                row.Policy.RequireManufacturingDate, row.Policy.RequireExpirationDate,
+                row.Policy.MinimumRemainingShelfLifeDays, row.Policy.IsActive, row.Policy.EffectiveFromUtc,
+                row.Policy.EffectiveToUtc, row.Policy.Description, row.Policy.RowVersion,
+                row.Policy.CreatedBy, row.Policy.CreatedDate))
             .ApplySearch(request)
             .ApplyAdvancedFilters(request)
-            .ApplySort(request, nameof(StockTrackingPolicyRow.Id))
-            .ToPagedResponseAsync(request, ct);
+            .ApplySort(request, nameof(StockTrackingPolicyRow.Id));
     }
 
     public async Task<long> CreateAsync(StockTrackingPolicyUpsertRequest request, long actor, CancellationToken ct = default)
