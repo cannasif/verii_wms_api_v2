@@ -219,8 +219,8 @@ public sealed class AdvancedQueryExtensionsTests
                 ["code", "name"])
             .ToQueryString();
 
-        Assert.Equal(2, CountOccurrences(sql, "[iıî]"));
-        Assert.Equal(2, CountOccurrences(sql, "[sş]"));
+        Assert.Equal(2, CountOccurrences(sql, "[iIİıîÎ]"));
+        Assert.Equal(2, CountOccurrences(sql, "[sSşŞ]"));
         Assert.Equal(1, CountOccurrences(sql, " LIKE "));
         Assert.DoesNotContain(" OR ", sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("COLLATE", sql, StringComparison.OrdinalIgnoreCase);
@@ -266,7 +266,7 @@ public sealed class AdvancedQueryExtensionsTests
     [Fact]
     public void Celik_search_builds_one_contains_pattern_with_turkish_variants()
     {
-        Assert.Equal("%[cç]el[iıî]k%", AsciiTurkishSearch.BuildContainsPattern("celik"));
+        Assert.Equal("%[cCçÇ]el[iIİıîÎ]k%", AsciiTurkishSearch.BuildContainsPattern("celik"));
     }
 
     [Fact]
@@ -313,9 +313,9 @@ public sealed class AdvancedQueryExtensionsTests
     }
 
     [Theory]
-    [InlineData("ust", "üst", "ÜST", "%[uüû][sş]t%")]
-    [InlineData("celik", "çelik", "ÇELİK", "%[cç]el[iıî]k%")]
-    [InlineData("tugrul", "tuğrul", "TUĞRUL", "%t[uüû][gğ]r[uüû]l%")]
+    [InlineData("ust", "üst", "ÜST", "%[uUüÜûÛ][sSşŞ]t%")]
+    [InlineData("celik", "çelik", "ÇELİK", "%[cCçÇ]el[iIİıîÎ]k%")]
+    [InlineData("tugrul", "tuğrul", "TUĞRUL", "%t[uUüÜûÛ][gGğĞ]r[uUüÜûÛ]l%")]
     public void Turkish_ascii_and_case_variants_build_equivalent_sql_patterns(
         string ascii,
         string turkish,
@@ -375,8 +375,8 @@ public sealed class AdvancedQueryExtensionsTests
 
         Assert.Contains("CustomerName", sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("CustomerCode] LIKE", sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("[cç]", sql, StringComparison.Ordinal);
-        Assert.Contains("[iıî]", sql, StringComparison.Ordinal);
+        Assert.Contains("[cCçÇ]", sql, StringComparison.Ordinal);
+        Assert.Contains("[iIİıîÎ]", sql, StringComparison.Ordinal);
         Assert.Contains(" AND ", sql, StringComparison.OrdinalIgnoreCase);
     }
 

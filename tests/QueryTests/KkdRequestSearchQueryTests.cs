@@ -87,7 +87,7 @@ public sealed class KkdRequestSearchQueryTests
         var sql = KkdRequestService.ApplyPagedSearch(db.Set<KkdRequest>(), request).ToQueryString();
 
         Assert.Contains("LIKE", sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("[iıî]", sql, StringComparison.Ordinal);
+        Assert.Contains("[iIİıîÎ]", sql, StringComparison.Ordinal);
         Assert.DoesNotContain("RII_KKD_REQUEST_LINE", sql, StringComparison.OrdinalIgnoreCase);
     }
 

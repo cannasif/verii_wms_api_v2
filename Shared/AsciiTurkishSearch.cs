@@ -47,13 +47,18 @@ internal static class AsciiTurkishSearch
     {
         switch (character)
         {
-            case 'a' or 'A' or 'â' or 'Â': pattern.Append("[aâ]"); return;
-            case 'c' or 'C' or 'ç' or 'Ç': pattern.Append("[cç]"); return;
-            case 'g' or 'G' or 'ğ' or 'Ğ': pattern.Append("[gğ]"); return;
-            case 'i' or 'I' or 'İ' or 'ı' or 'î' or 'Î': pattern.Append("[iıî]"); return;
-            case 'o' or 'O' or 'ö' or 'Ö': pattern.Append("[oö]"); return;
-            case 's' or 'S' or 'ş' or 'Ş': pattern.Append("[sş]"); return;
-            case 'u' or 'U' or 'ü' or 'Ü' or 'û' or 'Û': pattern.Append("[uüû]"); return;
+            // SQL Server bracket expressions follow the column collation. Under
+            // SQL_Latin1_General_CP1_CI_AS, lowercase i does not case-fold to
+            // Turkish uppercase İ inside a bracket class. Listing both cases
+            // makes the contract deterministic without applying a column
+            // function or COLLATE expression to every searched row.
+            case 'a' or 'A' or 'â' or 'Â': pattern.Append("[aAâÂ]"); return;
+            case 'c' or 'C' or 'ç' or 'Ç': pattern.Append("[cCçÇ]"); return;
+            case 'g' or 'G' or 'ğ' or 'Ğ': pattern.Append("[gGğĞ]"); return;
+            case 'i' or 'I' or 'İ' or 'ı' or 'î' or 'Î': pattern.Append("[iIİıîÎ]"); return;
+            case 'o' or 'O' or 'ö' or 'Ö': pattern.Append("[oOöÖ]"); return;
+            case 's' or 'S' or 'ş' or 'Ş': pattern.Append("[sSşŞ]"); return;
+            case 'u' or 'U' or 'ü' or 'Ü' or 'û' or 'Û': pattern.Append("[uUüÜûÛ]"); return;
         }
 
         if (character is '%' or '_' or '[' or ']' or '^' or '\\')

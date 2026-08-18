@@ -25,11 +25,12 @@ public sealed class KkdDistributionSearchQueryTests
     public void Selected_employee_field_search_keeps_lines_out_of_query()
     {
         using var db = SqlServerContext();
-        var request = new PagedRequest { Search = "TEST", SearchFields = ["employeeName"] };
+        var request = new PagedRequest { Search = "MUTI", SearchFields = ["employeeName"] };
 
         var sql = KkdDistributionService.BuildPagedQuery(request, db.Set<KkdDistribution>()).ToQueryString();
 
         Assert.Contains("LIKE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("[iIİıîÎ]", sql, StringComparison.Ordinal);
         Assert.DoesNotContain("RII_KKD_DISTRIBUTION_LINE", sql, StringComparison.OrdinalIgnoreCase);
     }
 
