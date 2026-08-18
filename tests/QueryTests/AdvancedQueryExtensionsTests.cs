@@ -247,6 +247,29 @@ public sealed class AdvancedQueryExtensionsTests
     }
 
     [Theory]
+    [InlineData("Firat Celik", "Fırat Çelik")]
+    [InlineData("UST KAT DEPO", "ÜST KAT DEPO")]
+    [InlineData("Mustafa Tugrul", "Mustafa Tuğrul")]
+    [InlineData("MUTI ERDOGAN", "MUTİ ERDOĞAN")]
+    [InlineData("Satinalma siparisi", "Satınalma siparişi")]
+    [InlineData("Mal Kabul Alani", "Mal Kabul Alanı")]
+    public void Customer_ascii_turkish_examples_match_the_same_row(string search, string stored)
+    {
+        var request = new PagedRequest { Search = search, SearchFields = ["name"] };
+        var rows = new[] { new SearchRow(1, "TR-REAL", stored, "") }.AsQueryable()
+            .ApplySearch(request, SearchColumns(), ["name"])
+            .ToList();
+
+        Assert.Single(rows);
+    }
+
+    [Fact]
+    public void Celik_search_builds_one_contains_pattern_with_turkish_variants()
+    {
+        Assert.Equal("%[cç]el[iıî]k%", AsciiTurkishSearch.BuildContainsPattern("celik"));
+    }
+
+    [Theory]
     [InlineData("İşlemci", "TSMC A19 Islemci Çip")]
     [InlineData("Monitor", "DELL UltraSharp U2723QE 27\" 4K IPS Monitör")]
     [InlineData("Endustriyel", "Endüstriyel Otomasyon Sistemleri Ltd. Sti.")]
