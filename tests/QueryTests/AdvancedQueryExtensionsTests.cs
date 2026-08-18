@@ -377,6 +377,19 @@ public sealed class AdvancedQueryExtensionsTests
     }
 
     [Fact]
+    public void Null_paged_collections_are_normalized_to_empty_lists()
+    {
+        var request = JsonSerializer.Deserialize<PagedRequest>("""
+            {"pageNumber":1,"pageSize":20,"searchFields":null,"filters":null}
+            """);
+
+        Assert.NotNull(request);
+        Assert.Empty(request.SearchFields);
+        Assert.Empty(request.Filters);
+        Assert.False(request.HasExplicitSearchFields);
+    }
+
+    [Fact]
     public void Search_supports_exact_numeric_record_id()
     {
         var request = new PagedRequest

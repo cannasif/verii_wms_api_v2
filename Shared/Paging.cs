@@ -4,6 +4,9 @@ namespace verii_wms_api_v2.Shared;
 
 public sealed class PagedRequest
 {
+    private IReadOnlyList<string> searchFields = Array.Empty<string>();
+    private IReadOnlyList<AdvancedFilterRequest> filters = Array.Empty<AdvancedFilterRequest>();
+
     // CRM sözleşmesi. Page alanı eski istemciler için geriye uyumluluk sağlar.
     public int PageNumber { get; init; } = 1;
     public int Page { get; init; }
@@ -12,11 +15,19 @@ public sealed class PagedRequest
     // İstemcinin gönderdiği ham arama metni sözleşmede aynen korunur.
     public string? Search { get; init; }
 
-    public IReadOnlyList<string> SearchFields { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<string> SearchFields
+    {
+        get => searchFields;
+        init => searchFields = value ?? Array.Empty<string>();
+    }
     public string? SortBy { get; init; }
     public string SortDirection { get; init; } = "asc";
     public string FilterLogic { get; init; } = "and";
-    public IReadOnlyList<AdvancedFilterRequest> Filters { get; init; } = Array.Empty<AdvancedFilterRequest>();
+    public IReadOnlyList<AdvancedFilterRequest> Filters
+    {
+        get => filters;
+        init => filters = value ?? Array.Empty<AdvancedFilterRequest>();
+    }
 
     [JsonIgnore]
     public int EffectivePageNumber => Page > 0 ? Page : PageNumber;
