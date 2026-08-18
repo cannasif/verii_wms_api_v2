@@ -276,18 +276,33 @@ public sealed class AdvancedQueryExtensionsTests
         {
             new
             {
-                Searches = new[] { "ust", "üst", "ÜST" },
+                Searches = new[] { "ust", "üst", "ÜST", "ÜsT", "uSt" },
                 Stored = new[] { "ÜST KAT DEPO", "UST KAT DEPO" }
             },
             new
             {
-                Searches = new[] { "celik", "çelik", "ÇELİK" },
+                Searches = new[] { "celik", "çelik", "ÇELİK", "ÇeLiK", "cElIk" },
                 Stored = new[] { "Fırat Çelik", "Firat Celik" }
             },
             new
             {
-                Searches = new[] { "tugrul", "tuğrul", "TUĞRUL" },
+                Searches = new[] { "tugrul", "tuğrul", "TUĞRUL", "TuĞrUl", "tUgRuL" },
                 Stored = new[] { "Mustafa Tuğrul", "Mustafa Tugrul" }
+            },
+            new
+            {
+                Searches = new[] { "gorus", "görüş", "GÖRÜŞ", "GöRüŞ", "gOrUs" },
+                Stored = new[] { "GÖRÜŞ", "GORUS" }
+            },
+            new
+            {
+                Searches = new[] { "isik", "ışık", "IŞIK", "IşIk", "iSiK" },
+                Stored = new[] { "ışık", "isik" }
+            },
+            new
+            {
+                Searches = new[] { "sukunet", "sükûnet", "SÜKÛNET", "SüKûNeT", "sUkUnEt" },
+                Stored = new[] { "sükûnet", "sukunet" }
             }
         };
 
@@ -316,6 +331,12 @@ public sealed class AdvancedQueryExtensionsTests
     [InlineData("ust", "üst", "ÜST", "%[uUüÜûÛ][sSşŞ]t%")]
     [InlineData("celik", "çelik", "ÇELİK", "%[cCçÇ]el[iIİıîÎ]k%")]
     [InlineData("tugrul", "tuğrul", "TUĞRUL", "%t[uUüÜûÛ][gGğĞ]r[uUüÜûÛ]l%")]
+    [InlineData("agac", "ağaç", "AĞAÇ", "%[aAâÂ][gGğĞ][aAâÂ][cCçÇ]%")]
+    [InlineData("gorus", "görüş", "GÖRÜŞ", "%[gGğĞ][oOöÖ]r[uUüÜûÛ][sSşŞ]%")]
+    [InlineData("isik", "ışık", "IŞIK", "%[iIİıîÎ][sSşŞ][iIİıîÎ]k%")]
+    [InlineData("sube", "şube", "ŞUBE", "%[sSşŞ][uUüÜûÛ]be%")]
+    [InlineData("kar", "kâr", "KÂR", "%k[aAâÂ]r%")]
+    [InlineData("sukunet", "sükûnet", "SÜKÛNET", "%[sSşŞ][uUüÜûÛ]k[uUüÜûÛ]net%")]
     public void Turkish_ascii_and_case_variants_build_equivalent_sql_patterns(
         string ascii,
         string turkish,

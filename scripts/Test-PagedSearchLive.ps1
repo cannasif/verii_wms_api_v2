@@ -152,7 +152,7 @@ function Get-SearchCandidates {
             $value = $property.Value.Trim()
             if ($value.Length -lt 2 -or $value.Length -gt 180) { continue }
 
-            $hasTurkish = $value -match $turkishPattern
+            $hasTurkish = $value -cmatch $turkishPattern
             if ($RequireTurkish -ne $hasTurkish) { continue }
             if (-not $hasTurkish -and $value -notmatch '[A-Za-z]{2}') { continue }
 
@@ -185,7 +185,7 @@ function Get-SearchTerm {
 
     $tokens = @([regex]::Matches($Value, '[\p{L}\p{Nd}._/-]+') | ForEach-Object { $_.Value })
     if ($Kind -eq 'Turkish') {
-        $turkishTokens = @($tokens | Where-Object { $_ -match $turkishPattern -and $_.Length -ge 2 } | Sort-Object Length -Descending)
+        $turkishTokens = @($tokens | Where-Object { $_ -cmatch $turkishPattern -and $_.Length -ge 2 } | Sort-Object Length -Descending)
         if ($turkishTokens.Count -gt 0) { return $turkishTokens[0] }
     }
 
@@ -193,6 +193,58 @@ function Get-SearchTerm {
     $asciiTokens = @($tokens | Where-Object { $_ -match '[A-Za-z]{2}' } | Sort-Object Length -Descending)
     if ($asciiTokens.Count -gt 0) { return $asciiTokens[0] }
     return $Value
+}
+
+function ConvertTo-AlternatingCase {
+    param(
+        [string] $Value,
+        [bool] $StartUpper,
+        [Globalization.CultureInfo] $Culture
+    )
+
+    $builder = [Text.StringBuilder]::new($Value.Length)
+    for ($index = 0; $index -lt $Value.Length; $index++) {
+        $text = [string] $Value[$index]
+        $upper = if ($index % 2 -eq 0) { $StartUpper } else { -not $StartUpper }
+        [void] $builder.Append($(if ($upper) { $Culture.TextInfo.ToUpper($text) } else { $Culture.TextInfo.ToLower($text) }))
+    }
+    return $builder.ToString()
+}
+
+function Get-SearchVariants {
+    param([string] $Value, [ValidateSet('Turkish', 'English')][string] $Kind)
+
+    $turkishCulture = [Globalization.CultureInfo]::GetCultureInfo('tr-TR')
+    $ascii = ConvertTo-AsciiTurkish $Value
+    $candidates = if ($Kind -eq 'Turkish') {
+        @(
+            $Value,
+            $ascii,
+            $Value.ToUpperInvariant(),
+            $Value.ToLowerInvariant(),
+            $turkishCulture.TextInfo.ToUpper($Value),
+            $turkishCulture.TextInfo.ToLower($Value),
+            $ascii.ToUpperInvariant(),
+            $ascii.ToLowerInvariant(),
+            (ConvertTo-AlternatingCase $Value $true $turkishCulture),
+            (ConvertTo-AlternatingCase $Value $false $turkishCulture),
+            (ConvertTo-AlternatingCase $ascii $true ([Globalization.CultureInfo]::InvariantCulture)),
+            (ConvertTo-AlternatingCase $ascii $false ([Globalization.CultureInfo]::InvariantCulture))
+        )
+    } else {
+        @(
+            $Value,
+            $Value.ToUpperInvariant(),
+            $Value.ToLowerInvariant(),
+            (ConvertTo-AlternatingCase $Value $true ([Globalization.CultureInfo]::InvariantCulture)),
+            (ConvertTo-AlternatingCase $Value $false ([Globalization.CultureInfo]::InvariantCulture))
+        )
+    }
+
+    $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    return @($candidates | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_) -and $seen.Add($_)
+    })
 }
 
 function Test-ContainsTarget {
@@ -210,7 +262,7 @@ function Get-IdentitySet {
     return @($Items | ForEach-Object { Get-RowIdentity $_ $Field } | Sort-Object -Unique)
 }
 
-function Test-SearchPair {
+function Test-SearchVariants {
     param(
         [string] $Path,
         [object[]] $Candidates,
@@ -220,49 +272,54 @@ function Test-SearchPair {
     )
 
     foreach ($candidate in $Candidates) {
-        $firstSearch = Get-SearchTerm $candidate.Value $Kind
-        $secondSearch = if ($Kind -eq 'Turkish') {
-            ConvertTo-AsciiTurkish $firstSearch
-        } elseif ($firstSearch -ceq $firstSearch.ToUpperInvariant()) {
-            $firstSearch.ToLowerInvariant()
-        } else {
-            $firstSearch.ToUpperInvariant()
-        }
+        $searchTerm = Get-SearchTerm $candidate.Value $Kind
+        $variants = @(Get-SearchVariants $searchTerm $Kind)
+        if ($variants.Count -lt 2) { continue }
 
-        if ($firstSearch -ceq $secondSearch) { continue }
-
-        $first = Invoke-WmsPost $Path (New-PagedBody $firstSearch $candidate.Field) $Headers
-        if (-not $first.Ok) {
-            if ($first.Status -eq 400) { continue }
-            return [pscustomobject]@{ Status = 'HTTP_ERROR'; Field = $candidate.Field; Search = $firstSearch; Alternate = $secondSearch; Detail = $first.Error }
-        }
-
-        $second = Invoke-WmsPost $Path (New-PagedBody $secondSearch $candidate.Field) $Headers
-        if (-not $second.Ok) {
-            if ($second.Status -eq 400) { continue }
-            return [pscustomobject]@{ Status = 'HTTP_ERROR'; Field = $candidate.Field; Search = $firstSearch; Alternate = $secondSearch; Detail = $second.Error }
-        }
-
-        $firstPage = Get-PageData $first.Data
-        $secondPage = Get-PageData $second.Data
         $identity = Get-RowIdentity $candidate.Row $candidate.Field
-        $firstHasTarget = Test-ContainsTarget $firstPage.Items $identity $candidate.Field
-        $secondHasTarget = Test-ContainsTarget $secondPage.Items $identity $candidate.Field
-        $firstSet = @(Get-IdentitySet $firstPage.Items $candidate.Field)
-        $secondSet = @(Get-IdentitySet $secondPage.Items $candidate.Field)
-        $setsEqual = $null -eq (Compare-Object $firstSet $secondSet)
-        $totalsEqual = $firstPage.TotalCount -eq $secondPage.TotalCount
+        $referenceSet = $null
+        $referenceTotal = $null
+        $allHaveTarget = $true
+        $allSetsEqual = $true
+        $totals = [Collections.Generic.List[long]]::new()
+        $unsupported = $false
+
+        foreach ($variant in $variants) {
+            $response = Invoke-WmsPost $Path (New-PagedBody $variant $candidate.Field) $Headers
+            if (-not $response.Ok) {
+                if ($response.Status -eq 400) { $unsupported = $true; break }
+                return [pscustomobject]@{
+                    Status = 'HTTP_ERROR'; Field = $candidate.Field; Search = $searchTerm
+                    Alternate = ($variants -join ' | '); VariantCount = $variants.Count; Detail = $response.Error
+                }
+            }
+
+            $variantPage = Get-PageData $response.Data
+            $variantSet = @(Get-IdentitySet $variantPage.Items $candidate.Field)
+            $totals.Add($variantPage.TotalCount)
+            if (-not (Test-ContainsTarget $variantPage.Items $identity $candidate.Field)) { $allHaveTarget = $false }
+
+            if ($null -eq $referenceSet) {
+                $referenceSet = $variantSet
+                $referenceTotal = $variantPage.TotalCount
+            } elseif ($referenceTotal -ne $variantPage.TotalCount -or $null -ne (Compare-Object $referenceSet $variantSet)) {
+                $allSetsEqual = $false
+            }
+        }
+
+        if ($unsupported) { continue }
 
         return [pscustomobject]@{
-            Status = if ($firstHasTarget -and $secondHasTarget -and $setsEqual -and $totalsEqual) { 'PASS' } else { 'MISMATCH' }
+            Status = if ($allHaveTarget -and $allSetsEqual) { 'PASS' } else { 'MISMATCH' }
             Field = $candidate.Field
-            Search = $firstSearch
-            Alternate = $secondSearch
-            Detail = "target=$firstHasTarget/$secondHasTarget total=$($firstPage.TotalCount)/$($secondPage.TotalCount) setEqual=$setsEqual"
+            Search = $searchTerm
+            Alternate = ($variants -join ' | ')
+            VariantCount = $variants.Count
+            Detail = "variants=$($variants.Count) targetAll=$allHaveTarget totals=$(@($totals | Sort-Object -Unique) -join ',') setEqual=$allSetsEqual"
         }
     }
 
-    return [pscustomobject]@{ Status = 'NO_SUPPORTED_FIELD'; Field = $null; Search = $null; Alternate = $null; Detail = 'Aranabilir örnek alan bulunamadı veya endpoint alanı reddetti.' }
+    return [pscustomobject]@{ Status = 'NO_SUPPORTED_FIELD'; Field = $null; Search = $null; Alternate = $null; VariantCount = 0; Detail = 'Aranabilir örnek alan bulunamadı veya endpoint alanı reddetti.' }
 }
 
 function Get-PagedEndpoints {
@@ -375,7 +432,7 @@ foreach ($endpoint in $endpointList) {
     $turkishCandidates = @(Get-SearchCandidates $page.Items $true)
     $englishCandidates = @(Get-SearchCandidates $page.Items $false)
     $turkish = if ($turkishCandidates.Count -gt 0) {
-        Test-SearchPair $endpoint $turkishCandidates $headers 'Turkish'
+        Test-SearchVariants $endpoint $turkishCandidates $headers 'Turkish'
     } else {
         $probe = Invoke-WmsPost $endpoint (New-PagedBody 'çğıöşü' $null) $headers
         [pscustomobject]@{
@@ -383,10 +440,11 @@ foreach ($endpoint in $endpointList) {
             Field = $null
             Search = 'çğıöşü'
             Alternate = 'cgiosu'
+            VariantCount = 0
             Detail = if ($probe.Ok) { 'İlk sayfada Türkçe karakterli gerçek örnek yok; input kabul edildi.' } else { $probe.Error }
         }
     }
-    $english = Test-SearchPair $endpoint $englishCandidates $headers 'English'
+    $english = Test-SearchVariants $endpoint $englishCandidates $headers 'English'
 
     $overall = if ($turkish.Status -eq 'MISMATCH' -or $english.Status -eq 'MISMATCH') { 'MISMATCH' }
         elseif ($turkish.Status -eq 'HTTP_ERROR' -or $english.Status -eq 'HTTP_ERROR') { 'SEARCH_ERROR' }
@@ -398,6 +456,8 @@ foreach ($endpoint in $endpointList) {
         Total = $page.TotalCount
         Turkish = $turkish.Status
         English = $english.Status
+        TurkishVariantCount = $turkish.VariantCount
+        EnglishVariantCount = $english.VariantCount
         Status = $overall
         Detail = "TR[$($turkish.Field)] $($turkish.Search) => $($turkish.Alternate): $($turkish.Detail); EN[$($english.Field)] $($english.Search) => $($english.Alternate): $($english.Detail)"
     })
