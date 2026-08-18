@@ -44,6 +44,23 @@ public sealed class GoodsReceiptLabelSearchQueryTests
     }
 
     [Fact]
+    public void Default_search_includes_its_task_number_reference_path()
+    {
+        using var db = SqlServerContext();
+        var request = new PagedRequest { Search = "çğıöşü" };
+
+        var itemSql = BuildQuery(db, request).ToQueryString();
+        var countSql = BuildCountQuery(db, request).ToQueryString();
+
+        Assert.Equal(1, CountOccurrences(itemSql, "RII_GR_LABEL]"));
+        Assert.Equal(1, CountOccurrences(itemSql, "RII_GR_TASK_LINE"));
+        Assert.Equal(1, CountOccurrences(itemSql, "RII_GR_TASK]"));
+        Assert.Equal(1, CountOccurrences(countSql, "RII_GR_LABEL]"));
+        Assert.Equal(1, CountOccurrences(countSql, "RII_GR_TASK_LINE"));
+        Assert.Equal(1, CountOccurrences(countSql, "RII_GR_TASK]"));
+    }
+
+    [Fact]
     public void Task_number_sort_keeps_reference_tables_out_of_count_query()
     {
         using var db = SqlServerContext();

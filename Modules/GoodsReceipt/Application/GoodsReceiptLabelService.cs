@@ -235,7 +235,8 @@ public sealed class GoodsReceiptLabelService(
 
     private static bool RequiresTaskNoForCount(PagedRequest request) =>
         (!string.IsNullOrWhiteSpace(request.EffectiveSearch)
-         && request.SearchFields.Contains("taskNo", StringComparer.OrdinalIgnoreCase))
+         && (!request.HasExplicitSearchFields
+             || request.SearchFields.Contains("taskNo", StringComparer.OrdinalIgnoreCase)))
         || request.Filters.Any(filter => filter.Column.Equals("taskNo", StringComparison.OrdinalIgnoreCase));
 
     private static bool RequiresTaskNoInMainQuery(PagedRequest request) =>
