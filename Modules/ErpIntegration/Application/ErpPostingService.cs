@@ -659,7 +659,7 @@ public sealed class ErpPostingService(
         }
 
         var headerProjectCode = ResolveHeaderProjectCode(usedOrderRows);
-        return NewRequest(
+        var request = NewRequest(
             options.GoodsReceiptDocumentType,
             options.GoodsReceiptSeries,
             ResolveGoodsReceiptErpDocumentNo(header),
@@ -673,6 +673,38 @@ public sealed class ErpPostingService(
             headerProjectCode,
             ResolveGoodsReceiptDeliveryDate(timeProvider),
             ResolveGoodsReceiptInvoiceType(options));
+        ApplyGoodsReceiptTradeClassification(header, request.FatUst);
+        return request;
+    }
+
+    internal static void ApplyGoodsReceiptTradeClassification(
+        GoodsReceiptHeader source,
+        NetsisItemSlipHeader target)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(target);
+
+        if (source.TradeType == GoodsReceiptTradeType.Domestic)
+        {
+            if (!string.IsNullOrWhiteSpace(source.ImportFileNumber))
+                throw AppException.Conflict(
+                    "Yurt içi mal kabul kaydında ithalat dosyası bulunamaz.");
+            target.ExportType = null;
+            target.ExportReferenceNumber = null;
+            return;
+        }
+
+        if (source.TradeType != GoodsReceiptTradeType.Foreign)
+            throw AppException.Conflict("Mal kabul ERP ticaret tipi geçersizdir.");
+
+        var importFileNumber = Clean(source.ImportFileNumber);
+        if (importFileNumber is null)
+            throw AppException.Conflict(
+                "Yurt dışı mal kabul ERP aktarımı için ithalat dosyası zorunludur.");
+
+        target.Tipi = NetsisItemSlipInvoiceType.Foreign;
+        target.ExportType = 1;
+        target.ExportReferenceNumber = importFileNumber;
     }
 
     internal static NetsisItemSlipInvoiceType ResolveGoodsReceiptInvoiceType(NetsisRestOptions options)

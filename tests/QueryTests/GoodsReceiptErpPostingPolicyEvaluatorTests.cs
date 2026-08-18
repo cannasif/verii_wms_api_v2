@@ -1,3 +1,4 @@
+using System.Text.Json;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.ErpIntegration.Infrastructure;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
@@ -17,6 +18,49 @@ public sealed class GoodsReceiptErpPostingPolicyEvaluatorTests
 
         Assert.Equal(NetsisItemSlipInvoiceType.DomesticOpen, invoiceType);
         Assert.Equal(2, (int)invoiceType);
+    }
+
+    [Fact]
+    public void Foreign_goods_receipt_serializes_import_file_metadata_for_netsis()
+    {
+        var source = new GoodsReceiptHeader
+        {
+            TradeType = GoodsReceiptTradeType.Foreign,
+            ImportFileNumber = "ITH-2026-001"
+        };
+        var target = new NetsisItemSlipHeader
+        {
+            Tipi = NetsisItemSlipInvoiceType.DomesticOpen
+        };
+
+        ErpPostingService.ApplyGoodsReceiptTradeClassification(source, target);
+
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(target));
+        Assert.Equal(8, json.RootElement.GetProperty("TIPI").GetInt32());
+        Assert.Equal(1, json.RootElement.GetProperty("EXPORTTYPE").GetInt32());
+        Assert.Equal("ITH-2026-001", json.RootElement.GetProperty("EXPORTREFNO").GetString());
+    }
+
+    [Fact]
+    public void Domestic_goods_receipt_omits_foreign_trade_metadata()
+    {
+        var source = new GoodsReceiptHeader
+        {
+            TradeType = GoodsReceiptTradeType.Domestic
+        };
+        var target = new NetsisItemSlipHeader
+        {
+            Tipi = NetsisItemSlipInvoiceType.DomesticOpen,
+            ExportType = 1,
+            ExportReferenceNumber = "STALE"
+        };
+
+        ErpPostingService.ApplyGoodsReceiptTradeClassification(source, target);
+
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(target));
+        Assert.Equal(2, json.RootElement.GetProperty("TIPI").GetInt32());
+        Assert.False(json.RootElement.TryGetProperty("EXPORTTYPE", out _));
+        Assert.False(json.RootElement.TryGetProperty("EXPORTREFNO", out _));
     }
 
     [Fact]
