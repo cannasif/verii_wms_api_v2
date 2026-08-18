@@ -20,7 +20,7 @@ public sealed class AuditLogQueryService(IUnitOfWork unitOfWork) : IAuditLogQuer
     public async Task<PagedResponse<AuditLogRow>> GetPagedAsync(PagedRequest request, CancellationToken ct)
     {
         var effective = string.IsNullOrWhiteSpace(request.SortBy) ? Clone(request, nameof(AuditLog.CreatedDate), "desc") : request;
-        var search = effective.Search?.Trim();
+        var search = effective.LegacySearch?.Trim();
         var query = unitOfWork.Repository<AuditLog>().Query().Where(x => string.IsNullOrWhiteSpace(search) || x.TraceId.Contains(search) || x.ActionType.Contains(search) || x.EntityType.Contains(search) || x.EntityId.Contains(search) || x.Result.Contains(search) || x.Source.Contains(search) || (x.PerformedByUserEmail != null && x.PerformedByUserEmail.Contains(search)))
             .Select(x => new AuditLogRow(x.Id, x.TraceId, x.ActionType, x.EntityType, x.EntityId, x.Result, x.Source, x.Reason, x.FailureReason, x.BranchCode, x.RequestPath, x.RequestMethod, x.PerformedByUserId, x.PerformedByUserEmail, x.OldValuesJson, x.NewValuesJson, x.ChangedFieldsJson, x.CreatedDate,
                 x.EntityType+" "+x.EntityId,

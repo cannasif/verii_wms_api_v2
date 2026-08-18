@@ -364,7 +364,16 @@ public sealed class AdvancedQueryExtensionsTests
 
         Assert.Equal("warehouse", request.Search);
         Assert.Equal("warehouse", request.EffectiveSearch);
+        Assert.Null(request.LegacySearch);
         Assert.True(request.HasExplicitSearchFields);
+    }
+
+    [Fact]
+    public void Search_without_explicit_scope_remains_available_to_legacy_paged_queries()
+    {
+        var request = new PagedRequest { Search = "  depo  " };
+
+        Assert.Equal("  depo  ", request.LegacySearch);
     }
 
     [Fact]

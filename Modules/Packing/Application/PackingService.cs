@@ -51,7 +51,7 @@ public sealed class PackingService(IUnitOfWork uow, IAuditLogWriter audit, Packi
     }
     public Task<PagedResponse<PackingStationRow>> GetStationsAsync(PagedRequest r,CancellationToken ct=default)
     {
-        var s=r.Search?.Trim();var q=Stations.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.Code.Contains(s)||x.Name.Contains(s))
+        var s=r.LegacySearch?.Trim();var q=Stations.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.Code.Contains(s)||x.Name.Contains(s))
             .Select(x=>new PackingStationRow(x.Id,x.BranchCode,x.WarehouseId,x.LocationId,x.Code,x.Name,x.ScaleDeviceCode,x.PrinterDefinitionId,x.IsActive,x.Description,x.CreatedBy,x.CreatedDate,x.UpdatedBy,x.UpdatedDate))
             .ApplyAdvancedFilters(r).ApplySort(r,nameof(PackingStationRow.Code));return q.ToPagedResponseAsync(r,ct);
     }
@@ -71,7 +71,7 @@ public sealed class PackingService(IUnitOfWork uow, IAuditLogWriter audit, Packi
     }
     public Task<PagedResponse<PackagingSpecificationRow>> GetSpecificationsAsync(PagedRequest r,CancellationToken ct=default)
     {
-        var search=r.Search?.Trim()??string.Empty;var materials=Materials.Query();var stocks=uow.Repository<StockEntity>().Query();var customers=uow.Repository<CustomerEntity>().Query();
+        var search=r.LegacySearch?.Trim()??string.Empty;var materials=Materials.Query();var stocks=uow.Repository<StockEntity>().Query();var customers=uow.Repository<CustomerEntity>().Query();
         var q=from e in Specifications.Query()
               join material in materials on e.PackagingMaterialId equals material.Id
               join stockValue in stocks on e.StockId equals (long?)stockValue.Id into stockJoin
@@ -113,7 +113,7 @@ public sealed class PackingService(IUnitOfWork uow, IAuditLogWriter audit, Packi
     }
     public Task<PagedResponse<PackingSessionRow>> GetSessionsAsync(PagedRequest r,CancellationToken ct=default)
     {
-        var s=r.Search?.Trim();var lines=UnitLines.Query();var units=Units.Query();
+        var s=r.LegacySearch?.Trim();var lines=UnitLines.Query();var units=Units.Query();
         var q=Sessions.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.PackingNo.Contains(s)||(x.SourceDocumentNo!=null&&x.SourceDocumentNo.Contains(s))||(x.CustomerCodeSnapshot!=null&&x.CustomerCodeSnapshot.Contains(s)))
             .Select(x=>new PackingSessionRow(x.Id,x.BranchCode,x.PackingNo,x.SourceType,x.SourceHeaderId,x.SourceDocumentNo,x.WarehouseId,x.PackingStationId,x.CustomerId,x.CustomerCodeSnapshot,x.Status,units.Count(u=>u.PackingSessionId==x.Id),lines.Where(l=>units.Where(u=>u.PackingSessionId==x.Id).Select(u=>u.Id).Contains(l.HandlingUnitId)).Sum(l=>(decimal?)l.Quantity)??0,units.Where(u=>u.PackingSessionId==x.Id).Sum(u=>(decimal?)u.GrossWeight)??0,x.OpenedAtUtc,x.ClosedAtUtc,x.ReleasedAtUtc,x.CreatedBy,x.CreatedDate,x.UpdatedBy,x.UpdatedDate))
             .ApplyAdvancedFilters(r).ApplySort(r,nameof(PackingSessionRow.OpenedAtUtc));return q.ToPagedResponseAsync(r,ct);
