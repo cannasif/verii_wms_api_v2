@@ -39,7 +39,7 @@ public sealed class ELogoConnectionService(
         string branchCode, PagedRequest request, CancellationToken ct = default)
     {
         var branch = NormalizeBranch(branchCode);
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var query = Connections.Query()
             .Where(x => x.BranchCode == branch
                 && (string.IsNullOrWhiteSpace(search)

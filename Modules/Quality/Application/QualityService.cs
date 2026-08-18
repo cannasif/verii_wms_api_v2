@@ -344,7 +344,7 @@ public sealed class QualityService(
         var workSessionsQuery = uow.Repository<QualityInspectionWorkSession>().Query();
         var includeLineSummary = RequiresInspectionRelation(request, InspectionLineSummaryColumns);
         var includeWorkAggregate = RequiresInspectionRelation(request, InspectionWorkAggregateColumns);
-        var includeWorkActor = !string.IsNullOrWhiteSpace(request.Search)
+        var includeWorkActor = !string.IsNullOrWhiteSpace(request.LegacySearch)
             || RequiresInspectionRelation(request, InspectionWorkActorColumns);
         var includeActiveWork = RequiresInspectionRelation(request, InspectionActiveWorkColumns);
         var joined=from i in Inspections.Query()
@@ -397,7 +397,7 @@ public sealed class QualityService(
                 select session.WorkerNameSnapshot+" "+(stoppedBy==null?"":stoppedBy.Username+" "+stoppedBy.Email)+" "
                     +(stoppedByDetail==null?"":stoppedByDetail.FirstName+" "+stoppedByDetail.LastName)).FirstOrDefault():null,
             CreatedBy=x.Inspection.CreatedBy,CreatedDate=x.Inspection.CreatedDate,UpdatedBy=x.Inspection.UpdatedBy,UpdatedDate=x.Inspection.UpdatedDate });
-        var search=request.Search?.Trim(); q=q.Where(x=>string.IsNullOrWhiteSpace(search)||x.InspectionNo.Contains(search)||x.SourceDocumentNo.Contains(search)
+        var search=request.LegacySearch?.Trim(); q=q.Where(x=>string.IsNullOrWhiteSpace(search)||x.InspectionNo.Contains(search)||x.SourceDocumentNo.Contains(search)
             ||(x.SourceWaybillNo!=null&&x.SourceWaybillNo.Contains(search))||(x.CreatedByName!=null&&x.CreatedByName.Contains(search))
             ||(x.WorkStartedByName!=null&&x.WorkStartedByName.Contains(search))
             ||(x.WarehouseName!=null&&x.WarehouseName.Contains(search))

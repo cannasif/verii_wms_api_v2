@@ -51,7 +51,7 @@ public sealed class WarehouseInboundOperationsService(
 
     public async Task<PagedResponse<WarehouseInboundGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var headers = Headers.Query();
         var warehouses = unitOfWork.Repository<WarehouseEntity>().Query(ignoreQueryFilters: true);
         var lines = unitOfWork.Repository<WarehouseInboundLine>().Query();

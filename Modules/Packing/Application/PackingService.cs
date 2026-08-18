@@ -24,7 +24,7 @@ public sealed class PackingService(IUnitOfWork uow, IAuditLogWriter audit, Packi
 
     public Task<PagedResponse<PackagingMaterialRow>> GetMaterialsAsync(PagedRequest request,CancellationToken ct=default)
     {
-        var search=request.Search?.Trim();
+        var search=request.LegacySearch?.Trim();
         var q=Materials.Query().Where(x=>string.IsNullOrWhiteSpace(search)||x.Code.Contains(search)||x.Name.Contains(search)||(x.Description!=null&&x.Description.Contains(search)))
             .Select(x=>new PackagingMaterialRow(x.Id,x.BranchCode,x.Code,x.Name,x.Type,x.TareWeight,x.MaxNetWeight,x.MaxGrossWeight,x.InnerLength,x.InnerWidth,x.InnerHeight,x.MaxVolume,x.IsReturnable,x.IsActive,x.Description,x.CreatedBy,x.CreatedDate,x.UpdatedBy,x.UpdatedDate))
             .ApplyAdvancedFilters(request).ApplySort(request,nameof(PackagingMaterialRow.Code));

@@ -188,7 +188,7 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
                   join vehicle in vehicleHeaders on acceptance.VehicleCheckInId equals vehicle.Id
                   orderby acceptance.AcceptedAtUtc descending
                   select vehicle.PlateNo+" "+(vehicle.DriverFirstName??"")+" "+(vehicle.DriverLastName??"")).FirstOrDefault()));
-        var s=request.Search?.Trim();q=q.Where(x=>string.IsNullOrWhiteSpace(s)||x.ImportReferenceNo.Contains(s)||x.SupplierCode.Contains(s)
+        var s=request.LegacySearch?.Trim();q=q.Where(x=>string.IsNullOrWhiteSpace(s)||x.ImportReferenceNo.Contains(s)||x.SupplierCode.Contains(s)
             ||x.SupplierName.Contains(s)||(x.ExportReferenceNo!=null&&x.ExportReferenceNo.Contains(s)));
         q=q.ApplySearch(request,PlanSearchColumns,DefaultPlanSearchColumns);
         var response=await q.ApplyAdvancedFilters(request).ApplySort(request,nameof(SteelReceiptPlanGridRow.ImportedAtUtc)).ToPagedResponseAsync(request,ct);
@@ -240,7 +240,7 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
 
     public async Task<PagedResponse<SteelReceiptLineGridRow>> GetLinesPagedAsync(PagedRequest request,CancellationToken ct=default)
     {
-        var q=GridQuery();var s=request.Search?.Trim();q=q.Where(x=>string.IsNullOrWhiteSpace(s)||x.DCode.Contains(s)||x.StockCode.Contains(s)
+        var q=GridQuery();var s=request.LegacySearch?.Trim();q=q.Where(x=>string.IsNullOrWhiteSpace(s)||x.DCode.Contains(s)||x.StockCode.Contains(s)
             ||x.SupplierSerialNo.Contains(s)||(x.NetsisOrderNo!=null&&x.NetsisOrderNo.Contains(s))||x.ImportReferenceNo.Contains(s));
         q=q.ApplySearch(request,LineSearchColumns,DefaultLineSearchColumns);
         return await q.ApplyAdvancedFilters(request).ApplySort(request,nameof(SteelReceiptLineGridRow.Id)).ToPagedResponseAsync(request,ct);
@@ -585,7 +585,7 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
 
     private static async Task<PagedResponse<SteelReceiptLineGridRow>> PageLinesAsync(IQueryable<SteelReceiptLineGridRow> query,PagedRequest request,CancellationToken ct)
     {
-        var s=request.Search?.Trim();query=query.Where(x=>string.IsNullOrWhiteSpace(s)||x.DCode.Contains(s)||x.StockCode.Contains(s)
+        var s=request.LegacySearch?.Trim();query=query.Where(x=>string.IsNullOrWhiteSpace(s)||x.DCode.Contains(s)||x.StockCode.Contains(s)
             ||x.SupplierSerialNo.Contains(s)||(x.NetsisOrderNo!=null&&x.NetsisOrderNo.Contains(s))||x.ImportReferenceNo.Contains(s));
         query=query.ApplySearch(request,LineSearchColumns,DefaultLineSearchColumns);
         return await query.ApplyAdvancedFilters(request).ApplySort(request,nameof(SteelReceiptLineGridRow.Id)).ToPagedResponseAsync(request,ct);

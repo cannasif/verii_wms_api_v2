@@ -75,7 +75,7 @@ public sealed class SteelVehicleAcceptanceService(
                 line.Attachments.Count,
                 Convert.ToBase64String(line.RowVersion));
 
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         if (!string.IsNullOrWhiteSpace(search))
         {
             query = query.Where(x =>

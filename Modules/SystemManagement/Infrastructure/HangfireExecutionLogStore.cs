@@ -29,7 +29,7 @@ public sealed class HangfireExecutionLogStore(IUnitOfWork unitOfWork) : IHangfir
     public async Task<PagedResponse<HangfireExecutionRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
         var rows = Logs.Query()
-            .Where(x => string.IsNullOrWhiteSpace(request.Search) || x.JobKey.Contains(request.Search) || x.Status.Contains(request.Search) || (x.ErrorMessage != null && x.ErrorMessage.Contains(request.Search)))
+            .Where(x => string.IsNullOrWhiteSpace(request.LegacySearch) || x.JobKey.Contains(request.LegacySearch) || x.Status.Contains(request.LegacySearch) || (x.ErrorMessage != null && x.ErrorMessage.Contains(request.LegacySearch)))
             .Select(x => new HangfireExecutionRow(x.Id, x.JobKey, x.HangfireJobId, x.TriggerSource, x.Status, x.StartedAt, x.CompletedAt, x.DurationMs, x.SourceCount, x.InsertedCount, x.UpdatedCount, x.DeactivatedCount, x.ResultSummary, x.ErrorType, x.ErrorMessage, x.StackTrace, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate))
             .ApplyAdvancedFilters(request);
         var sorted = string.IsNullOrWhiteSpace(request.SortBy)

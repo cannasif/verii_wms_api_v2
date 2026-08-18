@@ -30,7 +30,7 @@ public sealed partial class UserManagementService(
 
     public async Task<PagedResponse<UserGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken)
     {
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var query = Users.Query().Include(x => x.Detail)
             .Where(x => string.IsNullOrWhiteSpace(search) || x.Username.Contains(search) || x.Email.Contains(search) || (x.Detail != null && (x.Detail.FirstName.Contains(search) || x.Detail.LastName.Contains(search))))
             .Select(x => new UserGridRow(x.Id, x.Username, x.Email, x.Role, x.IsActive, x.LastLoginAt, x.Detail != null ? x.Detail.FirstName : "", x.Detail != null ? x.Detail.LastName : "", null, x.Detail != null ? x.Detail.CreatedDate : null, null, x.Detail != null ? x.Detail.UpdatedDate : null))

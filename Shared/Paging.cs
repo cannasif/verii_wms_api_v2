@@ -4,20 +4,13 @@ namespace verii_wms_api_v2.Shared;
 
 public sealed class PagedRequest
 {
-    private string? _search;
-
     // CRM sözleşmesi. Page alanı eski istemciler için geriye uyumluluk sağlar.
     public int PageNumber { get; init; } = 1;
     public int Page { get; init; }
     public int PageSize { get; init; } = 10;
 
-    // SearchFields gönderen yeni istemcilerde eski modül içi geniş OR filtreleri
-    // çalıştırılmaz. Ham değer ortak, allowlist tabanlı arama katmanında kullanılır.
-    public string? Search
-    {
-        get => HasExplicitSearchFields ? null : _search;
-        init => _search = value;
-    }
+    // İstemcinin gönderdiği ham arama metni sözleşmede aynen korunur.
+    public string? Search { get; init; }
 
     public IReadOnlyList<string> SearchFields { get; init; } = Array.Empty<string>();
     public string? SortBy { get; init; }
@@ -29,10 +22,15 @@ public sealed class PagedRequest
     public int EffectivePageNumber => Page > 0 ? Page : PageNumber;
 
     [JsonIgnore]
-    public string? EffectiveSearch => _search;
+    public string? EffectiveSearch => Search;
 
     [JsonIgnore]
     public bool HasExplicitSearchFields => SearchFields.Count > 0;
+
+    // SearchFields gönderen istemciler ortak allowlist tabanlı arama katmanına
+    // gider. Bu değer yalnız geriye uyumlu modül içi geniş OR sorguları içindir.
+    [JsonIgnore]
+    internal string? LegacySearch => HasExplicitSearchFields ? null : Search;
 
     [JsonIgnore]
     internal bool SearchApplied { get; private set; }

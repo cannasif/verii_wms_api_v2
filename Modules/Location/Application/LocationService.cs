@@ -21,7 +21,7 @@ public sealed class LocationService(IUnitOfWork unitOfWork, IAuditLogWriter audi
 
     public async Task<PagedResponse<LocationGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var query = BuildGridQuery().Where(x => string.IsNullOrWhiteSpace(search)
             || x.Code.Contains(search) || x.Name.Contains(search) || x.WarehouseName.Contains(search)
             || (x.Barcode != null && x.Barcode.Contains(search)) || (x.ZoneCode != null && x.ZoneCode.Contains(search)));

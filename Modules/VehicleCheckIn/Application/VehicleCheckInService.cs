@@ -95,7 +95,7 @@ public sealed class VehicleCheckInService(IUnitOfWork uow,IProjectSettingsServic
 
     public async Task<PagedResponse<VehicleCheckInRow>> GetPagedAsync(PagedRequest request,CancellationToken ct=default)
     {
-        var q=Headers.Query();var s=request.Search?.Trim();var normalized=NormalizePlate(s);
+        var q=Headers.Query();var s=request.LegacySearch?.Trim();var normalized=NormalizePlate(s);
         if(!string.IsNullOrWhiteSpace(s))q=q.Where(x=>x.PlateNo.Contains(s)||x.PlateNoNormalized.Contains(normalized)
             ||(x.TrailerPlateNo!=null&&x.TrailerPlateNo.Contains(s))||(x.DriverFirstName!=null&&x.DriverFirstName.Contains(s))
             ||(x.DriverLastName!=null&&x.DriverLastName.Contains(s))||(x.CustomerCodeSnapshot!=null&&x.CustomerCodeSnapshot.Contains(s))

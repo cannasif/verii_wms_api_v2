@@ -171,7 +171,7 @@ public sealed class WarehouseInboundLabelService(
         IQueryable<WarehouseInboundTask> tasks,
         bool includeTaskReference)
     {
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var joined = from batch in batches
                      join header in headers on batch.GrHeaderId equals header.Id
                      where string.IsNullOrWhiteSpace(search)

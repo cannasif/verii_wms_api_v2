@@ -28,7 +28,7 @@ public sealed partial class BarcodeDesignerService(IUnitOfWork unitOfWork, IAudi
 
     public async Task<PagedResponse<BarcodeTemplateGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var query = Grid().Where(x => string.IsNullOrWhiteSpace(search) || x.TemplateCode.Contains(search) || x.DisplayName.Contains(search) || x.LabelType.Contains(search));
         return await query.ApplySearch(request,SearchColumns,DefaultSearchColumns).ApplyAdvancedFilters(request).ApplySort(request, nameof(BarcodeTemplateGridRow.TemplateCode)).ToPagedResponseAsync(request, cancellationToken);
     }

@@ -70,7 +70,7 @@ public sealed class PackingDeviceService(IUnitOfWork uow,IPackingDeviceGateway g
     }
     public Task<PagedResponse<PackingPrintJobRow>> GetJobsAsync(PagedRequest request,CancellationToken ct)
     {
-        var search=request.Search?.Trim();
+        var search=request.LegacySearch?.Trim();
         var q=Jobs.Query().Where(x=>string.IsNullOrWhiteSpace(search)||(x.LastError!=null&&x.LastError.Contains(search)))
             .Select(x=>new PackingPrintJobRow(x.Id,x.HandlingUnitId,x.PackingStationId,x.PrinterDefinitionId,x.Status,x.Copies,x.AttemptCount,x.RequestedAtUtc,x.CompletedAtUtc,x.LastError))
             .ApplyAdvancedFilters(request).ApplySort(request,nameof(PackingPrintJobRow.RequestedAtUtc));

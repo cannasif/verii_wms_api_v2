@@ -83,7 +83,7 @@ public sealed partial class BarcodePolicyService(IUnitOfWork unitOfWork, IAuditL
 
     public async Task<PagedResponse<GeneratedBarcodeRow>> GetGeneratedPagedAsync(PagedRequest request, CancellationToken ct = default)
     {
-        var search=request.Search?.Trim();
+        var search=request.LegacySearch?.Trim();
         var rows=Generated.Query()
             .Where(x=>string.IsNullOrWhiteSpace(search)||x.BarcodeValue.Contains(search)||(x.StockCode??"").Contains(search)||(x.SerialNo??"").Contains(search)||(x.LocationCode??"").Contains(search)||(x.DocumentNo??"").Contains(search))
             .Select(x=>new GeneratedBarcodeRow(x.Id,x.Scope.ToString(),x.PolicyVersion,x.BarcodeValue,x.StockCode,x.SerialNo,x.YapCode,x.LotNo,x.WarehouseCode,x.LocationCode,x.DocumentNo,x.SequenceNo,x.GeneratedAt,x.CreatedBy));

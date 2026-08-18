@@ -331,7 +331,7 @@ public sealed class WarehouseOutboundService(
         IQueryable<WarehouseOutboundLine> lines,
         bool includeLineSummary)
     {
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var baseQuery =
             from header in headers
             join warehouse in warehouses on header.SourceWarehouseId equals warehouse.Id

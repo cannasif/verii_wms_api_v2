@@ -173,7 +173,7 @@ public sealed class ErpMirrorService(IUnitOfWork unitOfWork, INetsisReadService 
 
     public async Task<PagedResponse<WarehouseMirrorDto>> GetWarehousesPagedAsync(PagedRequest request, CancellationToken ct = default)
     {
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var query = Warehouses.Query()
             .Where(x => string.IsNullOrWhiteSpace(search) || x.BranchCode.Contains(search) || x.WarehouseName.Contains(search) || x.WarehouseCode.ToString().Contains(search))
             .Select(x => new WarehouseMirrorDto(x.Id, x.BranchCode, x.WarehouseCode, x.WarehouseName,
@@ -194,7 +194,7 @@ public sealed class ErpMirrorService(IUnitOfWork unitOfWork, INetsisReadService 
     }
     public Task<PagedResponse<StockMirrorDto>> GetStocksPagedAsync(PagedRequest request, CancellationToken ct = default)
     {
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var query = Stocks.Query()
             .Where(x => string.IsNullOrWhiteSpace(search) || x.BranchCode.Contains(search) || x.ErpStockCode.Contains(search) || x.StockName.Contains(search) || x.BaseUnitCode.Contains(search) || (x.ManufacturerCode != null && x.ManufacturerCode.Contains(search)) || (x.GroupCode != null && x.GroupCode.Contains(search)))
             .Select(x => new StockMirrorDto(x.Id, x.BranchCode, x.BusinessUnitCode, x.ErpStockCode, x.StockName, x.BaseUnitCode, x.ManufacturerCode, x.GroupCode, x.Code1, x.Code2, x.Code3, x.Code4, x.Code5, x.LastSyncDate, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate))
@@ -235,7 +235,7 @@ public sealed class ErpMirrorService(IUnitOfWork unitOfWork, INetsisReadService 
     }
     public Task<PagedResponse<ConfigurationCodeMirrorDto>> GetConfigurationCodesPagedAsync(PagedRequest request, CancellationToken ct = default)
     {
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var query = YapCodes.Query()
             .Where(x => string.IsNullOrWhiteSpace(search) || x.BranchCode.Contains(search) || x.ConfigurationCode.Contains(search) || x.Description.Contains(search) || (x.ConfigurableStockCode != null && x.ConfigurableStockCode.Contains(search)))
             .Select(x => new ConfigurationCodeMirrorDto(x.Id, x.BranchCode, x.ConfigurationCode, x.Description, x.ConfigurableStockCode, x.StockId, x.LastSyncDate, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate))

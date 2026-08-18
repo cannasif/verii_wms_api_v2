@@ -10,7 +10,7 @@ public sealed class ErpStockBalanceQueryService(WmsDbContext dbContext) : IErpSt
         PagedRequest request,
         CancellationToken cancellationToken)
     {
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var query =
             from balance in dbContext.ErpWarehouseStockBalances.AsNoTracking()
             join warehouse in dbContext.Warehouses.IgnoreQueryFilters().AsNoTracking()
@@ -50,7 +50,7 @@ public sealed class ErpStockBalanceQueryService(WmsDbContext dbContext) : IErpSt
         PagedRequest request,
         CancellationToken cancellationToken)
     {
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var query = dbContext.ErpStockBalanceChangeLogs.AsNoTracking()
             .Where(x => string.IsNullOrWhiteSpace(search)
                 || x.StockCode.Contains(search)
@@ -71,7 +71,7 @@ public sealed class ErpStockBalanceQueryService(WmsDbContext dbContext) : IErpSt
         PagedRequest request,
         CancellationToken cancellationToken)
     {
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var query = dbContext.ErpStockBalanceSyncRuns.AsNoTracking()
             .Where(x => string.IsNullOrWhiteSpace(search)
                 || x.RunKey.ToString().Contains(search)

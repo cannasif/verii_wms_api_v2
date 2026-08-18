@@ -242,7 +242,7 @@ public sealed partial class StockBalanceService(
 
     public async Task<PagedResponse<LocationBalanceRow>> GetLocationBalancesAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
-        var search = request.Search?.Trim() ?? string.Empty;
+        var search = request.LegacySearch?.Trim() ?? string.Empty;
         var balances = Locations.Query();
         var joined = from balance in balances
                      join warehouse in WarehouseDefinitions.Query() on balance.WarehouseId equals warehouse.Id
@@ -267,7 +267,7 @@ public sealed partial class StockBalanceService(
 
     public async Task<PagedResponse<WarehouseBalanceRow>> GetWarehouseBalancesAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var balances = Warehouses.Query();
         var joined = from balance in balances
                      join warehouse in WarehouseDefinitions.Query() on balance.WarehouseId equals warehouse.Id
@@ -289,7 +289,7 @@ public sealed partial class StockBalanceService(
 
     public async Task<PagedResponse<SerialBalanceRow>> GetSerialBalancesAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var balances = Locations.Query().Where(x => x.SerialNo != "");
         var joined = from balance in balances
                      join warehouse in WarehouseDefinitions.Query() on balance.WarehouseId equals warehouse.Id
@@ -318,7 +318,7 @@ public sealed partial class StockBalanceService(
             ?? throw AppException.NotFound("Stok seri bakiyesi bulunamadı.");
         if (string.IsNullOrWhiteSpace(balance.SerialNo)) throw AppException.BadRequest("Seçilen bakiye seri takipli değildir.");
 
-        var search = request.Search?.Trim() ?? string.Empty;
+        var search = request.LegacySearch?.Trim() ?? string.Empty;
         var entries = Entries.Query().Where(x => x.StockId == balance.StockId && x.YapCodeId == balance.YapCodeId
             && x.UnitCode == balance.UnitCode && (x.LotNo ?? "") == balance.LotNo && x.SerialNo == balance.SerialNo
             && x.StockStatus == balance.StockStatus);

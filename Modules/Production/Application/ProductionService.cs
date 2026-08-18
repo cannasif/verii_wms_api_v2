@@ -1638,7 +1638,7 @@ public sealed partial class ProductionService(
         IQueryable<ProductionMaterialRequirement> materials,IQueryable<ProductionOutputExpectation> outputs,
         bool includeOrders,bool includeMaterials,bool includeOutputs)
     {
-        var search=request.Search?.Trim();
+        var search=request.LegacySearch?.Trim();
         return headers.Where(h=>string.IsNullOrWhiteSpace(search)||h.DocumentNo.Contains(search)
                 ||(h.CustomerCodeSnapshot!=null&&h.CustomerCodeSnapshot.Contains(search))
                 ||(h.CustomerNameSnapshot!=null&&h.CustomerNameSnapshot.Contains(search)))

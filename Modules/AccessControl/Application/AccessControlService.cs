@@ -18,7 +18,7 @@ public sealed class AccessControlService(IUnitOfWork unitOfWork, IAuditLogWriter
 
     public async Task<PagedResponse<PermissionGridRow>> GetPermissionsAsync(PagedRequest request, CancellationToken ct)
     {
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var query = PermissionDefinitions.Query().Where(x => string.IsNullOrWhiteSpace(search) || x.Code.Contains(search) || x.Name.Contains(search) || (x.Description != null && x.Description.Contains(search)))
             .Select(x => new PermissionGridRow(x.Id, x.Code, x.Name, x.Description, x.IsActive, x.AvailableOnWeb, x.AvailableOnMobile, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate))
             .ApplyAdvancedFilters(request).ApplySort(request, nameof(PermissionGridRow.Code));
@@ -70,7 +70,7 @@ public sealed class AccessControlService(IUnitOfWork unitOfWork, IAuditLogWriter
 
     public async Task<PagedResponse<GroupGridRow>> GetGroupsAsync(PagedRequest request, CancellationToken ct)
     {
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var query = PermissionGroups.Query().Where(x => string.IsNullOrWhiteSpace(search) || x.Name.Contains(search) || (x.Description != null && x.Description.Contains(search)))
             .Select(x => new GroupGridRow(x.Id, x.Name, x.Description, x.IsSystemAdmin, x.IsProtected, x.TemplateKey, x.IsActive, x.GroupPermissions.Count, x.CreatedBy, x.CreatedDate, x.UpdatedBy, x.UpdatedDate,x.Name+" "+(x.Description??"")))
             .ApplySearch(request,new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase)

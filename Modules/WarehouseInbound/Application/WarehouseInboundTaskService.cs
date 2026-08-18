@@ -30,7 +30,7 @@ public sealed class WarehouseInboundTaskService(IUnitOfWork unitOfWork, IAuditLo
     public async Task<PagedResponse<WarehouseInboundTaskGridRow>> GetPagedAsync(PagedRequest request, long? currentUserId, bool assignedOnly, CancellationToken cancellationToken = default)
     {
         if (assignedOnly && currentUserId is null) throw AppException.Unauthorized("Geçersiz kullanıcı oturumu.");
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var tasks = Tasks.Query();
         if (assignedOnly)
         {

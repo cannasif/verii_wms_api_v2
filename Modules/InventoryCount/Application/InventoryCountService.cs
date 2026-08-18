@@ -41,7 +41,7 @@ public sealed class InventoryCountService(
 
     public async Task<PagedResponse<InventoryCountGridRow>> GetPagedAsync(PagedRequest request, CancellationToken ct = default)
     {
-        var search = request.Search?.Trim();
+        var search = request.LegacySearch?.Trim();
         var query = BuildGridQuery(request).Where(x => string.IsNullOrWhiteSpace(search)
             || x.DocumentNo.Contains(search)
             || x.WarehouseName.Contains(search)

@@ -354,7 +354,7 @@ public sealed class AdvancedQueryExtensionsTests
     }
 
     [Fact]
-    public void Explicit_search_scope_preserves_raw_term_and_suppresses_legacy_module_search()
+    public void Explicit_search_scope_keeps_the_public_search_contract_raw()
     {
         var request = new PagedRequest
         {
@@ -362,7 +362,7 @@ public sealed class AdvancedQueryExtensionsTests
             SearchFields = ["code"]
         };
 
-        Assert.Null(request.Search);
+        Assert.Equal("warehouse", request.Search);
         Assert.Equal("warehouse", request.EffectiveSearch);
         Assert.True(request.HasExplicitSearchFields);
     }

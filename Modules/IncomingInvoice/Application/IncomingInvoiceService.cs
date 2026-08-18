@@ -266,7 +266,7 @@ public sealed class IncomingInvoiceService(
         IQueryable<IncomingInvoiceDocument> documents,IQueryable<IncomingInvoiceGoodsReceiptLink> links,
         bool includeLines,bool includeDocuments,bool includeLinks)
     {
-        var search=request.Search?.Trim();
+        var search=request.LegacySearch?.Trim();
         var baseRows=headers.Where(x=>x.BranchCode==branch&&(string.IsNullOrWhiteSpace(search)
             ||x.InvoiceNo.Contains(search)||x.Uuid.ToString().Contains(search)||x.SupplierVknOrTckn.Contains(search)
             ||x.SupplierName.Contains(search)||(x.OrderReferenceNo!=null&&x.OrderReferenceNo.Contains(search))
