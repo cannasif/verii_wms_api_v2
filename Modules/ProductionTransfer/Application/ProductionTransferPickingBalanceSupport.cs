@@ -76,9 +76,12 @@ internal static class ProductionTransferPickingBalanceSupport
     {
         if (balance is not null)
         {
-            if (balance.AvailableQuantity > 0) return balance.AvailableQuantity;
             var reserved = ResolveLineReservedQuantity(line, locationId, balance.LotNo, balance.SerialNo);
-            return reserved > 0 ? Math.Min(balance.Quantity, reserved) : 0;
+            if (reserved > 0)
+                return Math.Min(balance.Quantity, reserved);
+
+            if (balance.AvailableQuantity > 0) return balance.AvailableQuantity;
+            return 0;
         }
 
         if (!reservedOnly) return 0;

@@ -451,12 +451,34 @@ public sealed class ProductionTransferPickingSupportTests
             Tasks = [parent, child, current],
         };
 
+        var link = new ProductionTransferHeaderLink
+        {
+            Lines =
+            [
+                new()
+                {
+                    WarehouseTransferLineId = line.Id,
+                    ProductionConsumptionId = 1,
+                    RequirementReference = "REQ-1",
+                    RequiredQuantity = 1,
+                },
+            ],
+        };
         ProductionTransferUnpickMovement.ApplyUnpickedQuantities(
             line, parentLine, 1, "SN-1", actor: 30, utcNow: DateTime.UtcNow);
         ProductionTransferUnpickMovement.ApplyUnpickedRouteLocations(
             line, parentLine, returnedLocationId, "SN-1", actor: 30, utcNow: DateTime.UtcNow);
         ProductionTransferUnpickMovement.ReopenTransferredQuantityInActiveTask(
-            current, parentLine, line, 1, returnedLocationId, actor: 30, utcNow: DateTime.UtcNow);
+            header,
+            link,
+            current,
+            parentLine,
+            line,
+            link.Lines.First(),
+            1,
+            returnedLocationId,
+            actor: 30,
+            utcNow: DateTime.UtcNow);
 
         var locationCodes = new Dictionary<long, string>
         {
@@ -567,6 +589,82 @@ public sealed class ProductionTransferPickingSupportTests
         Assert.Equal(0, open.ProcessedQuantity);
         Assert.Equal(1, open.RemainingQuantity);
         Assert.True(open.CanPick);
+    }
+
+    [Fact]
+    public void BuildPersistedRows_splits_ten_with_two_picked_into_eight_open_and_two_completed()
+    {
+        const long locationId = 9001;
+        var line = new WarehouseTransferLine
+        {
+            Id = 101,
+            LineNo = 1,
+            StockId = 10,
+            StockCodeSnapshot = "ASD",
+            TrackingType = StockTrackingType.None,
+            PickedQuantity = 2,
+            DefaultSourceLocationId = locationId,
+        };
+        var header = new WarehouseTransferHeader { Lines = [line] };
+        var task = new WarehouseTransferTask
+        {
+            Lines =
+            [
+                new WarehouseTransferTaskLine
+                {
+                    Id = 501,
+                    WtLineId = 101,
+                    PlannedQuantity = 10,
+                    ProcessedQuantity = 2,
+                    SourceLocationId = locationId,
+                    Line = line,
+                },
+            ],
+        };
+
+        var rows = ProductionTransferPickingSupport.BuildPersistedRows(
+            header,
+            task,
+            new Dictionary<long, string> { [locationId] = "A1" });
+
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(2, rows.Single(x => x.ProcessedQuantity > 0).ProcessedQuantity);
+        Assert.Equal(8, rows.Single(x => x.RemainingQuantity > 0).RemainingQuantity);
+    }
+
+    [Fact]
+    public void BuildRecipeRows_splits_partially_picked_non_serial_into_open_and_completed_rows()
+    {
+        var line = new WarehouseTransferLine
+        {
+            Id = 101,
+            LineNo = 1,
+            StockId = 10,
+            StockCodeSnapshot = "ASD",
+            TrackingType = StockTrackingType.None,
+            PickedQuantity = 2,
+        };
+        var header = new WarehouseTransferHeader { Lines = [line] };
+        var task = new WarehouseTransferTask
+        {
+            Lines =
+            [
+                new WarehouseTransferTaskLine
+                {
+                    Id = 501,
+                    WtLineId = 101,
+                    PlannedQuantity = 10,
+                    ProcessedQuantity = 2,
+                    Line = line,
+                },
+            ],
+        };
+
+        var rows = ProductionTransferPickingSupport.BuildRecipeRows(header, task);
+
+        Assert.Equal(2, rows.Count);
+        Assert.Equal(2, rows.Single(x => x.ProcessedQuantity > 0).ProcessedQuantity);
+        Assert.Equal(8, rows.Single(x => x.RemainingQuantity > 0).RemainingQuantity);
     }
 
     [Fact]

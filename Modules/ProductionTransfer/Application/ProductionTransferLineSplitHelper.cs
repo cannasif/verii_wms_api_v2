@@ -1,8 +1,10 @@
+using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
+using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 
 namespace verii_wms_api_v2.Modules.ProductionTransfer.Application;
 
@@ -173,6 +175,48 @@ internal static class ProductionTransferLineSplitHelper
             AddSibling(header, link, task, taskLine, line, sourceLineLink, new(null, shortage, null, null), ref nextLineNo, actor, utcNow);
     }
 
+    internal static bool ShouldSplitUnpickAcrossLocations(
+        WarehouseTransferTaskLine taskLine,
+        long? sourceLocationId,
+        long targetLocationId,
+        decimal unpickedQuantity)
+    {
+        if (unpickedQuantity <= 0) return false;
+        if (taskLine.ProcessedQuantity > 0) return true;
+        if (!sourceLocationId.HasValue || sourceLocationId.Value == targetLocationId) return false;
+        return taskLine.PlannedQuantity - taskLine.ProcessedQuantity - unpickedQuantity > 0;
+    }
+
+    internal static int ResolveNextLineNoAnchor(
+        IEnumerable<WarehouseTransferLine> lines,
+        int persistedMax = 0)
+    {
+        var inMemoryMax = lines.Select(x => x.LineNo).DefaultIfEmpty(0).Max();
+        return Math.Max(persistedMax, inMemoryMax);
+    }
+
+    internal static async Task<int> LoadPersistedMaxLineNoAsync(
+        IUnitOfWork uow,
+        long headerId,
+        CancellationToken ct)
+    {
+        if (headerId <= 0) return 0;
+        return await uow.Repository<WarehouseTransferLine>()
+            .Query(ignoreQueryFilters: true)
+            .Where(x => x.WtHeaderId == headerId)
+            .Select(x => (int?)x.LineNo)
+            .MaxAsync(ct) ?? 0;
+    }
+
+    internal static async Task<int> ResolveNextLineNoAnchorAsync(
+        IUnitOfWork uow,
+        WarehouseTransferHeader header,
+        CancellationToken ct)
+    {
+        var persistedMax = await LoadPersistedMaxLineNoAsync(uow, header.Id, ct);
+        return ResolveNextLineNoAnchor(header.Lines, persistedMax);
+    }
+
     internal static void ApplyPartialUnpickSplit(
         WarehouseTransferHeader header,
         ProductionTransferHeaderLink link,
@@ -186,16 +230,70 @@ internal static class ProductionTransferLineSplitHelper
         long actor,
         DateTime utcNow)
     {
-        var stillPicked = taskLine.ProcessedQuantity;
-        if (unpickedQuantity <= 0 || stillPicked <= 0) return;
+        if (unpickedQuantity <= 0) return;
 
-        line.RequestedQuantity = stillPicked;
-        taskLine.PlannedQuantity = stillPicked;
-        lineLink.RequiredQuantity = stillPicked;
+        var stillPicked = taskLine.ProcessedQuantity;
+        var sourceLocationId = taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
+        var sameLocation = sourceLocationId.HasValue && sourceLocationId.Value == targetLocationId;
+        var openOnSameTaskLine = Math.Max(0, taskLine.PlannedQuantity - stillPicked);
+        var sourceOpenRemainder = sameLocation
+            ? 0
+            : Math.Max(0, taskLine.PlannedQuantity - stillPicked - unpickedQuantity);
+        if (stillPicked <= 0 && sourceOpenRemainder <= 0) return;
+
+        var sourceRemainderMerged = false;
+        if (!sameLocation && sourceOpenRemainder > 0 && sourceLocationId.HasValue)
+        {
+            sourceRemainderMerged = TryMergeUnpickedQuantityAtLocation(
+                header,
+                link,
+                task,
+                lineLink,
+                line,
+                sourceLocationId.Value,
+                sourceOpenRemainder,
+                excludePickedWtLineId: line.Id,
+                actor,
+                utcNow,
+                out _);
+        }
+
+        var targetMerged = TryMergeUnpickedQuantityAtLocation(
+            header,
+            link,
+            task,
+            lineLink,
+            line,
+            targetLocationId,
+            unpickedQuantity,
+            excludePickedWtLineId: line.Id,
+            actor,
+            utcNow,
+            out _);
+        var keepOpenOnSameTaskLine = !targetMerged && sameLocation && openOnSameTaskLine > 0;
+        var keepSourceRemainderOnSameTaskLine = sourceOpenRemainder > 0 && !sourceRemainderMerged;
+
+        if (keepOpenOnSameTaskLine)
+        {
+            line.RequestedQuantity = taskLine.PlannedQuantity;
+            lineLink.RequiredQuantity = taskLine.PlannedQuantity;
+        }
+        else
+        {
+            var remainingOnPickedLine = stillPicked + (keepSourceRemainderOnSameTaskLine ? sourceOpenRemainder : 0);
+            line.RequestedQuantity = remainingOnPickedLine;
+            taskLine.PlannedQuantity = remainingOnPickedLine;
+            lineLink.RequiredQuantity = remainingOnPickedLine;
+        }
+
         line.UpdatedBy = actor;
         line.UpdatedDate = utcNow;
         taskLine.UpdatedBy = actor;
         taskLine.UpdatedDate = utcNow;
+        if (stillPicked <= 0)
+            taskLine.TargetLocationId = null;
+
+        if (targetMerged || keepOpenOnSameTaskLine) return;
 
         AddSibling(
             header,
@@ -208,6 +306,58 @@ internal static class ProductionTransferLineSplitHelper
             ref nextLineNo,
             actor,
             utcNow);
+    }
+
+    internal static bool TryMergeUnpickedQuantityAtLocation(
+        WarehouseTransferHeader header,
+        ProductionTransferHeaderLink link,
+        WarehouseTransferTask task,
+        ProductionTransferLineLink sourceLineLink,
+        WarehouseTransferLine pickedLine,
+        long targetLocationId,
+        decimal quantity,
+        long excludePickedWtLineId,
+        long actor,
+        DateTime utcNow,
+        out WarehouseTransferTaskLine? mergedTaskLine)
+    {
+        mergedTaskLine = null;
+        if (quantity <= 0) return false;
+
+        var groupKey = ProductionTransferRouteAllocation.BuildRouteSplitGroupKey(sourceLineLink, pickedLine);
+        var linkByWtLineId = link.Lines
+            .Where(x => !x.IsDeleted)
+            .GroupBy(x => x.WarehouseTransferLineId)
+            .ToDictionary(x => x.Key, x => x.First());
+
+        foreach (var candidateTaskLine in task.Lines
+                     .Where(x => !x.IsDeleted && x.ProcessedQuantity <= 0)
+                     .OrderBy(x => x.Id))
+        {
+            var candidateLine = candidateTaskLine.Line ?? header.Lines.SingleOrDefault(x => x.Id == candidateTaskLine.WtLineId);
+            if (candidateLine is null || candidateLine.IsDeleted || candidateLine.Id == excludePickedWtLineId) continue;
+            if (candidateLine.Trackings.Count > 0 || candidateLine.PickedQuantity > 0) continue;
+            if (candidateTaskLine.PlannedQuantity - candidateTaskLine.ProcessedQuantity <= 0) continue;
+            if (!linkByWtLineId.TryGetValue(candidateLine.Id, out var candidateLineLink)) continue;
+            if (ProductionTransferRouteAllocation.BuildRouteSplitGroupKey(candidateLineLink, candidateLine) != groupKey)
+                continue;
+
+            var locationId = candidateTaskLine.SourceLocationId ?? candidateLine.DefaultSourceLocationId;
+            if (!locationId.HasValue || locationId.Value != targetLocationId) continue;
+
+            candidateTaskLine.PlannedQuantity += quantity;
+            candidateLine.RequestedQuantity += quantity;
+            candidateLineLink.RequiredQuantity += quantity;
+            candidateTaskLine.UpdatedBy = actor;
+            candidateTaskLine.UpdatedDate = utcNow;
+            candidateLine.UpdatedBy = actor;
+            candidateLine.UpdatedDate = utcNow;
+
+            mergedTaskLine = candidateTaskLine;
+            return true;
+        }
+
+        return false;
     }
 
     internal static void ConsolidateSameLocationOpenTaskLines(
@@ -272,6 +422,79 @@ internal static class ProductionTransferLineSplitHelper
                 }
             }
         }
+    }
+
+    internal static (long TaskLineId, long LineId) ConsolidateSameLocationPickedTaskLines(
+        WarehouseTransferHeader header,
+        ProductionTransferHeaderLink link,
+        WarehouseTransferTask task,
+        long actor,
+        DateTime utcNow,
+        long focusTaskLineId,
+        long focusLineId)
+    {
+        var redirectedTaskLines = new Dictionary<long, (long TaskLineId, long LineId)>();
+        var linkByWtLineId = link.Lines
+            .Where(x => !x.IsDeleted)
+            .GroupBy(x => x.WarehouseTransferLineId)
+            .ToDictionary(x => x.Key, x => x.First());
+        var candidates = task.Lines
+            .Where(taskLine => !taskLine.IsDeleted
+                && taskLine.ProcessedQuantity > 0
+                && taskLine.PlannedQuantity - taskLine.ProcessedQuantity <= 0.000001m)
+            .Select(taskLine =>
+            {
+                var line = taskLine.Line ?? header.Lines.SingleOrDefault(x => x.Id == taskLine.WtLineId);
+                if (line is null || line.IsDeleted || line.Trackings.Count > 0) return null;
+                if (!linkByWtLineId.TryGetValue(line.Id, out var lineLink)) return null;
+                var locationId = taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
+                if (!locationId.HasValue) return null;
+                var groupKey = ProductionTransferRouteAllocation.BuildRouteSplitGroupKey(lineLink, line);
+                return new MergeCandidate(taskLine, line, lineLink, locationId.Value, groupKey);
+            })
+            .Where(x => x is not null)
+            .Select(x => x!)
+            .GroupBy(x => (x.GroupKey, x.LocationId))
+            .Where(group => group.Count() > 1);
+
+        foreach (var group in candidates)
+        {
+            var members = group.OrderBy(x => x.TaskLine.Id).ToArray();
+            var keeper = members[0];
+            for (var index = 1; index < members.Length; index++)
+            {
+                var mergee = members[index];
+                var pickedQuantity = mergee.TaskLine.ProcessedQuantity;
+                if (pickedQuantity <= 0) continue;
+
+                keeper.TaskLine.PlannedQuantity += pickedQuantity;
+                keeper.TaskLine.ProcessedQuantity += pickedQuantity;
+                keeper.Line.RequestedQuantity += pickedQuantity;
+                keeper.Line.PickedQuantity += mergee.Line.PickedQuantity;
+                keeper.LineLink.RequiredQuantity += pickedQuantity;
+                keeper.TaskLine.UpdatedBy = actor;
+                keeper.TaskLine.UpdatedDate = utcNow;
+                keeper.Line.UpdatedBy = actor;
+                keeper.Line.UpdatedDate = utcNow;
+
+                mergee.TaskLine.IsDeleted = true;
+                mergee.TaskLine.DeletedDate = utcNow;
+                mergee.TaskLine.DeletedBy = actor;
+
+                mergee.Line.IsDeleted = true;
+                mergee.Line.DeletedDate = utcNow;
+                mergee.Line.DeletedBy = actor;
+                mergee.LineLink.IsDeleted = true;
+                mergee.LineLink.DeletedDate = utcNow;
+                mergee.LineLink.DeletedBy = actor;
+
+                redirectedTaskLines[mergee.TaskLine.Id] = (keeper.TaskLine.Id, keeper.Line.Id);
+            }
+        }
+
+        if (redirectedTaskLines.TryGetValue(focusTaskLineId, out var resolved))
+            return resolved;
+        return (focusTaskLineId, focusLineId);
     }
 
     internal static void RemoveRedundantShortageSiblings(
@@ -467,7 +690,9 @@ internal static class ProductionTransferLineSplitHelper
             CreatedBy = actor,
             CreatedDate = utcNow,
             Task = task,
+            WtTaskId = task.Id,
             Line = sibling,
+            WtLineId = sibling.Id,
             PlannedQuantity = chunk.Quantity,
             ProcessedQuantity = 0,
             SourceLocationId = chunk.LocationId,
@@ -532,6 +757,7 @@ internal static class ProductionTransferLineSplitHelper
             CreatedDate = utcNow,
             HeaderLink = link,
             WarehouseTransferLine = sibling,
+            WarehouseTransferLineId = sibling.Id,
             LineRole = source.LineRole,
             ProductionConsumptionId = source.ProductionConsumptionId,
             ProductionOutputId = source.ProductionOutputId,

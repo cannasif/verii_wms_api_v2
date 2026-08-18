@@ -462,6 +462,29 @@ internal sealed class ProductionTransferScanPickExecutor(
             $"Barkodlu üretim toplama: {resolved.RawBarcode}",
             null, null, null), actor, ct);
 
+        var (resolvedTaskLineId, resolvedLineId) = (taskLine.Id, line.Id);
+        await uow.ExecuteInTransactionAsync(async token =>
+        {
+            var header = await uow.Repository<WarehouseTransferHeader>().Query(true)
+                .Include(x => x.Lines)
+                .Include(x => x.Tasks).ThenInclude(x => x.Lines)
+                .SingleAsync(x => x.Id == transferId, token);
+            var link = await uow.Repository<ProductionTransferHeaderLink>().Query(true)
+                .Include(x => x.Lines)
+                .SingleAsync(x => x.WarehouseTransferHeaderId == transferId, token);
+            var task = header.Tasks.Single(x => x.Lines.Any(l => l.Id == taskLine.Id && !l.IsDeleted));
+            (resolvedTaskLineId, resolvedLineId) = ProductionTransferLineSplitHelper.ConsolidateSameLocationPickedTaskLines(
+                header,
+                link,
+                task,
+                actor,
+                DateTime.UtcNow,
+                taskLine.Id,
+                line.Id);
+            await uow.SaveChangesAsync(token);
+            return true;
+        }, ct);
+
         await uow.ExecuteInTransactionAsync(async token =>
         {
             var link = await uow.Repository<ProductionTransferHeaderLink>().Query(true)
@@ -499,8 +522,8 @@ internal sealed class ProductionTransferScanPickExecutor(
 
         return await ReadDeltaAsync(
             transferId,
-            taskLine.Id,
-            line.Id,
+            resolvedTaskLineId,
+            resolvedLineId,
             sourceLocationId,
             sourceBalance.LocationCode,
             sourceBalance.LocationName,
@@ -600,6 +623,7 @@ internal sealed class ProductionTransferScanPickExecutor(
         var effectivePicked = ProductionWorkOrderMaterialAssignment.ResolveEffectivePickedQuantity(line);
         return new(
             row,
+            pickingTable.Rows,
             new(
                 aggregate.Link.WorkflowStatus,
                 pickingTable.PickedQuantity,

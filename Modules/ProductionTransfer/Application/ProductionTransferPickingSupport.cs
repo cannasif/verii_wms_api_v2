@@ -140,31 +140,46 @@ internal static class ProductionTransferPickingSupport
         WarehouseTransferTask task)
     {
         var rows = new List<ProductionTransferPickingRowDto>();
-        foreach (var group in task.Lines
-                     .Where(x => !x.IsDeleted)
-                     .GroupBy(x => x.WtLineId)
-                     .OrderBy(x => x.Min(line => line.Id)))
+        foreach (var taskLine in task.Lines.Where(x => !x.IsDeleted).OrderBy(x => x.Id))
         {
-            var anchorTaskLine = group.OrderBy(x => x.Id).First();
-            var line = ResolveTaskLine(header, anchorTaskLine);
-            var planned = group.Sum(x => x.PlannedQuantity);
-            var processed = group.Sum(x => x.ProcessedQuantity);
-            var remaining = Math.Max(0, planned - processed);
+            var line = ResolveTaskLine(header, taskLine);
+            var processed = taskLine.ProcessedQuantity;
+            var remaining = Math.Max(0, taskLine.PlannedQuantity - processed);
             if (remaining <= 0 && processed <= 0) continue;
 
+            if (line.Trackings.Count > 0)
+            {
+                rows.Add(new(
+                    taskLine.Id, line.Id, line.LineNo,
+                    null, null,
+                    line.StockId, line.StockCodeSnapshot, line.StockNameSnapshot, null,
+                    taskLine.PlannedQuantity, remaining, processed,
+                    false));
+                continue;
+            }
+
+            if (processed > 0 && remaining > 0)
+            {
+                rows.Add(new(
+                    taskLine.Id, line.Id, line.LineNo,
+                    null, null,
+                    line.StockId, line.StockCodeSnapshot, line.StockNameSnapshot, null,
+                    processed, 0m, processed,
+                    false));
+                rows.Add(new(
+                    taskLine.Id, line.Id, line.LineNo,
+                    null, null,
+                    line.StockId, line.StockCodeSnapshot, line.StockNameSnapshot, null,
+                    remaining, remaining, 0m,
+                    false));
+                continue;
+            }
+
             rows.Add(new(
-                anchorTaskLine.Id,
-                line.Id,
-                line.LineNo,
-                null,
-                null,
-                line.StockId,
-                line.StockCodeSnapshot,
-                line.StockNameSnapshot,
-                null,
-                planned,
-                remaining,
-                processed,
+                taskLine.Id, line.Id, line.LineNo,
+                null, null,
+                line.StockId, line.StockCodeSnapshot, line.StockNameSnapshot, null,
+                taskLine.PlannedQuantity, remaining, processed,
                 false));
         }
 

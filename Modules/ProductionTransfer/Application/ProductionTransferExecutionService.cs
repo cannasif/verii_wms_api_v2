@@ -626,7 +626,8 @@ public sealed class ProductionTransferExecutionService(
                 splits.Select(x => new RouteAllocationChunk(x.LocationId, x.Quantity, null, null)));
             if (remaining - total > 0.000001m && !currentSourceLocationId.HasValue)
                 throw AppException.Conflict("Kalan miktar için mevcut kaynak rafı bulunamadı.");
-            var nextLineNo = aggregate.Header.Lines.Max(x => x.LineNo);
+            var nextLineNo = await ProductionTransferLineSplitHelper.ResolveNextLineNoAnchorAsync(
+                uow, aggregate.Header, token);
             await ReleaseTransferReservationsAsync(
                 aggregate.Header,
                 $"{reservationPrefix}:release",
@@ -735,6 +736,7 @@ public sealed class ProductionTransferExecutionService(
                 token);
 
             var utcNow = DateTime.UtcNow;
+            var sourceLocationId = taskLine.SourceLocationId ?? line.DefaultSourceLocationId;
             var lotNo = serialTracking?.LotNo;
             var serialNo = serialTracking?.SerialNo ?? request.SerialNo;
             var movementLine = ProductionTransferUnpickMovement.BuildMovementLine(
@@ -769,17 +771,28 @@ public sealed class ProductionTransferExecutionService(
                 }
 
                 ProductionTransferUnpickMovement.ReopenTransferredQuantityInActiveTask(
+                    aggregate.Header,
+                    aggregate.Link,
                     activeTask,
                     taskLine,
                     line,
+                    lineLink,
                     quantity,
-                    request.TargetLocationId,
+                    targetLocationId,
                     actor,
                     utcNow);
+
+                if (!hasSerialTrackings)
+                {
+                    ProductionTransferLineSplitHelper.ConsolidateSameLocationOpenTaskLines(
+                        aggregate.Header, aggregate.Link, activeTask, actor, utcNow);
+                }
             }
-            else if (!hasSerialTrackings && taskLine.ProcessedQuantity > 0)
+            else if (!hasSerialTrackings && ProductionTransferLineSplitHelper.ShouldSplitUnpickAcrossLocations(
+                         taskLine, sourceLocationId, targetLocationId, quantity))
             {
-                var nextLineNo = aggregate.Header.Lines.Max(x => x.LineNo);
+                var nextLineNo = await ProductionTransferLineSplitHelper.ResolveNextLineNoAnchorAsync(
+                    uow, aggregate.Header, token);
                 ProductionTransferLineSplitHelper.ApplyPartialUnpickSplit(
                     aggregate.Header,
                     aggregate.Link,
