@@ -157,7 +157,8 @@ public sealed class DashboardServiceTests
         db.Stocks.AddRange(
             new Stock { ErpStockCode = "STK-100", StockName = "Civata M10", BaseUnitCode = "ADET" },
             new Stock { ErpStockCode = "01/001", StockName = "Intel Core i7", BaseUnitCode = "AD" },
-            new Stock { ErpStockCode = "STK-200", StockName = "Somun M10", BaseUnitCode = "ADET" });
+            new Stock { ErpStockCode = "STK-200", StockName = "Somun M10", BaseUnitCode = "ADET" },
+            new Stock { ErpStockCode = "STK-300", StockName = "Çağrı ALIŞVERİŞ", BaseUnitCode = "ADET" });
 
         db.GoodsReceiptHeaders.AddRange(
             GoodsReceipt("0", "MK-88421", now.AddMinutes(-2)),
@@ -172,6 +173,8 @@ public sealed class DashboardServiceTests
         var stockHits = await service.GetQuickSearchAsync(42, "0", "civata");
         var slashStockHits = await service.GetQuickSearchAsync(42, "0", "01/001");
         var turkishHits = await service.GetQuickSearchAsync(42, "0", "CİVATA");
+        var asciiMixedTurkishHits = await service.GetQuickSearchAsync(42, "0", "cagri");
+        var asciiMixedIHits = await service.GetQuickSearchAsync(42, "0", "alisveris");
         var emptyHits = await service.GetQuickSearchAsync(42, "0", "x");
 
         Assert.Contains(documentHits.Items, x => x.Kind == "goods-receipt" && x.Title == "MK-88421");
@@ -180,6 +183,8 @@ public sealed class DashboardServiceTests
         Assert.Contains(stockHits.Items, x => x.Kind == "stock" && x.Title == "STK-100");
         Assert.Contains(slashStockHits.Items, x => x.Kind == "stock" && x.Title == "01/001");
         Assert.Contains(turkishHits.Items, x => x.Kind == "stock" && x.Title == "STK-100");
+        Assert.Contains(asciiMixedTurkishHits.Items, x => x.Kind == "stock" && x.Title == "STK-300");
+        Assert.Contains(asciiMixedIHits.Items, x => x.Kind == "stock" && x.Title == "STK-300");
         Assert.Empty(emptyHits.Items);
     }
 

@@ -14,8 +14,6 @@ public sealed partial class DashboardService
     private const int QuickSearchMinLength = 1;
     private const int QuickSearchTextMinLength = 2;
     private const int QuickSearchMaxLength = 64;
-    private const string SearchCollation = AdvancedQueryExtensions.TurkishCaseInsensitiveSearchCollation;
-
     private static readonly Dictionary<string, string> StockSearchColumns = new(StringComparer.OrdinalIgnoreCase)
     {
         ["erpStockCode"] = nameof(StockEntity.ErpStockCode),
@@ -94,24 +92,22 @@ public sealed partial class DashboardService
         };
 
         IQueryable<StockEntity> query = dbContext.Stocks.AsNoTracking().Where(x => !x.IsDeleted);
-        if (UsesTurkishSearchCollation)
+        if (UsesSqlServer)
         {
             query = query.ApplySearch(
                 request,
                 StockSearchColumns,
-                StockSearchFields,
-                SearchCollation);
+                StockSearchFields);
         }
         else
         {
-            var needles = FoldedNeedles(term);
             var matched = (await query
                     .Select(x => new { x.Id, x.ErpStockCode, x.StockName, x.ManufacturerCode })
                     .ToListAsync(cancellationToken))
-                .Where(x => needles.Any(needle =>
-                    x.ErpStockCode.ToLower().Contains(needle)
-                    || x.StockName.ToLower().Contains(needle)
-                    || (x.ManufacturerCode != null && x.ManufacturerCode.ToLower().Contains(needle))))
+                .Where(x =>
+                    AsciiTurkishSearch.Contains(x.ErpStockCode, term)
+                    || AsciiTurkishSearch.Contains(x.StockName, term)
+                    || AsciiTurkishSearch.Contains(x.ManufacturerCode, term))
                 .OrderBy(x => x.ErpStockCode)
                 .Take(QuickSearchLimit)
                 .ToList();
@@ -152,20 +148,21 @@ public sealed partial class DashboardService
             query = query.Where(x => warehouseScope.WarehouseIds.Contains(x.Id));
 
         var parsedCode = int.TryParse(term, out var warehouseCode) ? warehouseCode : (int?)null;
-        if (UsesTurkishSearchCollation)
+        if (UsesSqlServer)
         {
+            var pattern = AsciiTurkishSearch.BuildContainsPattern(term);
             query = parsedCode.HasValue
-                ? query.Where(x => x.WarehouseName.Contains(term) || x.WarehouseCode == parsedCode.Value)
-                : query.Where(x => x.WarehouseName.Contains(term));
+                ? query.Where(x => EF.Functions.Like(x.WarehouseName, pattern, AsciiTurkishSearch.LikeEscapeCharacter)
+                    || x.WarehouseCode == parsedCode.Value)
+                : query.Where(x => EF.Functions.Like(x.WarehouseName, pattern, AsciiTurkishSearch.LikeEscapeCharacter));
         }
         else
         {
-            var needles = FoldedNeedles(term);
             var matched = (await query
                     .Select(x => new { x.Id, x.WarehouseCode, x.WarehouseName })
                     .ToListAsync(cancellationToken))
                 .Where(x => (parsedCode.HasValue && x.WarehouseCode == parsedCode.Value)
-                    || needles.Any(needle => x.WarehouseName.ToLower().Contains(needle)))
+                    || AsciiTurkishSearch.Contains(x.WarehouseName, term))
                 .OrderBy(x => x.WarehouseName)
                 .Take(QuickSearchLimit)
                 .ToList();
@@ -193,23 +190,23 @@ public sealed partial class DashboardService
         if (warehouseScope.Restricted)
             query = query.Where(x => warehouseScope.WarehouseIds.Contains(x.WarehouseId));
 
-        if (UsesTurkishSearchCollation)
+        if (UsesSqlServer)
         {
+            var pattern = AsciiTurkishSearch.BuildContainsPattern(term);
             query = query.Where(x =>
-                x.Code.Contains(term)
-                || x.Name.Contains(term)
-                || (x.Barcode != null && x.Barcode.Contains(term)));
+                EF.Functions.Like(x.Code, pattern, AsciiTurkishSearch.LikeEscapeCharacter)
+                || EF.Functions.Like(x.Name, pattern, AsciiTurkishSearch.LikeEscapeCharacter)
+                || (x.Barcode != null && EF.Functions.Like(x.Barcode, pattern, AsciiTurkishSearch.LikeEscapeCharacter)));
         }
         else
         {
-            var needles = FoldedNeedles(term);
             var matched = (await query
                     .Select(x => new { x.Id, x.Code, x.Name, x.Barcode, x.WarehouseId })
                     .ToListAsync(cancellationToken))
-                .Where(x => needles.Any(needle =>
-                    x.Code.ToLower().Contains(needle)
-                    || x.Name.ToLower().Contains(needle)
-                    || (x.Barcode != null && x.Barcode.ToLower().Contains(needle))))
+                .Where(x =>
+                    AsciiTurkishSearch.Contains(x.Code, term)
+                    || AsciiTurkishSearch.Contains(x.Name, term)
+                    || AsciiTurkishSearch.Contains(x.Barcode, term))
                 .OrderBy(x => x.Code)
                 .Take(QuickSearchLimit)
                 .ToList();
@@ -251,10 +248,11 @@ public sealed partial class DashboardService
         var rows = exact;
         if (rows.Count == 0)
         {
-            if (UsesTurkishSearchCollation)
+            if (UsesSqlServer)
             {
+                var pattern = AsciiTurkishSearch.BuildContainsPattern(term);
                 rows = await query
-                    .Where(x => x.SerialNo.Contains(term))
+                    .Where(x => EF.Functions.Like(x.SerialNo, pattern, AsciiTurkishSearch.LikeEscapeCharacter))
                     .OrderByDescending(x => x.AvailableQuantity)
                     .Take(QuickSearchLimit)
                     .Select(x => new { x.Id, x.SerialNo, x.StockId, x.WarehouseId, x.LocationId })
@@ -262,11 +260,10 @@ public sealed partial class DashboardService
             }
             else
             {
-                var needle = term.ToLowerInvariant();
                 rows = (await query
                         .Select(x => new { x.Id, x.SerialNo, x.StockId, x.WarehouseId, x.LocationId, x.AvailableQuantity })
                         .ToListAsync(cancellationToken))
-                    .Where(x => x.SerialNo.ToLower().Contains(needle))
+                    .Where(x => AsciiTurkishSearch.Contains(x.SerialNo, term))
                     .OrderByDescending(x => x.AvailableQuantity)
                     .Take(QuickSearchLimit)
                     .Select(x => new { x.Id, x.SerialNo, x.StockId, x.WarehouseId, x.LocationId })
@@ -310,10 +307,12 @@ public sealed partial class DashboardService
             query = query.Where(x => warehouseScope.WarehouseIds.Contains(x.WarehouseId));
 
         List<string> lotNos;
-        if (UsesTurkishSearchCollation)
+        if (UsesSqlServer)
         {
+            var pattern = AsciiTurkishSearch.BuildContainsPattern(term);
             lotNos = await query
-                .Where(x => x.LotNo == term || x.LotNo.Contains(term))
+                .Where(x => x.LotNo == term
+                    || EF.Functions.Like(x.LotNo, pattern, AsciiTurkishSearch.LikeEscapeCharacter))
                 .Select(x => x.LotNo)
                 .Distinct()
                 .OrderBy(x => x)
@@ -322,9 +321,9 @@ public sealed partial class DashboardService
         }
         else
         {
-            var needle = term.ToLowerInvariant();
             lotNos = (await query.Select(x => x.LotNo).Distinct().ToListAsync(cancellationToken))
-                .Where(lot => lot.Equals(term, StringComparison.OrdinalIgnoreCase) || lot.ToLower().Contains(needle))
+                .Where(lot => lot.Equals(term, StringComparison.OrdinalIgnoreCase)
+                    || AsciiTurkishSearch.Contains(lot, term))
                 .OrderBy(lot => lot)
                 .Take(QuickSearchLimit)
                 .ToList();
@@ -391,17 +390,23 @@ public sealed partial class DashboardService
             .Where(x => x.BranchCode == branch)
             .Where(x => !warehouseScope.Restricted || warehouseScope.WarehouseIds.Contains(x.TargetWarehouseId));
 
-        query = UsesTurkishSearchCollation
-            ? query.Where(x =>
-                EF.Functions.Collate(x.DocumentNo, SearchCollation).Contains(term)
-                || (x.WaybillNo != null && EF.Functions.Collate(x.WaybillNo, SearchCollation).Contains(term))
-                || (x.ElectronicWaybillNo != null && EF.Functions.Collate(x.ElectronicWaybillNo, SearchCollation).Contains(term))
-                || (x.ExternalReferenceNo != null && EF.Functions.Collate(x.ExternalReferenceNo, SearchCollation).Contains(term)))
-            : query.Where(x =>
+        if (UsesSqlServer)
+        {
+            var pattern = AsciiTurkishSearch.BuildContainsPattern(term);
+            query = query.Where(x =>
+                EF.Functions.Like(x.DocumentNo, pattern, AsciiTurkishSearch.LikeEscapeCharacter)
+                || (x.WaybillNo != null && EF.Functions.Like(x.WaybillNo, pattern, AsciiTurkishSearch.LikeEscapeCharacter))
+                || (x.ElectronicWaybillNo != null && EF.Functions.Like(x.ElectronicWaybillNo, pattern, AsciiTurkishSearch.LikeEscapeCharacter))
+                || (x.ExternalReferenceNo != null && EF.Functions.Like(x.ExternalReferenceNo, pattern, AsciiTurkishSearch.LikeEscapeCharacter)));
+        }
+        else
+        {
+            query = query.Where(x =>
                 x.DocumentNo.Contains(term)
                 || (x.WaybillNo != null && x.WaybillNo.Contains(term))
                 || (x.ElectronicWaybillNo != null && x.ElectronicWaybillNo.Contains(term))
                 || (x.ExternalReferenceNo != null && x.ExternalReferenceNo.Contains(term)));
+        }
 
         var rows = await query
             .OrderByDescending(x => x.CreatedDate)
@@ -436,15 +441,21 @@ public sealed partial class DashboardService
             .Where(x => x.BranchCode == branch)
             .Where(x => !warehouseScope.Restricted || warehouseScope.WarehouseIds.Contains(x.SourceWarehouseId));
 
-        query = UsesTurkishSearchCollation
-            ? query.Where(x =>
-                EF.Functions.Collate(x.DocumentNo, SearchCollation).Contains(term)
-                || (x.WaybillNo != null && EF.Functions.Collate(x.WaybillNo, SearchCollation).Contains(term))
-                || (x.ExternalReferenceNo != null && EF.Functions.Collate(x.ExternalReferenceNo, SearchCollation).Contains(term)))
-            : query.Where(x =>
+        if (UsesSqlServer)
+        {
+            var pattern = AsciiTurkishSearch.BuildContainsPattern(term);
+            query = query.Where(x =>
+                EF.Functions.Like(x.DocumentNo, pattern, AsciiTurkishSearch.LikeEscapeCharacter)
+                || (x.WaybillNo != null && EF.Functions.Like(x.WaybillNo, pattern, AsciiTurkishSearch.LikeEscapeCharacter))
+                || (x.ExternalReferenceNo != null && EF.Functions.Like(x.ExternalReferenceNo, pattern, AsciiTurkishSearch.LikeEscapeCharacter)));
+        }
+        else
+        {
+            query = query.Where(x =>
                 x.DocumentNo.Contains(term)
                 || (x.WaybillNo != null && x.WaybillNo.Contains(term))
                 || (x.ExternalReferenceNo != null && x.ExternalReferenceNo.Contains(term)));
+        }
 
         var rows = await query
             .OrderByDescending(x => x.CreatedDate)
@@ -481,13 +492,19 @@ public sealed partial class DashboardService
                 || warehouseScope.WarehouseIds.Contains(x.SourceWarehouseId)
                 || warehouseScope.WarehouseIds.Contains(x.TargetWarehouseId));
 
-        query = UsesTurkishSearchCollation
-            ? query.Where(x =>
-                EF.Functions.Collate(x.DocumentNo, SearchCollation).Contains(term)
-                || (x.ExternalReferenceNo != null && EF.Functions.Collate(x.ExternalReferenceNo, SearchCollation).Contains(term)))
-            : query.Where(x =>
+        if (UsesSqlServer)
+        {
+            var pattern = AsciiTurkishSearch.BuildContainsPattern(term);
+            query = query.Where(x =>
+                EF.Functions.Like(x.DocumentNo, pattern, AsciiTurkishSearch.LikeEscapeCharacter)
+                || (x.ExternalReferenceNo != null && EF.Functions.Like(x.ExternalReferenceNo, pattern, AsciiTurkishSearch.LikeEscapeCharacter)));
+        }
+        else
+        {
+            query = query.Where(x =>
                 x.DocumentNo.Contains(term)
                 || (x.ExternalReferenceNo != null && x.ExternalReferenceNo.Contains(term)));
+        }
 
         var rows = await query
             .OrderByDescending(x => x.CreatedDate)
@@ -511,7 +528,7 @@ public sealed partial class DashboardService
             .ToList();
     }
 
-    private bool UsesTurkishSearchCollation =>
+    private bool UsesSqlServer =>
         dbContext.Database.ProviderName?.Contains("SqlServer", StringComparison.OrdinalIgnoreCase) == true;
 
     internal static string? NormalizeQuickSearchQuery(string? query)
@@ -554,12 +571,6 @@ public sealed partial class DashboardService
         public static readonly QuickSearchScopeSet None = new(false, false, false, false, false, false, false);
         public bool IsEmpty => !Stock && !Warehouse && !Location && !Serial && !Lot && !Document && !Shipment;
     }
-
-    private static string[] FoldedNeedles(string term) =>
-        AdvancedQueryExtensions.TurkishSearchVariants(term)
-            .Select(static value => value.ToLowerInvariant())
-            .Distinct(StringComparer.Ordinal)
-            .ToArray();
 
     private static string TransferHref(WarehouseTransferBusinessContext context, long id) =>
         context switch
