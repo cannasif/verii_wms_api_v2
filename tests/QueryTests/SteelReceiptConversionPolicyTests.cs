@@ -1,6 +1,8 @@
 using verii_wms_api_v2.Modules.SteelReceipt.Application;
 using verii_wms_api_v2.Modules.SteelReceipt.Domain;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
+using verii_wms_api_v2.Modules.GoodsReceipt.Application;
+using verii_wms_api_v2.Modules.NetsisRead.Application.Dtos;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 using Xunit;
 
@@ -107,12 +109,70 @@ public sealed class SteelReceiptConversionPolicyTests
 
         Assert.True(SteelReceiptService.IsCompatibleReplay(
             receipt,key,SteelReceiptConversionMode.Direct,
-            "123456789012345",null,date));
+            "123456789012345",null,date,GoodsReceiptTradeType.Domestic,null));
         Assert.False(SteelReceiptService.IsCompatibleReplay(
             receipt,key,SteelReceiptConversionMode.Task,
-            "123456789012345",null,date));
+            "123456789012345",null,date,GoodsReceiptTradeType.Domestic,null));
         Assert.False(SteelReceiptService.IsCompatibleReplay(
             receipt,key,SteelReceiptConversionMode.Direct,
-            "999999999999999",null,date));
+            "999999999999999",null,date,GoodsReceiptTradeType.Domestic,null));
+    }
+
+    [Fact]
+    public void Foreign_receipt_requires_and_normalizes_import_file_number()
+    {
+        var normalized = GoodsReceiptOperationsService.ValidateTradeClassification(
+            GoodsReceiptTradeType.Foreign,
+            "  IMP-2026-001  ");
+
+        Assert.Equal("IMP-2026-001", normalized);
+        Assert.Throws<AppException>(() =>
+            GoodsReceiptOperationsService.ValidateTradeClassification(
+                GoodsReceiptTradeType.Foreign,
+                null));
+        Assert.Throws<AppException>(() =>
+            GoodsReceiptOperationsService.ValidateTradeClassification(
+                GoodsReceiptTradeType.Domestic,
+                "IMP-2026-001"));
+    }
+
+    [Fact]
+    public void Foreign_receipt_accepts_only_a_current_open_import_file()
+    {
+        var openFiles = new NetsisImportOpenFileDto[]
+        {
+            new("IMP-2026-001", "320.001", "Supplier", null, null)
+        };
+
+        SteelReceiptService.ValidateOpenImportFile("imp-2026-001", openFiles);
+
+        var exception = Assert.Throws<AppException>(() =>
+            SteelReceiptService.ValidateOpenImportFile("IMP-2026-CLOSED", openFiles));
+        Assert.Equal(409, exception.StatusCode);
+    }
+
+    [Fact]
+    public void Foreign_retry_must_match_the_original_import_file()
+    {
+        var key = Guid.NewGuid();
+        var date = new DateOnly(2026, 8, 18);
+        var receipt = new GoodsReceiptHeader
+        {
+            CorrelationId = key,
+            InitiationMode = GoodsReceiptInitiationMode.DirectReceipt,
+            ElectronicWaybillNo = "GIB2026AB000001",
+            WaybillDate = date,
+            TradeType = GoodsReceiptTradeType.Foreign,
+            ImportFileNumber = "IMP-2026-001"
+        };
+
+        Assert.True(SteelReceiptService.IsCompatibleReplay(
+            receipt,key,SteelReceiptConversionMode.Direct,
+            null,"GIB2026AB000001",date,
+            GoodsReceiptTradeType.Foreign,"IMP-2026-001"));
+        Assert.False(SteelReceiptService.IsCompatibleReplay(
+            receipt,key,SteelReceiptConversionMode.Direct,
+            null,"GIB2026AB000001",date,
+            GoodsReceiptTradeType.Foreign,"IMP-2026-002"));
     }
 }

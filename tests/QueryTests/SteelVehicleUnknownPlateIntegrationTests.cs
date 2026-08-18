@@ -107,7 +107,8 @@ public sealed class SteelVehicleUnknownPlateIntegrationTests
             new NullErpPostingCoordinator(),
             new UnusedStockMovementService(),
             new NullAuditWriter(),
-            new MemoryStorage());
+            new MemoryStorage(),
+            new TestNetsisImportOpenFileReader());
         var import = new PreviewSteelReceiptImportRequest(
             branch,
             "IDEMP-IMPORT",
@@ -644,7 +645,8 @@ public sealed class SteelVehicleUnknownPlateIntegrationTests
                 new NullErpPostingCoordinator(),
                 new UnusedStockMovementService(),
                 audit,
-                new MemoryStorage());
+                new MemoryStorage(),
+                new TestNetsisImportOpenFileReader());
             Permissions = new PermissionAuthorizationService(uow);
         }
 

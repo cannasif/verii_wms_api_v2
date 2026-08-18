@@ -297,7 +297,8 @@ public sealed class SteelReceiptImportLocationResolutionTests
                 new NullErpPostingCoordinator(),
                 new UnsupportedStockMovementService(),
                 new NullAuditWriter(),
-                new NullSteelAttachmentStorage());
+                new NullSteelAttachmentStorage(),
+                new TestNetsisImportOpenFileReader());
 
             return new Fixture(
                 context,

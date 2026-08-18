@@ -1,4 +1,5 @@
 using System.Text.Json.Serialization;
+using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.SteelReceipt.Domain;
 using verii_wms_api_v2.Shared;
 
@@ -40,7 +41,8 @@ public sealed record InspectSteelReceiptLineRequest(bool IsArrived,decimal Arriv
 public sealed record ConvertSteelReceiptRequest(Guid IdempotencyKey,DateOnly DocumentDate,IReadOnlyList<long> LineIds,
     IReadOnlyList<long>? AssignedUserIds,bool AssignToAllActiveUsers,byte Priority,string? Description,
     SteelReceiptConversionMode Mode=0,string? WaybillNo=null,
-    string? ElectronicWaybillNo=null,DateOnly? WaybillDate=null);
+    string? ElectronicWaybillNo=null,DateOnly? WaybillDate=null,
+    GoodsReceiptTradeType TradeType=GoodsReceiptTradeType.Domestic,string? ImportFileNumber=null);
 public sealed record ConvertSteelReceiptResult(long GoodsReceiptId,string DocumentNo,long? TaskId,string? TaskNo,
     long? ExecutionId,long? StockMovementOperationId,IReadOnlyList<long> GeneratedLabelIds,
     int ConvertedLineCount,decimal ConvertedQuantity,SteelReceiptConversionMode Mode,bool Replayed);

@@ -24,7 +24,9 @@ public sealed record CreateManualGoodsReceiptRequest(
     GoodsReceiptLabelStrategy LabelStrategy, GoodsReceiptExecutionMode ExecutionMode,
     byte Priority, string? DeviceId, string? Description,
     IReadOnlyList<long>? AssignedUserIds, IReadOnlyList<ManualGoodsReceiptLineRequest> Lines,
-    bool ForceQualityControl = false);
+    bool ForceQualityControl = false,
+    GoodsReceiptTradeType TradeType = GoodsReceiptTradeType.Domestic,
+    string? ImportFileNumber = null);
 
 public sealed record ManualGoodsReceiptResult(
     long Id, string DocumentNo, GoodsReceiptInitiationMode InitiationMode,

@@ -8,6 +8,8 @@ using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Application;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Location.Domain;
+using verii_wms_api_v2.Modules.NetsisRead.Application;
+using verii_wms_api_v2.Modules.NetsisRead.Application.Dtos;
 using verii_wms_api_v2.Modules.SteelReceipt.Domain;
 using verii_wms_api_v2.Modules.VehicleCheckIn.Domain;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
@@ -27,7 +29,8 @@ namespace verii_wms_api_v2.Modules.SteelReceipt.Application;
 
 public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsService grOperations,
     IGoodsReceiptErpPostingCoordinator erpPosting,
-    IStockMovementService stockMovement,IAuditLogWriter audit,ISteelReceiptAttachmentStorage attachmentStorage):ISteelReceiptService
+    IStockMovementService stockMovement,IAuditLogWriter audit,ISteelReceiptAttachmentStorage attachmentStorage,
+    INetsisImportOpenFileReader importOpenFileReader):ISteelReceiptService
 {
     private static readonly IReadOnlyDictionary<string,string> PlanSearchColumns=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase)
     {
@@ -344,10 +347,25 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
         var legacyTaskRequest=request.Mode==0;
         var mode=legacyTaskRequest?SteelReceiptConversionMode.Task:request.Mode;
         ValidateConversionMode(mode,request.AssignToAllActiveUsers,request.AssignedUserIds);
-
+        var importFileNumber=GoodsReceiptOperationsService.ValidateTradeClassification(
+            request.TradeType,request.ImportFileNumber);
+        var ids=request.LineIds.Where(x=>x>0).Distinct().ToArray();
+        if(request.TradeType==GoodsReceiptTradeType.Foreign)
+        {
+            var conversionStates=await Lines.Query()
+                .Where(x=>x.PlanId==planId&&ids.Contains(x.Id))
+                .Select(x=>x.ConversionStatus)
+                .ToListAsync(ct);
+            if(conversionStates.Count!=ids.Length
+                ||conversionStates.Any(x=>x!=SteelReceiptConversionStatus.Created))
+            {
+                var openFiles=await importOpenFileReader.GetImportOpenFilesAsync(ct);
+                ValidateOpenImportFile(importFileNumber!,openFiles);
+            }
+        }
         var converted=await uow.ExecuteInTransactionAsync<ConvertSteelReceiptResult>(async token=>{
             var plan=await Plans.Query(true).Include(x=>x.Lines).FirstOrDefaultAsync(x=>x.Id==planId,token)??throw AppException.NotFound("SAC planı bulunamadı.");
-            var ids=request.LineIds.Where(x=>x>0).Distinct().ToArray();var selected=plan.Lines.Where(x=>ids.Contains(x.Id)).OrderBy(x=>x.LineNo).ToList();
+            var selected=plan.Lines.Where(x=>ids.Contains(x.Id)).OrderBy(x=>x.LineNo).ToList();
             if(selected.Count==0||selected.Count!=ids.Length)throw AppException.BadRequest("Seçilen SAC satırlarından biri bulunamadı.");
             var (waybillNo,electronicWaybillNo)=ResolveConversionDocumentReference(
                 request.WaybillNo,request.ElectronicWaybillNo,plan.WaybillNo);
@@ -366,7 +384,8 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
                     ??throw AppException.Conflict("Bağlı mal kabul kaydı bulunamadı.");
                 if(!IsCompatibleReplay(
                     existingHeader,request.IdempotencyKey,mode,
-                    waybillNo,electronicWaybillNo,waybillDate))
+                    waybillNo,electronicWaybillNo,waybillDate,
+                    request.TradeType,importFileNumber))
                     throw AppException.Conflict("Levhalar daha önce farklı bir mal kabul isteğiyle aktarılmış.");
                 var existingTask=await uow.Repository<GoodsReceiptTask>().Query()
                     .FirstOrDefaultAsync(x=>x.GrHeaderId==existingHeader.Id,token);
@@ -399,7 +418,8 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
                 mode==SteelReceiptConversionMode.Direct?GoodsReceiptLabelStrategy.GenerateOnReceipt:GoodsReceiptLabelStrategy.PreGenerate,
                 legacyTaskRequest?GoodsReceiptExecutionMode.Import:GoodsReceiptExecutionMode.Manual,
                 request.Priority,null,Clean(request.Description,1000),assignedUserIds,
-                selected.Select(BuildManualGoodsReceiptLineForConvert).ToList());
+                selected.Select(BuildManualGoodsReceiptLineForConvert).ToList(),
+                TradeType:request.TradeType,ImportFileNumber:importFileNumber);
             var result=mode==SteelReceiptConversionMode.Direct
                 ?await grOperations.CreateDirectReceiptDeferredErpAsync(manual,actor,qualityAlreadyApproved:true,token)
                 :await grOperations.CreateOrderlessTaskAsync(manual,actor,token);
@@ -412,7 +432,7 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
                 selected[i].ConversionStatus=SteelReceiptConversionStatus.Created;selected[i].UpdatedBy=actor;selected[i].UpdatedDate=DateTime.UtcNow;}
             await RefreshPlanAsync(plan,token);await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("steel-receipt.convert",nameof(SteelReceiptPlan),plan.Id.ToString(),"Succeeded","steel-receipt",
-                NewValues:new{result.Id,result.DocumentNo,Mode=mode,LineIds=ids},ChangedFields:["GoodsReceipt","ConversionStatus"]),token);
+                NewValues:new{result.Id,result.DocumentNo,Mode=mode,request.TradeType,ImportFileNumber=importFileNumber,LineIds=ids},ChangedFields:["GoodsReceipt","ConversionStatus"]),token);
             return new(result.Id,result.DocumentNo,result.TaskId,result.TaskNo,result.ExecutionId,result.StockMovementOperationId,
                 result.GeneratedLabelIds,selected.Count,selected.Sum(x=>x.ApprovedQuantity),mode,result.Replayed);
         },ct,IsolationLevel.Serializable);
@@ -739,7 +759,9 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
         SteelReceiptConversionMode mode,
         string? waybillNo,
         string? electronicWaybillNo,
-        DateOnly? waybillDate)
+        DateOnly? waybillDate,
+        GoodsReceiptTradeType tradeType,
+        string? importFileNumber)
     {
         var expectedInitiation=mode==SteelReceiptConversionMode.Direct
             ?GoodsReceiptInitiationMode.DirectReceipt:GoodsReceiptInitiationMode.UnplannedTask;
@@ -747,7 +769,19 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
             &&existingHeader.InitiationMode==expectedInitiation
             &&existingHeader.WaybillNo==waybillNo
             &&existingHeader.ElectronicWaybillNo==electronicWaybillNo
-            &&existingHeader.WaybillDate==waybillDate;
+            &&existingHeader.WaybillDate==waybillDate
+            &&existingHeader.TradeType==tradeType
+            &&existingHeader.ImportFileNumber==importFileNumber;
+    }
+
+    internal static void ValidateOpenImportFile(
+        string importFileNumber,
+        IReadOnlyCollection<NetsisImportOpenFileDto> openFiles)
+    {
+        if(!openFiles.Any(x=>string.Equals(
+               x.FileNumber.Trim(),importFileNumber,StringComparison.OrdinalIgnoreCase)))
+            throw AppException.Conflict(
+                "Seçilen ithalat dosyası artık açık değildir. Listeyi yenileyip tekrar seçiniz.");
     }
 
     internal static (string? WaybillNo,string? ElectronicWaybillNo) ResolveConversionDocumentReference(

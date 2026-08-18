@@ -741,6 +741,7 @@ public sealed class GoodsReceiptOperationsService(
                 ReceivedAtUtc = direct ? now : null, ReceivedBy = direct ? actor : null,
                 WaybillNo = waybillNo, WaybillDate = request.WaybillDate,
                 ElectronicWaybillNo = electronicWaybillNo, ShipmentReferenceNo = Clean(request.ShipmentReferenceNo, 100),
+                TradeType = request.TradeType, ImportFileNumber = Clean(request.ImportFileNumber, 20),
                 CarrierCode = Clean(request.CarrierCode, 50), CarrierName = Clean(request.CarrierName, 200),
                 VehiclePlate = Clean(request.VehiclePlate, 20), TrailerPlate = Clean(request.TrailerPlate, 20),
                 DriverName = Clean(request.DriverName, 150), SealNo = Clean(request.SealNo, 50),
@@ -1027,6 +1028,23 @@ public sealed class GoodsReceiptOperationsService(
             throw AppException.BadRequest("Normal irsaliye numarası semboller dahil tam 15 karakter olmalıdır.");
         if (electronicWaybillNo is not null && !PurchaseWaybillNumberPolicy.IsValid(electronicWaybillNo))
             throw AppException.BadRequest("E-irsaliye / GİB numarası semboller dahil tam 15 karakter olmalıdır.");
+        ValidateTradeClassification(request.TradeType, request.ImportFileNumber);
+    }
+
+    internal static string? ValidateTradeClassification(
+        GoodsReceiptTradeType tradeType,
+        string? importFileNumber)
+    {
+        if (!Enum.IsDefined(tradeType))
+            throw AppException.BadRequest("Geçersiz ERP ticaret tipi.");
+
+        var normalizedFileNumber = Clean(importFileNumber, 20);
+        if (tradeType == GoodsReceiptTradeType.Foreign && normalizedFileNumber is null)
+            throw AppException.BadRequest("Yurt dışı mal kabulünde açık ithalat dosyası seçimi zorunludur.");
+        if (tradeType == GoodsReceiptTradeType.Domestic && normalizedFileNumber is not null)
+            throw AppException.BadRequest("Yurt içi mal kabulünde ithalat dosyası gönderilemez.");
+
+        return normalizedFileNumber;
     }
 
     internal static CreateManualGoodsReceiptRequest ApplyUnplannedDefaults(

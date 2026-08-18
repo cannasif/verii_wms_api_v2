@@ -2,7 +2,12 @@ using verii_wms_api_v2.Modules.NetsisRead.Application.Dtos;
 
 namespace verii_wms_api_v2.Modules.NetsisRead.Application;
 
-public interface INetsisReadService
+public interface INetsisImportOpenFileReader
+{
+    Task<IReadOnlyList<NetsisImportOpenFileDto>> GetImportOpenFilesAsync(CancellationToken cancellationToken);
+}
+
+public interface INetsisReadService : INetsisImportOpenFileReader
 {
     Task<IReadOnlyList<BranchDto>> GetBranchesAsync(int? branchNo, CancellationToken cancellationToken);
     Task<IReadOnlyList<WarehouseDto>> GetWarehousesAsync(short? warehouseCode, int? branchCode, CancellationToken cancellationToken);
@@ -12,7 +17,6 @@ public interface INetsisReadService
         int branchCode,
         CancellationToken cancellationToken);
     Task<IReadOnlyList<NetsisStockBalanceDto>> GetStockBalancesAsync(short? warehouseCode, string? stockCode, CancellationToken cancellationToken);
-    Task<IReadOnlyList<NetsisImportOpenFileDto>> GetImportOpenFilesAsync(CancellationToken cancellationToken);
     Task<IReadOnlyList<CustomerDto>> GetCustomersAsync(string? customerCode, int? branchCode, CancellationToken cancellationToken);
     Task<IReadOnlyList<ConfigurationCodeDto>> GetConfigurationCodesAsync(string? search, int? branchCode, CancellationToken cancellationToken);
     Task<IReadOnlyList<GoodsReceiptOpenOrderHeaderDto>> GetGoodsReceiptOpenOrderHeadersAsync(string customerCode, string? branchCode, CancellationToken cancellationToken);
