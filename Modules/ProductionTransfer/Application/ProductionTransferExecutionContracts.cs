@@ -189,6 +189,7 @@ public sealed record ProductionTransferExecutionDto(
 
 public sealed record ProductionTransferScanPickResult(
     ProductionTransferPickingRowDto Row,
+    IReadOnlyList<ProductionTransferPickingRowDto> Rows,
     ProductionTransferScanPickSummaryDelta Summary,
     ProductionTransferScanPickExecutionLineDelta ExecutionLine,
     long LineId,

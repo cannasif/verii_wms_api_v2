@@ -35,6 +35,60 @@ public sealed class ProductionTransferPickingBalanceSupportTests
     }
 
     [Fact]
+    public void ResolvePickableQuantity_prefers_line_reservation_over_available_quantity()
+    {
+        var line = new WarehouseTransferLine
+        {
+            StockId = 13,
+            UnitCode = "ADET",
+            DefaultSourceLocationId = 5,
+            ReservedQuantity = 15,
+        };
+
+        var balance = new LocationStockBalance
+        {
+            LocationId = 5,
+            StockId = 13,
+            UnitCode = "ADET",
+            Quantity = 20,
+            ReservedQuantity = 15,
+            AvailableQuantity = 5,
+            StockStatus = "Available",
+        };
+
+        var pickable = ProductionTransferPickingBalanceSupport.ResolvePickableQuantity(line, 5, balance);
+
+        Assert.Equal(15, pickable);
+    }
+
+    [Fact]
+    public void ResolvePickableQuantity_falls_back_to_available_when_line_is_not_reserved()
+    {
+        var line = new WarehouseTransferLine
+        {
+            StockId = 13,
+            UnitCode = "ADET",
+            DefaultSourceLocationId = 5,
+            ReservedQuantity = 0,
+        };
+
+        var balance = new LocationStockBalance
+        {
+            LocationId = 5,
+            StockId = 13,
+            UnitCode = "ADET",
+            Quantity = 8,
+            ReservedQuantity = 0,
+            AvailableQuantity = 5,
+            StockStatus = "Available",
+        };
+
+        var pickable = ProductionTransferPickingBalanceSupport.ResolvePickableQuantity(line, 5, balance);
+
+        Assert.Equal(5, pickable);
+    }
+
+    [Fact]
     public void ResolvePickableQuantity_uses_tracking_reservation_for_serial_line()
     {
         var line = new WarehouseTransferLine

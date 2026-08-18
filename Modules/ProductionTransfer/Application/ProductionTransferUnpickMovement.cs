@@ -160,9 +160,12 @@ internal static class ProductionTransferUnpickMovement
     }
 
     internal static WarehouseTransferTaskLine ReopenTransferredQuantityInActiveTask(
+        WarehouseTransferHeader header,
+        ProductionTransferHeaderLink link,
         WarehouseTransferTask activeTask,
         WarehouseTransferTaskLine sourceTaskLine,
         WarehouseTransferLine line,
+        ProductionTransferLineLink lineLink,
         decimal quantity,
         long sourceLocationId,
         long actor,
@@ -172,6 +175,26 @@ internal static class ProductionTransferUnpickMovement
             throw AppException.BadRequest("Aktif göreve aktarılacak miktar geçersiz.");
 
         var hasSerialTrackings = line.TrackingType is StockTrackingType.Serial or StockTrackingType.LotAndSerial;
+        if (!hasSerialTrackings
+            && ProductionTransferLineSplitHelper.TryMergeUnpickedQuantityAtLocation(
+                header,
+                link,
+                activeTask,
+                lineLink,
+                line,
+                sourceLocationId,
+                quantity,
+                excludePickedWtLineId: line.Id,
+                actor,
+                utcNow,
+                out var mergedTaskLine)
+            && mergedTaskLine is not null)
+        {
+            activeTask.UpdatedBy = actor;
+            activeTask.UpdatedDate = utcNow;
+            return mergedTaskLine;
+        }
+
         var targetTaskLine = activeTask.Lines
             .Where(x => !x.IsDeleted && x.WtLineId == sourceTaskLine.WtLineId)
             .Where(x => hasSerialTrackings

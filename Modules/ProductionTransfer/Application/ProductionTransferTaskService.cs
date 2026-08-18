@@ -1262,7 +1262,8 @@ public sealed class ProductionTransferTaskService(
         var context = await ProductionTransferPickingSupport.LoadBalanceContextAsync(
             uow, header, movable.Select(x => x.Line), ct);
         var utcNow = DateTime.UtcNow;
-        var nextLineNo = header.Lines.Max(x => x.LineNo);
+        var nextLineNo = await ProductionTransferLineSplitHelper.ResolveNextLineNoAnchorAsync(
+            uow, header, ct);
 
         foreach (var taskLine in movable)
         {

@@ -11,6 +11,20 @@ namespace verii_wms_api_v2.tests.QueryTests;
 public sealed class ProductionTransferLineSplitHelperTests
 {
     [Fact]
+    public void ResolveNextLineNoAnchor_uses_persisted_max_including_deleted_line_numbers()
+    {
+        var activeLines = new[]
+        {
+            new WarehouseTransferLine { LineNo = 1 },
+        };
+
+        Assert.Equal(2, ProductionTransferLineSplitHelper.ResolveNextLineNoAnchor(activeLines, persistedMax: 2));
+        Assert.Equal(1, ProductionTransferLineSplitHelper.ResolveNextLineNoAnchor(activeLines, persistedMax: 0));
+        Assert.Equal(3, ProductionTransferLineSplitHelper.ResolveNextLineNoAnchor(
+            [new WarehouseTransferLine { LineNo = 3 }], persistedMax: 2));
+    }
+
+    [Fact]
     public void ConsolidateSameLocationOpenTaskLines_merges_same_stock_on_same_shelf()
     {
         var link = new ProductionTransferHeaderLink
@@ -96,6 +110,99 @@ public sealed class ProductionTransferLineSplitHelperTests
         var mergedTaskLine = task.Lines.Single(x => x.WtLineId == 11);
         Assert.True(mergedTaskLine.IsDeleted);
         Assert.Equal(3, mergedTaskLine.PlannedQuantity);
+    }
+
+    [Fact]
+    public void ConsolidateSameLocationPickedTaskLines_merges_fully_picked_rows_on_same_shelf()
+    {
+        var link = new ProductionTransferHeaderLink
+        {
+            Lines =
+            [
+                new()
+                {
+                    WarehouseTransferLineId = 10,
+                    ProductionConsumptionId = 100,
+                    RequirementReference = "REQ-1",
+                    RequiredQuantity = 2,
+                },
+                new()
+                {
+                    WarehouseTransferLineId = 11,
+                    ProductionConsumptionId = 100,
+                    RequirementReference = "REQ-1",
+                    RequiredQuantity = 2,
+                },
+            ],
+        };
+        const long a1 = 68;
+        var pickedLineA = new WarehouseTransferLine
+        {
+            Id = 10,
+            LineNo = 1,
+            StockId = 13,
+            UnitCode = "ADET",
+            DefaultSourceLocationId = a1,
+            RequestedQuantity = 2,
+            PickedQuantity = 2,
+            Trackings = [],
+        };
+        var pickedLineB = new WarehouseTransferLine
+        {
+            Id = 11,
+            LineNo = 2,
+            StockId = 13,
+            UnitCode = "ADET",
+            DefaultSourceLocationId = a1,
+            RequestedQuantity = 2,
+            PickedQuantity = 2,
+            Trackings = [],
+        };
+        var header = new WarehouseTransferHeader { Lines = [pickedLineA, pickedLineB] };
+        var task = new WarehouseTransferTask
+        {
+            Lines =
+            [
+                new()
+                {
+                    Id = 100,
+                    WtLineId = 10,
+                    Line = pickedLineA,
+                    PlannedQuantity = 2,
+                    ProcessedQuantity = 2,
+                    SourceLocationId = a1,
+                },
+                new()
+                {
+                    Id = 101,
+                    WtLineId = 11,
+                    Line = pickedLineB,
+                    PlannedQuantity = 2,
+                    ProcessedQuantity = 2,
+                    SourceLocationId = a1,
+                },
+            ],
+        };
+
+        var (keeperTaskLineId, keeperLineId) = ProductionTransferLineSplitHelper.ConsolidateSameLocationPickedTaskLines(
+            header,
+            link,
+            task,
+            actor: 1,
+            utcNow: DateTime.UtcNow,
+            focusTaskLineId: 101,
+            focusLineId: 11);
+
+        Assert.Equal(100, keeperTaskLineId);
+        Assert.Equal(10, keeperLineId);
+        var activeTaskLines = task.Lines.Where(x => !x.IsDeleted).ToArray();
+        Assert.Single(activeTaskLines);
+        Assert.Equal(4, activeTaskLines[0].PlannedQuantity);
+        Assert.Equal(4, activeTaskLines[0].ProcessedQuantity);
+        Assert.Equal(4, pickedLineA.RequestedQuantity);
+        Assert.Equal(4, pickedLineA.PickedQuantity);
+        Assert.True(pickedLineB.IsDeleted);
+        Assert.True(link.Lines.Single(x => x.WarehouseTransferLineId == 11).IsDeleted);
     }
 
     [Fact]
