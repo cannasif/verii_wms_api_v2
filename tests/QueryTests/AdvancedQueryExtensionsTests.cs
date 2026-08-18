@@ -169,7 +169,7 @@ public sealed class AdvancedQueryExtensionsTests
     }
 
     [Fact]
-    public void Turkish_case_insensitive_search_collation_translates_to_sql_server()
+    public void Sql_search_leaves_selected_text_column_unwrapped()
     {
         using var db = SqlServerContext();
         var query = db.Customers.Select(x => new CustomerSearchRow(x.Id, x.CustomerCode, x.CustomerName));
@@ -187,13 +187,14 @@ public sealed class AdvancedQueryExtensionsTests
         var sql = query.ApplySearch(
                 request,
                 columns,
-                ["code", "name"],
-                AdvancedQueryExtensions.TurkishCaseInsensitiveSearchCollation)
+                ["code", "name"])
             .ToQueryString();
 
-        Assert.Contains("COLLATE Turkish_100_CI_AI", sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("LIKE", sql, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("CustomerCode] COLLATE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("COLLATE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("REPLACE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("LOWER", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("CustomerCode] LIKE", sql, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]

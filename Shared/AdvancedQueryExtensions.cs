@@ -10,11 +10,6 @@ namespace verii_wms_api_v2.Shared;
 
 public static class AdvancedQueryExtensions
 {
-    public const string TurkishCaseInsensitiveSearchCollation = "Turkish_100_CI_AI";
-
-    public static IReadOnlyList<string> TurkishSearchVariants(string term) =>
-        BuildStringSearchVariants(term ?? string.Empty, TurkishCaseInsensitiveSearchCollation).ToArray();
-
     private const int MaximumFilterCount = 20;
     private const int MaximumSearchFieldCount = 12;
     private const int MaximumSearchTermCount = 10;
@@ -32,8 +27,7 @@ public static class AdvancedQueryExtensions
         this IQueryable<T> query,
         PagedRequest request,
         IReadOnlyDictionary<string, string> columnMapping,
-        IReadOnlyCollection<string>? defaultColumns = null,
-        string? stringCollation = null)
+        IReadOnlyCollection<string>? defaultColumns = null)
     {
         ArgumentNullException.ThrowIfNull(query);
         ArgumentNullException.ThrowIfNull(request);
@@ -90,7 +84,7 @@ public static class AdvancedQueryExtensions
             Expression? anyColumn = null;
             foreach (var member in members)
             {
-                var current = BuildGeneralSearchMatch(member, term, stringCollation, useSqlPattern);
+                var current = BuildGeneralSearchMatch(member, term, useSqlPattern);
                 if (current is null) continue;
                 anyColumn = anyColumn is null ? current : Expression.OrElse(anyColumn, current);
             }
@@ -131,7 +125,6 @@ public static class AdvancedQueryExtensions
     private static Expression? BuildGeneralSearchMatch(
         Expression member,
         string term,
-        string? stringCollation,
         bool useSqlPattern)
     {
         var propertyType = member.Type;
@@ -139,22 +132,13 @@ public static class AdvancedQueryExtensions
         if (underlying == typeof(string))
         {
             var notNull = Expression.NotEqual(member, Expression.Constant(null, typeof(string)));
-            var searchTarget = string.IsNullOrWhiteSpace(stringCollation)
-                ? member
-                : Expression.Call(
-                    typeof(RelationalDbFunctionsExtensions),
-                    nameof(RelationalDbFunctionsExtensions.Collate),
-                    [typeof(string)],
-                    Expression.Property(null, typeof(EF), nameof(EF.Functions)),
-                    member,
-                    Expression.Constant(stringCollation));
             var contains = useSqlPattern
                 ? Expression.Call(
                     typeof(DbFunctionsExtensions),
                     nameof(DbFunctionsExtensions.Like),
                     Type.EmptyTypes,
                     Expression.Property(null, typeof(EF), nameof(EF.Functions)),
-                    searchTarget,
+                    member,
                     Expression.Constant(AsciiTurkishSearch.BuildContainsPattern(term)),
                     Expression.Constant(AsciiTurkishSearch.LikeEscapeCharacter))
                 : Expression.Call(
@@ -180,27 +164,6 @@ public static class AdvancedQueryExtensions
         var equals = Expression.Equal(valueMember, Expression.Constant(parsed, underlying));
         return hasValue is null ? equals : Expression.AndAlso(hasValue, equals);
     }
-
-    private static IReadOnlyCollection<string> BuildStringSearchVariants(string term, string? stringCollation)
-    {
-        var trimmed = term.Trim();
-        if (string.IsNullOrWhiteSpace(stringCollation)
-            || !string.Equals(stringCollation, TurkishCaseInsensitiveSearchCollation, StringComparison.OrdinalIgnoreCase)
-            || !trimmed.Any(IsTurkishIVariant))
-            return [trimmed];
-
-        // Turkish collation doğru olarak i/İ ile ı/I çiftlerini birbirinden ayırır.
-        // WMS kullanıcıları ERP kodlarında Türkçe ve ASCII klavyeyi karışık kullandığı
-        // için iki meşru yazımı da aratırız; tek bir yazıma zorlayıp veri kaçırmayız.
-        var dotted = string.Concat(trimmed.Select(character => IsTurkishIVariant(character) ? 'i' : character));
-        var dotless = string.Concat(trimmed.Select(character => IsTurkishIVariant(character) ? 'ı' : character));
-        return new[] { trimmed, dotted, dotless }
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-    }
-
-    private static bool IsTurkishIVariant(char character) =>
-        character is 'i' or 'İ' or 'ı' or 'I';
 
     private static bool TryParseGeneralSearchValue(string term, Type targetType, out object? parsed)
     {
