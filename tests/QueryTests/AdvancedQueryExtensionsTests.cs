@@ -219,7 +219,7 @@ public sealed class AdvancedQueryExtensionsTests
                 ["code", "name"])
             .ToQueryString();
 
-        Assert.Equal(2, CountOccurrences(sql, "[iı]"));
+        Assert.Equal(2, CountOccurrences(sql, "[iıî]"));
         Assert.Equal(2, CountOccurrences(sql, "[sş]"));
         Assert.Equal(1, CountOccurrences(sql, " LIKE "));
         Assert.DoesNotContain(" OR ", sql, StringComparison.OrdinalIgnoreCase);
@@ -234,6 +234,8 @@ public sealed class AdvancedQueryExtensionsTests
     [InlineData("isik", "ışık")]
     [InlineData("SUBE", "şube")]
     [InlineData("alisveris", "ALIŞVERİŞ")]
+    [InlineData("kar", "kâr")]
+    [InlineData("sukunet", "sükûnet")]
     public void Ascii_turkish_client_fallback_matches_equivalent_text(string search, string stored)
     {
         var request = new PagedRequest { Search = search, SearchFields = ["name"] };
@@ -265,7 +267,7 @@ public sealed class AdvancedQueryExtensionsTests
         Assert.Contains("CustomerName", sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("CustomerCode] LIKE", sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("[cç]", sql, StringComparison.Ordinal);
-        Assert.Contains("[iı]", sql, StringComparison.Ordinal);
+        Assert.Contains("[iıî]", sql, StringComparison.Ordinal);
         Assert.Contains(" AND ", sql, StringComparison.OrdinalIgnoreCase);
     }
 

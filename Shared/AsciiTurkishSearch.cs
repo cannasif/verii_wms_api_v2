@@ -47,12 +47,13 @@ internal static class AsciiTurkishSearch
     {
         switch (character)
         {
+            case 'a' or 'A' or 'â' or 'Â': pattern.Append("[aâ]"); return;
             case 'c' or 'C' or 'ç' or 'Ç': pattern.Append("[cç]"); return;
             case 'g' or 'G' or 'ğ' or 'Ğ': pattern.Append("[gğ]"); return;
-            case 'i' or 'I' or 'İ' or 'ı': pattern.Append("[iı]"); return;
+            case 'i' or 'I' or 'İ' or 'ı' or 'î' or 'Î': pattern.Append("[iıî]"); return;
             case 'o' or 'O' or 'ö' or 'Ö': pattern.Append("[oö]"); return;
             case 's' or 'S' or 'ş' or 'Ş': pattern.Append("[sş]"); return;
-            case 'u' or 'U' or 'ü' or 'Ü': pattern.Append("[uü]"); return;
+            case 'u' or 'U' or 'ü' or 'Ü' or 'û' or 'Û': pattern.Append("[uüû]"); return;
         }
 
         if (character is '%' or '_' or '[' or ']' or '^' or '\\')
