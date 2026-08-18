@@ -126,11 +126,10 @@ public sealed class ProductionTransferReturnMovementTests
     }
 
     [Fact]
-    public void ResolveReturnTaskLineLocations_uses_production_default_return_location_when_configured()
+    public void ResolveReturnTaskLineLocations_keeps_original_pick_source_when_production_default_exists()
     {
         const long stagingLocationId = 100;
         const long originalSourceLocationId = 200;
-        const long productionReturnLocationId = 300;
         var header = new WarehouseTransferHeader { SourceStagingLocationId = stagingLocationId };
         var line = new WarehouseTransferLine
         {
@@ -142,10 +141,9 @@ public sealed class ProductionTransferReturnMovementTests
         var (staging, target) = ProductionTransferReturnMovement.ResolveReturnTaskLineLocations(
             header,
             line,
-            pickTaskLine,
-            productionReturnLocationId);
+            pickTaskLine);
 
         Assert.Equal(stagingLocationId, staging);
-        Assert.Equal(productionReturnLocationId, target);
+        Assert.Equal(originalSourceLocationId, target);
     }
 }

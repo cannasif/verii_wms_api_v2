@@ -113,6 +113,78 @@ public sealed class ProductionTransferLineSplitHelperTests
     }
 
     [Fact]
+    public void Full_unpick_of_three_completed_lines_to_same_shelf_merges_open_rows()
+    {
+        const long shelfA = 1;
+        const long shelfB = 2;
+        const long shelfC = 3;
+        const long targetShelf = 10;
+        var link = new ProductionTransferHeaderLink
+        {
+            Lines =
+            [
+                new() { WarehouseTransferLineId = 10, ProductionConsumptionId = 100, RequirementReference = "REQ-1", RequiredQuantity = 2 },
+                new() { WarehouseTransferLineId = 11, ProductionConsumptionId = 100, RequirementReference = "REQ-1", RequiredQuantity = 3 },
+                new() { WarehouseTransferLineId = 12, ProductionConsumptionId = 100, RequirementReference = "REQ-1", RequiredQuantity = 5 },
+            ],
+        };
+        var lineA = new WarehouseTransferLine
+        {
+            Id = 10, LineNo = 1, StockId = 13, UnitCode = "ADET",
+            DefaultSourceLocationId = shelfA, RequestedQuantity = 2, PickedQuantity = 2, Trackings = [],
+        };
+        var lineB = new WarehouseTransferLine
+        {
+            Id = 11, LineNo = 2, StockId = 13, UnitCode = "ADET",
+            DefaultSourceLocationId = shelfB, RequestedQuantity = 3, PickedQuantity = 3, Trackings = [],
+        };
+        var lineC = new WarehouseTransferLine
+        {
+            Id = 12, LineNo = 3, StockId = 13, UnitCode = "ADET",
+            DefaultSourceLocationId = shelfC, RequestedQuantity = 5, PickedQuantity = 5, Trackings = [],
+        };
+        var header = new WarehouseTransferHeader { Lines = [lineA, lineB, lineC] };
+        var taskLineA = new WarehouseTransferTaskLine
+        {
+            Id = 100, WtLineId = 10, Line = lineA, PlannedQuantity = 2, ProcessedQuantity = 2, SourceLocationId = shelfA,
+        };
+        var taskLineB = new WarehouseTransferTaskLine
+        {
+            Id = 101, WtLineId = 11, Line = lineB, PlannedQuantity = 3, ProcessedQuantity = 3, SourceLocationId = shelfB,
+        };
+        var taskLineC = new WarehouseTransferTaskLine
+        {
+            Id = 102, WtLineId = 12, Line = lineC, PlannedQuantity = 5, ProcessedQuantity = 5, SourceLocationId = shelfC,
+        };
+        var task = new WarehouseTransferTask { Lines = [taskLineA, taskLineB, taskLineC] };
+        var utcNow = DateTime.UtcNow;
+
+        foreach (var (line, taskLine, quantity) in new[]
+                 {
+                     (lineA, taskLineA, 2m),
+                     (lineB, taskLineB, 3m),
+                     (lineC, taskLineC, 5m),
+                 })
+        {
+            ProductionTransferUnpickMovement.ApplyUnpickedQuantities(line, taskLine, quantity, serialNo: null, actor: 1, utcNow);
+            ProductionTransferUnpickMovement.ApplyUnpickedRouteLocations(line, taskLine, targetShelf, serialNo: null, actor: 1, utcNow);
+            ProductionTransferLineSplitHelper.ConsolidateSameLocationOpenTaskLines(header, link, task, actor: 1, utcNow);
+        }
+
+        var activeTaskLines = task.Lines.Where(x => !x.IsDeleted).ToArray();
+        Assert.Single(activeTaskLines);
+        Assert.Equal(10, activeTaskLines[0].PlannedQuantity);
+        Assert.Equal(0, activeTaskLines[0].ProcessedQuantity);
+        Assert.Equal(targetShelf, activeTaskLines[0].SourceLocationId);
+        Assert.Equal(10, lineA.RequestedQuantity);
+        Assert.Equal(0, lineA.PickedQuantity);
+        Assert.True(lineB.IsDeleted);
+        Assert.True(lineC.IsDeleted);
+        Assert.True(link.Lines.Single(x => x.WarehouseTransferLineId == 11).IsDeleted);
+        Assert.True(link.Lines.Single(x => x.WarehouseTransferLineId == 12).IsDeleted);
+    }
+
+    [Fact]
     public void ConsolidateSameLocationPickedTaskLines_merges_fully_picked_rows_on_same_shelf()
     {
         var link = new ProductionTransferHeaderLink
@@ -273,6 +345,76 @@ public sealed class ProductionTransferLineSplitHelperTests
         var siblingTaskLine = task.Lines.Single(x => x.WtLineId == sibling.Id);
         Assert.Equal(2, siblingTaskLine.PlannedQuantity);
         Assert.Equal(a2, siblingTaskLine.SourceLocationId);
+    }
+
+    [Fact]
+    public void ApplyNonSerialRouteChunks_keeps_unlocated_shortage_when_partially_routed()
+    {
+        const long a1 = 1;
+        var link = new ProductionTransferHeaderLink
+        {
+            Lines =
+            [
+                new()
+                {
+                    WarehouseTransferLineId = 10,
+                    ProductionConsumptionId = 100,
+                    RequirementReference = "REQ-1",
+                    RequiredQuantity = 5,
+                },
+            ],
+        };
+        var line = new WarehouseTransferLine
+        {
+            Id = 10,
+            LineNo = 1,
+            StockId = 13,
+            UnitCode = "ADET",
+            DefaultSourceLocationId = null,
+            RequestedQuantity = 5,
+            Trackings = [],
+        };
+        var header = new WarehouseTransferHeader { Lines = [line] };
+        var taskLine = new WarehouseTransferTaskLine
+        {
+            Id = 100,
+            WtLineId = 10,
+            Line = line,
+            PlannedQuantity = 5,
+            ProcessedQuantity = 0,
+            SourceLocationId = null,
+        };
+        var task = new WarehouseTransferTask { Lines = [taskLine] };
+        var sourceLineLink = link.Lines.First();
+        var nextLineNo = 1;
+        var chunks = ProductionTransferRouteAllocation.BuildRouteRefreshSplitChunks(
+            5,
+            currentSourceLocationId: null,
+            [new RouteAllocationChunk(a1, 3, null, null)]);
+
+        ProductionTransferLineSplitHelper.ApplyNonSerialRouteChunks(
+            header,
+            link,
+            task,
+            taskLine,
+            line,
+            sourceLineLink,
+            chunks,
+            ref nextLineNo,
+            actor: 1,
+            utcNow: DateTime.UtcNow,
+            allowShortageWithoutLocation: true);
+
+        Assert.Equal(a1, line.DefaultSourceLocationId);
+        Assert.Equal(3, line.RequestedQuantity);
+        Assert.Equal(3, taskLine.PlannedQuantity);
+        Assert.Equal(a1, taskLine.SourceLocationId);
+        var shortage = header.Lines.Single(x => x.Id != 10);
+        Assert.Null(shortage.DefaultSourceLocationId);
+        Assert.Equal(2, shortage.RequestedQuantity);
+        var shortageTaskLine = task.Lines.Single(x => x.WtLineId == shortage.Id);
+        Assert.Equal(2, shortageTaskLine.PlannedQuantity);
+        Assert.Null(shortageTaskLine.SourceLocationId);
     }
 
     [Fact]

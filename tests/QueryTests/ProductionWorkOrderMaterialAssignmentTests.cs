@@ -313,6 +313,91 @@ public sealed class ProductionWorkOrderMaterialAssignmentTests
     }
 
     [Fact]
+    public void BuildKalanOpenMaterials_merges_same_stock_and_requirement_split_across_task_lines()
+    {
+        var firstLine = new WarehouseTransferLine
+        {
+            Id = 10,
+            StockId = 13,
+            YapCodeId = 10,
+            UnitCode = "ADET",
+        };
+        var secondLine = new WarehouseTransferLine
+        {
+            Id = 11,
+            StockId = 13,
+            YapCodeId = 10,
+            UnitCode = "adet",
+        };
+        var otherLine = new WarehouseTransferLine
+        {
+            Id = 12,
+            StockId = 99,
+            YapCodeId = 10,
+            UnitCode = "ADET",
+        };
+        var link = new ProductionTransferHeaderLink
+        {
+            Lines =
+            [
+                new ProductionTransferLineLink
+                {
+                    IsDeleted = false,
+                    WarehouseTransferLineId = 10,
+                    RequirementReference = "IE-100#100",
+                },
+                new ProductionTransferLineLink
+                {
+                    IsDeleted = false,
+                    WarehouseTransferLineId = 11,
+                    RequirementReference = "IE-100#100",
+                },
+                new ProductionTransferLineLink
+                {
+                    IsDeleted = false,
+                    WarehouseTransferLineId = 12,
+                    RequirementReference = "IE-100#100",
+                },
+            ],
+        };
+        var kalanTask = new WarehouseTransferTask
+        {
+            Lines =
+            [
+                new WarehouseTransferTaskLine
+                {
+                    IsDeleted = false,
+                    Line = firstLine,
+                    PlannedQuantity = 5,
+                    ProcessedQuantity = 0,
+                },
+                new WarehouseTransferTaskLine
+                {
+                    IsDeleted = false,
+                    Line = secondLine,
+                    PlannedQuantity = 3,
+                    ProcessedQuantity = 0,
+                },
+                new WarehouseTransferTaskLine
+                {
+                    IsDeleted = false,
+                    Line = otherLine,
+                    PlannedQuantity = 2,
+                    ProcessedQuantity = 0,
+                },
+            ],
+        };
+
+        var materials = ProductionWorkOrderMaterialAssignment.BuildKalanOpenMaterials(link, kalanTask);
+
+        Assert.Equal(2, materials.Count);
+        Assert.Equal(13, materials[0].StockId);
+        Assert.Equal(8, materials[0].RequiredQuantity);
+        Assert.Equal(99, materials[1].StockId);
+        Assert.Equal(2, materials[1].RequiredQuantity);
+    }
+
+    [Fact]
     public void IsFullyAssigned_requires_all_kalan_materials_not_source_transfer_only()
     {
         var kalanMaterials = new List<PreparedNetsisProductionMaterial>

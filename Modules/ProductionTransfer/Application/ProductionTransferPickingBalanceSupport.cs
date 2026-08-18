@@ -68,6 +68,87 @@ internal static class ProductionTransferPickingBalanceSupport
         candidates.Any(x => x.LocationId == locationId && x.AvailableQuantity > 0)
         || ResolvePickableQuantity(line, locationId, reservedOnly: true) > 0;
 
+    /// <summary>
+    /// Rafsız: CanPick yalnızca kullanılabilir bakiye veya bu satırın rezervi varsa true.
+    /// Varsayılan sanal rafın atanmış olması yeterli değildir. Raflı depolara dokunmaz.
+    /// </summary>
+    internal static async Task<IReadOnlyList<ProductionTransferPickingRowDto>> ApplyRacklessCanPickIfNeededAsync(
+        IUnitOfWork uow,
+        WarehouseTransferHeader header,
+        IReadOnlyList<ProductionTransferPickingRowDto> rows,
+        CancellationToken ct)
+    {
+        if (rows.Count == 0) return rows;
+        if (!await ProductionTransferWarehouseRacklessSupport.IsRacklessAsync(uow, header.SourceWarehouseId, ct))
+            return rows;
+
+        var balances = await LoadBalancesForRowsAsync(uow, header, rows, ct);
+        return ApplyRacklessCanPick(header, rows, balances);
+    }
+
+    internal static IReadOnlyList<ProductionTransferPickingRowDto> ApplyRacklessCanPick(
+        WarehouseTransferHeader header,
+        IReadOnlyList<ProductionTransferPickingRowDto> rows,
+        IReadOnlyList<LocationStockBalance> balances)
+    {
+        if (rows.Count == 0) return rows;
+        var lineById = header.Lines.ToDictionary(x => x.Id);
+        var result = new ProductionTransferPickingRowDto[rows.Count];
+        for (var i = 0; i < rows.Count; i++)
+        {
+            var row = rows[i];
+            if (row.IsHistorical || row.RemainingQuantity <= 0 || !row.SourceLocationId.HasValue)
+            {
+                result[i] = row;
+                continue;
+            }
+
+            if (!lineById.TryGetValue(row.WtLineId, out var line))
+            {
+                result[i] = row with { CanPick = false };
+                continue;
+            }
+
+            var locationId = row.SourceLocationId.Value;
+            var matching = balances
+                .Where(balance =>
+                    balance.LocationId == locationId
+                    && balance.StockId == line.StockId
+                    && MatchesYapCode(line.YapCodeId, balance.YapCodeId)
+                    && string.Equals(balance.UnitCode, line.UnitCode, StringComparison.OrdinalIgnoreCase)
+                    && SameTrackingValue(balance.SerialNo, row.SerialNo))
+                .ToArray();
+            var canPick = matching.Any(balance => ResolvePickableQuantity(line, locationId, balance) > 0)
+                || (matching.Length == 0 && ResolvePickableQuantity(line, locationId, reservedOnly: true) > 0);
+            result[i] = row.CanPick == canPick ? row : row with { CanPick = canPick };
+        }
+
+        return result;
+    }
+
+    private static async Task<IReadOnlyList<LocationStockBalance>> LoadBalancesForRowsAsync(
+        IUnitOfWork uow,
+        WarehouseTransferHeader header,
+        IReadOnlyList<ProductionTransferPickingRowDto> rows,
+        CancellationToken ct)
+    {
+        var stockIds = rows.Select(x => x.StockId).Distinct().ToArray();
+        var locationIds = rows
+            .Where(x => x.SourceLocationId.HasValue)
+            .Select(x => x.SourceLocationId!.Value)
+            .Distinct()
+            .ToArray();
+        if (stockIds.Length == 0 || locationIds.Length == 0) return [];
+
+        return await uow.Repository<LocationStockBalance>().Query()
+            .Where(x => x.WarehouseId == header.SourceWarehouseId
+                && stockIds.Contains(x.StockId)
+                && locationIds.Contains(x.LocationId)
+                && x.StockStatus == "Available"
+                && x.Quantity > 0)
+            .ToListAsync(ct);
+    }
+
     internal static decimal ResolvePickableQuantity(
         WarehouseTransferLine line,
         long locationId,

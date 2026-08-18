@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using verii_wms_api_v2.Modules.Production.Application;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
@@ -8,6 +9,43 @@ namespace verii_wms_api_v2.Modules.ProductionTransfer.Application;
 
 internal static class ProductionTransferCancellationReturnRemainderSupport
 {
+    internal static bool HasNoPickedProgressForDraftLikeCancel(WarehouseTransferHeader header)
+    {
+        if (header.Status is WarehouseTransferStatus.Cancelled
+            or WarehouseTransferStatus.Completed
+            or WarehouseTransferStatus.CompletedWithShortage
+            or WarehouseTransferStatus.AwaitingHandover)
+            return false;
+
+        return !header.Lines.Any(line => !line.IsDeleted
+            && ProductionWorkOrderMaterialAssignment.ResolveEffectivePickedQuantity(line) > 0);
+    }
+
+    internal static void RevertZeroProgressHeaderToDraft(WarehouseTransferHeader header, long actor, DateTime utcNow)
+    {
+        if (header.Status == WarehouseTransferStatus.Draft)
+            return;
+
+        header.Status = WarehouseTransferStatus.Draft;
+        header.ReleasedAtUtc = null;
+        header.ReleasedBy = null;
+        header.UpdatedBy = actor;
+        header.UpdatedDate = utcNow;
+
+        foreach (var task in header.Tasks.Where(task => !task.IsDeleted
+                     && task.TaskType == WarehouseTransferTaskType.Pick
+                     && task.Status is not WarehouseTransferTaskStatus.Completed
+                         and not WarehouseTransferTaskStatus.Cancelled))
+        {
+            task.StartedAtUtc = null;
+            task.StartedBy = null;
+            task.AcceptedAtUtc = null;
+            task.AcceptedBy = null;
+            task.UpdatedBy = actor;
+            task.UpdatedDate = utcNow;
+        }
+    }
+
     public static Task ReleaseUnlinkedShortageRemainderToAtanmayanlarAsync(
         IUnitOfWork uow,
         IWarehouseTransferReservationService reservations,

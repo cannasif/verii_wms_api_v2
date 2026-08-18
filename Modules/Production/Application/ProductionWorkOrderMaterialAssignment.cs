@@ -352,6 +352,45 @@ public static class ProductionWorkOrderMaterialAssignment
                 null));
         }
 
-        return materials;
+        return ConsolidateSameRequirementMaterials(materials);
     }
+
+    /// <summary>
+    /// Atanmayanlar reçete/açıklama görünümü: aynı stok + aynı ihtiyaç satırlarını birleştirir.
+    /// Kayıtlı transfer/görev satırlarına dokunmaz.
+    /// </summary>
+    internal static IReadOnlyList<PreparedNetsisProductionMaterial> ConsolidateSameRequirementMaterials(
+        IReadOnlyList<PreparedNetsisProductionMaterial> materials)
+    {
+        if (materials.Count <= 1) return materials;
+
+        var grouped = new List<PreparedNetsisProductionMaterial>(materials.Count);
+        var indexByKey = new Dictionary<(ProductionRecipeMaterialKey Key, string UnitCode), int>();
+        foreach (var material in materials)
+        {
+            var key = (
+                CreateKey(material.StockId, material.YapCodeId, material.OperationNumber),
+                NormalizeUnitCode(material.UnitCode));
+            if (indexByKey.TryGetValue(key, out var index))
+            {
+                var current = grouped[index];
+                grouped[index] = current with
+                {
+                    RecipeQuantity = current.RecipeQuantity + material.RecipeQuantity,
+                    WasteQuantity = current.WasteQuantity + material.WasteQuantity,
+                    RequiredQuantity = current.RequiredQuantity + material.RequiredQuantity,
+                    MappingError = current.MappingError ?? material.MappingError,
+                };
+                continue;
+            }
+
+            indexByKey[key] = grouped.Count;
+            grouped.Add(material);
+        }
+
+        return grouped;
+    }
+
+    private static string NormalizeUnitCode(string? unitCode) =>
+        string.IsNullOrWhiteSpace(unitCode) ? "ADET" : unitCode.Trim().ToUpperInvariant();
 }

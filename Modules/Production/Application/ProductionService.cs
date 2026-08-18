@@ -1167,6 +1167,9 @@ public sealed partial class ProductionService(
                 stock is null ? $"Bileşen stok WMS ERP aynasında bulunamadı: {transferLine.StockId}" : null));
         }
 
+        kalanMaterials = ProductionWorkOrderMaterialAssignment
+            .ConsolidateSameRequirementMaterials(kalanMaterials)
+            .ToList();
         if (kalanMaterials.Count == 0)
             return new CancellationReturnRemainderMaterialSplit([], []);
 

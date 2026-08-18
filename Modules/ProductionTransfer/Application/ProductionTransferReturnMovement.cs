@@ -42,16 +42,11 @@ internal static class ProductionTransferReturnMovement
     internal static (long StagingLocationId, long TargetLocationId) ResolveReturnTaskLineLocations(
         WarehouseTransferHeader header,
         WarehouseTransferLine line,
-        WarehouseTransferTaskLine pickTaskLine,
-        long? defaultProductionReturnLocationId = null)
+        WarehouseTransferTaskLine pickTaskLine)
     {
         var stagingLocationId = ResolveStagingLocationId(header, line, pickTaskLine)
             ?? throw AppException.Conflict("Kaynak depo için üretim transfer bekleme rafı tanımlanmamış.");
-        // Üretim iade ayarı varsa görev bu rafla başlar; kullanıcı görev ekranında satır
-        // bazında farklı bir raf seçebilir. Ayar yoksa eski davranış korunur ve ürün
-        // toplandığı asıl rafa döner.
-        var targetLocationId = defaultProductionReturnLocationId
-            ?? ResolveReturnTargetLocationId(line, pickTaskLine)
+        var targetLocationId = ResolveReturnTargetLocationId(line, pickTaskLine)
             ?? throw AppException.Conflict($"{line.StockCodeSnapshot} için iade hedef rafı bulunamadı.");
         return (stagingLocationId, targetLocationId);
     }

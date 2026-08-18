@@ -221,6 +221,11 @@ public interface IProductionTransferExecutionService
         ApplyProductionTransferRouteRefreshSplitRequest request,
         long actor,
         CancellationToken ct = default);
+    Task<ProductionTransferPickingTableDto> RefreshRacklessBalanceSplitAsync(
+        long transferId,
+        long taskLineId,
+        long actor,
+        CancellationToken ct = default);
     Task<ProductionTransferPickingTableDto> UnpickToLocationAsync(
         long transferId,
         UnpickProductionTransferToLocationRequest request,

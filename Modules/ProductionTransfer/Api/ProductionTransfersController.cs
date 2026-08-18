@@ -107,6 +107,15 @@ public sealed class ProductionTransfersController(
     public async Task<IActionResult>ApplyRouteSplit(long id,long taskLineId,ApplyProductionTransferRouteRefreshSplitRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);
         return Ok(ApiResponse<ProductionTransferPickingTableDto>.Ok(await execution.ApplyRouteRefreshSplitAsync(id,taskLineId,request,UserId(),ct),"Toplama rotası güncellendi."));}
+    [HttpPost("{id:long}/task-lines/{taskLineId:long}/rackless-balance-split")]
+    public async Task<IActionResult> RefreshRacklessBalanceSplit(long id, long taskLineId, CancellationToken ct)
+    {
+        await Require("WMS.PRODUCTION_TRANSFER.OPERATE", ct);
+        await Ensure(id, ct);
+        return Ok(ApiResponse<ProductionTransferPickingTableDto>.Ok(
+            await execution.RefreshRacklessBalanceSplitAsync(id, taskLineId, UserId(), ct),
+            "Stok bakiyesi güncellendi."));
+    }
     [HttpPost("{id:long}/scan-pick")]
     public async Task<IActionResult>ScanPick(long id,ProductionTransferScanPickRequest request,CancellationToken ct){
         await Require("WMS.PRODUCTION_TRANSFER.OPERATE",ct);await Ensure(id,ct);

@@ -528,6 +528,8 @@ internal static class ProductionTransferPickingSupport
         var rows = currentRows
             .Concat(BuildHistoricalPickedRows(header, task, locationCodes))
             .ToArray();
+        rows = (await ProductionTransferPickingBalanceSupport.ApplyRacklessCanPickIfNeededAsync(
+            uow, header, rows, ct)).ToArray();
 
         return MapTable(
             header, link, task, isLocked, policy,

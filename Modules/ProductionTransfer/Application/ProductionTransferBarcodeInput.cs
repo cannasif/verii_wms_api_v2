@@ -113,7 +113,8 @@ internal static class ProductionTransferBarcodeInput
         return openRows.FirstOrDefault(x => x.RemainingQuantity > 0
             && !x.CanPick
             && string.IsNullOrWhiteSpace(x.SerialNo)
-            && SameStockCode(x.StockCode, input.Raw));
+            && (SameStockCode(x.StockCode, input.Raw)
+                || SameLocationCode(x.SourceLocationCode, input.Raw)));
     }
 
     internal static ProductionTransferPickingRowDto? FindUnavailableSerialRow(
@@ -289,6 +290,9 @@ internal static class ProductionTransferBarcodeInput
             string.IsNullOrWhiteSpace(left) ? null : left.Trim(),
             string.IsNullOrWhiteSpace(right) ? null : right.Trim(),
             StringComparison.OrdinalIgnoreCase);
+
+    private static bool SameLocationCode(string? left, string? right) =>
+        !string.IsNullOrWhiteSpace(left) && SameStockCode(left, right);
 
     private static bool SameTrackingValue(string? left, string? right) =>
         string.Equals(

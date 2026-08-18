@@ -142,6 +142,44 @@ public sealed class ProductionTransferBarcodeInputTests
     }
 
     [Fact]
+    public void EnsureResolvableBarcode_reports_missing_balance_when_assigned_location_is_not_pickable()
+    {
+        var openRows = new[]
+        {
+            new ProductionTransferPickingRowDto(
+                400, 20, 2, 26, "01/026", 19, "01/013", "Non serial", null, 3, 3, 0, false),
+        };
+
+        var error = Assert.Throws<AppException>(() =>
+            ProductionTransferBarcodeInput.EnsureResolvableBarcode(
+                ProductionTransferBarcodeInput.Parse("01/013"),
+                openRows,
+                openRows));
+
+        Assert.Contains("01/013", error.Message, StringComparison.Ordinal);
+        Assert.Contains("kullanılabilir stok bakiyesi bulunmuyor", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EnsureResolvableBarcode_reports_missing_balance_when_assigned_location_barcode_is_scanned()
+    {
+        var openRows = new[]
+        {
+            new ProductionTransferPickingRowDto(
+                400, 20, 2, 26, "01/026", 19, "01/013", "Non serial", null, 3, 3, 0, false),
+        };
+
+        var error = Assert.Throws<AppException>(() =>
+            ProductionTransferBarcodeInput.EnsureResolvableBarcode(
+                ProductionTransferBarcodeInput.Parse("01/026"),
+                openRows,
+                openRows));
+
+        Assert.Contains("01/013", error.Message, StringComparison.Ordinal);
+        Assert.Contains("kullanılabilir stok bakiyesi bulunmuyor", error.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void BuildResolveContext_returns_line_location_for_exact_serial_match()
     {
         var header = new WarehouseTransferHeader

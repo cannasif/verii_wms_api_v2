@@ -82,6 +82,8 @@ public sealed class ProductionTransferExecutionService(
             .Concat(ProductionTransferPickingSupport.BuildHistoricalPickedRows(
                 aggregate.Header, task, locationCodes))
             .ToArray();
+        rows = (await ProductionTransferPickingBalanceSupport.ApplyRacklessCanPickIfNeededAsync(
+            uow, aggregate.Header, rows, ct)).ToArray();
 
         return ProductionTransferPickingSupport.MapTable(
             aggregate.Header, aggregate.Link, task, isLocked,
@@ -624,8 +626,6 @@ public sealed class ProductionTransferExecutionService(
                 remaining,
                 currentSourceLocationId,
                 splits.Select(x => new RouteAllocationChunk(x.LocationId, x.Quantity, null, null)));
-            if (remaining - total > 0.000001m && !currentSourceLocationId.HasValue)
-                throw AppException.Conflict("Kalan miktar için mevcut kaynak rafı bulunamadı.");
             var nextLineNo = await ProductionTransferLineSplitHelper.ResolveNextLineNoAnchorAsync(
                 uow, aggregate.Header, token);
             await ReleaseTransferReservationsAsync(
@@ -646,7 +646,7 @@ public sealed class ProductionTransferExecutionService(
             {
                 ProductionTransferLineSplitHelper.ApplyNonSerialRouteChunks(
                     aggregate.Header, link, task, taskLine, line, sourceLineLink, chunks, ref nextLineNo, actor,
-                    splitUtcNow, allowShortageWithoutLocation: false);
+                    splitUtcNow, allowShortageWithoutLocation: true);
             }
             ProductionTransferLineSplitHelper.ConsolidateSameLocationOpenTaskLines(
                 aggregate.Header, link, task, actor, splitUtcNow);
@@ -659,6 +659,46 @@ public sealed class ProductionTransferExecutionService(
                 actor,
                 token);
 
+            await uow.SaveChangesAsync(token);
+            return await GetPickingTableAsync(transferId, actor, token);
+        }, ct, IsolationLevel.Serializable);
+
+    public Task<ProductionTransferPickingTableDto> RefreshRacklessBalanceSplitAsync(
+        long transferId,
+        long taskLineId,
+        long actor,
+        CancellationToken ct = default) =>
+        uow.ExecuteInTransactionAsync(async token =>
+        {
+            var aggregate = await LoadAsync(transferId, true, token);
+            EnsurePickingAllowed(aggregate.Link);
+            if (!await ProductionTransferWarehouseRacklessSupport.IsRacklessAsync(
+                    uow, aggregate.Header.SourceWarehouseId, token))
+                throw AppException.Conflict("Stok bakiyesi güncellemesi yalnızca rafsız kaynak depoda kullanılır.");
+
+            var task = ProductionTransferPickingSupport.ResolveWorkerPickTask(aggregate.Header, actor);
+            if (task.Status is not WarehouseTransferTaskStatus.InProgress
+                and not WarehouseTransferTaskStatus.PartiallyCompleted)
+                throw AppException.Conflict("Stok bakiyesi yalnızca başlatılmış toplamada güncellenebilir.");
+
+            var taskLine = task.Lines.SingleOrDefault(x => x.Id == taskLineId && !x.IsDeleted)
+                ?? throw AppException.NotFound("Toplama satırı bulunamadı.");
+            var line = ProductionTransferPickingSupport.ResolveTaskLine(aggregate.Header, taskLine);
+
+            await ReleaseTransferReservationsAsync(
+                aggregate.Header,
+                $"PT:{transferId}:RACKLESS-BAL:{taskLineId}:release",
+                "Rafsız stok bakiyesi güncelleme öncesi rezervasyon salımı",
+                actor,
+                token);
+            await ProductionTransferRacklessBalanceSplitSupport.ApplyAsync(
+                uow, aggregate.Header, aggregate.Link, task, actor, line.StockId, token);
+            await uow.SaveChangesAsync(token);
+            await ReserveTransferReservationsAsync(
+                aggregate.Header,
+                $"PT:{transferId}:RACKLESS-BAL:{taskLineId}:reserve",
+                actor,
+                token);
             await uow.SaveChangesAsync(token);
             return await GetPickingTableAsync(transferId, actor, token);
         }, ct, IsolationLevel.Serializable);
@@ -814,6 +854,11 @@ public sealed class ProductionTransferExecutionService(
             {
                 ProductionTransferUnpickMovement.ApplyUnpickedRouteLocations(
                     line, taskLine, targetLocationId, serialNo, actor, utcNow);
+                if (!hasSerialTrackings)
+                {
+                    ProductionTransferLineSplitHelper.ConsolidateSameLocationOpenTaskLines(
+                        aggregate.Header, aggregate.Link, task, actor, utcNow);
+                }
             }
 
             ProductionTransferUnpickMovement.UpdateHeaderStatusAfterUnpick(aggregate.Header, actor);
@@ -1112,23 +1157,9 @@ public sealed class ProductionTransferExecutionService(
         CancellationToken ct)
     {
         var pickTask = ProductionTransferResidualDraftSupport.ResolvePrimaryPickTask(original);
-        var residualLines = original.Lines
-            .Select(line => new
-            {
-                Line = line,
-                RemainingQuantity = Math.Max(0, line.RequestedQuantity - ProductionWorkOrderMaterialAssignment.ResolveEffectivePickedQuantity(line)),
-            })
-            .Where(x => x.RemainingQuantity > 0)
-            .Select(x => x.Line)
-            .OrderBy(x => x.LineNo)
-            .ToArray();
-        var draftLines = residualLines
-            .Select(line =>
-            {
-                var remainingQuantity = Math.Max(0, line.RequestedQuantity - ProductionWorkOrderMaterialAssignment.ResolveEffectivePickedQuantity(line));
-                return ProductionTransferResidualDraftSupport.BuildLineDraft(original, line, pickTask, remainingQuantity);
-            })
-            .ToArray();
+        var residualGroups = ProductionTransferResidualDraftSupport.BuildConsolidatedResidualGroups(
+            original, originalLink, pickTask);
+        var draftLines = residualGroups.Select(x => x.Draft).ToArray();
         var autoAssignSources = ProductionTransferResidualDraftSupport.NeedsAutoAssignSources(original, draftLines);
 
         var result = await transfers.CreateDraftWithPolicyContextAsync(
@@ -1173,10 +1204,9 @@ public sealed class ProductionTransferExecutionService(
             RequestedByNameSnapshot = originalLink.RequestedByNameSnapshot,
             ParentWarehouseTransferHeaderId = original.Id
         };
-        var sourceLinks = originalLink.Lines.ToDictionary(x => x.WarehouseTransferLineId);
-        foreach (var pair in residualLines.Zip(residualHeader.Lines.OrderBy(x => x.LineNo)))
+        foreach (var pair in residualGroups.Zip(residualHeader.Lines.OrderBy(x => x.LineNo)))
         {
-            var sourceLink = sourceLinks[pair.First.Id];
+            var sourceLink = pair.First.SourceLink;
             childLink.Lines.Add(new()
             {
                 BranchCode = original.BranchCode,
@@ -1187,8 +1217,7 @@ public sealed class ProductionTransferExecutionService(
                 ProductionConsumptionId = sourceLink.ProductionConsumptionId,
                 ProductionOutputId = sourceLink.ProductionOutputId,
                 RequirementReference = sourceLink.RequirementReference,
-                RequiredQuantity = pair.First.RequestedQuantity
-                    - ProductionWorkOrderMaterialAssignment.ResolveEffectivePickedQuantity(pair.First)
+                RequiredQuantity = pair.First.RemainingQuantity
             });
         }
         await uow.Repository<ProductionTransferHeaderLink>().AddAsync(childLink, ct);

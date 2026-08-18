@@ -210,6 +210,8 @@ public sealed class ProductionTransferService(
         {
             var documentNo = header.DocumentNo;
             var erpStatus = header.ErpIntegrationStatus;
+            if (header.Status != WarehouseTransferStatus.Draft)
+                await RevertZeroProgressHeaderToDraftAsync(id, actor, ct);
             await DeleteDraftAsync(id, actor, ct);
             await audit.WriteAsync(new(
                 "production-transfer.draft.cancel",
@@ -256,6 +258,10 @@ public sealed class ProductionTransferService(
                     request.IdempotencyKey,
                     actor,
                     token);
+                ProductionTransferCancellationReturnRemainderSupport.RevertZeroProgressHeaderToDraft(
+                    trackedHeader,
+                    actor,
+                    DateTime.UtcNow);
 
                 await uow.SaveChangesAsync(token);
                 await audit.WriteAsync(new(
@@ -860,6 +866,18 @@ public sealed class ProductionTransferService(
     private static string Branch(string? value)=>string.IsNullOrWhiteSpace(value)?"0":value.Trim();
     private static string? Clean(string? value,int max){var result=value?.Trim();return string.IsNullOrEmpty(result)?null:result.Length<=max?result:result[..max];}
 
+    private async Task RevertZeroProgressHeaderToDraftAsync(long transferId, long actor, CancellationToken ct)
+    {
+        var tracked = await uow.Repository<WarehouseTransferHeader>().Query(true)
+            .Include(x => x.Tasks.Where(task => !task.IsDeleted))
+            .SingleAsync(x => x.Id == transferId, ct);
+        ProductionTransferCancellationReturnRemainderSupport.RevertZeroProgressHeaderToDraft(
+            tracked,
+            actor,
+            DateTime.UtcNow);
+        await uow.SaveChangesAsync(ct);
+    }
+
     private async Task<bool> ShouldDeleteDraftInsteadOfCancelAsync(
         WarehouseTransferHeader header,
         ProductionTransferHeaderLink link,
@@ -868,11 +886,7 @@ public sealed class ProductionTransferService(
         if (ProductionWorkOrderTransferGrouping.IsUnlinkedProductionTransfer(link))
             return false;
 
-        if (header.Status != WarehouseTransferStatus.Draft)
-            return false;
-
-        if (header.Lines.Any(line => !line.IsDeleted
-                && ProductionWorkOrderMaterialAssignment.ResolveEffectivePickedQuantity(line) > 0))
+        if (!ProductionTransferCancellationReturnRemainderSupport.HasNoPickedProgressForDraftLikeCancel(header))
             return false;
 
         return !await uow.Repository<StockMovementOperation>().Query()
@@ -887,11 +901,7 @@ public sealed class ProductionTransferService(
         if (!ProductionWorkOrderTransferGrouping.IsUnlinkedProductionTransfer(link))
             return false;
 
-        if (header.Status != WarehouseTransferStatus.Draft)
-            return false;
-
-        if (header.Lines.Any(line => !line.IsDeleted
-                && ProductionWorkOrderMaterialAssignment.ResolveEffectivePickedQuantity(line) > 0))
+        if (!ProductionTransferCancellationReturnRemainderSupport.HasNoPickedProgressForDraftLikeCancel(header))
             return false;
 
         return !await uow.Repository<StockMovementOperation>().Query()

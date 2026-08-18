@@ -53,6 +53,23 @@ public sealed class ProductionTransferRouteAllocationTests
     }
 
     [Fact]
+    public void BuildRouteRefreshSplitChunks_keeps_unlocated_remainder_when_no_current_source()
+    {
+        const long a1 = 1;
+
+        var chunks = ProductionTransferRouteAllocation.BuildRouteRefreshSplitChunks(
+            5,
+            currentSourceLocationId: null,
+            [new RouteAllocationChunk(a1, 3, null, null)]);
+
+        Assert.Equal(2, chunks.Length);
+        Assert.Equal(a1, chunks[0].LocationId);
+        Assert.Equal(3, chunks[0].Quantity);
+        Assert.Null(chunks[1].LocationId);
+        Assert.Equal(2, chunks[1].Quantity);
+    }
+
+    [Fact]
     public void BuildRouteRefreshSplitChunks_skips_remainder_when_fully_rerouted()
     {
         const long a2 = 2;

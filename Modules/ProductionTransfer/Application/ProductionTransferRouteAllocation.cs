@@ -233,6 +233,7 @@ internal static class ProductionTransferRouteAllocation
     /// <summary>
     /// Rota güncellemede kullanıcının seçtiği miktarlar kaynak rafın tamamını karşılamıyorsa,
     /// kalan miktarı mevcut kaynak rafa ilk parça olarak ekler; böylece orijinal satır orada kalır.
+    /// Kaynak raf yoksa kalan bakiyesiz parça olarak tutulur.
     /// </summary>
     internal static RouteAllocationChunk[] BuildRouteRefreshSplitChunks(
         decimal openQuantity,
@@ -246,7 +247,7 @@ internal static class ProductionTransferRouteAllocation
             return selected;
 
         if (!currentSourceLocationId.HasValue)
-            return selected;
+            return [..selected, new(null, remainderOnSource, null, null)];
 
         return [new(currentSourceLocationId.Value, remainderOnSource, null, null), ..selected];
     }

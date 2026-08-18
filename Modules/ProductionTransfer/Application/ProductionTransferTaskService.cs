@@ -514,22 +514,6 @@ public sealed class ProductionTransferTaskService(
             if (warehouseId == 0)
                 warehouseId = header.SourceWarehouseId;
 
-            var defaultProductionReturnLocationId = await uow.Repository<WarehouseEntity>().Query()
-                .Where(x => x.Id == warehouseId)
-                .Select(x => x.DefaultProductionTransferReturnLocationId)
-                .SingleOrDefaultAsync(token);
-            if (defaultProductionReturnLocationId.HasValue)
-            {
-                var isUsableReturnLocation = await uow.Repository<WarehouseLocation>().Query()
-                    .AnyAsync(x => x.Id == defaultProductionReturnLocationId.Value
-                        && x.WarehouseId == header.SourceWarehouseId
-                        && x.IsActive
-                        && x.IsPutaway, token);
-                if (!isUsableReturnLocation)
-                    throw AppException.Conflict(
-                        "Kaynak depo için seçilen varsayılan üretim iptal/iade rafı bulunamadı, aktif değil veya yerleştirmeye uygun değil.");
-            }
-
             var (lastPickTask, assigneeUserId) = ResolveLastPickWorkerForCancellationReturn(header);
             var now = DateTime.UtcNow;
             var returnTask = new WarehouseTransferTask
@@ -553,7 +537,7 @@ public sealed class ProductionTransferTaskService(
                 var line = representative.Line;
                 var totalProcessed = group.Sum(x => x.ProcessedQuantity);
                 var (stagingLocationId, targetLocationId) = ProductionTransferReturnMovement.ResolveReturnTaskLineLocations(
-                    header, line, representative, defaultProductionReturnLocationId);
+                    header, line, representative);
                 returnTask.Lines.Add(new WarehouseTransferTaskLine
                 {
                     BranchCode = header.BranchCode,
@@ -1049,35 +1033,7 @@ public sealed class ProductionTransferTaskService(
 
         var header = await LoadTransferHeaderAsync(transferId, token);
         WarehouseTransferTask? kalanTask = null;
-        if (ProductionWorkOrderTransferGrouping.IsProductionCancellationReturnTask(task))
-        {
-            CompleteActivePickTasksForReturnFlow(header, actor, now, utcNow);
-
-            var remainingLines = header.Lines
-                .Where(x => !x.IsDeleted && x.RequestedQuantity > x.PickedQuantity)
-                .ToArray();
-            if (remainingLines.Length > 0)
-            {
-                await ProductionTransferCancellationReturnRemainderSupport.ReleaseUnpickedRemainderToWorkOrderAsync(
-                    uow,
-                    header,
-                    remainingLines,
-                    actor,
-                    utcNow,
-                    token);
-            }
-
-            await ProductionTransferCancellationReturnRemainderSupport.FinalizeTransferAfterProductionCancellationReturnAsync(
-                uow,
-                reservations,
-                header,
-                task,
-                idempotencyKey,
-                actor,
-                utcNow,
-                token);
-        }
-        else if (ProductionWorkOrderTransferGrouping.IsCancellationReturnEligibleForRemainderFlow(task))
+        if (ProductionWorkOrderTransferGrouping.IsCancellationReturnEligibleForRemainderFlow(task))
         {
             CompleteActivePickTasksForReturnFlow(header, actor, now, utcNow);
 
@@ -1119,7 +1075,8 @@ public sealed class ProductionTransferTaskService(
                 .SingleOrDefaultAsync(x => x.WarehouseTransferHeaderId == transferId, token);
             if (kalanTask is not null
                 && link is not null
-                && ProductionWorkOrderTransferGrouping.IsUnlinkedProductionTransfer(link))
+                && (ProductionWorkOrderTransferGrouping.IsUnlinkedProductionTransfer(link)
+                    || ProductionWorkOrderTransferGrouping.IsProductionCancellationReturnTask(task)))
             {
                 ProductionTransferCancellationReturnRemainderSupport.ReactivateUnlinkedTransferAfterCancellationReturn(
                     header,
@@ -1144,8 +1101,8 @@ public sealed class ProductionTransferTaskService(
                 StockMovementOperationId = stockMovementOperationId,
                 KalanTaskId = kalanTask?.Id,
                 kalanTask?.TaskNo,
-                ReleasedRemainderToWorkOrder = ProductionWorkOrderTransferGrouping.IsProductionCancellationReturnTask(task),
-                TransferFinalized = ProductionWorkOrderTransferGrouping.IsProductionCancellationReturnTask(task),
+                ReleasedRemainderToWorkOrder = false,
+                TransferFinalized = false,
             },
             ChangedFields: ["ProcessedQuantity", "Status", "Line.PickedQuantity", "Line.ReservedQuantity"]), token);
     }
@@ -1248,10 +1205,15 @@ public sealed class ProductionTransferTaskService(
             return;
 
         var header = task.Header;
-        // Rafsız kaynak: Faz 2 DefaultSourceLocationId sabitlemesi korunur.
-        // Rota bölme sanal rafı exclusion ile göremez ve atamayı null'a çekerdi.
         if (await ProductionTransferWarehouseRacklessSupport.IsRacklessAsync(uow, header.SourceWarehouseId, ct))
+        {
+            var racklessLink = await uow.Repository<ProductionTransferHeaderLink>().Query(true)
+                .Include(x => x.Lines)
+                .SingleAsync(x => x.WarehouseTransferHeaderId == header.Id, ct);
+            await ProductionTransferRacklessBalanceSplitSupport.ApplyAsync(
+                uow, header, racklessLink, task, actor, stockIdFilter: null, ct);
             return;
+        }
 
         var link = await uow.Repository<ProductionTransferHeaderLink>().Query(true)
             .Include(x => x.Lines)
@@ -1420,7 +1382,8 @@ public sealed class ProductionTransferTaskService(
 
     private async Task<WarehouseTransferTask> LoadTaskAsync(long transferId, long taskId, CancellationToken ct) =>
         await uow.Repository<WarehouseTransferTask>().Query(true)
-            .Include(x => x.Header).Include(x => x.Assignments)
+            .Include(x => x.Header).ThenInclude(x => x.Lines)
+            .Include(x => x.Assignments)
             .Include(x => x.Lines).ThenInclude(x => x.Line).ThenInclude(x => x.Trackings)
             .SingleOrDefaultAsync(x => x.Id == taskId && x.WtHeaderId == transferId && Contexts.Contains(x.Header.BusinessContext), ct)
         ?? throw AppException.NotFound("Üretim transfer görevi bulunamadı.");

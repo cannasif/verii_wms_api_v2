@@ -1,12 +1,79 @@
+using verii_wms_api_v2.Modules.Production.Application;
+using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
+using verii_wms_api_v2.Shared.Application.Exceptions;
 
 namespace verii_wms_api_v2.Modules.ProductionTransfer.Application;
+
+internal sealed record ResidualDraftGroup(
+    WarehouseTransferLine SourceLine,
+    ProductionTransferLineLink SourceLink,
+    decimal RemainingQuantity,
+    WarehouseTransferLineDraftRequest Draft);
 
 internal static class ProductionTransferResidualDraftSupport
 {
     private const decimal QuantityTolerance = 0.0001m;
+
+    internal static IReadOnlyList<ResidualDraftGroup> BuildConsolidatedResidualGroups(
+        WarehouseTransferHeader header,
+        ProductionTransferHeaderLink originalLink,
+        WarehouseTransferTask? pickTask)
+    {
+        var linkByLineId = originalLink.Lines
+            .Where(x => !x.IsDeleted)
+            .GroupBy(x => x.WarehouseTransferLineId)
+            .ToDictionary(x => x.Key, x => x.First());
+
+        var remainingLines = header.Lines
+            .Where(x => !x.IsDeleted)
+            .Select(line => (Line: line, Remaining: GetRemainingQuantity(line)))
+            .Where(x => x.Remaining > 0)
+            .OrderBy(x => x.Line.LineNo)
+            .ThenBy(x => x.Line.Id)
+            .ToArray();
+
+        var groups = remainingLines
+            .GroupBy(x => BuildConsolidateKey(x.Line, linkByLineId.GetValueOrDefault(x.Line.Id)))
+            .Select(group =>
+            {
+                var members = group.ToArray();
+                var first = members[0];
+                if (!linkByLineId.TryGetValue(first.Line.Id, out var sourceLink))
+                    throw AppException.Conflict("Eksik teslim kalan satırının üretim bağlantısı bulunamadı.");
+
+                var remainingQuantity = members.Sum(x => x.Remaining);
+                var draft = BuildLineDraft(header, first.Line, pickTask, remainingQuantity);
+                if (members.Length > 1)
+                {
+                    var sources = members
+                        .Select(x => ResolveResidualSourceLocationId(header, x.Line, pickTask))
+                        .Distinct()
+                        .ToArray();
+                    var targets = members
+                        .Select(x => ResolveResidualTargetLocationId(header, x.Line))
+                        .Distinct()
+                        .ToArray();
+                    draft = draft with
+                    {
+                        DefaultSourceLocationId = sources.Length == 1 ? sources[0] : null,
+                        DefaultTargetLocationId = targets.Length == 1
+                            ? targets[0]
+                            : ResolveResidualTargetLocationId(header, first.Line),
+                    };
+                }
+
+                return new ResidualDraftGroup(first.Line, sourceLink, remainingQuantity, draft);
+            })
+            .ToArray();
+
+        return groups;
+    }
+
+    internal static decimal GetRemainingQuantity(WarehouseTransferLine line) =>
+        Math.Max(0, line.RequestedQuantity - ProductionWorkOrderMaterialAssignment.ResolveEffectivePickedQuantity(line));
 
     internal static WarehouseTransferLineDraftRequest BuildLineDraft(
         WarehouseTransferHeader header,
@@ -181,6 +248,75 @@ internal static class ProductionTransferResidualDraftSupport
             .ToArray();
 
         return trackings.Length == 0 ? null : trackings;
+    }
+
+    private static ResidualConsolidateKey BuildConsolidateKey(
+        WarehouseTransferLine line,
+        ProductionTransferLineLink? sourceLink)
+    {
+        if (!CanConsolidateResidualLine(line) || sourceLink is null)
+            return ResidualConsolidateKey.Distinct(line.Id);
+
+        return ResidualConsolidateKey.Shared(
+            sourceLink.ProductionConsumptionId,
+            sourceLink.ProductionOutputId,
+            sourceLink.RequirementReference ?? string.Empty,
+            sourceLink.LineRole,
+            line.StockId,
+            line.YapCodeId,
+            line.UnitCode.Trim(),
+            line.RequireHandlingUnit,
+            line.SourceStockStatus,
+            line.TargetStockStatus);
+    }
+
+    private static bool CanConsolidateResidualLine(WarehouseTransferLine line) =>
+        line.TrackingType == StockTrackingType.None
+        && !line.RequireSerial
+        && !line.RequireLot
+        && line.Trackings.All(x => x.IsDeleted);
+
+    private readonly record struct ResidualConsolidateKey(
+        bool Consolidatable,
+        long DistinctLineId,
+        long? ProductionConsumptionId,
+        long? ProductionOutputId,
+        string RequirementReference,
+        ProductionTransferLineRole LineRole,
+        long StockId,
+        long? YapCodeId,
+        string UnitCode,
+        bool RequireHandlingUnit,
+        string? SourceStockStatus,
+        string? TargetStockStatus)
+    {
+        internal static ResidualConsolidateKey Distinct(long lineId) =>
+            new(false, lineId, null, null, string.Empty, default, 0, null, string.Empty, false, null, null);
+
+        internal static ResidualConsolidateKey Shared(
+            long? productionConsumptionId,
+            long? productionOutputId,
+            string requirementReference,
+            ProductionTransferLineRole lineRole,
+            long stockId,
+            long? yapCodeId,
+            string unitCode,
+            bool requireHandlingUnit,
+            string? sourceStockStatus,
+            string? targetStockStatus) =>
+            new(
+                true,
+                0,
+                productionConsumptionId,
+                productionOutputId,
+                requirementReference,
+                lineRole,
+                stockId,
+                yapCodeId,
+                unitCode,
+                requireHandlingUnit,
+                sourceStockStatus,
+                targetStockStatus);
     }
 }
 

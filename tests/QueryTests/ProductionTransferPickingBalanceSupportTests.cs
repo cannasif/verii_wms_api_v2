@@ -124,4 +124,133 @@ public sealed class ProductionTransferPickingBalanceSupportTests
 
         Assert.Equal(1, pickable);
     }
+
+    [Fact]
+    public void ApplyRacklessCanPick_clears_can_pick_when_location_has_no_available_or_reserved()
+    {
+        var line = new WarehouseTransferLine
+        {
+            Id = 20,
+            StockId = 13,
+            UnitCode = "ADET",
+            DefaultSourceLocationId = 5,
+            ReservedQuantity = 0,
+        };
+        var header = new WarehouseTransferHeader { Lines = [line] };
+        var rows = new[]
+        {
+            new ProductionTransferPickingRowDto(
+                400, 20, 2, 5, "01/026", 13, "01/013", "Test", null, 3, 3, 0, true),
+        };
+        var balances = new[]
+        {
+            new LocationStockBalance
+            {
+                LocationId = 5,
+                StockId = 13,
+                UnitCode = "ADET",
+                Quantity = 3,
+                ReservedQuantity = 3,
+                AvailableQuantity = 0,
+                StockStatus = "Available",
+            },
+        };
+
+        var updated = ProductionTransferPickingBalanceSupport.ApplyRacklessCanPick(header, rows, balances);
+
+        Assert.False(Assert.Single(updated).CanPick);
+    }
+
+    [Fact]
+    public void ApplyRacklessCanPick_keeps_can_pick_when_line_is_reserved_at_location()
+    {
+        var line = new WarehouseTransferLine
+        {
+            Id = 20,
+            StockId = 13,
+            UnitCode = "ADET",
+            DefaultSourceLocationId = 5,
+            ReservedQuantity = 3,
+        };
+        var header = new WarehouseTransferHeader { Lines = [line] };
+        var rows = new[]
+        {
+            new ProductionTransferPickingRowDto(
+                400, 20, 2, 5, "01/026", 13, "01/013", "Test", null, 3, 3, 0, true),
+        };
+        var balances = new[]
+        {
+            new LocationStockBalance
+            {
+                LocationId = 5,
+                StockId = 13,
+                UnitCode = "ADET",
+                Quantity = 3,
+                ReservedQuantity = 3,
+                AvailableQuantity = 0,
+                StockStatus = "Available",
+            },
+        };
+
+        var updated = ProductionTransferPickingBalanceSupport.ApplyRacklessCanPick(header, rows, balances);
+
+        Assert.True(Assert.Single(updated).CanPick);
+    }
+
+    [Fact]
+    public void ApplyRacklessCanPick_keeps_can_pick_when_available_quantity_exists()
+    {
+        var line = new WarehouseTransferLine
+        {
+            Id = 20,
+            StockId = 13,
+            UnitCode = "ADET",
+            DefaultSourceLocationId = 5,
+        };
+        var header = new WarehouseTransferHeader { Lines = [line] };
+        var rows = new[]
+        {
+            new ProductionTransferPickingRowDto(
+                400, 20, 2, 5, "01/026", 13, "01/013", "Test", null, 3, 3, 0, true),
+        };
+        var balances = new[]
+        {
+            new LocationStockBalance
+            {
+                LocationId = 5,
+                StockId = 13,
+                UnitCode = "ADET",
+                Quantity = 8,
+                ReservedQuantity = 0,
+                AvailableQuantity = 8,
+                StockStatus = "Available",
+            },
+        };
+
+        var updated = ProductionTransferPickingBalanceSupport.ApplyRacklessCanPick(header, rows, balances);
+
+        Assert.True(Assert.Single(updated).CanPick);
+    }
+
+    [Fact]
+    public void ApplyRacklessCanPick_leaves_historical_and_completed_rows_unchanged()
+    {
+        var line = new WarehouseTransferLine
+        {
+            Id = 20,
+            StockId = 13,
+            UnitCode = "ADET",
+            DefaultSourceLocationId = 5,
+        };
+        var header = new WarehouseTransferHeader { Lines = [line] };
+        var historical = new ProductionTransferPickingRowDto(
+            400, 20, 2, 5, "01/026", 13, "01/013", "Test", null, 2, 0, 2, false, true);
+        var completed = historical with { IsHistorical = false };
+
+        var updated = ProductionTransferPickingBalanceSupport.ApplyRacklessCanPick(
+            header, [historical, completed], []);
+
+        Assert.Equal(historical, updated[0]);
+        Assert.Equal(completed, updated[1]);
+    }
 }

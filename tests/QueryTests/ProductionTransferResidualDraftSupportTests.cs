@@ -1,4 +1,5 @@
 using verii_wms_api_v2.Modules.ProductionTransfer.Application;
+using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
@@ -322,4 +323,142 @@ public class ProductionTransferResidualDraftSupportTests
 
         Assert.Null(exception);
     }
+
+    [Fact]
+    public void BuildConsolidatedResidualGroups_merges_same_stock_split_across_shelves()
+    {
+        var header = new WarehouseTransferHeader
+        {
+            Id = 1,
+            DocumentNo = "PT-258",
+            SourceWarehouseId = 1,
+            TargetWarehouseId = 2,
+            TargetPutawayLocationId = 303,
+            Lines =
+            [
+                NonSerialLine(10, 1, 13, source: 3, requested: 5, picked: 2),
+                NonSerialLine(11, 2, 13, source: 2, requested: 3, picked: 0),
+                NonSerialLine(12, 3, 13, source: 1, requested: 1, picked: 0),
+                NonSerialLine(13, 4, 13, source: null, requested: 1, picked: 0),
+            ],
+        };
+        var link = SameRequirementLink(100, 10, 11, 12, 13);
+
+        var groups = ProductionTransferResidualDraftSupport.BuildConsolidatedResidualGroups(header, link, null);
+
+        var group = Assert.Single(groups);
+        Assert.Equal(8, group.RemainingQuantity);
+        Assert.Equal(8, group.Draft.Quantity);
+        Assert.Equal(13, group.Draft.StockId);
+        Assert.Null(group.Draft.DefaultSourceLocationId);
+        Assert.Equal(100, group.SourceLink.ProductionConsumptionId);
+    }
+
+    [Fact]
+    public void BuildConsolidatedResidualGroups_keeps_single_source_when_all_remainders_share_shelf()
+    {
+        const long a1 = 1;
+        var header = new WarehouseTransferHeader
+        {
+            Id = 1,
+            DocumentNo = "PT-1",
+            SourceWarehouseId = 1,
+            TargetWarehouseId = 2,
+            TargetPutawayLocationId = 303,
+            Lines =
+            [
+                NonSerialLine(10, 1, 13, source: a1, requested: 2, picked: 0),
+                NonSerialLine(11, 2, 13, source: a1, requested: 5, picked: 0),
+            ],
+        };
+        var link = SameRequirementLink(100, 10, 11);
+
+        var groups = ProductionTransferResidualDraftSupport.BuildConsolidatedResidualGroups(header, link, null);
+
+        var group = Assert.Single(groups);
+        Assert.Equal(7, group.RemainingQuantity);
+        Assert.Equal(a1, group.Draft.DefaultSourceLocationId);
+    }
+
+    [Fact]
+    public void BuildConsolidatedResidualGroups_does_not_merge_different_consumption_or_serial_lines()
+    {
+        var header = new WarehouseTransferHeader
+        {
+            Id = 1,
+            DocumentNo = "PT-1",
+            SourceWarehouseId = 1,
+            TargetWarehouseId = 2,
+            TargetPutawayLocationId = 303,
+            Lines =
+            [
+                NonSerialLine(10, 1, 13, source: 1, requested: 3, picked: 0),
+                NonSerialLine(11, 2, 13, source: 2, requested: 4, picked: 0),
+                new WarehouseTransferLine
+                {
+                    Id = 12,
+                    LineNo = 3,
+                    StockId = 13,
+                    UnitCode = "ADET",
+                    TrackingType = StockTrackingType.Serial,
+                    RequireSerial = true,
+                    DefaultSourceLocationId = 1,
+                    RequestedQuantity = 1,
+                    PickedQuantity = 0,
+                    Trackings =
+                    [
+                        new WarehouseTransferTracking { PlannedQuantity = 1, PickedQuantity = 0, SerialNo = "SN-1" },
+                    ],
+                },
+            ],
+        };
+        var link = new ProductionTransferHeaderLink
+        {
+            Lines =
+            [
+                new() { WarehouseTransferLineId = 10, ProductionConsumptionId = 100, RequirementReference = "REQ-1", RequiredQuantity = 3 },
+                new() { WarehouseTransferLineId = 11, ProductionConsumptionId = 200, RequirementReference = "REQ-1", RequiredQuantity = 4 },
+                new() { WarehouseTransferLineId = 12, ProductionConsumptionId = 100, RequirementReference = "REQ-1", RequiredQuantity = 1 },
+            ],
+        };
+
+        var groups = ProductionTransferResidualDraftSupport.BuildConsolidatedResidualGroups(header, link, null);
+
+        Assert.Equal(3, groups.Count);
+        Assert.Equal(new decimal[] { 3, 4, 1 }, groups.Select(x => x.RemainingQuantity));
+    }
+
+    private static WarehouseTransferLine NonSerialLine(
+        long id,
+        int lineNo,
+        long stockId,
+        long? source,
+        decimal requested,
+        decimal picked) =>
+        new()
+        {
+            Id = id,
+            LineNo = lineNo,
+            StockId = stockId,
+            UnitCode = "ADET",
+            TrackingType = StockTrackingType.None,
+            DefaultSourceLocationId = source,
+            DefaultTargetLocationId = 303,
+            RequestedQuantity = requested,
+            PickedQuantity = picked,
+            Trackings = [],
+        };
+
+    private static ProductionTransferHeaderLink SameRequirementLink(long consumptionId, params long[] lineIds) =>
+        new()
+        {
+            Lines = lineIds.Select(lineId => new ProductionTransferLineLink
+            {
+                WarehouseTransferLineId = lineId,
+                ProductionConsumptionId = consumptionId,
+                RequirementReference = "REQ-1",
+                LineRole = ProductionTransferLineRole.ConsumptionSupply,
+                RequiredQuantity = 1,
+            }).ToList(),
+        };
 }
