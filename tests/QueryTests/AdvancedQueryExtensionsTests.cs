@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Modules.StockBalance.Application;
@@ -195,17 +196,14 @@ public sealed class AdvancedQueryExtensionsTests
         Assert.DoesNotContain("CustomerCode] COLLATE", sql, StringComparison.OrdinalIgnoreCase);
     }
 
-    [Theory]
-    [InlineData("sabit")]
-    [InlineData("SABİT")]
-    [InlineData("SABIT")]
-    public void Turkish_search_emits_dotted_and_dotless_i_variants(string search)
+    [Fact]
+    public void Turkish_search_uses_one_linear_pattern_for_mixed_i_variants()
     {
         using var db = SqlServerContext();
         var query = db.Customers.Select(x => new CustomerSearchRow(x.Id, x.CustomerCode, x.CustomerName));
         var request = new PagedRequest
         {
-            Search = search,
+            Search = "alisveris",
             SearchFields = ["name"]
         };
         var columns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -217,13 +215,66 @@ public sealed class AdvancedQueryExtensionsTests
         var sql = query.ApplySearch(
                 request,
                 columns,
-                ["code", "name"],
-                AdvancedQueryExtensions.TurkishCaseInsensitiveSearchCollation)
+                ["code", "name"])
             .ToQueryString();
 
-        Assert.Contains("sabit", sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("sabıt", sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains(" OR ", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, CountOccurrences(sql, "[iı]"));
+        Assert.Equal(2, CountOccurrences(sql, "[sş]"));
+        Assert.Equal(1, CountOccurrences(sql, " LIKE "));
+        Assert.DoesNotContain(" OR ", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("COLLATE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("REPLACE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("LOWER", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("cagri", "Çağrı")]
+    [InlineData("gorus", "GÖRÜŞ")]
+    [InlineData("isik", "ışık")]
+    [InlineData("SUBE", "şube")]
+    [InlineData("alisveris", "ALIŞVERİŞ")]
+    public void Ascii_turkish_client_fallback_matches_equivalent_text(string search, string stored)
+    {
+        var request = new PagedRequest { Search = search, SearchFields = ["name"] };
+        var rows = new[] { new SearchRow(1, "TR-1", stored, "") }.AsQueryable()
+            .ApplySearch(request, SearchColumns(), ["name"])
+            .ToList();
+
+        Assert.Single(rows);
+    }
+
+    [Fact]
+    public void Frontend_paged_payload_preserves_selected_field_and_turkish_pattern()
+    {
+        const string payload = """
+            {"pageNumber":1,"pageSize":20,"search":"cagri alisveris","searchFields":["name"]}
+            """;
+        var request = JsonSerializer.Deserialize<PagedRequest>(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        Assert.NotNull(request);
+
+        using var db = SqlServerContext();
+        var query = db.Customers.Select(x => new CustomerSearchRow(x.Id, x.CustomerCode, x.CustomerName));
+        var sql = query.ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["code"] = nameof(CustomerSearchRow.Code),
+                ["name"] = nameof(CustomerSearchRow.Name)
+            }, ["code", "name"])
+            .ToQueryString();
+
+        Assert.Contains("CustomerName", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("CustomerCode] LIKE", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("[cç]", sql, StringComparison.Ordinal);
+        Assert.Contains("[iı]", sql, StringComparison.Ordinal);
+        Assert.Contains(" AND ", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Sql_like_control_characters_are_literal_and_escaped_once()
+    {
+        var pattern = AsciiTurkishSearch.BuildContainsPattern(@"100%_[]^\");
+
+        Assert.Equal(@"%100\%\_\[\]\^\\%", pattern);
+        Assert.True(AsciiTurkishSearch.Contains(@"REF-100%_[]^\-OK", @"100%_[]^\"));
     }
 
     [Fact]
@@ -465,6 +516,19 @@ public sealed class AdvancedQueryExtensionsTests
     {
         Filters = [new AdvancedFilterRequest(column, operation, value)]
     };
+
+    private static int CountOccurrences(string source, string value)
+    {
+        var count = 0;
+        var offset = 0;
+        while ((offset = source.IndexOf(value, offset, StringComparison.Ordinal)) >= 0)
+        {
+            count++;
+            offset += value.Length;
+        }
+
+        return count;
+    }
 
     private static IQueryable<QueryRow> Rows() => new[]
     {

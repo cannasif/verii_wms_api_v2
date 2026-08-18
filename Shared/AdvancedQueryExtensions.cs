@@ -3,6 +3,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Query;
 using verii_wms_api_v2.Shared.Application.Exceptions;
 
 namespace verii_wms_api_v2.Shared;
@@ -82,13 +83,14 @@ public static class AdvancedQueryExtensions
         if (terms.Length > MaximumSearchTermCount)
             throw AppException.BadRequest($"Arama metni en fazla {MaximumSearchTermCount} kelime içerebilir.");
 
+        var useSqlPattern = query.Provider is IAsyncQueryProvider;
         Expression? allTerms = null;
         foreach (var term in terms)
         {
             Expression? anyColumn = null;
             foreach (var member in members)
             {
-                var current = BuildGeneralSearchMatch(member, term, stringCollation);
+                var current = BuildGeneralSearchMatch(member, term, stringCollation, useSqlPattern);
                 if (current is null) continue;
                 anyColumn = anyColumn is null ? current : Expression.OrElse(anyColumn, current);
             }
@@ -126,7 +128,11 @@ public static class AdvancedQueryExtensions
             || IsNumericType(type);
     }
 
-    private static Expression? BuildGeneralSearchMatch(Expression member, string term, string? stringCollation)
+    private static Expression? BuildGeneralSearchMatch(
+        Expression member,
+        string term,
+        string? stringCollation,
+        bool useSqlPattern)
     {
         var propertyType = member.Type;
         var underlying = Nullable.GetUnderlyingType(propertyType) ?? propertyType;
@@ -142,19 +148,23 @@ public static class AdvancedQueryExtensions
                     Expression.Property(null, typeof(EF), nameof(EF.Functions)),
                     member,
                     Expression.Constant(stringCollation));
-            Expression? containsAnyVariant = null;
-            foreach (var variant in BuildStringSearchVariants(term, stringCollation))
-            {
-                var contains = Expression.Call(
+            var contains = useSqlPattern
+                ? Expression.Call(
+                    typeof(DbFunctionsExtensions),
+                    nameof(DbFunctionsExtensions.Like),
+                    Type.EmptyTypes,
+                    Expression.Property(null, typeof(EF), nameof(EF.Functions)),
                     searchTarget,
-                    typeof(string).GetMethod(nameof(string.Contains), [typeof(string)])!,
-                    Expression.Constant(variant));
-                containsAnyVariant = containsAnyVariant is null
-                    ? contains
-                    : Expression.OrElse(containsAnyVariant, contains);
-            }
+                    Expression.Constant(AsciiTurkishSearch.BuildContainsPattern(term)),
+                    Expression.Constant(AsciiTurkishSearch.LikeEscapeCharacter))
+                : Expression.Call(
+                    typeof(AsciiTurkishSearch),
+                    nameof(AsciiTurkishSearch.Contains),
+                    Type.EmptyTypes,
+                    member,
+                    Expression.Constant(term));
 
-            return Expression.AndAlso(notNull, containsAnyVariant ?? Expression.Constant(false));
+            return Expression.AndAlso(notNull, contains);
         }
 
         if (!TryParseGeneralSearchValue(term, underlying, out var parsed)) return null;
