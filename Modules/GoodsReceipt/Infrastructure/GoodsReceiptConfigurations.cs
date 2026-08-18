@@ -66,6 +66,11 @@ public sealed class GoodsReceiptHeaderConfiguration : BaseEntityConfiguration<Go
         // references are constrained to exactly 15 characters at the application boundary.
         builder.Property(x => x.ElectronicWaybillNo).HasMaxLength(16).IsUnicode(false);
         builder.Property(x => x.ShipmentReferenceNo).HasMaxLength(100);
+        Enum(builder.Property(x => x.TradeType), 20);
+        builder.Property(x => x.TradeType)
+            .HasDefaultValue(GoodsReceiptTradeType.Domestic)
+            .HasSentinel((GoodsReceiptTradeType)0);
+        builder.Property(x => x.ImportFileNumber).HasMaxLength(20).IsUnicode(false);
         builder.Property(x => x.CarrierCode).HasMaxLength(50);
         builder.Property(x => x.CarrierName).HasMaxLength(200);
         builder.Property(x => x.VehiclePlate).HasMaxLength(20);

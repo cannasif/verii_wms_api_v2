@@ -40,6 +40,12 @@ public enum GoodsReceiptInitiationMode
     DirectReceipt = 3
 }
 
+public enum GoodsReceiptTradeType
+{
+    Domestic = 1,
+    Foreign = 2
+}
+
 /// <summary>
 /// Raporlama ve süreç yönlendirmesi için mal kabulün sipariş/emir eksenindeki açık sınıflandırmasıdır.
 /// ReceiptType iş kaynağını, InitiationMode teknik başlangıç biçimini; ProcessType ise iş senaryosunu ifade eder.
@@ -117,6 +123,8 @@ public sealed class GoodsReceiptHeader : BaseEntity, IWarehouseOperationHeader
     public DateOnly? WaybillDate { get; set; }
     public string? ElectronicWaybillNo { get; set; }
     public string? ShipmentReferenceNo { get; set; }
+    public GoodsReceiptTradeType TradeType { get; set; } = GoodsReceiptTradeType.Domestic;
+    public string? ImportFileNumber { get; set; }
     public string? CarrierCode { get; set; }
     public string? CarrierName { get; set; }
     public string? VehiclePlate { get; set; }
