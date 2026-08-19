@@ -204,7 +204,7 @@ public sealed class QualityWarehouseDispositionTests
     }
 
     [Fact]
-    public void Inspection_accepted_decision_ignores_warehouse_matrix_accepted_location()
+    public void Inspection_accepted_decision_uses_warehouse_matrix_accepted_location()
     {
         var inspectionLine = new QualityInspectionLine
         {
@@ -237,10 +237,47 @@ public sealed class QualityWarehouseDispositionTests
             headerReceivingLocationId: 43,
             []);
 
-        Assert.Equal([43], required);
-        Assert.DoesNotContain(20, required);
+        Assert.Equal([20], required);
+        Assert.DoesNotContain(43, required);
         Assert.DoesNotContain(95, required);
         Assert.DoesNotContain(99, required);
+    }
+
+    [Fact]
+    public void Inspection_accepted_destination_falls_back_to_the_receipt_when_the_warehouse_route_is_empty()
+    {
+        IReadOnlyDictionary<long, QualityWarehouseRoute> routes = new Dictionary<long, QualityWarehouseRoute>
+        {
+            [1] = new() { SourceWarehouseId = 1 }
+        };
+
+        var resolved = QualityService.ResolveInspectionAcceptedLocationId(
+            routes,
+            sourceWarehouseId: 1,
+            defaultReceivingLocationId: 43,
+            defaultPutawayLocationId: 22,
+            headerReceivingLocationId: 44);
+
+        Assert.Equal(43, resolved);
+    }
+
+    [Fact]
+    public void Inspection_accepted_destination_uses_only_the_matching_warehouse_route()
+    {
+        IReadOnlyDictionary<long, QualityWarehouseRoute> routes = new Dictionary<long, QualityWarehouseRoute>
+        {
+            [1] = new() { SourceWarehouseId = 1, AcceptedLocationId = 20 },
+            [2] = new() { SourceWarehouseId = 2, AcceptedLocationId = 99 }
+        };
+
+        var resolved = QualityService.ResolveInspectionAcceptedLocationId(
+            routes,
+            sourceWarehouseId: 1,
+            defaultReceivingLocationId: 43,
+            defaultPutawayLocationId: 22,
+            headerReceivingLocationId: 44);
+
+        Assert.Equal(20, resolved);
     }
 
     [Fact]

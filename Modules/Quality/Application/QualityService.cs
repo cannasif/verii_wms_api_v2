@@ -506,7 +506,9 @@ public sealed class QualityService(
                 if (!line.GoodsReceiptLineId.HasValue
                     || !receiptLineDefaults.TryGetValue(line.GoodsReceiptLineId.Value, out var receiptLine))
                     return ResolveAcceptedLocationId(null, null, receipt?.ReceivingLocationId);
-                return ResolveAcceptedLocationId(
+                return ResolveInspectionAcceptedLocationId(
+                    warehouseRoutes,
+                    receiptLine.WarehouseId,
                     receiptLine.DefaultReceivingLocationId,
                     receiptLine.DefaultPutawayLocationId,
                     receipt?.ReceivingLocationId);
@@ -1081,7 +1083,9 @@ public sealed class QualityService(
                 .Distinct()
                 .ToArray();
             var acceptedFallbackLocationIds = grLines.Values
-                .Select(line => ResolveAcceptedLocationId(
+                .Select(line => ResolveInspectionAcceptedLocationId(
+                    warehouseRoutes,
+                    line.TargetWarehouseId,
                     line.DefaultReceivingLocationId,
                     line.DefaultPutawayLocationId,
                     gr.ReceivingLocationId))
@@ -2029,7 +2033,9 @@ public sealed class QualityService(
         var route = ResolveInspectionWarehouseRoute(warehouseRoutes, sourceWarehouseId);
         return part.Decision switch
         {
-            QualityDecision.Accepted => ResolveAcceptedLocationId(
+            QualityDecision.Accepted => ResolveInspectionAcceptedLocationId(
+                warehouseRoutes,
+                sourceWarehouseId,
                 defaultReceivingLocationId,
                 defaultPutawayLocationId,
                 headerReceivingLocationId),
@@ -2132,7 +2138,9 @@ public sealed class QualityService(
             var route = ResolveInspectionWarehouseRoute(warehouseRoutes, warehouseId);
             switch (part.Decision)
             {
-                case QualityDecision.Accepted when !ResolveAcceptedLocationId(
+                case QualityDecision.Accepted when !ResolveInspectionAcceptedLocationId(
+                    warehouseRoutes,
+                    warehouseId,
                     receiptLine.DefaultReceivingLocationId,
                     receiptLine.DefaultPutawayLocationId,
                     headerReceivingLocationId).HasValue:
@@ -2584,6 +2592,17 @@ public sealed class QualityService(
         defaultReceivingLocationId
         ?? defaultPutawayLocationId
         ?? headerReceivingLocationId;
+    internal static long? ResolveInspectionAcceptedLocationId(
+        IReadOnlyDictionary<long, QualityWarehouseRoute> warehouseRoutes,
+        long sourceWarehouseId,
+        long? defaultReceivingLocationId,
+        long? defaultPutawayLocationId,
+        long? headerReceivingLocationId) =>
+        ResolveInspectionWarehouseRoute(warehouseRoutes, sourceWarehouseId).AcceptedLocationId
+        ?? ResolveAcceptedLocationId(
+            defaultReceivingLocationId,
+            defaultPutawayLocationId,
+            headerReceivingLocationId);
     internal static IReadOnlySet<long> ResolveRequiredDecisionTargetLocationIds(
         IReadOnlyList<QualityDecisionPart> decisionParts,
         IReadOnlyDictionary<long, GoodsReceiptLine> receiptLines,
