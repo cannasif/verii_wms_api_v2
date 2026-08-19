@@ -410,10 +410,11 @@ public sealed class NetsisItemSlipLine
     [JsonPropertyName("DEPO_KODU")]
     public int? DepoKodu { get; set; }
 
-    [JsonPropertyName("Gir_Depo_Kodu")]
+    // NetOpenX model member names; the underscored SQL column aliases are not accepted here.
+    [JsonPropertyName("GirisDepoKodu")]
     public int? GirisDepoKodu { get; set; }
 
-    [JsonPropertyName("Cikis_Depo_Kodu")]
+    [JsonPropertyName("CikisDepoKodu")]
     public int? CikisDepoKodu { get; set; }
 
     [JsonPropertyName("YapKod")]

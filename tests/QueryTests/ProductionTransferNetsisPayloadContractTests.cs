@@ -2,6 +2,7 @@ using System.Text.Json;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.NetsisRead.Application.Dtos;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
+using verii_wms_api_v2.Shared.Application.Exceptions;
 using Xunit;
 
 namespace verii_wms_api_v2.QueryTests;
@@ -85,11 +86,46 @@ public sealed class ProductionTransferNetsisPayloadContractTests
         Assert.Equal(1, header.GetProperty("DEPO_KODU").GetInt32());
         Assert.Equal("01/020", line.GetProperty("StokKodu").GetString());
         Assert.Equal(1m, line.GetProperty("STra_GCMIK").GetDecimal());
-        Assert.Equal(1, line.GetProperty("Cikis_Depo_Kodu").GetInt32());
-        Assert.Equal(2, line.GetProperty("Gir_Depo_Kodu").GetInt32());
+        Assert.Equal(1, line.GetProperty("CikisDepoKodu").GetInt32());
+        Assert.Equal(2, line.GetProperty("GirisDepoKodu").GetInt32());
+        Assert.False(line.TryGetProperty("Cikis_Depo_Kodu", out _));
+        Assert.False(line.TryGetProperty("Gir_Depo_Kodu", out _));
         Assert.Equal("YAP-01", line.GetProperty("YapKod").GetString());
         Assert.Equal("SR-0001", line.GetProperty("SeriNo").GetString());
         Assert.Equal("PRJ-01", line.GetProperty("ProjeKodu").GetString());
+    }
+
+    [Fact]
+    public void Warehouse_transfer_payload_requires_source_and_target_codes_on_every_line()
+    {
+        var request = new NetsisItemSlipRequest
+        {
+            FatUst = new NetsisItemSlipHeader { DepoKodu = 2 },
+            Kalems =
+            [
+                new NetsisItemSlipLine
+                {
+                    StokKodu = "STK-001",
+                    Miktar = 1,
+                    CikisDepoKodu = 2,
+                    GirisDepoKodu = 1
+                },
+                new NetsisItemSlipLine
+                {
+                    StokKodu = "STK-002",
+                    Miktar = 2,
+                    CikisDepoKodu = 2,
+                    GirisDepoKodu = 1
+                }
+            ]
+        };
+
+        ErpPostingService.ValidateWarehouseTransferWarehouseCodes(request, 2, 1);
+
+        request.Kalems[1].CikisDepoKodu = null;
+        var exception = Assert.Throws<AppException>(() =>
+            ErpPostingService.ValidateWarehouseTransferWarehouseCodes(request, 2, 1));
+        Assert.Contains("Çıkış depo: 2, giriş depo: 1", exception.Message);
     }
 
     [Fact]

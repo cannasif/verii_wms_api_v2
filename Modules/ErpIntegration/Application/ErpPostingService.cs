@@ -815,13 +815,36 @@ public sealed class ErpPostingService(
                     targetWarehouse.WarehouseCode, line.YapCodeSnapshot, null, null, line.Description));
         }
 
-        return NewRequest(options.WarehouseTransferDocumentType, options.WarehouseTransferSeries,
+        var request = NewRequest(options.WarehouseTransferDocumentType, options.WarehouseTransferSeries,
             header.DocumentNo, header.WaybillNo ?? header.DocumentNo, header.DocumentDate, header.ShippedAtUtc,
             null, sourceWarehouse, BuildProductionTransferErpDescription(header.Description, productionReference), lines,
             usedOrderRows.Count > 0
                 ? ResolveErpHeaderProjectCode(usedOrderRows)
                 : NetsisItemSlipDefaults.NormalizeProjectCode(header.ProjectCode),
             ResolveErpDeliveryDate(usedOrderRows, header.DocumentDate));
+        ValidateWarehouseTransferWarehouseCodes(
+            request,
+            sourceWarehouse.WarehouseCode,
+            targetWarehouse.WarehouseCode);
+        return request;
+    }
+
+    internal static void ValidateWarehouseTransferWarehouseCodes(
+        NetsisItemSlipRequest request,
+        int sourceWarehouseCode,
+        int targetWarehouseCode)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (request.FatUst.DepoKodu != sourceWarehouseCode
+            || request.Kalems.Count == 0
+            || request.Kalems.Any(line =>
+                line.CikisDepoKodu != sourceWarehouseCode
+                || line.GirisDepoKodu != targetWarehouseCode))
+        {
+            throw AppException.Conflict(
+                $"ERP transfer depo eşlemesi geçersiz. Çıkış depo: {sourceWarehouseCode}, giriş depo: {targetWarehouseCode}.");
+        }
     }
 
     private async Task<NetsisItemSlipRequest> MapShipmentAsync(
