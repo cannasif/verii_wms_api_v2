@@ -76,7 +76,8 @@ public sealed class AccessControlService(IUnitOfWork unitOfWork, IAuditLogWriter
             .ApplySearch(request,new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["id"]=nameof(GroupGridRow.Id),["name"]=nameof(GroupGridRow.NameSearchText),
-                ["permissionCount"]=nameof(GroupGridRow.PermissionCount)
+                ["permissionCount"]=nameof(GroupGridRow.PermissionCount),
+                ["createdBy"]=nameof(GroupGridRow.CreatedBy),["updatedBy"]=nameof(GroupGridRow.UpdatedBy)
             },["name"])
             .ApplyAdvancedFilters(request).ApplySort(request, nameof(GroupGridRow.Name));
         return await query.ToPagedResponseAsync(request, ct);

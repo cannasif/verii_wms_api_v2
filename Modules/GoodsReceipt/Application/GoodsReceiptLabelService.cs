@@ -30,7 +30,9 @@ public sealed class GoodsReceiptLabelService(
             ["taskNo"] = nameof(GoodsReceiptLabelBatchRow.TaskNo),
             ["totalLabelCount"] = nameof(GoodsReceiptLabelBatchRow.TotalLabelCount),
             ["printedLabelCount"] = nameof(GoodsReceiptLabelBatchRow.PrintedLabelCount),
-            ["consumedLabelCount"] = nameof(GoodsReceiptLabelBatchRow.ConsumedLabelCount)
+            ["consumedLabelCount"] = nameof(GoodsReceiptLabelBatchRow.ConsumedLabelCount),
+            ["createdBy"] = nameof(GoodsReceiptLabelBatchRow.CreatedBy),
+            ["updatedBy"] = nameof(GoodsReceiptLabelBatchRow.CreatedBy)
         };
     private static readonly string[] DefaultGridSearchColumns = ["batchNo", "waybillNo", "taskNo"];
 

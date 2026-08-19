@@ -6,6 +6,7 @@ public sealed class PagedRequest
 {
     private IReadOnlyList<string> searchFields = Array.Empty<string>();
     private IReadOnlyList<AdvancedFilterRequest> filters = Array.Empty<AdvancedFilterRequest>();
+    private IReadOnlyList<long> actorUserIds = Array.Empty<long>();
 
     // CRM sözleşmesi. Page alanı eski istemciler için geriye uyumluluk sağlar.
     public int PageNumber { get; init; } = 1;
@@ -28,6 +29,12 @@ public sealed class PagedRequest
         get => filters;
         init => filters = value ?? Array.Empty<AdvancedFilterRequest>();
     }
+    public IReadOnlyList<long> ActorUserIds
+    {
+        get => actorUserIds;
+        init => actorUserIds = value ?? Array.Empty<long>();
+    }
+    public bool ActorIncludeSystem { get; init; }
 
     [JsonIgnore]
     public int EffectivePageNumber => Page > 0 ? Page : PageNumber;

@@ -29,7 +29,8 @@ public sealed class IncomingInvoiceService(
     {
         ["id"]=nameof(IncomingInvoiceGridRow.Id),["invoiceNo"]=nameof(IncomingInvoiceGridRow.InvoiceSearchText),
         ["supplierVknOrTckn"]=nameof(IncomingInvoiceGridRow.SupplierVknOrTckn),["supplierName"]=nameof(IncomingInvoiceGridRow.SupplierName),
-        ["payableAmount"]=nameof(IncomingInvoiceGridRow.PayableSearchText),["lineCount"]=nameof(IncomingInvoiceGridRow.LineProgressSearchText)
+        ["payableAmount"]=nameof(IncomingInvoiceGridRow.PayableSearchText),["lineCount"]=nameof(IncomingInvoiceGridRow.LineProgressSearchText),
+        ["createdBy"]=nameof(IncomingInvoiceGridRow.CreatedBy),["updatedBy"]=nameof(IncomingInvoiceGridRow.UpdatedBy)
     };
     private static readonly string[] DefaultGridSearchColumns=["invoiceNo","supplierVknOrTckn","supplierName"];
     private static readonly HashSet<string> LineSummaryColumns=new(StringComparer.OrdinalIgnoreCase)

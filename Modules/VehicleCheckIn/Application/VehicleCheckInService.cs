@@ -19,7 +19,8 @@ public sealed class VehicleCheckInService(IUnitOfWork uow,IProjectSettingsServic
         ["trailerPlateNo"]=nameof(VehicleCheckInRow.TrailerPlateNo),["driverFirstName"]=nameof(VehicleCheckInRow.DriverSearchText),
         ["driverPhone"]=nameof(VehicleCheckInRow.DriverPhone),["steelSheetCount"]=nameof(VehicleCheckInRow.SteelSheetCount),
         ["customerCode"]=nameof(VehicleCheckInRow.CustomerCode),["customerName"]=nameof(VehicleCheckInRow.CustomerName),
-        ["status"]=nameof(VehicleCheckInRow.Status),["imageCount"]=nameof(VehicleCheckInRow.ImageCount)
+        ["status"]=nameof(VehicleCheckInRow.Status),["imageCount"]=nameof(VehicleCheckInRow.ImageCount),
+        ["createdBy"]=nameof(VehicleCheckInRow.CreatedBy),["updatedBy"]=nameof(VehicleCheckInRow.UpdatedBy)
     };
     private static readonly string[] DefaultGridSearchColumns=["plateNo","trailerPlateNo","driverFirstName","driverPhone","customerCode","customerName"];
     private IGenericRepository<VehicleCheckInHeader> Headers=>uow.Repository<VehicleCheckInHeader>();

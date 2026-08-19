@@ -45,7 +45,9 @@ public sealed record ProcurementGridRow(
     long? UpdatedBy=null,
     string? UpdatedByName=null,
     [property: JsonIgnore] string? SubjectSearchText=null,
-    [property: JsonIgnore] string? TotalSearchText=null);
+    [property: JsonIgnore] string? TotalSearchText=null,
+    [property: JsonIgnore] string? CreatedBySearchText=null,
+    [property: JsonIgnore] string? UpdatedBySearchText=null);
 public sealed record ProcurementAttachmentRow(long Id,string OwnerType,long OwnerId,string FileName,string ContentType,string Url,long FileSize,string? Caption,DateTime? CreatedDate);
 public sealed record ProcurementAttachmentDownload(Stream Content,string FileName,string ContentType);
 public sealed record ProcurementAttachmentUpload(Stream Content,string FileName,string? ContentType,long Length);

@@ -18,7 +18,8 @@ public sealed class ELogoConnectionService(
     {
         ["id"]=nameof(ELogoConnectionRow.Id),["displayName"]=nameof(ELogoConnectionRow.DisplaySearchText),
         ["vkn"]=nameof(ELogoConnectionRow.Vkn),["username"]=nameof(ELogoConnectionRow.Username),
-        ["source"]=nameof(ELogoConnectionRow.Source)
+        ["source"]=nameof(ELogoConnectionRow.Source),
+        ["createdBy"]=nameof(ELogoConnectionRow.CreatedBy),["updatedBy"]=nameof(ELogoConnectionRow.UpdatedBy)
     };
     private static readonly string[] DefaultSearchColumns=["displayName","vkn","username","source"];
     internal const string ProtectorPurpose = "V3RII.WmsV2.IncomingInvoice.ELogoConnection.Password.v1";

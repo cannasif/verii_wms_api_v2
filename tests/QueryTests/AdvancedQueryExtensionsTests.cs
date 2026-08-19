@@ -107,6 +107,79 @@ public sealed class AdvancedQueryExtensionsTests
     }
 
     [Fact]
+    public void Numeric_actor_search_matches_directory_user_ids()
+    {
+        var rows = new[]
+        {
+            new ActorSearchRow(1, 8, "A"),
+            new ActorSearchRow(2, 9, "B"),
+            new ActorSearchRow(3, null, "C")
+        }.AsQueryable();
+        var columns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["code"] = nameof(ActorSearchRow.Code),
+            ["createdBy"] = nameof(ActorSearchRow.CreatedBy)
+        };
+
+        var byName = rows.ApplySearch(new PagedRequest
+        {
+            Search = "mutahhar",
+            SearchFields = ["createdBy"],
+            ActorUserIds = [8]
+        }, columns).ToList();
+        Assert.Single(byName);
+        Assert.Equal(1, byName[0].Id);
+
+        var withoutIds = rows.ApplySearch(new PagedRequest
+        {
+            Search = "mutahhar",
+            SearchFields = ["createdBy"]
+        }, columns).ToList();
+        Assert.Empty(withoutIds);
+
+        var byNumericId = rows.ApplySearch(new PagedRequest
+        {
+            Search = "8",
+            SearchFields = ["createdBy"]
+        }, columns).ToList();
+        Assert.Single(byNumericId);
+        Assert.Equal(1, byNumericId[0].Id);
+
+        var system = rows.ApplySearch(new PagedRequest
+        {
+            Search = "Sistem",
+            SearchFields = ["createdBy"],
+            ActorIncludeSystem = true
+        }, columns).ToList();
+        Assert.Single(system);
+        Assert.Equal(3, system[0].Id);
+    }
+
+    [Fact]
+    public void String_actor_search_text_ignores_directory_user_ids()
+    {
+        var rows = new[]
+        {
+            new ActorNameSearchRow(1, "Mutahhar Yılmaz"),
+            new ActorNameSearchRow(2, "Ali Veli")
+        }.AsQueryable();
+        var columns = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["createdBy"] = nameof(ActorNameSearchRow.CreatedBySearchText)
+        };
+
+        var found = rows.ApplySearch(new PagedRequest
+        {
+            Search = "mutahhar",
+            SearchFields = ["createdBy"],
+            ActorUserIds = [99]
+        }, columns).ToList();
+
+        Assert.Single(found);
+        Assert.Equal(1, found[0].Id);
+    }
+
+    [Fact]
     public void Search_uses_default_columns_and_does_not_search_unselected_fields()
     {
         var request = new PagedRequest { Search = "ONLY-PREFIX" };
@@ -717,6 +790,8 @@ public sealed class AdvancedQueryExtensionsTests
 
     private sealed record QueryRow(long Id, int SortKey, QueryStatus Status, decimal Quantity, int? OptionalCode);
     private sealed record SearchRow(long Id, string Code, string Name, string Prefix);
+    private sealed record ActorSearchRow(long Id, long? CreatedBy, string Code);
+    private sealed record ActorNameSearchRow(long Id, string CreatedBySearchText);
     private sealed record CustomerSearchRow(long Id, string Code, string Name);
     private sealed class AutoSearchRow
     {

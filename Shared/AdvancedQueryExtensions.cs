@@ -11,8 +11,9 @@ namespace verii_wms_api_v2.Shared;
 public static class AdvancedQueryExtensions
 {
     private const int MaximumFilterCount = 20;
-    private const int MaximumSearchFieldCount = 12;
+    private const int MaximumSearchFieldCount = 40;
     private const int MaximumSearchTermCount = 10;
+    private const int MaximumActorUserIdCount = 50;
     private const int MaximumColumnLength = 100;
     private const int MaximumOperatorLength = 30;
     private const int MaximumFilterValueLength = 500;
@@ -67,7 +68,7 @@ public static class AdvancedQueryExtensions
                 ?? throw AppException.BadRequest($"'{column}' aranabilir bir kolon değildir.");
             if (!SupportsGeneralSearch(resolved.member.Type))
                 throw AppException.BadRequest($"'{column}' genel aramayı destekleyen bir kolon değildir.");
-            return resolved.member;
+            return (column, member: resolved.member);
         }).ToArray();
 
         var terms = search
@@ -82,9 +83,15 @@ public static class AdvancedQueryExtensions
         foreach (var term in terms)
         {
             Expression? anyColumn = null;
-            foreach (var member in members)
+            foreach (var (column, member) in members)
             {
                 var current = BuildGeneralSearchMatch(member, term, useSqlPattern);
+                if (IsActorSearchColumn(column))
+                {
+                    var actorMatch = BuildActorDirectoryMatch(member, request);
+                    if (actorMatch is not null)
+                        current = current is null ? actorMatch : Expression.OrElse(current, actorMatch);
+                }
                 if (current is null) continue;
                 anyColumn = anyColumn is null ? current : Expression.OrElse(anyColumn, current);
             }
@@ -194,6 +201,64 @@ public static class AdvancedQueryExtensions
             || type == typeof(bool)
             || type.IsEnum
             || IsNumericType(type);
+    }
+
+    private static bool IsActorSearchColumn(string column) =>
+        column.Equals("createdBy", StringComparison.OrdinalIgnoreCase)
+        || column.Equals("updatedBy", StringComparison.OrdinalIgnoreCase);
+
+    private static Expression? BuildActorDirectoryMatch(Expression member, PagedRequest request)
+    {
+        var underlying = Nullable.GetUnderlyingType(member.Type) ?? member.Type;
+        if (!IsNumericType(underlying)) return null;
+
+        var ids = request.ActorUserIds
+            .Distinct()
+            .Take(MaximumActorUserIdCount)
+            .ToArray();
+
+        Expression? match = ids.Length > 0 ? BuildNumericContains(member, underlying, ids) : null;
+        if (request.ActorIncludeSystem && Nullable.GetUnderlyingType(member.Type) is not null)
+        {
+            var isNull = Expression.Equal(member, Expression.Constant(null, member.Type));
+            match = match is null ? isNull : Expression.OrElse(match, isNull);
+        }
+
+        return match;
+    }
+
+    private static Expression? BuildNumericContains(Expression member, Type underlying, long[] ids)
+    {
+        var listType = typeof(List<>).MakeGenericType(underlying);
+        var list = (System.Collections.IList)Activator.CreateInstance(listType)!;
+        foreach (var id in ids)
+        {
+            try
+            {
+                list.Add(Convert.ChangeType(id, underlying, CultureInfo.InvariantCulture));
+            }
+            catch (Exception exception) when (exception is FormatException or InvalidCastException or OverflowException)
+            {
+                // Dizin kimliği hedef kolon tipine sığmıyorsa atlanır.
+            }
+        }
+        if (list.Count == 0) return null;
+
+        Expression value = member;
+        Expression? hasValue = null;
+        if (Nullable.GetUnderlyingType(member.Type) is not null)
+        {
+            hasValue = Expression.Property(member, "HasValue");
+            value = Expression.Property(member, "Value");
+        }
+
+        var contains = Expression.Call(
+            typeof(Enumerable),
+            nameof(Enumerable.Contains),
+            [underlying],
+            Expression.Constant(list, listType),
+            value);
+        return hasValue is null ? contains : Expression.AndAlso(hasValue, contains);
     }
 
     private static Expression? BuildGeneralSearchMatch(

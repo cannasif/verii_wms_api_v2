@@ -43,7 +43,9 @@ public sealed class StockMovementService(
         ["entryCount"] = nameof(StockMovementGridProjection.EntryCount),
         ["inboundQuantity"] = nameof(StockMovementGridProjection.InboundQuantity),
         ["outboundQuantity"] = nameof(StockMovementGridProjection.OutboundQuantity),
-        ["reason"] = nameof(StockMovementGridProjection.Reason)
+        ["reason"] = nameof(StockMovementGridProjection.Reason),
+        ["createdBy"] = nameof(StockMovementGridProjection.CreatedBy),
+        ["updatedBy"] = nameof(StockMovementGridProjection.UpdatedBy)
     };
     private static readonly string[] DefaultGridSearchColumns = ["operationCode", "operationType", "referenceNo", "reason"];
 

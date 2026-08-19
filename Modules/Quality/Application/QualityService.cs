@@ -179,7 +179,9 @@ public sealed class QualityService(
         {
             ["id"] = nameof(QualityRuleGridRow.Id),
             // The grid deliberately renders stock code, stock name and group in one cell.
-            ["stockCode"] = nameof(QualityRuleGridRow.StockSearchText)
+            ["stockCode"] = nameof(QualityRuleGridRow.StockSearchText),
+            ["createdBy"] = nameof(QualityRuleGridRow.CreatedBy),
+            ["updatedBy"] = nameof(QualityRuleGridRow.UpdatedBy)
         }, ["stockCode"]);
         return await q.ApplyAdvancedFilters(request).ApplySort(request,nameof(QualityRuleGridRow.Id)).ToPagedResponseAsync(request,ct);
     }
@@ -225,10 +227,13 @@ public sealed class QualityService(
         });
         query = query.ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
+            ["id"] = nameof(QualityDecisionCodeGridRow.Id),
             ["code"] = nameof(QualityDecisionCodeGridRow.Code),
             ["name"] = nameof(QualityDecisionCodeGridRow.Name),
             ["description"] = nameof(QualityDecisionCodeGridRow.Description),
-            ["sortOrder"] = nameof(QualityDecisionCodeGridRow.SortOrder)
+            ["sortOrder"] = nameof(QualityDecisionCodeGridRow.SortOrder),
+            ["createdBy"] = nameof(QualityDecisionCodeGridRow.CreatedBy),
+            ["updatedBy"] = nameof(QualityDecisionCodeGridRow.UpdatedBy)
         }, ["code", "name"]);
         return await query.ApplyAdvancedFilters(request)
             .ApplySort(request, nameof(QualityDecisionCodeGridRow.SortOrder))

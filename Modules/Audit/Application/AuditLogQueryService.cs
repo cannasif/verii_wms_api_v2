@@ -14,7 +14,8 @@ public sealed class AuditLogQueryService(IUnitOfWork unitOfWork) : IAuditLogQuer
         ["id"]=nameof(AuditLogRow.Id),["actionType"]=nameof(AuditLogRow.ActionType),
         ["entityType"]=nameof(AuditLogRow.EntitySearchText),["result"]=nameof(AuditLogRow.Result),
         ["source"]=nameof(AuditLogRow.Source),["performedByUserEmail"]=nameof(AuditLogRow.PerformedBySearchText),
-        ["requestMethod"]=nameof(AuditLogRow.RequestSearchText),["traceId"]=nameof(AuditLogRow.TraceId)
+        ["requestMethod"]=nameof(AuditLogRow.RequestSearchText),["traceId"]=nameof(AuditLogRow.TraceId),
+        ["createdBy"]=nameof(AuditLogRow.PerformedBySearchText),["updatedBy"]=nameof(AuditLogRow.PerformedBySearchText)
     };
     private static readonly string[] DefaultSearchColumns=["actionType","entityType","result","source","performedByUserEmail","requestMethod","traceId"];
     public async Task<PagedResponse<AuditLogRow>> GetPagedAsync(PagedRequest request, CancellationToken ct)

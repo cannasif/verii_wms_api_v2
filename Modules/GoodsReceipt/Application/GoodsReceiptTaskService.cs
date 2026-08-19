@@ -29,7 +29,9 @@ public sealed class GoodsReceiptTaskService(
             ["warehouseCode"] = nameof(GoodsReceiptTaskGridRow.WarehouseCode),
             ["warehouseName"] = nameof(GoodsReceiptTaskGridRow.WarehouseName),
             ["plannedQuantity"] = nameof(GoodsReceiptTaskGridRow.PlannedQuantity),
-            ["processedQuantity"] = nameof(GoodsReceiptTaskGridRow.ProcessedQuantity)
+            ["processedQuantity"] = nameof(GoodsReceiptTaskGridRow.ProcessedQuantity),
+            ["createdBy"] = nameof(GoodsReceiptTaskGridRow.CreatedBy),
+            ["updatedBy"] = nameof(GoodsReceiptTaskGridRow.UpdatedBy)
         };
     private static readonly string[] DefaultGridSearchColumns =
         ["taskNo", "documentNo", "waybillNo", "supplierCode", "supplierName", "warehouseCode", "warehouseName"];

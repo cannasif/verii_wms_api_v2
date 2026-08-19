@@ -38,7 +38,8 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
         ["vehiclePlateNo"]=nameof(SteelReceiptPlanGridRow.VehicleSearchText),["supplierCode"]=nameof(SteelReceiptPlanGridRow.SupplierCode),
         ["supplierName"]=nameof(SteelReceiptPlanGridRow.SupplierName),["warehouseCode"]=nameof(SteelReceiptPlanGridRow.WarehouseCode),
         ["warehouseName"]=nameof(SteelReceiptPlanGridRow.WarehouseName),["status"]=nameof(SteelReceiptPlanGridRow.Status),
-        ["totalLineCount"]=nameof(SteelReceiptPlanGridRow.TotalLineCount),["totalExpectedQuantity"]=nameof(SteelReceiptPlanGridRow.TotalExpectedQuantity)
+        ["totalLineCount"]=nameof(SteelReceiptPlanGridRow.TotalLineCount),["totalExpectedQuantity"]=nameof(SteelReceiptPlanGridRow.TotalExpectedQuantity),
+        ["createdBy"]=nameof(SteelReceiptPlanGridRow.CreatedBy),["updatedBy"]=nameof(SteelReceiptPlanGridRow.UpdatedBy)
     };
     private static readonly string[] DefaultPlanSearchColumns=["importReferenceNo","vehiclePlateNo","supplierCode","supplierName","warehouseCode","warehouseName"];
     private static readonly IReadOnlyDictionary<string,string> LineSearchColumns=new Dictionary<string,string>(StringComparer.OrdinalIgnoreCase)
@@ -53,7 +54,8 @@ public sealed class SteelReceiptService(IUnitOfWork uow,IGoodsReceiptOperationsS
         ["approvedQuantity"]=nameof(SteelReceiptLineGridRow.ApprovedQuantity),["rejectedQuantity"]=nameof(SteelReceiptLineGridRow.RejectedQuantity),
         ["arrivalStatus"]=nameof(SteelReceiptLineGridRow.ArrivalStatus),["inspectionStatus"]=nameof(SteelReceiptLineGridRow.InspectionStatus),
         ["conversionStatus"]=nameof(SteelReceiptLineGridRow.ConversionStatus),["putawayStatus"]=nameof(SteelReceiptLineGridRow.PutawayStatus),
-        ["goodsReceiptNo"]=nameof(SteelReceiptLineGridRow.GoodsReceiptNo)
+        ["goodsReceiptNo"]=nameof(SteelReceiptLineGridRow.GoodsReceiptNo),
+        ["createdBy"]=nameof(SteelReceiptLineGridRow.CreatedBy),["updatedBy"]=nameof(SteelReceiptLineGridRow.UpdatedBy)
     };
     private static readonly string[] DefaultLineSearchColumns=["dCode","supplierSerialNo","stockCode","stockName","importReferenceNo","netsisOrderNo","materialGrade","combinedSize","heatNumber","certificateNumber","goodsReceiptNo"];
     private IGenericRepository<SteelReceiptPlan> Plans=>uow.Repository<SteelReceiptPlan>();

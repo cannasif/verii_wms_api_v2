@@ -22,7 +22,8 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
         ["subject"]=nameof(ProcurementGridRow.SubjectSearchText),["counterparty"]=nameof(ProcurementGridRow.Counterparty),
         ["requestNo"]=nameof(ProcurementGridRow.RequestNo),["rfqNo"]=nameof(ProcurementGridRow.RfqNo),
         ["quoteNo"]=nameof(ProcurementGridRow.QuoteNo),["lineCount"]=nameof(ProcurementGridRow.LineCount),
-        ["totalAmount"]=nameof(ProcurementGridRow.TotalSearchText)
+        ["totalAmount"]=nameof(ProcurementGridRow.TotalSearchText),
+        ["createdBy"]=nameof(ProcurementGridRow.CreatedBySearchText),["updatedBy"]=nameof(ProcurementGridRow.UpdatedBySearchText)
     };
     private static readonly string[] DefaultGridSearchColumns=["documentNo","subject","counterparty","requestNo","rfqNo","quoteNo"];
     private static readonly IReadOnlySet<string> QuoteLineSummaryColumns=new HashSet<string>(StringComparer.OrdinalIgnoreCase){"lineCount","totalAmount","dueDate"};
@@ -434,12 +435,103 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
         await emailSender.SendQuoteInvitationAsync(invitation.RecipientEmail,quote.SupplierNameSnapshot,quote.Rfq.RfqNo,quote.Rfq.Subject,quote.Rfq.ResponseDueDate,$"{baseUrl}/supplier/quotes/{Uri.EscapeDataString(rawToken)}",ct);
     }
 
-    private IQueryable<ProcurementGridRow> RequestRows(PagedRequest r){var s=r.LegacySearch?.Trim();var q=Requests.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.RequestNo.Contains(s)||x.Subject.Contains(s)).Select(x=>new ProcurementGridRow(x.Id,"request",x.RequestNo,x.RequestDate,x.Status.ToString(),x.Subject,null,x.Lines.Count,0,"TRY",x.RequiredDate,x.CreatedDate,x.Id,x.RequestNo,null,null,null,null,x.CreatedBy,null,x.UpdatedDate,x.UpdatedBy,null,x.Subject,"0 TRY"));return GridSearch(q,r).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
-    private IQueryable<ProcurementGridRow> RfqRows(PagedRequest r){var s=r.LegacySearch?.Trim();var q=Rfqs.Query().Where(x=>string.IsNullOrWhiteSpace(s)||x.RfqNo.Contains(s)||x.Subject.Contains(s)||(x.Request!=null&&x.Request.RequestNo.Contains(s))).Select(x=>new ProcurementGridRow(x.Id,"rfq",x.RfqNo,x.RfqDate,x.Status.ToString(),x.Subject,x.Suppliers.OrderBy(y=>y.Id).Select(y=>y.SupplierNameSnapshot).FirstOrDefault(),x.Lines.Count,0,"TRY",x.ResponseDueDate,x.CreatedDate,x.ProcurementRequestId,x.Request!=null?x.Request.RequestNo:null,x.Id,x.RfqNo,null,null,x.CreatedBy,null,x.UpdatedDate,x.UpdatedBy,null,x.Subject,"0 TRY"));return GridSearch(q,r).ApplyAdvancedFilters(r).ApplySort(r,nameof(ProcurementGridRow.DocumentDate));}
+    private IQueryable<ProcurementGridRow> RequestRows(PagedRequest r)=>
+        BuildRequestRows(r,Requests.Query(),uow.Repository<User>().Query(),uow.Repository<UserDetail>().Query());
+
+    internal static IQueryable<ProcurementGridRow> BuildRequestRows(PagedRequest request,IQueryable<ProcurementRequest> requests,IQueryable<User> users,IQueryable<UserDetail> userDetails)
+    {
+        var s=request.LegacySearch?.Trim();
+        var sources=requests
+            .Where(x=>string.IsNullOrWhiteSpace(s)||x.RequestNo.Contains(s)||x.Subject.Contains(s))
+            .Select(x=>new ProcurementRequestGridBase
+            {
+                Id=x.Id,RequestNo=x.RequestNo,RequestDate=x.RequestDate,Status=x.Status.ToString(),Subject=x.Subject,
+                LineCount=x.Lines.Count,RequiredDate=x.RequiredDate,CreatedDate=x.CreatedDate,CreatedBy=x.CreatedBy,
+                UpdatedDate=x.UpdatedDate,UpdatedBy=x.UpdatedBy
+            });
+        IQueryable<ProcurementRequestActorGridSource> actorSources;
+        if(RequiresActorSearch(request))
+            actorSources=from source in sources
+                join createdUser in users on source.CreatedBy equals (long?)createdUser.Id into createdUsers
+                from createdUser in createdUsers.DefaultIfEmpty()
+                join createdDetail in userDetails on source.CreatedBy equals (long?)createdDetail.UserId into createdDetails
+                from createdDetail in createdDetails.DefaultIfEmpty()
+                join updatedUser in users on source.UpdatedBy equals (long?)updatedUser.Id into updatedUsers
+                from updatedUser in updatedUsers.DefaultIfEmpty()
+                join updatedDetail in userDetails on source.UpdatedBy equals (long?)updatedDetail.UserId into updatedDetails
+                from updatedDetail in updatedDetails.DefaultIfEmpty()
+                select new ProcurementRequestActorGridSource
+                {
+                    Base=source,
+                    CreatedBySearchText=(source.CreatedBy==null?"Sistem System":source.CreatedBy.GetValueOrDefault().ToString())+" "
+                        +(createdUser==null?"":createdUser.Username+" "+createdUser.Email)+" "
+                        +(createdDetail==null?"":createdDetail.FirstName+" "+createdDetail.LastName),
+                    UpdatedBySearchText=(source.UpdatedBy==null?"Sistem System":source.UpdatedBy.GetValueOrDefault().ToString())+" "
+                        +(updatedUser==null?"":updatedUser.Username+" "+updatedUser.Email)+" "
+                        +(updatedDetail==null?"":updatedDetail.FirstName+" "+updatedDetail.LastName)
+                };
+        else
+            actorSources=sources.Select(source=>new ProcurementRequestActorGridSource{Base=source});
+
+        return actorSources
+            .Select(x=>new ProcurementGridRow(
+                x.Base.Id,"request",x.Base.RequestNo,x.Base.RequestDate,x.Base.Status,x.Base.Subject,null,x.Base.LineCount,0,"TRY",x.Base.RequiredDate,x.Base.CreatedDate,x.Base.Id,x.Base.RequestNo,null,null,null,null,x.Base.CreatedBy,null,x.Base.UpdatedDate,x.Base.UpdatedBy,null,x.Base.Subject,"0 TRY",x.CreatedBySearchText,x.UpdatedBySearchText))
+            .ApplySearch(request,GridSearchColumns,DefaultGridSearchColumns)
+            .ApplyAdvancedFilters(request)
+            .ApplySort(request,nameof(ProcurementGridRow.DocumentDate));
+    }
+    private IQueryable<ProcurementGridRow> RfqRows(PagedRequest r)=>
+        BuildRfqRows(r,Rfqs.Query(),uow.Repository<User>().Query(),uow.Repository<UserDetail>().Query());
+
+    internal static IQueryable<ProcurementGridRow> BuildRfqRows(PagedRequest request,IQueryable<ProcurementRfq> rfqs,IQueryable<User> users,IQueryable<UserDetail> userDetails)
+    {
+        var s=request.LegacySearch?.Trim();
+        var sources=rfqs
+            .Where(x=>string.IsNullOrWhiteSpace(s)||x.RfqNo.Contains(s)||x.Subject.Contains(s)||(x.Request!=null&&x.Request.RequestNo.Contains(s)))
+            .Select(x=>new ProcurementRfqGridBase
+            {
+                Id=x.Id,RfqNo=x.RfqNo,RfqDate=x.RfqDate,Status=x.Status.ToString(),Subject=x.Subject,
+                Counterparty=x.Suppliers.OrderBy(y=>y.Id).Select(y=>y.SupplierNameSnapshot).FirstOrDefault(),
+                LineCount=x.Lines.Count,ResponseDueDate=x.ResponseDueDate,CreatedDate=x.CreatedDate,CreatedBy=x.CreatedBy,
+                RequestId=x.ProcurementRequestId,RequestNo=x.Request!=null?x.Request.RequestNo:null,
+                UpdatedDate=x.UpdatedDate,UpdatedBy=x.UpdatedBy
+            });
+        IQueryable<ProcurementRfqActorGridSource> actorSources;
+        if(RequiresActorSearch(request))
+            actorSources=from source in sources
+                join createdUser in users on source.CreatedBy equals (long?)createdUser.Id into createdUsers
+                from createdUser in createdUsers.DefaultIfEmpty()
+                join createdDetail in userDetails on source.CreatedBy equals (long?)createdDetail.UserId into createdDetails
+                from createdDetail in createdDetails.DefaultIfEmpty()
+                join updatedUser in users on source.UpdatedBy equals (long?)updatedUser.Id into updatedUsers
+                from updatedUser in updatedUsers.DefaultIfEmpty()
+                join updatedDetail in userDetails on source.UpdatedBy equals (long?)updatedDetail.UserId into updatedDetails
+                from updatedDetail in updatedDetails.DefaultIfEmpty()
+                select new ProcurementRfqActorGridSource
+                {
+                    Base=source,
+                    CreatedBySearchText=(source.CreatedBy==null?"Sistem System":source.CreatedBy.GetValueOrDefault().ToString())+" "
+                        +(createdUser==null?"":createdUser.Username+" "+createdUser.Email)+" "
+                        +(createdDetail==null?"":createdDetail.FirstName+" "+createdDetail.LastName),
+                    UpdatedBySearchText=(source.UpdatedBy==null?"Sistem System":source.UpdatedBy.GetValueOrDefault().ToString())+" "
+                        +(updatedUser==null?"":updatedUser.Username+" "+updatedUser.Email)+" "
+                        +(updatedDetail==null?"":updatedDetail.FirstName+" "+updatedDetail.LastName)
+                };
+        else
+            actorSources=sources.Select(source=>new ProcurementRfqActorGridSource{Base=source});
+
+        return actorSources
+            .Select(x=>new ProcurementGridRow(
+                x.Base.Id,"rfq",x.Base.RfqNo,x.Base.RfqDate,x.Base.Status,x.Base.Subject,x.Base.Counterparty,x.Base.LineCount,0,"TRY",x.Base.ResponseDueDate,x.Base.CreatedDate,x.Base.RequestId,x.Base.RequestNo,x.Base.Id,x.Base.RfqNo,null,null,x.Base.CreatedBy,null,x.Base.UpdatedDate,x.Base.UpdatedBy,null,x.Base.Subject,"0 TRY",x.CreatedBySearchText,x.UpdatedBySearchText))
+            .ApplySearch(request,GridSearchColumns,DefaultGridSearchColumns)
+            .ApplyAdvancedFilters(request)
+            .ApplySort(request,nameof(ProcurementGridRow.DocumentDate));
+    }
     private async Task<PagedResponse<ProcurementGridRow>> GetQuotePageAsync(PagedRequest request,CancellationToken ct)
     {
         var quotes=Quotes.Query();var lines=QuoteLines.Query();
-        var page=await BuildQuoteRows(request,quotes,lines).ToPagedResponseAsync(BuildQuoteCountQuery(request,quotes,lines),request,ct);
+        var users=uow.Repository<User>().Query();var userDetails=uow.Repository<UserDetail>().Query();
+        var page=await BuildQuoteRows(request,quotes,lines,users,userDetails).ToPagedResponseAsync(BuildQuoteCountQuery(request,quotes,lines,users,userDetails),request,ct);
         return page.Items.Count==0||RequiresInMainQuery(request,QuoteLineSummaryColumns)
             ?page:await EnrichQuoteSummariesAsync(page,lines,ct);
     }
@@ -447,21 +539,22 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
     private async Task<PagedResponse<ProcurementGridRow>> GetOrderPageAsync(PagedRequest request,CancellationToken ct)
     {
         var orders=Orders.Query();var quotes=Quotes.Query();var lines=OrderLines.Query();
-        var page=await BuildOrderRows(request,orders,quotes,lines).ToPagedResponseAsync(BuildOrderCountQuery(request,orders,quotes,lines),request,ct);
+        var users=uow.Repository<User>().Query();var userDetails=uow.Repository<UserDetail>().Query();
+        var page=await BuildOrderRows(request,orders,quotes,lines,users,userDetails).ToPagedResponseAsync(BuildOrderCountQuery(request,orders,quotes,lines,users,userDetails),request,ct);
         return page.Items.Count==0||RequiresInMainQuery(request,OrderLineSummaryColumns)
             ?page:await EnrichOrderSummariesAsync(page,lines,ct);
     }
 
-    internal static IQueryable<ProcurementGridRow> BuildQuoteRows(PagedRequest request,IQueryable<ProcurementSupplierQuote> quotes,IQueryable<ProcurementSupplierQuoteLine> lines)
+    internal static IQueryable<ProcurementGridRow> BuildQuoteRows(PagedRequest request,IQueryable<ProcurementSupplierQuote> quotes,IQueryable<ProcurementSupplierQuoteLine> lines,IQueryable<User> users,IQueryable<UserDetail> userDetails)
     {
-        var rows=BuildQuoteProjections(quotes,lines,RequiresInMainQuery(request,QuoteLineSummaryColumns))
+        var rows=AttachActorSearch(BuildQuoteProjections(quotes,lines,RequiresInMainQuery(request,QuoteLineSummaryColumns)),request,users,userDetails)
             .ApplySearch(request,GridSearchColumns,DefaultGridSearchColumns)
             .ApplyAdvancedFilters(request).ApplySort(request,nameof(ProcurementGridRow.DocumentDate));
         return ToGridRows(rows);
     }
 
-    internal static IQueryable<long> BuildQuoteCountQuery(PagedRequest request,IQueryable<ProcurementSupplierQuote> quotes,IQueryable<ProcurementSupplierQuoteLine> lines)=>
-        BuildQuoteProjections(quotes,lines,RequiresForCount(request,QuoteLineSummaryColumns))
+    internal static IQueryable<long> BuildQuoteCountQuery(PagedRequest request,IQueryable<ProcurementSupplierQuote> quotes,IQueryable<ProcurementSupplierQuoteLine> lines,IQueryable<User> users,IQueryable<UserDetail> userDetails)=>
+        AttachActorSearch(BuildQuoteProjections(quotes,lines,RequiresForCount(request,QuoteLineSummaryColumns)),request,users,userDetails)
             .ApplySearch(request,GridSearchColumns,DefaultGridSearchColumns).ApplyAdvancedFilters(request).Select(x=>x.Id);
 
     private static IQueryable<ProcurementGridProjection> BuildQuoteProjections(IQueryable<ProcurementSupplierQuote> quotes,IQueryable<ProcurementSupplierQuoteLine> lines,bool includeSummary)
@@ -487,20 +580,21 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
                 Counterparty=row.Counterparty,LineCount=(int?)total.LineCount??0,TotalAmount=(decimal?)total.TotalAmount??0,CurrencyCode=row.CurrencyCode,
                 DueDate=total.EarliestDeliveryDate??row.DueDate,CreatedDate=row.CreatedDate,RequestId=row.RequestId,RequestNo=row.RequestNo,RfqId=row.RfqId,
                 RfqNo=row.RfqNo,QuoteId=row.QuoteId,QuoteNo=row.QuoteNo,CreatedBy=row.CreatedBy,UpdatedDate=row.UpdatedDate,UpdatedBy=row.UpdatedBy,
-                SubjectSearchText=row.SubjectSearchText,TotalSearchText=((decimal?)total.TotalAmount??0)+" "+row.CurrencyCode
+                SubjectSearchText=row.SubjectSearchText,TotalSearchText=((decimal?)total.TotalAmount??0)+" "+row.CurrencyCode,
+                CreatedBySearchText=row.CreatedBySearchText,UpdatedBySearchText=row.UpdatedBySearchText
             };
     }
 
-    internal static IQueryable<ProcurementGridRow> BuildOrderRows(PagedRequest request,IQueryable<ProcurementPurchaseOrder> orders,IQueryable<ProcurementSupplierQuote> quotes,IQueryable<ProcurementPurchaseOrderLine> lines)
+    internal static IQueryable<ProcurementGridRow> BuildOrderRows(PagedRequest request,IQueryable<ProcurementPurchaseOrder> orders,IQueryable<ProcurementSupplierQuote> quotes,IQueryable<ProcurementPurchaseOrderLine> lines,IQueryable<User> users,IQueryable<UserDetail> userDetails)
     {
-        var rows=BuildOrderProjections(orders,quotes,lines,RequiresInMainQuery(request,OrderLineSummaryColumns))
+        var rows=AttachActorSearch(BuildOrderProjections(orders,quotes,lines,RequiresInMainQuery(request,OrderLineSummaryColumns)),request,users,userDetails)
             .ApplySearch(request,GridSearchColumns,DefaultGridSearchColumns)
             .ApplyAdvancedFilters(request).ApplySort(request,nameof(ProcurementGridRow.DocumentDate));
         return ToGridRows(rows);
     }
 
-    internal static IQueryable<long> BuildOrderCountQuery(PagedRequest request,IQueryable<ProcurementPurchaseOrder> orders,IQueryable<ProcurementSupplierQuote> quotes,IQueryable<ProcurementPurchaseOrderLine> lines)=>
-        BuildOrderProjections(orders,quotes,lines,RequiresForCount(request,OrderLineSummaryColumns))
+    internal static IQueryable<long> BuildOrderCountQuery(PagedRequest request,IQueryable<ProcurementPurchaseOrder> orders,IQueryable<ProcurementSupplierQuote> quotes,IQueryable<ProcurementPurchaseOrderLine> lines,IQueryable<User> users,IQueryable<UserDetail> userDetails)=>
+        AttachActorSearch(BuildOrderProjections(orders,quotes,lines,RequiresForCount(request,OrderLineSummaryColumns)),request,users,userDetails)
             .ApplySearch(request,GridSearchColumns,DefaultGridSearchColumns).ApplyAdvancedFilters(request).Select(x=>x.Id);
 
     private static IQueryable<ProcurementGridProjection> BuildOrderProjections(IQueryable<ProcurementPurchaseOrder> orders,IQueryable<ProcurementSupplierQuote> quotes,IQueryable<ProcurementPurchaseOrderLine> lines,bool includeSummary)
@@ -527,7 +621,8 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
                 Counterparty=row.Counterparty,LineCount=(int?)total.LineCount??0,TotalAmount=(decimal?)total.TotalAmount??0,CurrencyCode=row.CurrencyCode,
                 DueDate=row.DueDate,CreatedDate=row.CreatedDate,RequestId=row.RequestId,RequestNo=row.RequestNo,RfqId=row.RfqId,RfqNo=row.RfqNo,
                 QuoteId=row.QuoteId,QuoteNo=row.QuoteNo,CreatedBy=row.CreatedBy,UpdatedDate=row.UpdatedDate,UpdatedBy=row.UpdatedBy,
-                SubjectSearchText=row.SubjectSearchText,TotalSearchText=((decimal?)total.TotalAmount??0)+" "+row.CurrencyCode
+                SubjectSearchText=row.SubjectSearchText,TotalSearchText=((decimal?)total.TotalAmount??0)+" "+row.CurrencyCode,
+                CreatedBySearchText=row.CreatedBySearchText,UpdatedBySearchText=row.UpdatedBySearchText
             };
     }
 
@@ -536,7 +631,7 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
 
     private static IQueryable<ProcurementGridRow> ToGridRows(IQueryable<ProcurementGridProjection> rows)=>rows.Select(x=>new ProcurementGridRow(
         x.Id,x.DocumentType,x.DocumentNo,x.DocumentDate,x.Status,x.Subject,x.Counterparty,x.LineCount,x.TotalAmount,x.CurrencyCode,x.DueDate,x.CreatedDate,
-        x.RequestId,x.RequestNo,x.RfqId,x.RfqNo,x.QuoteId,x.QuoteNo,x.CreatedBy,null,x.UpdatedDate,x.UpdatedBy,null,x.SubjectSearchText,x.TotalSearchText));
+        x.RequestId,x.RequestNo,x.RfqId,x.RfqNo,x.QuoteId,x.QuoteNo,x.CreatedBy,null,x.UpdatedDate,x.UpdatedBy,null,x.SubjectSearchText,x.TotalSearchText,x.CreatedBySearchText,x.UpdatedBySearchText));
 
     private static async Task<PagedResponse<ProcurementGridRow>> EnrichQuoteSummariesAsync(PagedResponse<ProcurementGridRow> page,IQueryable<ProcurementSupplierQuoteLine> lines,CancellationToken ct)
     {
@@ -565,10 +660,93 @@ public sealed class ProcurementService(IUnitOfWork uow,IAuditLogWriter audit,IPr
         public long? RequestId{get;init;} public string? RequestNo{get;init;} public long? RfqId{get;init;} public string? RfqNo{get;init;}
         public long? QuoteId{get;init;} public string? QuoteNo{get;init;} public long? CreatedBy{get;init;} public DateTime? UpdatedDate{get;init;}
         public long? UpdatedBy{get;init;} public string? SubjectSearchText{get;init;} public string? TotalSearchText{get;init;}
+        public string? CreatedBySearchText{get;init;} public string? UpdatedBySearchText{get;init;}
+    }
+
+    private static IQueryable<ProcurementGridProjection> AttachActorSearch(IQueryable<ProcurementGridProjection> rows,PagedRequest request,IQueryable<User> users,IQueryable<UserDetail> userDetails)
+    {
+        if(!RequiresActorSearch(request))return rows;
+        return from source in rows
+            join createdUser in users on source.CreatedBy equals (long?)createdUser.Id into createdUsers
+            from createdUser in createdUsers.DefaultIfEmpty()
+            join createdDetail in userDetails on source.CreatedBy equals (long?)createdDetail.UserId into createdDetails
+            from createdDetail in createdDetails.DefaultIfEmpty()
+            join updatedUser in users on source.UpdatedBy equals (long?)updatedUser.Id into updatedUsers
+            from updatedUser in updatedUsers.DefaultIfEmpty()
+            join updatedDetail in userDetails on source.UpdatedBy equals (long?)updatedDetail.UserId into updatedDetails
+            from updatedDetail in updatedDetails.DefaultIfEmpty()
+            select new ProcurementGridProjection
+            {
+                Id=source.Id,DocumentType=source.DocumentType,DocumentNo=source.DocumentNo,DocumentDate=source.DocumentDate,Status=source.Status,
+                Subject=source.Subject,Counterparty=source.Counterparty,LineCount=source.LineCount,TotalAmount=source.TotalAmount,CurrencyCode=source.CurrencyCode,
+                DueDate=source.DueDate,CreatedDate=source.CreatedDate,RequestId=source.RequestId,RequestNo=source.RequestNo,RfqId=source.RfqId,RfqNo=source.RfqNo,
+                QuoteId=source.QuoteId,QuoteNo=source.QuoteNo,CreatedBy=source.CreatedBy,UpdatedDate=source.UpdatedDate,UpdatedBy=source.UpdatedBy,
+                SubjectSearchText=source.SubjectSearchText,TotalSearchText=source.TotalSearchText,
+                CreatedBySearchText=(source.CreatedBy==null?"Sistem System":source.CreatedBy.GetValueOrDefault().ToString())+" "
+                    +(createdUser==null?"":createdUser.Username+" "+createdUser.Email)+" "
+                    +(createdDetail==null?"":createdDetail.FirstName+" "+createdDetail.LastName),
+                UpdatedBySearchText=(source.UpdatedBy==null?"Sistem System":source.UpdatedBy.GetValueOrDefault().ToString())+" "
+                    +(updatedUser==null?"":updatedUser.Username+" "+updatedUser.Email)+" "
+                    +(updatedDetail==null?"":updatedDetail.FirstName+" "+updatedDetail.LastName)
+            };
     }
 
     private static IQueryable<ProcurementGridRow> GridSearch(IQueryable<ProcurementGridRow> rows,PagedRequest request)=>
         rows.ApplySearch(request,GridSearchColumns,DefaultGridSearchColumns);
+
+    private static bool RequiresActorSearch(PagedRequest request)=>
+        !string.IsNullOrWhiteSpace(request.EffectiveSearch)
+        && request.SearchFields.Any(x=>IsColumn(x,"createdBy")||IsColumn(x,"updatedBy"));
+
+    private static bool IsColumn(string? value,string expected)=>
+        string.Equals(value?.Trim(),expected,StringComparison.OrdinalIgnoreCase);
+
+    private sealed class ProcurementRequestGridBase
+    {
+        public long Id { get; init; }
+        public required string RequestNo { get; init; }
+        public DateOnly RequestDate { get; init; }
+        public required string Status { get; init; }
+        public required string Subject { get; init; }
+        public int LineCount { get; init; }
+        public DateOnly? RequiredDate { get; init; }
+        public DateTime? CreatedDate { get; init; }
+        public long? CreatedBy { get; init; }
+        public DateTime? UpdatedDate { get; init; }
+        public long? UpdatedBy { get; init; }
+    }
+
+    private sealed class ProcurementRequestActorGridSource
+    {
+        public required ProcurementRequestGridBase Base { get; init; }
+        public string? CreatedBySearchText { get; init; }
+        public string? UpdatedBySearchText { get; init; }
+    }
+
+    private sealed class ProcurementRfqGridBase
+    {
+        public long Id { get; init; }
+        public required string RfqNo { get; init; }
+        public DateOnly RfqDate { get; init; }
+        public required string Status { get; init; }
+        public required string Subject { get; init; }
+        public string? Counterparty { get; init; }
+        public int LineCount { get; init; }
+        public DateOnly? ResponseDueDate { get; init; }
+        public DateTime? CreatedDate { get; init; }
+        public long? CreatedBy { get; init; }
+        public long? RequestId { get; init; }
+        public string? RequestNo { get; init; }
+        public DateTime? UpdatedDate { get; init; }
+        public long? UpdatedBy { get; init; }
+    }
+
+    private sealed class ProcurementRfqActorGridSource
+    {
+        public required ProcurementRfqGridBase Base { get; init; }
+        public string? CreatedBySearchText { get; init; }
+        public string? UpdatedBySearchText { get; init; }
+    }
 
     private async Task<PagedResponse<ProcurementGridRow>> EnrichGridAuditAsync(PagedResponse<ProcurementGridRow> page,CancellationToken ct)
     {

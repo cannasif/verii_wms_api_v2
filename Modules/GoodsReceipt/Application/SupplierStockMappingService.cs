@@ -16,6 +16,7 @@ public sealed class SupplierStockMappingService(
     private static readonly IReadOnlyDictionary<string, string> SearchColumns =
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
+            ["id"] = nameof(SupplierStockMappingRow.Id),
             ["supplierCode"] = nameof(SupplierStockMappingRow.SupplierSearchText),
             ["supplierName"] = nameof(SupplierStockMappingRow.SupplierName),
             ["supplierStockCode"] = nameof(SupplierStockMappingRow.SupplierStockCode),
@@ -24,7 +25,9 @@ public sealed class SupplierStockMappingService(
             ["systemStockName"] = nameof(SupplierStockMappingRow.SystemStockName),
             ["supplierUnitCode"] = nameof(SupplierStockMappingRow.SupplierUnitCode),
             ["systemUnitCode"] = nameof(SupplierStockMappingRow.SystemUnitCode),
-            ["notes"] = nameof(SupplierStockMappingRow.Notes)
+            ["notes"] = nameof(SupplierStockMappingRow.Notes),
+            ["createdBy"] = nameof(SupplierStockMappingRow.CreatedBy),
+            ["updatedBy"] = nameof(SupplierStockMappingRow.UpdatedBy)
         };
     private static readonly string[] DefaultSearchColumns =
     [

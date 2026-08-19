@@ -25,7 +25,8 @@ public sealed partial class StockBalanceService(
         ["id"]=nameof(SerialMovementHistoryRow.Id),["operationCode"]=nameof(SerialMovementHistoryRow.OperationCode),
         ["referenceNo"]=nameof(SerialMovementHistoryRow.ReferenceSearchText),["warehouseCode"]=nameof(SerialMovementHistoryRow.WarehouseCode),
         ["warehouseName"]=nameof(SerialMovementHistoryRow.WarehouseName),["locationCode"]=nameof(SerialMovementHistoryRow.LocationCode),
-        ["locationName"]=nameof(SerialMovementHistoryRow.LocationName),["quantityDelta"]=nameof(SerialMovementHistoryRow.QuantitySearchText)
+        ["locationName"]=nameof(SerialMovementHistoryRow.LocationName),["quantityDelta"]=nameof(SerialMovementHistoryRow.QuantitySearchText),
+        ["createdBy"]=nameof(SerialMovementHistoryRow.CreatedBy),["updatedBy"]=nameof(SerialMovementHistoryRow.UpdatedBy)
     };
     private static readonly string[] DefaultSerialHistorySearchColumns=["operationCode","referenceNo","warehouseCode","warehouseName","locationCode","locationName"];
     private IGenericRepository<LocationStockBalance> Locations => unitOfWork.Repository<LocationStockBalance>();

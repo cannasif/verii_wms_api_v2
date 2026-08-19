@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Modules.Procurement.Application;
 using verii_wms_api_v2.Modules.Procurement.Domain;
@@ -62,14 +63,106 @@ public sealed class ProcurementSearchQueryTests
         Assert.Equal(1,CountOccurrences(countSql,"RII_PC_ORDER_LINE"));
     }
 
+    [Fact]
+    public void Request_field_search_does_not_join_actor_tables()
+    {
+        using var db=SqlServerContext();
+        var sql=RequestRows(db,new PagedRequest{Search="REQ",SearchFields=["documentNo"]}).ToQueryString();
+        Assert.Contains("RII_PC_REQUEST",sql,StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("RII_USERS",sql,StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("RII_USER_DETAILS",sql,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("createdBy")]
+    [InlineData("updatedBy")]
+    public void Request_actor_search_joins_actor_tables_only_when_selected(string field)
+    {
+        using var db=SqlServerContext();
+        var sql=RequestRows(db,new PagedRequest{Search="System Administrator",SearchFields=[field]}).ToQueryString();
+        Assert.Contains("RII_USERS",sql,StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("RII_USER_DETAILS",sql,StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("LIKE",sql,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Rfq_field_search_does_not_join_actor_tables()
+    {
+        using var db=SqlServerContext();
+        var sql=RfqRows(db,new PagedRequest{Search="RFQ",SearchFields=["documentNo"]}).ToQueryString();
+        Assert.Contains("RII_PC_RFQ",sql,StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("RII_USERS",sql,StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("RII_USER_DETAILS",sql,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("createdBy")]
+    [InlineData("updatedBy")]
+    public void Rfq_actor_search_joins_actor_tables_only_when_selected(string field)
+    {
+        using var db=SqlServerContext();
+        var sql=RfqRows(db,new PagedRequest{Search="System Administrator",SearchFields=[field]}).ToQueryString();
+        Assert.Contains("RII_USERS",sql,StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("RII_USER_DETAILS",sql,StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("LIKE",sql,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Quote_field_search_does_not_join_actor_tables()
+    {
+        using var db=SqlServerContext();
+        var sql=QuoteRows(db,new PagedRequest{Search="QT",SearchFields=["quoteNo"]}).ToQueryString();
+        Assert.DoesNotContain("RII_USERS",sql,StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("RII_USER_DETAILS",sql,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("createdBy")]
+    [InlineData("updatedBy")]
+    public void Quote_actor_search_joins_actor_tables_only_when_selected(string field)
+    {
+        using var db=SqlServerContext();
+        var sql=QuoteRows(db,new PagedRequest{Search="System Administrator",SearchFields=[field]}).ToQueryString();
+        Assert.Contains("RII_USERS",sql,StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("RII_USER_DETAILS",sql,StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("LIKE",sql,StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("RII_PC_QUOTE_LINE",sql,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Order_field_search_does_not_join_actor_tables()
+    {
+        using var db=SqlServerContext();
+        var sql=OrderRows(db,new PagedRequest{Search="PO",SearchFields=["documentNo"]}).ToQueryString();
+        Assert.DoesNotContain("RII_USERS",sql,StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("RII_USER_DETAILS",sql,StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("createdBy")]
+    [InlineData("updatedBy")]
+    public void Order_actor_search_joins_actor_tables_only_when_selected(string field)
+    {
+        using var db=SqlServerContext();
+        var sql=OrderRows(db,new PagedRequest{Search="System Administrator",SearchFields=[field]}).ToQueryString();
+        Assert.Contains("RII_USERS",sql,StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("RII_USER_DETAILS",sql,StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("LIKE",sql,StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("RII_PC_ORDER_LINE",sql,StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static IQueryable<ProcurementGridRow> RequestRows(WmsDbContext db,PagedRequest request)=>
+        ProcurementService.BuildRequestRows(request,db.Set<ProcurementRequest>(),db.Set<User>(),db.Set<UserDetail>());
+    private static IQueryable<ProcurementGridRow> RfqRows(WmsDbContext db,PagedRequest request)=>
+        ProcurementService.BuildRfqRows(request,db.Set<ProcurementRfq>(),db.Set<User>(),db.Set<UserDetail>());
     private static IQueryable<ProcurementGridRow> QuoteRows(WmsDbContext db,PagedRequest request)=>
-        ProcurementService.BuildQuoteRows(request,db.Set<ProcurementSupplierQuote>(),db.Set<ProcurementSupplierQuoteLine>());
+        ProcurementService.BuildQuoteRows(request,db.Set<ProcurementSupplierQuote>(),db.Set<ProcurementSupplierQuoteLine>(),db.Set<User>(),db.Set<UserDetail>());
     private static IQueryable<long> QuoteCount(WmsDbContext db,PagedRequest request)=>
-        ProcurementService.BuildQuoteCountQuery(request,db.Set<ProcurementSupplierQuote>(),db.Set<ProcurementSupplierQuoteLine>());
+        ProcurementService.BuildQuoteCountQuery(request,db.Set<ProcurementSupplierQuote>(),db.Set<ProcurementSupplierQuoteLine>(),db.Set<User>(),db.Set<UserDetail>());
     private static IQueryable<ProcurementGridRow> OrderRows(WmsDbContext db,PagedRequest request)=>
-        ProcurementService.BuildOrderRows(request,db.Set<ProcurementPurchaseOrder>(),db.Set<ProcurementSupplierQuote>(),db.Set<ProcurementPurchaseOrderLine>());
+        ProcurementService.BuildOrderRows(request,db.Set<ProcurementPurchaseOrder>(),db.Set<ProcurementSupplierQuote>(),db.Set<ProcurementPurchaseOrderLine>(),db.Set<User>(),db.Set<UserDetail>());
     private static IQueryable<long> OrderCount(WmsDbContext db,PagedRequest request)=>
-        ProcurementService.BuildOrderCountQuery(request,db.Set<ProcurementPurchaseOrder>(),db.Set<ProcurementSupplierQuote>(),db.Set<ProcurementPurchaseOrderLine>());
+        ProcurementService.BuildOrderCountQuery(request,db.Set<ProcurementPurchaseOrder>(),db.Set<ProcurementSupplierQuote>(),db.Set<ProcurementPurchaseOrderLine>(),db.Set<User>(),db.Set<UserDetail>());
 
     private static WmsDbContext SqlServerContext(){var options=new DbContextOptionsBuilder<WmsDbContext>()
         .UseSqlServer("Server=(localdb)\\mssqllocaldb;Database=QueryTranslationOnly;Trusted_Connection=True;").Options;return new WmsDbContext(options);}
