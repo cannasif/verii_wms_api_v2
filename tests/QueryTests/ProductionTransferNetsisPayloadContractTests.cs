@@ -169,6 +169,39 @@ public sealed class ProductionTransferNetsisPayloadContractTests
     }
 
     [Fact]
+    public void Identical_untracked_transfer_lines_are_consolidated_for_erp()
+    {
+        var lines = new[]
+        {
+            TransferLine(1m),
+            TransferLine(3m)
+        };
+
+        var result = ErpPostingService.ConsolidateWarehouseTransferLines(lines);
+
+        var line = Assert.Single(result);
+        Assert.Equal(4m, line.Miktar);
+        Assert.Null(line.ProjeKodu);
+        Assert.Equal(2, line.DepoKodu);
+        Assert.Equal(2, line.CikisDepoKodu);
+        Assert.Equal(1, line.GirisDepoKodu);
+    }
+
+    [Fact]
+    public void Serial_or_order_linked_transfer_lines_are_not_consolidated()
+    {
+        var serialLine = TransferLine(1m);
+        serialLine.SeriNo = "SER-1";
+        var orderLine = TransferLine(3m);
+        orderLine.SiparisNumarasi = "SIP-1";
+        orderLine.SiparisKontrol = 1;
+
+        var result = ErpPostingService.ConsolidateWarehouseTransferLines([serialLine, orderLine]);
+
+        Assert.Equal(2, result.Count);
+    }
+
+    [Fact]
     public void Global_serial_export_policy_removes_serials_from_every_erp_line_when_disabled()
     {
         var request = new NetsisItemSlipRequest
@@ -188,6 +221,17 @@ public sealed class ProductionTransferNetsisPayloadContractTests
             json.RootElement.GetProperty("Kalems").EnumerateArray(),
             line => Assert.False(line.TryGetProperty("SeriNo", out _)));
     }
+
+    private static NetsisItemSlipLine TransferLine(decimal quantity) => new()
+    {
+        StokKodu = "01/025",
+        Miktar = quantity,
+        DepoKodu = 2,
+        CikisDepoKodu = 2,
+        GirisDepoKodu = 1,
+        Aciklama = "Kalan miktar",
+        ProjeKodu = null
+    };
 
     [Fact]
     public void Global_serial_export_policy_preserves_serials_when_enabled()

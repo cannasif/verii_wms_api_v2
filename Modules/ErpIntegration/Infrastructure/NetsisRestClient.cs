@@ -14,10 +14,7 @@ public sealed class NetsisRestClient(
     IOptions<NetsisOptions> optionsAccessor,
     ILogger<NetsisRestClient> logger) : INetsisRestClient
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
-    {
-        PropertyNameCaseInsensitive = true
-    };
+    private static readonly JsonSerializerOptions JsonOptions = NetsisJsonSerializerOptions.Default;
 
     public async Task<NetsisCallResult<NetsisItemSlipResponse>> CreateItemSlipAsync(
         NetsisItemSlipRequest request,
@@ -236,8 +233,6 @@ public sealed class NetsisRestClient(
 
 internal static class NetsisItemSlipDefaults
 {
-    internal const string DefaultProjectCode = "0";
-
     internal static void Apply(NetsisItemSlipRequest request, DateTime now)
     {
         ArgumentNullException.ThrowIfNull(request);
@@ -259,6 +254,6 @@ internal static class NetsisItemSlipDefaults
         }
     }
 
-    internal static string NormalizeProjectCode(string? value) =>
-        string.IsNullOrWhiteSpace(value) ? DefaultProjectCode : value.Trim();
+    internal static string? NormalizeProjectCode(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 }

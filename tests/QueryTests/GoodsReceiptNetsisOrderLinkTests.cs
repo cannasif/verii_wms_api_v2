@@ -80,8 +80,8 @@ public sealed class GoodsReceiptNetsisOrderLinkTests
         };
 
         Assert.Equal("PRJ-01", ErpPostingService.ResolveHeaderProjectCode(sameProject));
-        Assert.Equal("0", ErpPostingService.ResolveHeaderProjectCode(mixedProject));
-        Assert.Equal("0", ErpPostingService.ResolveHeaderProjectCode([]));
+        Assert.Null(ErpPostingService.ResolveHeaderProjectCode(mixedProject));
+        Assert.Null(ErpPostingService.ResolveHeaderProjectCode([]));
     }
 
     [Fact]

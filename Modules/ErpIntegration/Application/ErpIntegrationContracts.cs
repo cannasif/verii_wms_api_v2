@@ -389,7 +389,8 @@ public sealed class NetsisItemSlipHeader
     public DateTime FiiliTarih { get; set; }
 
     [JsonPropertyName("Proje_Kodu")]
-    public string ProjeKodu { get; set; } = "0";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ProjeKodu { get; set; }
 
     [JsonPropertyName("TIP")]
     public int Tip { get; set; }
@@ -474,7 +475,8 @@ public sealed class NetsisItemSlipLine
     public int SiparisKontrol { get; set; }
 
     [JsonPropertyName("ProjeKodu")]
-    public string ProjeKodu { get; set; } = "0";
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ProjeKodu { get; set; }
 }
 
 public sealed class NetsisItemSlipResponse

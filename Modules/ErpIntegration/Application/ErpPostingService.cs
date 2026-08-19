@@ -39,7 +39,7 @@ public sealed class ErpPostingService(
     ILogger<ErpPostingService> logger,
     TimeProvider timeProvider) : IErpPostingService
 {
-    private static readonly JsonSerializerOptions HashJsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions HashJsonOptions = NetsisJsonSerializerOptions.Default;
     private IGenericRepository<ErpPostingRecord> Postings => unitOfWork.Repository<ErpPostingRecord>();
     private IGenericRepository<ErpIntegrationAttempt> Attempts => unitOfWork.Repository<ErpIntegrationAttempt>();
 
@@ -815,6 +815,7 @@ public sealed class ErpPostingService(
                     targetWarehouse.WarehouseCode, line.YapCodeSnapshot, null, null, line.Description));
         }
 
+        lines = ConsolidateWarehouseTransferLines(lines);
         var sourceBranchCode = ParseBranchCode(sourceWarehouse.BranchCode);
         var targetBranchCode = ParseBranchCode(targetWarehouse.BranchCode);
         var documentType = ResolveWarehouseTransferDocumentType(sourceBranchCode, targetBranchCode);
@@ -839,6 +840,51 @@ public sealed class ErpPostingService(
             targetBranchCode);
         return request;
     }
+
+    internal static List<NetsisItemSlipLine> ConsolidateWarehouseTransferLines(
+        IEnumerable<NetsisItemSlipLine> sourceLines)
+    {
+        ArgumentNullException.ThrowIfNull(sourceLines);
+
+        var result = new List<NetsisItemSlipLine>();
+        var mergeTargets = new Dictionary<WarehouseTransferLineMergeKey, NetsisItemSlipLine>();
+        foreach (var line in sourceLines)
+        {
+            ArgumentNullException.ThrowIfNull(line);
+            var hasSerial = !string.IsNullOrWhiteSpace(line.SeriNo);
+            var hasOrderLink = !string.IsNullOrWhiteSpace(line.SiparisNumarasi)
+                || line.SiparisKontrol != 0;
+            if (hasSerial || hasOrderLink)
+            {
+                result.Add(line);
+                continue;
+            }
+
+            var key = new WarehouseTransferLineMergeKey(
+                NormalizeMergeKey(line.StokKodu),
+                line.DepoKodu,
+                line.CikisDepoKodu,
+                line.GirisDepoKodu,
+                NormalizeMergeKey(line.ConfigurationCode),
+                line.Aciklama?.Trim(),
+                line.NetFiyat,
+                line.BrutFiyat,
+                NormalizeMergeKey(line.ProjeKodu));
+            if (mergeTargets.TryGetValue(key, out var existing))
+            {
+                existing.Miktar += line.Miktar;
+                continue;
+            }
+
+            mergeTargets.Add(key, line);
+            result.Add(line);
+        }
+
+        return result;
+    }
+
+    private static string? NormalizeMergeKey(string? value) =>
+        string.IsNullOrWhiteSpace(value) ? null : value.Trim().ToUpperInvariant();
 
     internal static int ResolveWarehouseTransferDocumentType(
         int sourceBranchCode,
@@ -1470,7 +1516,7 @@ public sealed class ErpPostingService(
     private static string OrderAllocationKey(string stockCode, string? yapCode) =>
         $"{stockCode.Trim().ToUpperInvariant()}\u001F{Clean(yapCode)?.ToUpperInvariant() ?? string.Empty}";
 
-    internal static string ResolveHeaderProjectCode(IEnumerable<GoodsReceiptOrderSourceLine> orderRows)
+    internal static string? ResolveHeaderProjectCode(IEnumerable<GoodsReceiptOrderSourceLine> orderRows)
     {
         var projectCodes = orderRows
             .Select(x => Clean(x.ProjectCode))
@@ -1478,9 +1524,7 @@ public sealed class ErpPostingService(
             .Cast<string>()
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        return projectCodes.Count == 1
-            ? projectCodes[0]
-            : NetsisItemSlipDefaults.DefaultProjectCode;
+        return projectCodes.Count == 1 ? projectCodes[0] : null;
     }
 
     internal sealed record GoodsReceiptOrderAllocation(
@@ -1749,14 +1793,14 @@ public sealed class ErpPostingService(
         }
     }
 
-    private static string ResolveErpHeaderProjectCode(IEnumerable<ErpOrderRow> rows)
+    private static string? ResolveErpHeaderProjectCode(IEnumerable<ErpOrderRow> rows)
     {
         var values = rows.Select(x => Clean(x.ProjectCode))
             .Where(x => x is not null)
             .Cast<string>()
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
-        return values.Count == 1 ? values[0] : NetsisItemSlipDefaults.DefaultProjectCode;
+        return values.Count == 1 ? values[0] : null;
     }
 
     private static DateTime? ResolveErpDeliveryDate(IEnumerable<ErpOrderRow> rows, DateOnly fallback)
@@ -1779,6 +1823,17 @@ public sealed class ErpPostingService(
         string? ExternalYapCode,
         decimal AllocatedQuantity);
     private sealed record ErpSerialPart(decimal Quantity, string SerialNo);
+
+    private readonly record struct WarehouseTransferLineMergeKey(
+        string? StockCode,
+        int? WarehouseCode,
+        int? SourceWarehouseCode,
+        int? TargetWarehouseCode,
+        string? ConfigurationCode,
+        string? Description,
+        decimal NetPrice,
+        decimal GrossPrice,
+        string? ProjectCode);
     internal sealed record ProductionErpReference(
         string? ProductionPlanNo,
         string? ProductionOrderNo,

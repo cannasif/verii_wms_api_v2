@@ -75,7 +75,7 @@ public sealed class NetsisRestClientTests
     }
 
     [Fact]
-    public async Task Create_applies_project_and_date_defaults_before_serialization()
+    public async Task Create_omits_empty_projects_and_applies_date_defaults_before_serialization()
     {
         string? payload = null;
         var handler = new QueueHandler(request =>
@@ -87,7 +87,7 @@ public sealed class NetsisRestClientTests
         request.FatUst.ProjeKodu = " ";
         request.FatUst.Tarih = default;
         request.FatUst.FiiliTarih = default;
-        request.Kalems[0].ProjeKodu = null!;
+        request.Kalems[0].ProjeKodu = null;
 
         var before = DateTime.Now;
         var result = await CreateClient(handler, new FakeTokenService())
@@ -95,12 +95,38 @@ public sealed class NetsisRestClientTests
         var after = DateTime.Now;
 
         Assert.True(result.BusinessSucceeded);
-        Assert.Equal("0", request.FatUst.ProjeKodu);
-        Assert.Equal("0", request.Kalems[0].ProjeKodu);
+        Assert.Null(request.FatUst.ProjeKodu);
+        Assert.Null(request.Kalems[0].ProjeKodu);
         Assert.InRange(request.FatUst.Tarih, before, after);
         Assert.InRange(request.FatUst.FiiliTarih, before, after);
-        Assert.Contains("\"Proje_Kodu\":\"0\"", payload);
-        Assert.Contains("\"ProjeKodu\":\"0\"", payload);
+        Assert.DoesNotContain("Proje_Kodu", payload);
+        Assert.DoesNotContain("ProjeKodu", payload);
+        Assert.DoesNotContain("\"Seri\":", payload);
+        Assert.DoesNotContain("SIPARIS_TEST", payload);
+        Assert.DoesNotContain("YapKod", payload);
+    }
+
+    [Fact]
+    public async Task Create_preserves_and_serializes_real_project_codes()
+    {
+        string? payload = null;
+        var handler = new QueueHandler(request =>
+        {
+            payload = request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return Json(HttpStatusCode.OK, """{"isSuccessful":true}""");
+        });
+        var request = SampleRequest();
+        request.FatUst.ProjeKodu = " PRJ-01 ";
+        request.Kalems[0].ProjeKodu = " PRJ-01 ";
+
+        var result = await CreateClient(handler, new FakeTokenService())
+            .CreateItemSlipAsync(request, CancellationToken.None);
+
+        Assert.True(result.BusinessSucceeded);
+        Assert.Equal("PRJ-01", request.FatUst.ProjeKodu);
+        Assert.Equal("PRJ-01", request.Kalems[0].ProjeKodu);
+        Assert.Contains("\"Proje_Kodu\":\"PRJ-01\"", payload);
+        Assert.Contains("\"ProjeKodu\":\"PRJ-01\"", payload);
     }
 
     [Fact]
