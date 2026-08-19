@@ -333,7 +333,10 @@ public sealed record KkdPreparationScanPickRequest(
     /// <summary>Grup→stok çözümünde talep kalemi concurrency kontrolü.</summary>
     string? ExpectedRequestLineRowVersion = null,
     /// <summary>Üretimdeki ConfirmAboveThreshold: eşik üstü miktarda kullanıcı onayı.</summary>
-    bool ConfirmAboveThreshold = false);
+    bool ConfirmAboveThreshold = false,
+    /// <summary>Çok adaylı raf/seri seçiminde barkod çözümü tekilleşmez; seçilen seri ayrıca gelir.</summary>
+    string? SerialNo = null,
+    string? LotNo = null);
 
 public sealed record KkdPreparationScanPickTracking(
     decimal Quantity,
