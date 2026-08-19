@@ -206,8 +206,9 @@ internal static class ProductionTransferPickingSupport
                 decimal shortageProcessed = 0;
 
                 var pickedSerialOffset = GetTaskLinePickedSerialOffset(header, task, taskLine);
+                var pickedSerialTake = ResolvePickedSerialTake(header, task, taskLine, line, pickedSerialOffset);
                 foreach (var (tracking, trackingProcessed, trackingRemaining) in EnumerateTaskScopedSerialTrackings(
-                             line, taskLine, pickedSerialOffset))
+                             line, taskLine, pickedSerialOffset, pickedSerialTake))
                 {
                     if (ProductionTransferLineSplitHelper.IsSerialShortageTracking(tracking))
                     {
@@ -341,15 +342,20 @@ internal static class ProductionTransferPickingSupport
 
     internal static IEnumerable<(WarehouseTransferTracking Tracking, decimal Processed, decimal Remaining)>
         EnumerateTaskScopedSerialTrackings(WarehouseTransferLine line, WarehouseTransferTaskLine taskLine)
-        => EnumerateTaskScopedSerialTrackings(line, taskLine, 0);
+        => EnumerateTaskScopedSerialTrackings(
+            line,
+            taskLine,
+            0,
+            ResolvePickedSerialTake(taskLine, line, 0, isLastClaimer: true));
 
     private static IEnumerable<(WarehouseTransferTracking Tracking, decimal Processed, decimal Remaining)>
         EnumerateTaskScopedSerialTrackings(
             WarehouseTransferLine line,
             WarehouseTransferTaskLine taskLine,
-            int pickedOffset)
+            int pickedOffset,
+            int pickedTake)
     {
-        var pickedBudget = (int)Math.Floor(taskLine.ProcessedQuantity);
+        var pickedBudget = Math.Max(0, pickedTake);
         var openBudget = (int)Math.Ceiling(Math.Max(0, taskLine.PlannedQuantity - taskLine.ProcessedQuantity));
 
         foreach (var tracking in line.Trackings.OrderBy(x => x.Id))
@@ -381,18 +387,71 @@ internal static class ProductionTransferPickingSupport
         WarehouseTransferLine line,
         WarehouseTransferTaskLine taskLine)
     {
-        var pickedBudget = (int)Math.Floor(taskLine.ProcessedQuantity);
-        if (pickedBudget <= 0) return [];
         var pickedOffset = GetTaskLinePickedSerialOffset(header, task, taskLine);
+        var pickedTake = ResolvePickedSerialTake(header, task, taskLine, line, pickedOffset);
+        if (pickedTake <= 0) return [];
 
         return line.Trackings
             .Where(t => t.PickedQuantity > 0 && !string.IsNullOrWhiteSpace(t.SerialNo))
             .OrderBy(t => t.Id)
             .Skip(pickedOffset)
-            .Take(pickedBudget)
+            .Take(pickedTake)
             .Select(t => t.SerialNo!.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+    }
+
+    private static int ResolvePickedSerialTake(
+        WarehouseTransferHeader header,
+        WarehouseTransferTask task,
+        WarehouseTransferTaskLine taskLine,
+        WarehouseTransferLine line,
+        int pickedOffset)
+    {
+        var isLastClaimer = IsLastPickedSerialClaimer(header, task, taskLine);
+        return ResolvePickedSerialTake(taskLine, line, pickedOffset, isLastClaimer);
+    }
+
+    private static int ResolvePickedSerialTake(
+        WarehouseTransferTaskLine taskLine,
+        WarehouseTransferLine line,
+        int pickedOffset,
+        bool isLastClaimer)
+    {
+        var processed = (int)Math.Floor(Math.Max(0, taskLine.ProcessedQuantity));
+        if (processed <= 0) return 0;
+        if (!isLastClaimer) return processed;
+        var pickedCount = line.Trackings.Count(x => x.PickedQuantity > 0);
+        return Math.Max(processed, Math.Max(0, pickedCount - pickedOffset));
+    }
+
+    /// <summary>
+    /// Leftover picked serials (picked count &gt; ProcessedQuantity) belong only to the last
+    /// claimer of this WT line. Later sibling lines and later handoff pick tasks keep their
+    /// own processed slice so historical / split views do not duplicate serials.
+    /// </summary>
+    private static bool IsLastPickedSerialClaimer(
+        WarehouseTransferHeader header,
+        WarehouseTransferTask task,
+        WarehouseTransferTaskLine taskLine)
+    {
+        if (task.Lines
+            .Where(x => !x.IsDeleted && x.WtLineId == taskLine.WtLineId && x.Id > taskLine.Id)
+            .Any(x => x.ProcessedQuantity > 0))
+        {
+            return false;
+        }
+
+        if (task.Id <= 0) return true;
+
+        foreach (var other in header.Tasks.Where(x => !x.IsDeleted && x.Id != task.Id && x.TaskType == WarehouseTransferTaskType.Pick))
+        {
+            if (!ResolveTaskLineage(header, other).Any(x => x.Id == task.Id)) continue;
+            if (other.Lines.Any(x => !x.IsDeleted && x.WtLineId == taskLine.WtLineId && x.ProcessedQuantity > 0))
+                return false;
+        }
+
+        return true;
     }
 
     private static int GetTaskLinePickedSerialOffset(

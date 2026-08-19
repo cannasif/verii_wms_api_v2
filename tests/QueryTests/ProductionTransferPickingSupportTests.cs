@@ -547,6 +547,97 @@ public sealed class ProductionTransferPickingSupportTests
     }
 
     [Fact]
+    public void BuildPersistedRows_lists_each_picked_serial_even_when_processed_quantity_undercounts()
+    {
+        const long locationId = 9001;
+        var line = new WarehouseTransferLine
+        {
+            Id = 102,
+            LineNo = 1,
+            StockId = 11,
+            StockCodeSnapshot = "ASD",
+            StockNameSnapshot = "Ürün ASD",
+            TrackingType = StockTrackingType.Serial,
+            PickedQuantity = 3,
+            DefaultSourceLocationId = locationId,
+            Trackings =
+            [
+                new WarehouseTransferTracking { Id = 1, SerialNo = "SN-1", PlannedQuantity = 1, PickedQuantity = 1, SourceLocationId = locationId },
+                new WarehouseTransferTracking { Id = 2, SerialNo = "SN-2", PlannedQuantity = 1, PickedQuantity = 1, SourceLocationId = locationId },
+                new WarehouseTransferTracking { Id = 3, SerialNo = "SN-3", PlannedQuantity = 1, PickedQuantity = 1, SourceLocationId = locationId },
+                new WarehouseTransferTracking { Id = 4, SerialNo = "SN-4", PlannedQuantity = 1, PickedQuantity = 0, SourceLocationId = locationId },
+                new WarehouseTransferTracking { Id = 5, SerialNo = "SN-5", PlannedQuantity = 1, PickedQuantity = 0, SourceLocationId = locationId },
+            ],
+        };
+        var header = new WarehouseTransferHeader { Lines = [line] };
+        var task = new WarehouseTransferTask
+        {
+            Lines =
+            [
+                new WarehouseTransferTaskLine
+                {
+                    Id = 501,
+                    WtLineId = 102,
+                    PlannedQuantity = 5,
+                    ProcessedQuantity = 1,
+                    Line = line,
+                },
+            ],
+        };
+        var locationCodes = new Dictionary<long, string> { [locationId] = "A1" };
+
+        var rows = ProductionTransferPickingSupport.BuildPersistedRows(header, task, locationCodes);
+
+        Assert.Equal(["SN-1", "SN-2", "SN-3"], rows.Where(x => x.ProcessedQuantity > 0).Select(x => x.SerialNo).ToArray());
+        Assert.All(rows.Where(x => x.ProcessedQuantity > 0), row =>
+        {
+            Assert.Equal(0, row.RemainingQuantity);
+            Assert.Equal(1, row.ProcessedQuantity);
+        });
+        Assert.Equal(["SN-4", "SN-5"], rows.Where(x => x.RemainingQuantity > 0).Select(x => x.SerialNo).ToArray());
+    }
+
+    [Fact]
+    public void BuildPersistedRows_does_not_duplicate_picked_serials_across_sibling_task_lines()
+    {
+        const long locationId = 9001;
+        var line = new WarehouseTransferLine
+        {
+            Id = 102,
+            LineNo = 1,
+            StockId = 11,
+            StockCodeSnapshot = "ASD",
+            TrackingType = StockTrackingType.Serial,
+            PickedQuantity = 3,
+            DefaultSourceLocationId = locationId,
+            Trackings =
+            [
+                new WarehouseTransferTracking { Id = 1, SerialNo = "SN-1", PlannedQuantity = 1, PickedQuantity = 1, SourceLocationId = locationId },
+                new WarehouseTransferTracking { Id = 2, SerialNo = "SN-2", PlannedQuantity = 1, PickedQuantity = 1, SourceLocationId = locationId },
+                new WarehouseTransferTracking { Id = 3, SerialNo = "SN-3", PlannedQuantity = 1, PickedQuantity = 1, SourceLocationId = locationId },
+            ],
+        };
+        var header = new WarehouseTransferHeader { Lines = [line] };
+        var task = new WarehouseTransferTask
+        {
+            Lines =
+            [
+                new WarehouseTransferTaskLine { Id = 501, WtLineId = 102, PlannedQuantity = 1, ProcessedQuantity = 1, Line = line },
+                new WarehouseTransferTaskLine { Id = 502, WtLineId = 102, PlannedQuantity = 1, ProcessedQuantity = 1, Line = line },
+            ],
+        };
+        var locationCodes = new Dictionary<long, string> { [locationId] = "A1" };
+
+        var rows = ProductionTransferPickingSupport.BuildPersistedRows(header, task, locationCodes);
+
+        Assert.Equal(["SN-1", "SN-2", "SN-3"], rows.Select(x => x.SerialNo).OrderBy(x => x).ToArray());
+        Assert.Equal(1, rows.Count(x => x.SerialNo == "SN-1"));
+        Assert.Equal(501, rows.Single(x => x.SerialNo == "SN-1").TaskLineId);
+        Assert.Equal(502, rows.Single(x => x.SerialNo == "SN-2").TaskLineId);
+        Assert.Equal(502, rows.Single(x => x.SerialNo == "SN-3").TaskLineId);
+    }
+
+    [Fact]
     public void BuildPersistedRows_splits_partially_picked_non_serial_into_open_and_completed_rows()
     {
         const long locationId = 9001;

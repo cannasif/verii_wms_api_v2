@@ -1,3 +1,4 @@
+using verii_wms_api_v2.Modules.BarcodeDesigner.Application;
 using verii_wms_api_v2.Modules.ProductionTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -15,6 +16,31 @@ public sealed class ProductionTransferBarcodeInputTests
         Assert.Equal("01/013", parsed.StockCode);
         Assert.Equal("UTG-1", parsed.SerialNo);
         Assert.Equal("UTG-1", parsed.ResolutionBarcode);
+    }
+
+    [Fact]
+    public void Parse_keeps_plain_stock_code_including_hyphenated_codes()
+    {
+        var parsed = ProductionTransferBarcodeInput.Parse("100134-1");
+
+        Assert.Null(parsed.StockCode);
+        Assert.Null(parsed.SerialNo);
+        Assert.Equal("100134-1", parsed.ResolutionBarcode);
+        Assert.Null(WarehouseBarcodeParser.TryParse(parsed.Raw));
+    }
+
+    [Fact]
+    public void FindMatchingOpenRow_matches_hyphenated_plain_stock_code()
+    {
+        var openRows = new[] { NonSerialRow("100134-1") };
+
+        var matched = ProductionTransferBarcodeInput.FindMatchingOpenRow(
+            ProductionTransferBarcodeInput.Parse("100134-1"),
+            openRows);
+
+        Assert.NotNull(matched);
+        Assert.Equal("100134-1", matched!.StockCode);
+        Assert.Null(matched.SerialNo);
     }
 
     [Fact]

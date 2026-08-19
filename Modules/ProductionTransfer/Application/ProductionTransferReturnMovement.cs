@@ -14,6 +14,9 @@ internal static class ProductionTransferReturnMovement
         WarehouseTransferLine line,
         WarehouseTransferTaskLine? pickTaskLine = null)
     {
+        if (header.SourceStagingLocationId is long waitingLocationId)
+            return waitingLocationId;
+
         var fromTracking = line.Trackings
             .Where(x => x.PickedQuantity > 0 && x.TargetLocationId.HasValue)
             .Select(x => x.TargetLocationId!.Value)
@@ -21,7 +24,7 @@ internal static class ProductionTransferReturnMovement
             .ToArray();
         if (fromTracking.Length == 1) return fromTracking[0];
         if (pickTaskLine?.TargetLocationId is long pickTarget) return pickTarget;
-        return header.SourceStagingLocationId;
+        return null;
     }
 
     internal static long? ResolveReturnTargetLocationId(
@@ -182,7 +185,7 @@ internal static class ProductionTransferReturnMovement
 
             foreach (var tracking in tracked)
             {
-                var source = tracking.TargetLocationId ?? defaultStaging;
+                var source = header.SourceStagingLocationId ?? tracking.TargetLocationId ?? defaultStaging;
                 var target = taskLine.TargetLocationId ?? tracking.SourceLocationId ?? defaultTarget;
                 if (source == target) continue;
                 rows.Add(new(

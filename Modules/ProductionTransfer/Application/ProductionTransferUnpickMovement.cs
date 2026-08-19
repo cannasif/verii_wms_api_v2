@@ -38,6 +38,11 @@ internal static class ProductionTransferUnpickMovement
         WarehouseTransferTaskLine taskLine,
         WarehouseTransferTracking? tracking)
     {
+        // Barkod toplama stoku her zaman bekleme rafına taşır. Tracking.TargetLocationId
+        // taslakta planlanan hedef/üretim rafı olarak kalabilir; geri alma kaynağı olamaz.
+        if (header.SourceStagingLocationId is long waitingLocationId)
+            return waitingLocationId;
+
         if (tracking?.TargetLocationId is long trackingStaging) return trackingStaging;
         var fromTracking = line.Trackings
             .Where(x => x.PickedQuantity > 0 && x.TargetLocationId.HasValue)
@@ -46,8 +51,7 @@ internal static class ProductionTransferUnpickMovement
             .ToArray();
         if (fromTracking.Length == 1) return fromTracking[0];
         if (taskLine.TargetLocationId is long taskTarget) return taskTarget;
-        return header.SourceStagingLocationId
-            ?? throw AppException.Conflict("Kaynak depo için üretim transfer bekleme rafı tanımlanmamış.");
+        throw AppException.Conflict("Kaynak depo için üretim transfer bekleme rafı tanımlanmamış.");
     }
 
     internal static StockMovementLineRequest BuildMovementLine(

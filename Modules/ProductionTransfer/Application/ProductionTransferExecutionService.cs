@@ -194,31 +194,8 @@ public sealed class ProductionTransferExecutionService(
             resolveContext.YapCodeId,
             resolveContext.UnitCode), ct);
 
-        var expectedLocationId = matchedRow.SourceLocationId ?? matchedLine.DefaultSourceLocationId;
-        if (!expectedLocationId.HasValue)
-            return resolved;
-
-        var pickBalances = await ProductionTransferPickingBalanceSupport.FindPickBalanceCandidatesAsync(
-            uow,
-            header,
-            matchedLine,
-            expectedLocationId.Value,
-            resolved.LotNo,
-            matchedRow.SerialNo ?? resolved.SerialNo,
-            ct);
-        if (pickBalances.Count == 0)
-            return resolved;
-
-        var missing = resolved.MissingFields
-            .Where(x => !string.Equals(x, "Kullanılabilir raf bakiyesi", StringComparison.Ordinal))
-            .ToArray();
-        return resolved with
-        {
-            BalanceCandidates = pickBalances,
-            MissingFields = missing,
-            SuggestedLocationId = expectedLocationId,
-            CanExecute = missing.Length == 0,
-        };
+        return await ProductionTransferPickingBalanceSupport.ApplyReservedPickBalancesAsync(
+            uow, header, matchedLine, matchedRow, resolved, ct);
     }
 
     public Task<ProductionTransferRouteRefreshCandidatesDto> GetRouteRefreshCandidatesAsync(

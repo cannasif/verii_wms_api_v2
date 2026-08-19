@@ -33,32 +33,59 @@ internal static class ProductionTransferPickingBalanceSupport
             .SingleOrDefaultAsync(ct);
         if (location is null) return [];
 
-        return balances
-            .Where(x => MatchesYapCode(line.YapCodeId, x.YapCodeId)
-                && string.Equals(x.UnitCode, line.UnitCode, StringComparison.OrdinalIgnoreCase)
-                && SameTrackingValue(x.LotNo, lot)
-                && SameTrackingValue(x.SerialNo, serial))
-            .Select(x =>
-            {
-                var pickable = ResolvePickableQuantity(line, locationId, x);
-                if (pickable <= 0) return null;
-                return new WarehouseBarcodeBalanceCandidate(
-                    x.Id,
-                    x.WarehouseId,
-                    x.LocationId,
-                    location.Code,
-                    location.Name,
-                    x.StockId,
-                    x.YapCodeId,
-                    x.UnitCode,
-                    EmptyToNull(x.LotNo),
-                    EmptyToNull(x.SerialNo),
-                    x.StockStatus,
-                    pickable);
-            })
-            .Where(x => x is not null)
-            .Select(x => x!)
+        return MapPickBalanceCandidates(line, locationId, location.Code, location.Name, balances, lot, serial);
+    }
+
+    internal static async Task<ResolvedWarehouseBarcode> ApplyReservedPickBalancesAsync(
+        IUnitOfWork uow,
+        WarehouseTransferHeader header,
+        WarehouseTransferLine line,
+        ProductionTransferPickingRowDto matchedRow,
+        ResolvedWarehouseBarcode resolved,
+        CancellationToken ct)
+    {
+        var expectedLocationId = matchedRow.SourceLocationId ?? line.DefaultSourceLocationId;
+        var serial = EmptyToNull(matchedRow.SerialNo) ?? EmptyToNull(resolved.SerialNo);
+        if (!expectedLocationId.HasValue)
+            return OverlayResolvedPickBalances(resolved, line, matchedRow, [], serial);
+
+        var pickBalances = await FindPickBalanceCandidatesAsync(
+            uow, header, line, expectedLocationId.Value, resolved.LotNo, serial, ct);
+        if (pickBalances.Count == 0 && EmptyToNull(resolved.LotNo) is not null)
+        {
+            pickBalances = await FindPickBalanceCandidatesAsync(
+                uow, header, line, expectedLocationId.Value, null, serial, ct);
+        }
+
+        return OverlayResolvedPickBalances(resolved, line, matchedRow, pickBalances, serial);
+    }
+
+    internal static ResolvedWarehouseBarcode OverlayResolvedPickBalances(
+        ResolvedWarehouseBarcode resolved,
+        WarehouseTransferLine line,
+        ProductionTransferPickingRowDto matchedRow,
+        IReadOnlyList<WarehouseBarcodeBalanceCandidate> pickBalances,
+        string? serial = null)
+    {
+        var expectedLocationId = matchedRow.SourceLocationId ?? line.DefaultSourceLocationId;
+        serial ??= EmptyToNull(matchedRow.SerialNo) ?? EmptyToNull(resolved.SerialNo);
+        var reservedHere = expectedLocationId.HasValue
+            && ResolvePickableQuantity(line, expectedLocationId.Value, reservedOnly: true) > 0;
+        if (pickBalances.Count == 0 && !reservedHere)
+            return resolved;
+
+        var missing = resolved.MissingFields
+            .Where(x => !string.Equals(x, "Kullanılabilir raf bakiyesi", StringComparison.Ordinal))
             .ToArray();
+        return resolved with
+        {
+            BalanceCandidates = pickBalances.Count > 0 ? pickBalances : resolved.BalanceCandidates,
+            MissingFields = missing,
+            SuggestedLocationId = expectedLocationId ?? resolved.SuggestedLocationId,
+            SerialNo = serial ?? resolved.SerialNo,
+            YapCodeId = resolved.YapCodeId ?? line.YapCodeId,
+            CanExecute = missing.Length == 0,
+        };
     }
 
     internal static bool HasPickableBalanceAtLocation(
@@ -190,6 +217,41 @@ internal static class ProductionTransferPickingBalanceSupport
         if (EmptyToNull(lot) is not null || EmptyToNull(serial) is not null) return 0;
         return line.ReservedQuantity;
     }
+
+    private static IReadOnlyList<WarehouseBarcodeBalanceCandidate> MapPickBalanceCandidates(
+        WarehouseTransferLine line,
+        long locationId,
+        string locationCode,
+        string locationName,
+        IReadOnlyList<LocationStockBalance> balances,
+        string? lot,
+        string? serial) =>
+        balances
+            .Where(x => MatchesYapCode(line.YapCodeId, x.YapCodeId)
+                && string.Equals(x.UnitCode, line.UnitCode, StringComparison.OrdinalIgnoreCase)
+                && SameTrackingValue(x.LotNo, lot)
+                && SameTrackingValue(x.SerialNo, serial))
+            .Select(x =>
+            {
+                var pickable = ResolvePickableQuantity(line, locationId, x);
+                if (pickable <= 0) return null;
+                return new WarehouseBarcodeBalanceCandidate(
+                    x.Id,
+                    x.WarehouseId,
+                    x.LocationId,
+                    locationCode,
+                    locationName,
+                    x.StockId,
+                    x.YapCodeId,
+                    x.UnitCode,
+                    EmptyToNull(x.LotNo),
+                    EmptyToNull(x.SerialNo),
+                    x.StockStatus,
+                    pickable);
+            })
+            .Where(x => x is not null)
+            .Select(x => x!)
+            .ToArray();
 
     private static bool MatchesYapCode(long? expected, long? actual) => expected == actual;
 

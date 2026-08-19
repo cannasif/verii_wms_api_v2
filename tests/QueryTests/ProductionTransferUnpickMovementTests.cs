@@ -9,6 +9,45 @@ namespace verii_wms_api_v2.tests.QueryTests;
 public sealed class ProductionTransferUnpickMovementTests
 {
     [Fact]
+    public void ResolveStagingLocationId_uses_waiting_location_not_planned_tracking_target()
+    {
+        const long waitingLocationId = 100;
+        const long plannedTargetLocationId = 900;
+        const long sourceLocationId = 68;
+        var tracking = new WarehouseTransferTracking
+        {
+            SerialNo = "QWR-3",
+            PickedQuantity = 1,
+            SourceLocationId = sourceLocationId,
+            TargetLocationId = plannedTargetLocationId,
+        };
+        var line = new WarehouseTransferLine
+        {
+            Id = 10,
+            DefaultTargetLocationId = plannedTargetLocationId,
+            Trackings = [tracking],
+        };
+        var taskLine = new WarehouseTransferTaskLine
+        {
+            Id = 1676,
+            WtLineId = 10,
+            TargetLocationId = waitingLocationId,
+            Line = line,
+        };
+        var header = new WarehouseTransferHeader
+        {
+            SourceStagingLocationId = waitingLocationId,
+            Lines = [line],
+        };
+
+        var staging = ProductionTransferUnpickMovement.ResolveStagingLocationId(
+            header, line, taskLine, tracking);
+
+        Assert.Equal(waitingLocationId, staging);
+        Assert.NotEqual(plannedTargetLocationId, staging);
+    }
+
+    [Fact]
     public void BuildMovementLine_moves_from_staging_to_selected_shelf()
     {
         const long stagingLocationId = 100;

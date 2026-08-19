@@ -48,8 +48,20 @@ public sealed class WarehouseBarcodeParserTests
     [InlineData("")]
     [InlineData("ABC")]
     [InlineData("0101")]
+    [InlineData("100134-1")]
+    [InlineData("10LOT-77")]
     public void Rejects_values_that_are_not_supported_gs1(string value)
     {
         Assert.Null(WarehouseBarcodeParser.TryParse(value));
+    }
+
+    [Fact]
+    public void Still_parses_human_readable_lot_only_gs1()
+    {
+        var result = WarehouseBarcodeParser.TryParse("(10)LOT-77");
+
+        Assert.NotNull(result);
+        Assert.Equal("LOT-77", result.LotNo);
+        Assert.Null(result.ProductCode);
     }
 }
