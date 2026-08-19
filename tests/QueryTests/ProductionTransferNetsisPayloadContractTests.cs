@@ -62,6 +62,7 @@ public sealed class ProductionTransferNetsisPayloadContractTests
                 {
                     StokKodu = "01/020",
                     Miktar = 1m,
+                    DepoKodu = 1,
                     CikisDepoKodu = 1,
                     GirisDepoKodu = 2,
                     ConfigurationCode = "YAP-01",
@@ -86,6 +87,7 @@ public sealed class ProductionTransferNetsisPayloadContractTests
         Assert.Equal(1, header.GetProperty("DEPO_KODU").GetInt32());
         Assert.Equal("01/020", line.GetProperty("StokKodu").GetString());
         Assert.Equal(1m, line.GetProperty("STra_GCMIK").GetDecimal());
+        Assert.Equal(1, line.GetProperty("DEPO_KODU").GetInt32());
         Assert.Equal(1, line.GetProperty("CikisDepoKodu").GetInt32());
         Assert.Equal(2, line.GetProperty("GirisDepoKodu").GetInt32());
         Assert.False(line.TryGetProperty("Cikis_Depo_Kodu", out _));
@@ -107,6 +109,7 @@ public sealed class ProductionTransferNetsisPayloadContractTests
                 {
                     StokKodu = "STK-001",
                     Miktar = 1,
+                    DepoKodu = 2,
                     CikisDepoKodu = 2,
                     GirisDepoKodu = 1
                 },
@@ -114,6 +117,7 @@ public sealed class ProductionTransferNetsisPayloadContractTests
                 {
                     StokKodu = "STK-002",
                     Miktar = 2,
+                    DepoKodu = 2,
                     CikisDepoKodu = 2,
                     GirisDepoKodu = 1
                 }
@@ -122,7 +126,7 @@ public sealed class ProductionTransferNetsisPayloadContractTests
 
         ErpPostingService.ValidateWarehouseTransferWarehouseCodes(request, 2, 1);
 
-        request.Kalems[1].CikisDepoKodu = null;
+        request.Kalems[1].DepoKodu = null;
         var exception = Assert.Throws<AppException>(() =>
             ErpPostingService.ValidateWarehouseTransferWarehouseCodes(request, 2, 1));
         Assert.Contains("Çıkış depo: 2, giriş depo: 1", exception.Message);

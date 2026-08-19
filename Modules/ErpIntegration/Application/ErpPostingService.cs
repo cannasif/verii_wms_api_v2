@@ -802,16 +802,16 @@ public sealed class ErpPostingService(
                     line.Description,
                     serials.Select(x => new ErpSerialPart(x.ShippedQuantity, x.SerialNo!)),
                     allocations,
-                    null,
+                    sourceWarehouse.WarehouseCode,
                     sourceWarehouse.WarehouseCode,
                     targetWarehouse.WarehouseCode);
             }
             else if (allocations.Count > 0)
                 lines.AddRange(allocations.Select(x => NewOrderLinkedLine(
-                    line.StockCodeSnapshot, x.Quantity, null, sourceWarehouse.WarehouseCode,
+                    line.StockCodeSnapshot, x.Quantity, sourceWarehouse.WarehouseCode, sourceWarehouse.WarehouseCode,
                     targetWarehouse.WarehouseCode, line.YapCodeSnapshot, null, line.Description, x.OrderRow)));
             else
-                lines.Add(NewLine(line.StockCodeSnapshot, quantity, null, sourceWarehouse.WarehouseCode,
+                lines.Add(NewLine(line.StockCodeSnapshot, quantity, sourceWarehouse.WarehouseCode, sourceWarehouse.WarehouseCode,
                     targetWarehouse.WarehouseCode, line.YapCodeSnapshot, null, null, line.Description));
         }
 
@@ -839,7 +839,8 @@ public sealed class ErpPostingService(
         if (request.FatUst.DepoKodu != sourceWarehouseCode
             || request.Kalems.Count == 0
             || request.Kalems.Any(line =>
-                line.CikisDepoKodu != sourceWarehouseCode
+                line.DepoKodu != sourceWarehouseCode
+                || line.CikisDepoKodu != sourceWarehouseCode
                 || line.GirisDepoKodu != targetWarehouseCode))
         {
             throw AppException.Conflict(
