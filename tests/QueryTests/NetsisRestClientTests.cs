@@ -199,9 +199,9 @@ public sealed class NetsisRestClientTests
     [Fact]
     public void Warehouse_transfer_delete_allows_empty_customer_segment()
     {
-        var providerId = new NetsisItemSlipDeleteRequest(9, "DAT0001", null).ToProviderId();
+        var providerId = new NetsisItemSlipDeleteRequest(5, "DAT0001", null).ToProviderId();
 
-        Assert.Equal("ftAmbarC;DAT0001;", providerId);
+        Assert.Equal("ftLokalDepo;DAT0001;", providerId);
     }
 
     private static NetsisRestClient CreateClient(HttpMessageHandler handler, INetsisTokenService tokenService)

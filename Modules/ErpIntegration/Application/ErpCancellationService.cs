@@ -534,7 +534,7 @@ public sealed class ErpCancellationService(
                 .SupplierCodeSnapshot,
                 posting.BranchCode),
             ErpPostingSourceType.WarehouseTransfer => new(
-                options.WarehouseTransferDocumentType,
+                NetsisItemSlipDocumentTypes.LocalWarehouseTransfer,
                 documentNo,
                 null,
                 posting.BranchCode),

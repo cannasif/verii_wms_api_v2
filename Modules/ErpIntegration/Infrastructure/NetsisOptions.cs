@@ -28,7 +28,8 @@ public sealed class NetsisRestOptions
     public int GoodsReceiptDocumentType { get; set; } = 3;
     public NetsisItemSlipInvoiceType GoodsReceiptInvoiceType { get; set; } =
         NetsisItemSlipInvoiceType.DomesticOpen;
-    public int WarehouseTransferDocumentType { get; set; } = 9;
+    public int WarehouseTransferDocumentType { get; set; } =
+        NetsisItemSlipDocumentTypes.LocalWarehouseTransfer;
     public int ShipmentDocumentType { get; set; } = 2;
     public bool AutoUpdateRegisteredNumber { get; set; } = true;
     public bool SendSerialsToErp { get; set; } = true;

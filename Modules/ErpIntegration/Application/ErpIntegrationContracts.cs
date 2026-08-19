@@ -272,6 +272,12 @@ public sealed class NetsisItemSlipRequest
     public List<NetsisItemSlipLine> Kalems { get; set; } = [];
 }
 
+public static class NetsisItemSlipDocumentTypes
+{
+    public const int InterBranchWarehouseTransfer = 4;
+    public const int LocalWarehouseTransfer = 5;
+}
+
 public sealed record NetsisItemSlipDeleteRequest(
     int DocumentType,
     string DocumentNo,
@@ -285,7 +291,7 @@ public sealed record NetsisItemSlipDeleteRequest(
             throw new ArgumentException("Netsis belge numarası zorunludur.", nameof(DocumentNo));
 
         var customerCode = CustomerCode?.Trim() ?? string.Empty;
-        if (DocumentType is not (8 or 9) && string.IsNullOrWhiteSpace(customerCode))
+        if (DocumentType is not (4 or 5 or 8 or 9) && string.IsNullOrWhiteSpace(customerCode))
             throw new ArgumentException("Netsis cari kodu zorunludur.", nameof(CustomerCode));
 
         var faturaTip = DocumentType switch
@@ -294,6 +300,8 @@ public sealed record NetsisItemSlipDeleteRequest(
             1 => "ftAFat",
             2 => "ftSIrs",
             3 => "ftAIrs",
+            4 => "ftDepo",
+            5 => "ftLokalDepo",
             6 => "ftASip",
             7 => "ftSSip",
             8 => "ftAmbarG",
@@ -320,9 +328,19 @@ public sealed record NetsisItemSlipDeleteRequest(
 
 public enum NetsisItemSlipInvoiceType
 {
+    Empty = 0,
     DomesticClosed = 1,
     DomesticOpen = 2,
     Foreign = 8
+}
+
+public enum NetsisWarehouseMovementType
+{
+    Opening = 0,
+    Warehouses = 1,
+    Production = 2,
+    Miscellaneous = 3,
+    Consignment = 4
 }
 
 /// <summary>
@@ -347,6 +365,10 @@ public sealed class NetsisItemSlipHeader
 {
     [JsonPropertyName("CariKod")]
     public string? CariKod { get; set; }
+
+    [JsonPropertyName("CARI_KOD2")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? SecondaryCustomerCode { get; set; }
 
     [JsonPropertyName("FATIRS_NO")]
     public string? FisNo { get; set; }
@@ -374,6 +396,18 @@ public sealed class NetsisItemSlipHeader
 
     [JsonPropertyName("TIPI")]
     public NetsisItemSlipInvoiceType Tipi { get; set; } = NetsisItemSlipInvoiceType.DomesticClosed;
+
+    [JsonPropertyName("AMBHARTUR")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public NetsisWarehouseMovementType? WarehouseMovementType { get; set; }
+
+    [JsonPropertyName("GCKOD_CIKIS")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? SourceBranchCode { get; set; }
+
+    [JsonPropertyName("GCKOD_GIRIS")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? TargetBranchCode { get; set; }
 
     [JsonPropertyName("EXPORTTYPE")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

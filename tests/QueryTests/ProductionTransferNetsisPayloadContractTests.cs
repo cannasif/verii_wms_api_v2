@@ -42,7 +42,7 @@ public sealed class ProductionTransferNetsisPayloadContractTests
     {
         var request = new NetsisItemSlipRequest
         {
-            FaturaTip = 9,
+            FaturaTip = 5,
             KayitliNumaraOtomatikGuncellensin = true,
             FatUst = new NetsisItemSlipHeader
             {
@@ -50,8 +50,13 @@ public sealed class ProductionTransferNetsisPayloadContractTests
                 BelgeNo = "UT2026000000001",
                 Tarih = new DateTime(2026, 8, 14),
                 FiiliTarih = new DateTime(2026, 8, 14, 17, 44, 8),
-                Tip = 9,
-                Tipi = NetsisItemSlipInvoiceType.DomesticClosed,
+                Tip = 5,
+                Tipi = NetsisItemSlipInvoiceType.Empty,
+                CariKod = string.Empty,
+                SecondaryCustomerCode = string.Empty,
+                WarehouseMovementType = NetsisWarehouseMovementType.Warehouses,
+                SourceBranchCode = 0,
+                TargetBranchCode = 0,
                 SubeKodu = 0,
                 DepoKodu = 1,
                 ProjeKodu = "PRJ-01"
@@ -79,10 +84,15 @@ public sealed class ProductionTransferNetsisPayloadContractTests
         var header = root.GetProperty("FatUst");
         var line = root.GetProperty("Kalems")[0];
 
-        Assert.Equal(9, root.GetProperty("FaturaTip").GetInt32());
+        Assert.Equal(5, root.GetProperty("FaturaTip").GetInt32());
         Assert.Equal("UT2026000000001", header.GetProperty("FATIRS_NO").GetString());
-        Assert.Equal(9, header.GetProperty("TIP").GetInt32());
-        Assert.Equal(1, header.GetProperty("TIPI").GetInt32());
+        Assert.Equal(5, header.GetProperty("TIP").GetInt32());
+        Assert.Equal(0, header.GetProperty("TIPI").GetInt32());
+        Assert.Equal(1, header.GetProperty("AMBHARTUR").GetInt32());
+        Assert.Equal(0, header.GetProperty("GCKOD_CIKIS").GetInt32());
+        Assert.Equal(0, header.GetProperty("GCKOD_GIRIS").GetInt32());
+        Assert.Equal(string.Empty, header.GetProperty("CariKod").GetString());
+        Assert.Equal(string.Empty, header.GetProperty("CARI_KOD2").GetString());
         Assert.Equal(0, header.GetProperty("SUBE_KODU").GetInt32());
         Assert.Equal(1, header.GetProperty("DEPO_KODU").GetInt32());
         Assert.Equal("01/020", line.GetProperty("StokKodu").GetString());
@@ -124,12 +134,38 @@ public sealed class ProductionTransferNetsisPayloadContractTests
             ]
         };
 
-        ErpPostingService.ValidateWarehouseTransferWarehouseCodes(request, 2, 1);
+        request.FaturaTip = 5;
+        request.FatUst.Tip = 5;
+        request.FatUst.Tipi = NetsisItemSlipInvoiceType.Empty;
+        request.FatUst.CariKod = string.Empty;
+        request.FatUst.SecondaryCustomerCode = string.Empty;
+        request.FatUst.WarehouseMovementType = NetsisWarehouseMovementType.Warehouses;
+        request.FatUst.SourceBranchCode = 0;
+        request.FatUst.TargetBranchCode = 0;
+
+        ErpPostingService.ValidateWarehouseTransferWarehouseCodes(request, 2, 1, 0, 0);
 
         request.Kalems[1].DepoKodu = null;
         var exception = Assert.Throws<AppException>(() =>
-            ErpPostingService.ValidateWarehouseTransferWarehouseCodes(request, 2, 1));
+            ErpPostingService.ValidateWarehouseTransferWarehouseCodes(request, 2, 1, 0, 0));
         Assert.Contains("Çıkış depo: 2, giriş depo: 1", exception.Message);
+    }
+
+    [Fact]
+    public void Same_branch_transfer_always_uses_local_warehouse_transfer_type()
+    {
+        Assert.Equal(
+            NetsisItemSlipDocumentTypes.LocalWarehouseTransfer,
+            ErpPostingService.ResolveWarehouseTransferDocumentType(0, 0));
+    }
+
+    [Fact]
+    public void Cross_branch_transfer_is_blocked_without_required_customer_mapping()
+    {
+        var exception = Assert.Throws<AppException>(() =>
+            ErpPostingService.ResolveWarehouseTransferDocumentType(0, 1));
+
+        Assert.Contains("şube cari kodu eşlemesi", exception.Message);
     }
 
     [Fact]

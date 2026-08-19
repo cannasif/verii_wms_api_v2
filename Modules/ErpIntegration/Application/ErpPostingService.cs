@@ -815,28 +815,62 @@ public sealed class ErpPostingService(
                     targetWarehouse.WarehouseCode, line.YapCodeSnapshot, null, null, line.Description));
         }
 
-        var request = NewRequest(options.WarehouseTransferDocumentType, options.WarehouseTransferSeries,
+        var sourceBranchCode = ParseBranchCode(sourceWarehouse.BranchCode);
+        var targetBranchCode = ParseBranchCode(targetWarehouse.BranchCode);
+        var documentType = ResolveWarehouseTransferDocumentType(sourceBranchCode, targetBranchCode);
+        var request = NewRequest(documentType, options.WarehouseTransferSeries,
             header.DocumentNo, header.WaybillNo ?? header.DocumentNo, header.DocumentDate, header.ShippedAtUtc,
             null, sourceWarehouse, BuildProductionTransferErpDescription(header.Description, productionReference), lines,
             usedOrderRows.Count > 0
                 ? ResolveErpHeaderProjectCode(usedOrderRows)
                 : NetsisItemSlipDefaults.NormalizeProjectCode(header.ProjectCode),
-            ResolveErpDeliveryDate(usedOrderRows, header.DocumentDate));
+            ResolveErpDeliveryDate(usedOrderRows, header.DocumentDate),
+            NetsisItemSlipInvoiceType.Empty);
+        request.FatUst.CariKod = string.Empty;
+        request.FatUst.SecondaryCustomerCode = string.Empty;
+        request.FatUst.WarehouseMovementType = NetsisWarehouseMovementType.Warehouses;
+        request.FatUst.SourceBranchCode = sourceBranchCode;
+        request.FatUst.TargetBranchCode = targetBranchCode;
         ValidateWarehouseTransferWarehouseCodes(
             request,
             sourceWarehouse.WarehouseCode,
-            targetWarehouse.WarehouseCode);
+            targetWarehouse.WarehouseCode,
+            sourceBranchCode,
+            targetBranchCode);
         return request;
+    }
+
+    internal static int ResolveWarehouseTransferDocumentType(
+        int sourceBranchCode,
+        int targetBranchCode)
+    {
+        if (sourceBranchCode != targetBranchCode)
+            throw AppException.Conflict(
+                "Şubeler arası ERP transferi için çıkış/giriş şube cari kodu eşlemesi tanımlı değildir. " +
+                "Eksik cari eşlemesiyle Netsis belgesi gönderilmedi.");
+
+        // NetOpenX TFaturaTip.ftLokalDepo: aynı şubedeki lokal depolar arası transfer.
+        return NetsisItemSlipDocumentTypes.LocalWarehouseTransfer;
     }
 
     internal static void ValidateWarehouseTransferWarehouseCodes(
         NetsisItemSlipRequest request,
         int sourceWarehouseCode,
-        int targetWarehouseCode)
+        int targetWarehouseCode,
+        int sourceBranchCode,
+        int targetBranchCode)
     {
         ArgumentNullException.ThrowIfNull(request);
 
-        if (request.FatUst.DepoKodu != sourceWarehouseCode
+        if (request.FaturaTip != NetsisItemSlipDocumentTypes.LocalWarehouseTransfer
+            || request.FatUst.Tip != NetsisItemSlipDocumentTypes.LocalWarehouseTransfer
+            || request.FatUst.Tipi != NetsisItemSlipInvoiceType.Empty
+            || request.FatUst.WarehouseMovementType != NetsisWarehouseMovementType.Warehouses
+            || request.FatUst.SourceBranchCode != sourceBranchCode
+            || request.FatUst.TargetBranchCode != targetBranchCode
+            || !string.IsNullOrEmpty(request.FatUst.CariKod)
+            || !string.IsNullOrEmpty(request.FatUst.SecondaryCustomerCode)
+            || request.FatUst.DepoKodu != sourceWarehouseCode
             || request.Kalems.Count == 0
             || request.Kalems.Any(line =>
                 line.DepoKodu != sourceWarehouseCode
@@ -844,7 +878,8 @@ public sealed class ErpPostingService(
                 || line.GirisDepoKodu != targetWarehouseCode))
         {
             throw AppException.Conflict(
-                $"ERP transfer depo eşlemesi geçersiz. Çıkış depo: {sourceWarehouseCode}, giriş depo: {targetWarehouseCode}.");
+                $"ERP lokal depo transfer sözleşmesi geçersiz. Çıkış depo: {sourceWarehouseCode}, " +
+                $"giriş depo: {targetWarehouseCode}, şube: {sourceBranchCode}->{targetBranchCode}.");
         }
     }
 
