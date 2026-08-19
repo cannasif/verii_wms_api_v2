@@ -69,9 +69,10 @@ public sealed class KkdPreparationScanPickService(
             .Where(x => x.Id == task.WarehouseId)
             .Select(x => x.AutoPickWithoutConfirmMaxQuantity)
             .SingleAsync(ct);
-        // Üretim UI: seri → otomatik dene; serisiz → eşik tanımlı ve default ≤ eşik ise otomatik.
-        var canAutoPick = isSerial
-            || (threshold is > 0 && defaultQuantity > 0 && defaultQuantity <= threshold.Value);
+        // Üretim: raf/seri belirsizken otomatik toplama yok. Seri veya (eşik tanımlı ve default ≤ eşik).
+        var canAutoPick = HasUniquePickSource(resolved)
+            && (isSerial
+                || (threshold is > 0 && defaultQuantity > 0 && defaultQuantity <= threshold.Value));
 
         return new(
             match.Line.Id,
@@ -150,14 +151,23 @@ public sealed class KkdPreparationScanPickService(
                 throw AppException.Conflict("Bu kalemde kalan miktar yok.");
 
             var resolved = prep.Resolved;
-            var isSerial = IsSerial(resolved);
+            var selected = SelectBalanceCandidate(resolved, request.SourceLocationId, request.SerialNo, request.LotNo)
+                ?? throw AppException.Conflict("Kaynak raf belirlenemedi; birden fazla raf/seri varsa birini seçmelisiniz.");
+            var sourceLocationId = selected.LocationId;
+            var serialNo = NullIfWhiteSpace(request.SerialNo)
+                ?? NullIfWhiteSpace(selected.SerialNo)
+                ?? NullIfWhiteSpace(resolved.SerialNo);
+            var lotNo = NullIfWhiteSpace(request.LotNo)
+                ?? NullIfWhiteSpace(selected.LotNo)
+                ?? NullIfWhiteSpace(resolved.LotNo);
+            var isSerial = !string.IsNullOrWhiteSpace(serialNo) || IsSerial(resolved);
             decimal quantity;
             if (isSerial)
             {
-                if (string.IsNullOrWhiteSpace(resolved.SerialNo))
-                    throw AppException.Conflict("Seri numarası zorunlu barkod çözümlenemedi.");
+                if (string.IsNullOrWhiteSpace(serialNo))
+                    throw AppException.Conflict("Seri numarası zorunlu; aday listesinden bir seri seçin.");
                 quantity = 1m;
-                var serial = resolved.SerialNo.Trim();
+                var serial = serialNo.Trim();
                 var duplicate = await Scans.Query().AnyAsync(x =>
                     x.TaskId == task.Id
                     && x.SerialNo != null
@@ -172,6 +182,11 @@ public sealed class KkdPreparationScanPickService(
                     : resolved.Quantity is > 0 ? resolved.Quantity.Value : 1m;
                 if (quantity <= 0)
                     throw AppException.BadRequest("Geçerli bir miktar girin.");
+                var maxOnShelf = Math.Min(remaining, selected.AvailableQuantity);
+                if (quantity > maxOnShelf)
+                    quantity = maxOnShelf;
+                if (quantity <= 0)
+                    throw AppException.Conflict("Seçilen rafta toplanabilir bakiye yok.");
             }
 
             if (quantity > remaining)
@@ -184,7 +199,6 @@ public sealed class KkdPreparationScanPickService(
             if (threshold is > 0 && quantity > threshold.Value && !request.ConfirmAboveThreshold)
                 throw AppException.Conflict(PickAboveThresholdConfirmMessage);
 
-            var sourceLocationId = request.SourceLocationId ?? resolved.SuggestedLocationId;
             var now = DateTimeOffset.UtcNow;
             var unitCode = string.IsNullOrWhiteSpace(resolved.UnitCode) ? requestLine.UnitCode : resolved.UnitCode;
 
@@ -192,7 +206,7 @@ public sealed class KkdPreparationScanPickService(
             // sanal rafına gerçek stok hareketi postala — "ben bu işi yapıyorum" dediği an bakiye düşer.
             var movementOperationId = await ConsumeReservationAndMoveAsync(
                 task, line, resolved.StockId, unitCode, sourceLocationId,
-                NullIfWhiteSpace(resolved.SerialNo), NullIfWhiteSpace(resolved.LotNo), quantity,
+                serialNo, lotNo, quantity,
                 actor, now, request.IdempotencyKey, token);
 
             await Scans.AddAsync(new KkdPreparationBarcodeScan
@@ -206,8 +220,8 @@ public sealed class KkdPreparationScanPickService(
                 BarcodeSource = resolved.Source,
                 StockId = resolved.StockId,
                 UnitCode = unitCode,
-                LotNo = NullIfWhiteSpace(resolved.LotNo),
-                SerialNo = NullIfWhiteSpace(resolved.SerialNo),
+                LotNo = lotNo,
+                SerialNo = serialNo,
                 Quantity = quantity,
                 SourceLocationId = sourceLocationId,
                 ScannedAtUtc = now,
@@ -240,8 +254,8 @@ public sealed class KkdPreparationScanPickService(
                 resolved.StockId,
                 resolved.StockCode,
                 resolved.StockName,
-                NullIfWhiteSpace(resolved.LotNo),
-                NullIfWhiteSpace(resolved.SerialNo),
+                NullIfWhiteSpace(lotNo),
+                serialNo,
                 sourceLocationId,
                 taskRow);
         }, ct, IsolationLevel.Serializable);
@@ -397,7 +411,8 @@ public sealed class KkdPreparationScanPickService(
 
     /// <summary>
     /// StokKodu**SeriNo yazılmışsa önce stok koduyla StockId'yi bulur, seriyi ExpectedStockId ile
-    /// çözer; aksi halde ham metni (fiziksel barkod/GS1) doğrudan paylaşılan çözücüye gönderir.
+    /// çözer; düz stok kodu bu görevin açık kalemine oturuyorsa aynı bağlamla çözülür (çıkış
+    /// barkod politikası stok kodunu reddetmesin). Aksi halde ham metin paylaşılan çözücüye gider.
     /// </summary>
     private async Task<ResolvedWarehouseBarcode> ResolveBarcodeAsync(KkdPreparationTask task, string rawBarcode, CancellationToken ct)
     {
@@ -415,12 +430,92 @@ public sealed class KkdPreparationScanPickService(
         }
         else
         {
+            var expectedStockId = await FindOpenTaskStockIdByCodeAsync(task, parsed.Raw, ct);
             resolved = await barcodeResolver.ResolveAsync(new(
-                parsed.Raw, task.BranchCode, WarehouseBarcodePurpose.Outbound, task.WarehouseId), ct);
+                parsed.Raw, task.BranchCode, WarehouseBarcodePurpose.Outbound, task.WarehouseId,
+                ExpectedStockId: expectedStockId), ct);
         }
+
         if (!resolved.CanExecute)
-            throw AppException.Conflict("Barkod çıkış için kullanılamıyor.");
+        {
+            var onlyTrackingMissing = resolved.MissingFields.Count > 0
+                && resolved.MissingFields.All(field => field is "Seri" or "Lot");
+            if (resolved.BalanceCandidates.Count == 0 || !onlyTrackingMissing)
+            {
+                throw AppException.Conflict(resolved.MissingFields.Count > 0
+                    ? $"Barkod toplama için uygun değil: {string.Join(", ", resolved.MissingFields)}."
+                    : "Barkod çıkış için kullanılamıyor.");
+            }
+        }
+
         return resolved;
+    }
+
+    private async Task<long?> FindOpenTaskStockIdByCodeAsync(KkdPreparationTask task, string code, CancellationToken ct)
+    {
+        var normalized = code.Trim();
+        if (string.IsNullOrWhiteSpace(normalized)) return null;
+        var stockIds = task.Lines
+            .Where(x => !x.IsDeleted && Remaining(x) > 0 && x.RequestLine.StockId.HasValue)
+            .Select(x => x.RequestLine.StockId!.Value)
+            .Distinct()
+            .ToArray();
+        if (stockIds.Length == 0) return null;
+        var stocks = await Stocks.Query()
+            .Where(x => stockIds.Contains(x.Id) && x.BranchCode == task.BranchCode)
+            .Select(x => new
+            {
+                x.Id,
+                x.ErpStockCode,
+                x.ManufacturerCode,
+                x.Code1,
+                x.Code2,
+                x.Code3,
+                x.Code4,
+                x.Code5,
+            })
+            .ToListAsync(ct);
+        return stocks.FirstOrDefault(stock =>
+            new[]
+            {
+                stock.ErpStockCode,
+                stock.ManufacturerCode,
+                stock.Code1,
+                stock.Code2,
+                stock.Code3,
+                stock.Code4,
+                stock.Code5,
+            }.Any(alias => string.Equals(alias?.Trim(), normalized, StringComparison.OrdinalIgnoreCase)))?.Id;
+    }
+
+    internal static bool HasUniquePickSource(ResolvedWarehouseBarcode resolved)
+    {
+        if (resolved.BalanceCandidates.Count == 1) return true;
+        if (resolved.SuggestedLocationId is not { } locationId) return false;
+        return resolved.BalanceCandidates.Count(candidate => candidate.LocationId == locationId) == 1;
+    }
+
+    internal static WarehouseBarcodeBalanceCandidate? SelectBalanceCandidate(
+        ResolvedWarehouseBarcode resolved,
+        long? sourceLocationId,
+        string? serialNo,
+        string? lotNo)
+    {
+        var serial = NullIfWhiteSpace(serialNo);
+        var lot = NullIfWhiteSpace(lotNo);
+        var matches = resolved.BalanceCandidates.AsEnumerable();
+        if (sourceLocationId is { } locationId)
+            matches = matches.Where(candidate => candidate.LocationId == locationId);
+        if (serial is not null)
+            matches = matches.Where(candidate => string.Equals(candidate.SerialNo, serial, StringComparison.OrdinalIgnoreCase));
+        if (lot is not null)
+            matches = matches.Where(candidate => string.Equals(candidate.LotNo, lot, StringComparison.OrdinalIgnoreCase));
+
+        var list = matches.ToArray();
+        if (list.Length == 1) return list[0];
+        if (list.Length == 0 && sourceLocationId is null && resolved.BalanceCandidates.Count == 1)
+            return resolved.BalanceCandidates[0];
+        return null;
     }
 
     private async Task<KkdPreparationScanPickResult> BuildReplayResultAsync(
