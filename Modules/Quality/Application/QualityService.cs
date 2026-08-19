@@ -368,6 +368,7 @@ public sealed class QualityService(
             SourceDocumentType=x.Inspection.SourceDocumentType,SourceDocumentId=x.Inspection.SourceDocumentId,SourceDocumentNo=x.Inspection.SourceDocumentNo,
             WarehouseId=x.Inspection.WarehouseId,WarehouseCode=x.Warehouse==null?null:x.Warehouse.WarehouseCode,
             WarehouseName=x.Warehouse==null?null:x.Warehouse.WarehouseName,SupplierId=x.Inspection.SupplierId,
+            SupplierName=x.Receipt==null?null:x.Receipt.SupplierNameSnapshot,
             SourceWaybillNo=x.Receipt==null?null:(x.Receipt.ElectronicWaybillNo??x.Receipt.WaybillNo),
             CreatedByName=x.User==null?null:(x.Detail==null?x.User.Username:(x.Detail.FirstName+" "+x.Detail.LastName)),
             IsPriority=x.Inspection.IsPriority,PriorityAssignedAtUtc=x.Inspection.PriorityAssignedAtUtc,
@@ -444,7 +445,7 @@ public sealed class QualityService(
             .Select(x => new { x.WarehouseCode, x.WarehouseName }).FirstOrDefaultAsync(ct);
         var receipt = inspection.SourceDocumentType == "GoodsReceipt"
             ? await uow.Repository<GoodsReceiptHeader>().Query().Where(x => x.Id == inspection.SourceDocumentId)
-                .Select(x => new { x.WaybillNo, x.ElectronicWaybillNo, x.Status, x.ReceivingLocationId }).FirstOrDefaultAsync(ct)
+                .Select(x => new { x.WaybillNo, x.ElectronicWaybillNo, x.SupplierNameSnapshot, x.Status, x.ReceivingLocationId }).FirstOrDefaultAsync(ct)
             : null;
         var creator = inspection.CreatedBy.HasValue
             ? await (from user in uow.Repository<User>().Query()
@@ -458,7 +459,9 @@ public sealed class QualityService(
             InspectionNo = inspection.InspectionNo, SourceDocumentType = inspection.SourceDocumentType,
             SourceDocumentId = inspection.SourceDocumentId, SourceDocumentNo = inspection.SourceDocumentNo,
             WarehouseId = inspection.WarehouseId, WarehouseCode = warehouse?.WarehouseCode, WarehouseName = warehouse?.WarehouseName,
-            SupplierId = inspection.SupplierId, SourceWaybillNo = receipt == null ? null : receipt.ElectronicWaybillNo ?? receipt.WaybillNo,
+            SupplierId = inspection.SupplierId,
+            SupplierName = receipt?.SupplierNameSnapshot,
+            SourceWaybillNo = receipt == null ? null : receipt.ElectronicWaybillNo ?? receipt.WaybillNo,
             CreatedByName = creator, IsPriority = inspection.IsPriority, Status = inspection.Status.ToString(), LineCount = inspection.Lines.Count,
             TotalQuantity = inspection.Lines.Sum(x => x.Quantity),
             RequiredInspectionQuantity = inspection.Lines.Sum(x => x.SampleQuantity),

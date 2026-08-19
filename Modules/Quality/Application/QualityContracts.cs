@@ -148,6 +148,7 @@ public sealed class QualityInspectionGridRow
     public long Id { get; init; } public string BranchCode { get; init; } = "0"; public string InspectionNo { get; init; } = string.Empty;
     public string SourceDocumentType { get; init; } = string.Empty; public long SourceDocumentId { get; init; } public string SourceDocumentNo { get; init; } = string.Empty;
     public long WarehouseId { get; init; } public int? WarehouseCode { get; init; } public string? WarehouseName { get; init; } public long? SupplierId { get; init; }
+    public string? SupplierName { get; init; }
     public string? SourceWaybillNo { get; init; } public string? ProjectCodes { get; set; } public string? CreatedByName { get; init; }
     public bool IsPriority { get; init; }
     public DateTimeOffset? PriorityAssignedAtUtc { get; init; }
