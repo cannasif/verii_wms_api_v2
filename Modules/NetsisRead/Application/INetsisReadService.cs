@@ -26,6 +26,11 @@ public interface INetsisReadService : INetsisImportOpenFileReader
         string? branchCode,
         bool includeUnavailable,
         CancellationToken cancellationToken);
+    Task<GoodsReceiptImportOpenOrdersDto> GetGoodsReceiptImportOpenOrdersAsync(
+        string importFileNumber,
+        string? branchCode,
+        bool includeUnavailable,
+        CancellationToken cancellationToken);
     Task<IReadOnlyList<WarehouseTransferOpenOrderHeaderDto>> GetWarehouseTransferOpenOrderHeadersAsync(string customerCode,string? branchCode,CancellationToken cancellationToken);
     Task<IReadOnlyList<WarehouseTransferOpenOrderLineDto>> GetWarehouseTransferOpenOrderLinesAsync(string orderNumbersCsv,string? branchCode,CancellationToken cancellationToken);
     Task<IReadOnlyList<ShipmentOpenOrderHeaderDto>> GetShipmentOpenOrderHeadersAsync(string customerCode,string? branchCode,CancellationToken cancellationToken);

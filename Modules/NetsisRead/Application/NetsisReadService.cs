@@ -211,6 +211,26 @@ public sealed class NetsisReadService(INetsisQueryExecutor queryExecutor) : INet
             : rows.Where(x => x.AvailableQuantity > 0).ToList();
     }
 
+    public async Task<GoodsReceiptImportOpenOrdersDto> GetGoodsReceiptImportOpenOrdersAsync(
+        string importFileNumber,
+        string? branchCode,
+        bool includeUnavailable,
+        CancellationToken ct)
+    {
+        var openFiles = await GetImportOpenFilesAsync(ct);
+        var importFile = NetsisImportOpenFilePolicy.FindOpenFile(importFileNumber, openFiles)
+            ?? throw new ArgumentException(
+                "Seçilen ithalat dosyası artık açık değildir. Listeyi yenileyip tekrar seçiniz.",
+                nameof(importFileNumber));
+        var lines = await GetGoodsReceiptOpenOrderLinesAsync(
+            null,
+            importFile.CustomerCode,
+            branchCode,
+            includeUnavailable,
+            ct);
+        return new GoodsReceiptImportOpenOrdersDto(importFile, lines);
+    }
+
     public async Task<IReadOnlyList<WarehouseTransferOpenOrderHeaderDto>> GetWarehouseTransferOpenOrderHeadersAsync(string customerCode,string? branchCode,CancellationToken ct)
     {
         customerCode=Normalize(customerCode)??throw new ArgumentException("Müşteri kodu zorunludur.",nameof(customerCode));

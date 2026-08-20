@@ -106,6 +106,10 @@ public sealed record GoodsReceiptOpenOrderLineDto(
     decimal? OrderedQuantity, decimal? DeliveredQuantity, decimal? RemainingQuantity,
     decimal? PlannedQuantity, decimal? AvailableQuantity);
 
+public sealed record GoodsReceiptImportOpenOrdersDto(
+    NetsisImportOpenFileDto ImportFile,
+    IReadOnlyList<GoodsReceiptOpenOrderLineDto> Lines);
+
 public sealed record WarehouseTransferOpenOrderHeaderDto(
     string Mode,string OrderNumber,int? OrderId,string? CustomerCode,string? CustomerName,
     int? BranchCode,int? TargetWarehouseCode,string? ProjectCode,DateTime? OrderDate,
