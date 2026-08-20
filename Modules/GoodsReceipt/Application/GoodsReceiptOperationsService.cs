@@ -12,6 +12,8 @@ using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Identity.Application;
 using verii_wms_api_v2.Modules.Location.Domain;
+using verii_wms_api_v2.Modules.NetsisRead.Application;
+using verii_wms_api_v2.Modules.NetsisRead.Application.Dtos;
 using verii_wms_api_v2.Modules.Quality.Application;
 using verii_wms_api_v2.Modules.Quality.Domain;
 using verii_wms_api_v2.Modules.Stock.Application;
@@ -45,6 +47,7 @@ public sealed class GoodsReceiptOperationsService(
     IGoodsReceiptErpPostingCoordinator erpPosting,
     IGoodsReceiptOnReceiptLabelService onReceiptLabels,
     IGoodsReceiptOrderSource orderSource,
+    INetsisImportOpenFileReader importOpenFileReader,
     IQualityWarehouseRoutingResolver? qualityWarehouseRoutingResolver = null) : IGoodsReceiptOperationsService
 {
     private static readonly IReadOnlyDictionary<string, string> GridSearchColumnMapping =
@@ -100,25 +103,56 @@ public sealed class GoodsReceiptOperationsService(
             requirements.OrderBy(x => x.StockId).ToArray());
     }
 
-    public Task<ManualGoodsReceiptResult> CreateOrderlessTaskAsync(CreateManualGoodsReceiptRequest request, long actorUserId, CancellationToken cancellationToken = default) =>
-        CreateAsync(request, actorUserId, direct: false, qualityAlreadyApproved: false, cancellationToken);
+    public async Task<ManualGoodsReceiptResult> CreateOrderlessTaskAsync(CreateManualGoodsReceiptRequest request, long actorUserId, CancellationToken cancellationToken = default)
+    {
+        var importFile = await ResolveOpenImportFileForNewReceiptAsync(request, cancellationToken);
+        return await CreateAsync(
+            request,
+            actorUserId,
+            direct: false,
+            qualityAlreadyApproved: false,
+            importFile,
+            cancellationToken);
+    }
 
     public async Task<ManualGoodsReceiptResult> CreateDirectReceiptAsync(
         CreateManualGoodsReceiptRequest request,
         long actorUserId,
         CancellationToken cancellationToken = default)
     {
-        var result = await CreateAsync(request, actorUserId, direct: true, qualityAlreadyApproved: false, cancellationToken);
+        var importFile = await ResolveOpenImportFileForNewReceiptAsync(request, cancellationToken);
+        var result = await CreateAsync(
+            request,
+            actorUserId,
+            direct: true,
+            qualityAlreadyApproved: false,
+            importFile,
+            cancellationToken);
         await erpPosting.PostIfEligibleAsync(result.Id, actorUserId, cancellationToken);
         return result;
     }
 
-    public Task<ManualGoodsReceiptResult> CreateDirectReceiptDeferredErpAsync(
+    public Task<ManualGoodsReceiptResult> CreateImportDirectReceiptAsync(
+        CreateManualGoodsReceiptRequest request,
+        long actorUserId,
+        CancellationToken cancellationToken = default) =>
+        CreateDirectReceiptAsync(ApplyImportDefaults(request), actorUserId, cancellationToken);
+
+    public async Task<ManualGoodsReceiptResult> CreateDirectReceiptDeferredErpAsync(
         CreateManualGoodsReceiptRequest request,
         long actorUserId,
         bool qualityAlreadyApproved,
-        CancellationToken cancellationToken = default) =>
-        CreateAsync(request, actorUserId, direct: true, qualityAlreadyApproved, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        var importFile = await ResolveOpenImportFileForNewReceiptAsync(request, cancellationToken);
+        return await CreateAsync(
+            request,
+            actorUserId,
+            direct: true,
+            qualityAlreadyApproved,
+            importFile,
+            cancellationToken);
+    }
 
     public async Task<PagedResponse<GoodsReceiptGridRow>> GetPagedAsync(PagedRequest request, CancellationToken cancellationToken = default)
     {
@@ -547,6 +581,7 @@ public sealed class GoodsReceiptOperationsService(
         long actor,
         bool direct,
         bool qualityAlreadyApproved,
+        NetsisImportOpenFileDto? importFile,
         CancellationToken ct)
     {
         // Orderless/direct receipts are operational captures, not planned work.
@@ -568,6 +603,7 @@ public sealed class GoodsReceiptOperationsService(
             var branch = request.BranchCode.Trim();
             var supplier = await unitOfWork.Repository<CustomerEntity>().FirstOrDefaultAsync(x => x.Id == request.SupplierId && x.BranchCode == branch, false, token)
                 ?? throw AppException.BadRequest("Cari bulunamadı veya şube ile uyuşmuyor.");
+            ValidateImportFileCustomer(request.TradeType, importFile, supplier.CustomerCode);
             var waybillNo = NormalizeDocumentNumber(request.WaybillNo);
             var electronicWaybillNo = NormalizeDocumentNumber(request.ElectronicWaybillNo);
             var duplicateDocument = await Headers.Query().AnyAsync(x => x.BranchCode == branch && x.SupplierId == supplier.Id
@@ -1050,6 +1086,55 @@ public sealed class GoodsReceiptOperationsService(
     internal static CreateManualGoodsReceiptRequest ApplyUnplannedDefaults(
         CreateManualGoodsReceiptRequest request) =>
         request with { Priority = 1 };
+
+    internal static CreateManualGoodsReceiptRequest ApplyImportDefaults(
+        CreateManualGoodsReceiptRequest request) =>
+        request with
+        {
+            TradeType = GoodsReceiptTradeType.Foreign,
+            ExecutionMode = request.LabelStrategy == GoodsReceiptLabelStrategy.SupplierLabel
+                ? GoodsReceiptExecutionMode.SupplierLabel
+                : GoodsReceiptExecutionMode.Import
+        };
+
+    internal static void ValidateImportFileCustomer(
+        GoodsReceiptTradeType tradeType,
+        NetsisImportOpenFileDto? importFile,
+        string supplierCode)
+    {
+        if (tradeType != GoodsReceiptTradeType.Foreign) return;
+        if (importFile is null)
+            throw AppException.Conflict(
+                "Seçilen ithalat dosyası artık açık değildir. Listeyi yenileyip tekrar seçiniz.");
+        if (!string.Equals(
+                importFile.CustomerCode.Trim(),
+                supplierCode.Trim(),
+                StringComparison.OrdinalIgnoreCase))
+            throw AppException.BadRequest(
+                "Seçilen cari, ithalat dosyasındaki cari koduyla uyuşmuyor.");
+    }
+
+    private async Task<NetsisImportOpenFileDto?> ResolveOpenImportFileForNewReceiptAsync(
+        CreateManualGoodsReceiptRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (request.TradeType != GoodsReceiptTradeType.Foreign) return null;
+
+        var importFileNumber = ValidateTradeClassification(
+            request.TradeType,
+            request.ImportFileNumber);
+
+        // Idempotent replays must remain replayable after the ERP file is closed.
+        if (await Headers.Query().AnyAsync(
+                header => header.CorrelationId == request.IdempotencyKey,
+                cancellationToken))
+            return null;
+
+        var openFiles = await importOpenFileReader.GetImportOpenFilesAsync(cancellationToken);
+        return NetsisImportOpenFilePolicy.FindOpenFile(importFileNumber, openFiles)
+            ?? throw AppException.Conflict(
+                "Seçilen ithalat dosyası artık açık değildir. Listeyi yenileyip tekrar seçiniz.");
+    }
 
     internal static void ValidateDocumentReference(
         string? waybillNo,

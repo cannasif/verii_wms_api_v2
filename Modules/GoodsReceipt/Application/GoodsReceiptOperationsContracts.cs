@@ -112,6 +112,7 @@ public interface IGoodsReceiptOperationsService
         CancellationToken cancellationToken = default);
     Task<ManualGoodsReceiptResult> CreateOrderlessTaskAsync(CreateManualGoodsReceiptRequest request, long actorUserId, CancellationToken cancellationToken = default);
     Task<ManualGoodsReceiptResult> CreateDirectReceiptAsync(CreateManualGoodsReceiptRequest request, long actorUserId, CancellationToken cancellationToken = default);
+    Task<ManualGoodsReceiptResult> CreateImportDirectReceiptAsync(CreateManualGoodsReceiptRequest request, long actorUserId, CancellationToken cancellationToken = default);
     Task<ManualGoodsReceiptResult> CreateDirectReceiptDeferredErpAsync(
         CreateManualGoodsReceiptRequest request, long actorUserId,
         bool qualityAlreadyApproved, CancellationToken cancellationToken = default);

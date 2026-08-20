@@ -1101,6 +1101,12 @@ public sealed class SteelVehicleUnknownPlateIntegrationTests
             CreateDirectReceiptDeferredErpAsync(
                 request, actorUserId, true, cancellationToken);
 
+        public Task<ManualGoodsReceiptResult> CreateImportDirectReceiptAsync(
+            CreateManualGoodsReceiptRequest request,
+            long actorUserId,
+            CancellationToken cancellationToken = default) =>
+            CreateDirectReceiptAsync(request, actorUserId, cancellationToken);
+
         public async Task<ManualGoodsReceiptResult> CreateDirectReceiptDeferredErpAsync(
             CreateManualGoodsReceiptRequest request,
             long actorUserId,

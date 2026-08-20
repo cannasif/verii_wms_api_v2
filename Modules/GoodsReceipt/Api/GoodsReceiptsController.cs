@@ -90,6 +90,19 @@ public sealed class GoodsReceiptsController(
         return Ok(ApiResponse<ManualGoodsReceiptResult>.Ok(await operations.CreateDirectReceiptAsync(request, CurrentUserId(), cancellationToken)));
     }
 
+    [HttpPost("import/direct")]
+    public async Task<IActionResult> CreateImportDirect(
+        CreateManualGoodsReceiptRequest request,
+        CancellationToken cancellationToken)
+    {
+        await Require("WMS.GOODS_RECEIPT.RECEIVE", cancellationToken);
+        return Ok(ApiResponse<ManualGoodsReceiptResult>.Ok(
+            await operations.CreateImportDirectReceiptAsync(
+                request,
+                CurrentUserId(),
+                cancellationToken)));
+    }
+
     [HttpPost("paged")]
     public async Task<IActionResult> GetPaged(PagedRequest request, CancellationToken cancellationToken)
     {

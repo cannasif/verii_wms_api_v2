@@ -369,6 +369,12 @@ public sealed class SteelReceiptImportLocationResolutionTests
             CancellationToken cancellationToken = default) =>
             throw new NotSupportedException();
 
+        public Task<ManualGoodsReceiptResult> CreateImportDirectReceiptAsync(
+            CreateManualGoodsReceiptRequest request,
+            long actorUserId,
+            CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException();
+
         public Task<ManualGoodsReceiptResult> CreateDirectReceiptDeferredErpAsync(
             CreateManualGoodsReceiptRequest request,
             long actorUserId,

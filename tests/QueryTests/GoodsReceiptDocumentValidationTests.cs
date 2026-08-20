@@ -353,6 +353,41 @@ public sealed class GoodsReceiptDocumentValidationTests
     }
 
     [Fact]
+    public void Import_endpoint_forces_foreign_trade_and_import_execution_mode()
+    {
+        var request = new CreateManualGoodsReceiptRequest(
+            Guid.NewGuid(), "0", 1, 1, 1, 1, new DateOnly(2026, 8, 20),
+            null, null, null, null, null, null, null, null, null, null,
+            null, null, GoodsReceiptLabelStrategy.None, GoodsReceiptExecutionMode.Manual,
+            1, null, null, null, [],
+            TradeType: GoodsReceiptTradeType.Domestic,
+            ImportFileNumber: "ITH-2026-001");
+
+        var normalized = GoodsReceiptOperationsService.ApplyImportDefaults(request);
+
+        Assert.Equal(GoodsReceiptTradeType.Foreign, normalized.TradeType);
+        Assert.Equal(GoodsReceiptExecutionMode.Import, normalized.ExecutionMode);
+        Assert.Equal("ITH-2026-001", normalized.ImportFileNumber);
+    }
+
+    [Fact]
+    public void Import_file_customer_must_match_the_selected_supplier()
+    {
+        var openFile = new verii_wms_api_v2.Modules.NetsisRead.Application.Dtos.NetsisImportOpenFileDto(
+            "ITH-2026-001", "320.001", "Tedarikçi", null, null);
+
+        GoodsReceiptOperationsService.ValidateImportFileCustomer(
+            GoodsReceiptTradeType.Foreign,
+            openFile,
+            " 320.001 ");
+
+        Assert.Throws<AppException>(() => GoodsReceiptOperationsService.ValidateImportFileCustomer(
+            GoodsReceiptTradeType.Foreign,
+            openFile,
+            "320.999"));
+    }
+
+    [Fact]
     public void Manual_flow_requires_one_waybill_reference()
     {
         var exception = Assert.Throws<AppException>(() =>
