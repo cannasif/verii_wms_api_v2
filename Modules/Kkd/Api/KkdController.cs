@@ -16,6 +16,7 @@ namespace verii_wms_api_v2.Modules.Kkd.Api;
 public sealed class KkdController(
     IKkdDefinitionService definitions,
     IKkdDefinitionWorkbookService definitionWorkbook,
+    IKkdSimpleMatrixWorkbookService simpleMatrixWorkbook,
     IKkdEntitlementService entitlements,
     IKkdDistributionService distributions,
     IKkdRequestService requests,
@@ -84,6 +85,59 @@ public sealed class KkdController(
         return Ok(ApiResponse<KkdDefinitionWorkbookImportResult>.Ok(
             result,
             $"KKD tanımları uygulandı. {result.Created} yeni kayıt, {result.Updated} güncelleme, {result.Unchanged} değişmeyen kayıt."));
+    }
+
+    [HttpGet("imports/simple-matrix/template")]
+    public async Task<IActionResult> DownloadSimpleMatrixTemplate([FromQuery] long customerId, CancellationToken ct)
+    {
+        await Require("WMS.KKD.DEFINITIONS.VIEW", ct);
+        await Require("WMS.KKD.MATRICES.VIEW", ct);
+
+        var workbook = await simpleMatrixWorkbook.CreateTemplateAsync(customerId, BranchCode(), ct);
+        return File(
+            workbook,
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            $"WMS_KKD_Basit_Matris_{DateTime.UtcNow:yyyyMMdd_HHmm}.xlsx");
+    }
+
+    [HttpPost("imports/simple-matrix/preview")]
+    [RequestSizeLimit(KkdSimpleMatrixWorkbookService.MaxFileSize)]
+    public async Task<IActionResult> PreviewSimpleMatrix(
+        [FromForm] IFormFile? file,
+        [FromQuery] long customerId,
+        [FromQuery] DateOnly effectiveFrom,
+        CancellationToken ct)
+    {
+        await Require("WMS.KKD.DEFINITIONS.VIEW", ct);
+        await Require("WMS.KKD.MATRICES.MANAGE", ct);
+        ValidateSimpleMatrixFile(file);
+
+        await using var stream = file!.OpenReadStream();
+        var preview = await simpleMatrixWorkbook.PreviewAsync(stream, customerId, effectiveFrom, BranchCode(), ct);
+        return Ok(ApiResponse<KkdSimpleMatrixWorkbookPreview>.Ok(preview));
+    }
+
+    [HttpPost("imports/simple-matrix/commit")]
+    [RequestSizeLimit(KkdSimpleMatrixWorkbookService.MaxFileSize)]
+    public async Task<IActionResult> ImportSimpleMatrix(
+        [FromForm] IFormFile? file,
+        [FromQuery] long customerId,
+        [FromQuery] DateOnly effectiveFrom,
+        [FromQuery] string previewHash,
+        [FromQuery] string stateHash,
+        CancellationToken ct)
+    {
+        await Require("WMS.KKD.MATRICES.MANAGE", ct);
+        ValidateSimpleMatrixFile(file);
+        if (string.IsNullOrWhiteSpace(previewHash) || string.IsNullOrWhiteSpace(stateHash))
+            throw AppException.BadRequest("Önizleme doğrulama bilgileri eksik. Dosyayı yeniden önizleyin.");
+
+        await using var stream = file!.OpenReadStream();
+        var result = await simpleMatrixWorkbook.ImportAsync(
+            stream, customerId, effectiveFrom, BranchCode(), previewHash, stateHash, UserId(), ct);
+        return Ok(ApiResponse<KkdSimpleMatrixWorkbookImportResult>.Ok(
+            result,
+            $"Basit KKD matrisi uygulandı. {result.Created} yeni matris, {result.Updated} güncelleme."));
     }
 
     [HttpGet("departments")]
@@ -437,6 +491,16 @@ public sealed class KkdController(
 
     private string BranchCode() => User.FindFirstValue(JwtTokenIssuer.BranchCodeClaim)?.Trim() is { Length: > 0 } branch
         ? branch : throw AppException.Unauthorized("Oturum şube bilgisi bulunamadı.");
+
+    private static void ValidateSimpleMatrixFile(IFormFile? file)
+    {
+        if (file is null || file.Length == 0)
+            throw AppException.BadRequest("Basit KKD matris dosyası seçilmelidir.");
+        if (!string.Equals(Path.GetExtension(file.FileName), ".xlsx", StringComparison.OrdinalIgnoreCase))
+            throw AppException.BadRequest("Yalnızca XLSX biçimindeki KKD matris dosyaları yüklenebilir.");
+        if (file.Length > KkdSimpleMatrixWorkbookService.MaxFileSize)
+            throw AppException.BadRequest("Basit KKD matris dosyası 15 MB sınırını aşamaz.");
+    }
 
     private async Task Require(string code, CancellationToken ct)
     { if (!await permissions.HasPermissionAsync(User, code, ct)) throw AppException.Forbidden(); }
