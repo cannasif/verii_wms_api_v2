@@ -20,8 +20,6 @@ public sealed class QualityDispositionDatJob(
     ILogger<QualityDispositionDatJob> logger) : IGoodsReceiptErpSuccessJob
 {
     private const int RecoveryBatchSize = 100;
-    internal const int AutomaticPreSendRetryLimit = 5;
-    internal const string PreSendFailureCode = "ERP_PRE_SEND_FAILURE";
 
     public async Task ProcessGoodsReceiptAsync(
         long goodsReceiptId,
@@ -92,10 +90,6 @@ public sealed class QualityDispositionDatJob(
                     on inspection.SourceDocumentId equals receipt.Id
                 join transfer in unitOfWork.Repository<WarehouseTransferHeader>().Query()
                     on disposition.WarehouseTransferId equals transfer.Id
-                join receiptPosting in unitOfWork.Repository<ErpPostingRecord>().Query()
-                        .Where(posting => posting.SourceType == ErpPostingSourceType.GoodsReceipt)
-                    on receipt.Id equals receiptPosting.SourceEntityId into receiptPostings
-                from receiptPosting in receiptPostings.DefaultIfEmpty()
                 where inspection.SourceDocumentType == "GoodsReceipt"
                     && inspection.DecidedAtUtc.HasValue
                     && (inspection.Status == QualityInspectionStatus.Passed
@@ -104,12 +98,7 @@ public sealed class QualityDispositionDatJob(
                         || inspection.Status == QualityInspectionStatus.Released)
                     && disposition.WarehouseTransferId.HasValue
                     && (receipt.ErpIntegrationStatus == ErpIntegrationStatus.Pending
-                        || receipt.ErpIntegrationStatus == ErpIntegrationStatus.Succeeded
-                        || receipt.ErpIntegrationStatus == ErpIntegrationStatus.Failed
-                            && receiptPosting != null
-                            && receiptPosting.Status == ErpPostingStatus.Failed
-                            && receiptPosting.LastErrorCode == PreSendFailureCode
-                            && receiptPosting.AttemptCount < AutomaticPreSendRetryLimit)
+                        || receipt.ErpIntegrationStatus == ErpIntegrationStatus.Succeeded)
                     && transfer.Status != WarehouseTransferStatus.Cancelled
                     && (transfer.Status != WarehouseTransferStatus.Completed
                         || transfer.ErpIntegrationStatus != ErpIntegrationStatus.Succeeded)
@@ -127,11 +116,10 @@ public sealed class QualityDispositionDatJob(
         {
             try
             {
-                if (candidate.ErpIntegrationStatus != ErpIntegrationStatus.Succeeded)
+                if (candidate.ErpIntegrationStatus == ErpIntegrationStatus.Pending)
                 {
                     // This covers decisions committed before the quarantine-aware quality
-                    // gate was introduced, transient enqueue failures after deployment,
-                    // and bounded retries where the Netsis request was never sent.
+                    // gate was introduced, and transient enqueue failures after deployment.
                     // A successful goods-receipt post enqueues the DAT follow-up itself.
                     await goodsReceiptErpPosting.PostIfEligibleAsync(
                         candidate.Id,
