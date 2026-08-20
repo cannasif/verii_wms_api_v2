@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Localization;
 using verii_wms_api_v2.Modules.Audit.Application;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
+using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 using verii_wms_api_v2.Modules.Identity.Domain;
 using verii_wms_api_v2.Modules.Kkd.Domain;
 using verii_wms_api_v2.Modules.Kkd.Localization;
@@ -230,7 +231,11 @@ public sealed class KkdDistributionService(
                     throw AppException.Conflict($"{item.OrderNumber}/{item.OrderLineId} Netsis açık siparişlerinde bulunamadı.");
                 if (!string.Equals(order.CustomerCode, customerCode, StringComparison.OrdinalIgnoreCase))
                     throw AppException.Conflict($"{item.OrderNumber} personelin bağlı olduğu cariye ait değil.");
-                if (!string.Equals(stock.ErpStockCode, order.StockCode, StringComparison.OrdinalIgnoreCase))
+                // Talep üzerinden gelen teslimde sipariş kalemi bir gruptur; kesin stok (ör. beden) toplama
+                // sırasında seçilir ya da uymadığında değiştirilir. Bu yüzden verilen stok kodunun sipariş
+                // kodundan farklı olması normaldir ve yalnızca doğrudan dağıtımda hata sayılır.
+                if (!request.KkdRequestId.HasValue
+                    && !string.Equals(stock.ErpStockCode, order.StockCode, StringComparison.OrdinalIgnoreCase))
                     throw AppException.Conflict($"{item.OrderNumber}/{item.OrderLineId} stok eşleşmesi geçersiz.");
                 if (item.Quantity > order.RemainingQuantity)
                     throw AppException.Conflict($"{item.OrderNumber}/{item.OrderLineId} açık sipariş bakiyesi {order.RemainingQuantity}; {item.Quantity} çıkış yapılamaz.");
@@ -270,7 +275,8 @@ public sealed class KkdDistributionService(
             null, null, null, null, null, null,
             Clean(request.Description, 1000) ?? $"{employee.EmployeeCode} KKD teslimi",
             prepared.Select(ToOutboundLine).ToArray(),
-            request.CreateWarehouseTask ? assignedUserIds : null);
+            request.CreateWarehouseTask ? assignedUserIds : null,
+            StockAlreadyStaged: request.StockAlreadyStaged);
         var outbound = await outbounds.CreateDraftAsync(outboundRequest, actor, ct);
 
         return await uow.ExecuteInTransactionAsync(async token =>
@@ -432,6 +438,7 @@ public sealed class KkdDistributionService(
             .ToArrayAsync(ct);
         var query = uow.Repository<KkdDistribution>().Query();
         if (warehouseIds.Length > 0) query = query.Where(x => warehouseIds.Contains(x.WarehouseId));
+        var headers = uow.Repository<WarehouseOutboundHeader>().Query();
         return await query
             .OrderByDescending(x => x.Id).Take(250)
             .Select(x => new KkdDistributionRow(
@@ -440,14 +447,19 @@ public sealed class KkdDistributionService(
                 x.Lines.Sum(l => l.Quantity), x.Lines.Sum(l => l.EntitledQuantity),
                 x.Lines.Sum(l => l.ExcessQuantity), x.ExcessApprovalStatus.ToString(),
                 x.ExcessApprovalReason, x.ExcessApprovedBy, x.ExcessApprovedAtUtc,
-                x.CreatedDate, x.CompletedAtUtc, Convert.ToBase64String(x.RowVersion)))
+                x.CreatedDate, x.CompletedAtUtc, Convert.ToBase64String(x.RowVersion),
+                headers.Where(o => o.Id == x.WarehouseOutboundId).Select(o => o.DocumentNo).FirstOrDefault(),
+                headers.Where(o => o.Id == x.WarehouseOutboundId).Select(o => o.Status.ToString()).FirstOrDefault(),
+                headers.Where(o => o.Id == x.WarehouseOutboundId).Select(o => o.ErpIntegrationStatus.ToString()).FirstOrDefault(),
+                x.KkdRequestId,
+                x.KkdRequest == null ? null : x.KkdRequest.RequestNo))
             .ToListAsync(ct);
     }
 
     public async Task<PagedResponse<KkdDistributionRow>> GetPagedAsync(PagedRequest request, long actor, CancellationToken ct = default)
     {
         var query = await AuthorizedDistributionsAsync(actor, ct);
-        var projected = BuildPagedQuery(request, query);
+        var projected = BuildPagedQuery(request, query, uow.Repository<WarehouseOutboundHeader>().Query());
         var page = await projected.ToPagedResponseAsync(request, ct);
         if (page.Items.Count == 0) return page;
 
@@ -479,13 +491,19 @@ public sealed class KkdDistributionService(
 
     internal static IQueryable<KkdDistributionRow> BuildPagedQuery(
         PagedRequest request,
-        IQueryable<KkdDistribution> distributions) =>
+        IQueryable<KkdDistribution> distributions,
+        IQueryable<WarehouseOutboundHeader> outbounds) =>
         distributions.Select(x => new KkdDistributionRow(
                 x.Id, x.DocumentNo, x.Status.ToString(), x.EmployeeId, x.Employee.EmployeeCode,
                 x.Employee.FirstName + " " + x.Employee.LastName, x.WarehouseId, x.WarehouseOutboundId,
                 0, 0, 0, x.ExcessApprovalStatus.ToString(),
                 x.ExcessApprovalReason, x.ExcessApprovedBy, x.ExcessApprovedAtUtc,
-                x.CreatedDate, x.CompletedAtUtc, Convert.ToBase64String(x.RowVersion)))
+                x.CreatedDate, x.CompletedAtUtc, Convert.ToBase64String(x.RowVersion),
+                outbounds.Where(o => o.Id == x.WarehouseOutboundId).Select(o => o.DocumentNo).FirstOrDefault(),
+                outbounds.Where(o => o.Id == x.WarehouseOutboundId).Select(o => o.Status.ToString()).FirstOrDefault(),
+                outbounds.Where(o => o.Id == x.WarehouseOutboundId).Select(o => o.ErpIntegrationStatus.ToString()).FirstOrDefault(),
+                x.KkdRequestId,
+                x.KkdRequest == null ? null : x.KkdRequest.RequestNo))
             .ApplySearch(request, new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["documentNo"] = nameof(KkdDistributionRow.DocumentNo),
@@ -497,6 +515,10 @@ public sealed class KkdDistributionService(
     public async Task<KkdDistributionDetail> GetDetailAsync(long id, long actor, CancellationToken ct = default)
     {
         var query = await AuthorizedDistributionsAsync(actor, ct);
+        var users = uow.Repository<User>().Query();
+        var outboundNumbers = uow.Repository<WarehouseOutboundHeader>().Query();
+        var postings = uow.Repository<ErpPostingRecord>().Query()
+            .Where(x => x.SourceType == ErpPostingSourceType.WarehouseOutbound);
         return await query.Where(x => x.Id == id)
             .Select(x => new KkdDistributionDetail(
                 x.Id, x.CorrelationId, x.DocumentNo, x.Status.ToString(),
@@ -507,7 +529,17 @@ public sealed class KkdDistributionService(
                     l.Id, l.LineNo, l.StockId, l.StockCodeSnapshot, l.StockNameSnapshot ?? string.Empty,
                     l.GroupCode, l.Quantity, l.EntitledQuantity, l.ExcessQuantity, l.SourceLocationId,
                     l.LotNo, l.SerialNo, l.OpenOrderNo, l.OpenOrderLineId)).ToArray(),
-                Convert.ToBase64String(x.RowVersion)))
+                Convert.ToBase64String(x.RowVersion),
+                outboundNumbers.Where(o => o.Id == x.WarehouseOutboundId).Select(o => o.DocumentNo).FirstOrDefault(),
+                users.Where(u => u.Id == x.CreatedBy)
+                    .Select(u => u.Detail == null ? u.Username : u.Detail.FirstName + " " + u.Detail.LastName)
+                    .FirstOrDefault(),
+                outboundNumbers.Where(o => o.Id == x.WarehouseOutboundId).Select(o => o.Status.ToString()).FirstOrDefault(),
+                outboundNumbers.Where(o => o.Id == x.WarehouseOutboundId).Select(o => o.ErpIntegrationStatus.ToString()).FirstOrDefault(),
+                postings.Where(p => p.SourceEntityId == x.WarehouseOutboundId)
+                    .OrderByDescending(p => p.Id).Select(p => p.ErpDocumentNo).FirstOrDefault(),
+                x.KkdRequestId,
+                x.KkdRequest == null ? null : x.KkdRequest.RequestNo))
             .SingleOrDefaultAsync(ct)
             ?? throw AppException.NotFound("KKD dağıtım kaydı bulunamadı veya bu depoya erişiminiz yok.");
     }
@@ -717,6 +749,16 @@ public sealed class KkdDistributionService(
         CheckVersion(entity.RowVersion, expectedRowVersion);
         if (entity.WarehouseOutboundId.HasValue)
         {
+            // Belge Netsis'e gittiyse WMS tarafında geri alınamaz; kullanıcı ambar çıkışı ekranından
+            // ERP iptalini yürütmelidir. Hatayı ters kayıt denemesinden önce ve KKD diliyle veriyoruz.
+            var erpStatus = await uow.Repository<WarehouseOutboundHeader>().Query()
+                .Where(x => x.Id == entity.WarehouseOutboundId.Value)
+                .Select(x => x.ErpIntegrationStatus)
+                .SingleOrDefaultAsync(ct);
+            if (erpStatus is ErpIntegrationStatus.Processing or ErpIntegrationStatus.Succeeded or ErpIntegrationStatus.CommitUncertain)
+                throw AppException.Conflict(
+                    "Bu teslim Netsis'e aktarıldığı için iptal edilemez. İptal, ambar çıkışı ekranından ERP iptali ile yürütülür.");
+
             var cancellation = await cancellations.CancelWarehouseOutboundAsync(entity.WarehouseOutboundId.Value,
                 new(idempotencyKey, reason), actor, ct);
             if (!cancellation.WmsReversed)
@@ -897,8 +939,10 @@ public sealed class KkdDistributionService(
         x.Lines.Sum(l => l.Quantity), x.Lines.Sum(l => l.EntitledQuantity), x.Lines.Sum(l => l.ExcessQuantity),
         x.ExcessApprovalStatus.ToString(), replayed);
 
-    private async Task<KkdDistributionRow> GetRowAsync(long id, CancellationToken ct) =>
-        await uow.Repository<KkdDistribution>().Query()
+    private async Task<KkdDistributionRow> GetRowAsync(long id, CancellationToken ct)
+    {
+        var headers = uow.Repository<WarehouseOutboundHeader>().Query();
+        return await uow.Repository<KkdDistribution>().Query()
             .Where(x => x.Id == id)
             .Select(x => new KkdDistributionRow(
                 x.Id, x.DocumentNo, x.Status.ToString(), x.EmployeeId, x.Employee.EmployeeCode,
@@ -906,8 +950,14 @@ public sealed class KkdDistributionService(
                 x.Lines.Sum(l => l.Quantity), x.Lines.Sum(l => l.EntitledQuantity),
                 x.Lines.Sum(l => l.ExcessQuantity), x.ExcessApprovalStatus.ToString(),
                 x.ExcessApprovalReason, x.ExcessApprovedBy, x.ExcessApprovedAtUtc,
-                x.CreatedDate, x.CompletedAtUtc, Convert.ToBase64String(x.RowVersion)))
+                x.CreatedDate, x.CompletedAtUtc, Convert.ToBase64String(x.RowVersion),
+                headers.Where(o => o.Id == x.WarehouseOutboundId).Select(o => o.DocumentNo).FirstOrDefault(),
+                headers.Where(o => o.Id == x.WarehouseOutboundId).Select(o => o.Status.ToString()).FirstOrDefault(),
+                headers.Where(o => o.Id == x.WarehouseOutboundId).Select(o => o.ErpIntegrationStatus.ToString()).FirstOrDefault(),
+                x.KkdRequestId,
+                x.KkdRequest == null ? null : x.KkdRequest.RequestNo))
             .SingleAsync(ct);
+    }
 
     internal static void ValidateCreateEnvelope(KkdDistributionCreateRequest request)
     {
@@ -926,8 +976,8 @@ public sealed class KkdDistributionService(
                 throw AppException.BadRequest("KKD talebi ve talep kalemi bağlantıları geçerli olmalıdır.");
             if (request.Lines.Select(x => x.KkdRequestLineId).Distinct().Count() != request.Lines.Count)
                 throw AppException.BadRequest("Aynı KKD talep kalemi bir dağıtımda yalnızca bir kez kullanılabilir.");
-            if (request.Lines.Any(x => !string.IsNullOrWhiteSpace(x.OrderNumber) || x.OrderLineId.HasValue))
-                throw AppException.BadRequest("KKD talebi bağlantısı ile Netsis sipariş bağlantısı aynı dağıtımda kullanılamaz.");
+            // Tezgâh kanalında talebin kendisi açık siparişten üretilir; teslim, siparişi kapatmak için
+            // referansı taşımak zorundadır. Sipariş bağı talep kaleminden gelir, kullanıcı serbestçe giremez.
         }
         else if (request.Lines.Any(x => x.KkdRequestLineId.HasValue))
             throw AppException.BadRequest("KKD talep kalemi gönderildiğinde üst talep kimliği de zorunludur.");
@@ -945,7 +995,9 @@ public sealed class KkdDistributionService(
         if (!policy.AllowMultipleOrdersPerDistribution
             && orderRefs.Select(x => x.OrderNumber!.Trim()).Distinct(StringComparer.OrdinalIgnoreCase).Skip(1).Any())
             throw AppException.Conflict("KKD politikası tek dağıtımda yalnızca bir Netsis siparişine izin veriyor.");
-        if (policy.RequireEmployeeUserLink && !employee.UserId.HasValue)
+        // Talepten gelen teslimde personelin kimliği talebi açan/onaylayan adımlarda zaten doğrulanmıştır;
+        // WMS kullanıcı bağı yalnızca personelin kendi başlattığı doğrudan dağıtım için aranır.
+        if (policy.RequireEmployeeUserLink && !request.KkdRequestId.HasValue && !employee.UserId.HasValue)
             throw AppException.Conflict("KKD politikası gereği personel aktif bir WMS kullanıcısına bağlanmalıdır.");
         if (!policy.AllowFutureDatedDistribution && request.DocumentDate > DateOnly.FromDateTime(DateTime.UtcNow))
             throw AppException.Conflict("KKD politikası ileri tarihli dağıtıma izin vermiyor.");

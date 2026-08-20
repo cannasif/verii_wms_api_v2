@@ -404,7 +404,11 @@ public sealed class KkdRequestService(
             foreach (var input in request.Lines)
             {
                 var groupCode = NormalizeCode(input.GroupCode);
-                await EnsureGroupEntitlementAsync(employee, groupCode, now, token);
+                // Açık siparişten gelen kalemde yetkiyi siparişin kendisi verir: personelin hak matrisinde o
+                // grup hiç tanımlı olmasa bile talep açılabilir. Miktar kontrolü kapanmaz — kota, görev
+                // üzerine alınırken canlı olarak bakılır ve aşım varsa kalem müdür onayına düşer.
+                if (string.IsNullOrWhiteSpace(input.ExternalOrderNo))
+                    await EnsureGroupEntitlementAsync(employee, groupCode, now, token);
                 var stock = input.StockId.HasValue
                     ? await ValidateStockAsync(input.StockId.Value, groupCode, token)
                     : null;
@@ -487,7 +491,9 @@ public sealed class KkdRequestService(
                 throw AppException.Conflict(Message(KkdRequestMessageKeys.StockCannotChange));
 
             var stock = await ValidateStockAsync(request.StockId, line.GroupCode, token);
-            await EnsureGroupEntitlementAsync(entity.Employee, line.GroupCode, DateTimeOffset.UtcNow, token);
+            // Talep açılırken olduğu gibi: sipariş kaynaklı kalemde yetkiyi sipariş verir, hak matrisi aranmaz.
+            if (string.IsNullOrWhiteSpace(line.ExternalOrderNo))
+                await EnsureGroupEntitlementAsync(entity.Employee, line.GroupCode, DateTimeOffset.UtcNow, token);
             var old = new { line.StockId, line.StockCodeSnapshot, line.StockNameSnapshot, line.Status };
             var now = DateTimeOffset.UtcNow;
             foreach (var taskLine in taskLines)

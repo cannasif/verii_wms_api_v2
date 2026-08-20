@@ -260,7 +260,11 @@ public sealed record KkdPreparationTaskLineRow(
     string LineStatus,
     string RequestLineRowVersion,
     string QuotaDecision,
-    IReadOnlyList<KkdPreparationTaskLineLocationRow> Locations);
+    IReadOnlyList<KkdPreparationTaskLineLocationRow> Locations,
+    /// <summary>Talebe grup olarak girip stoğu toplama sırasında bağlanmış kalemde, henüz hiçbir şey
+    /// toplanmadıysa yanlış bağlanan stok (ör. yanlış beden) değiştirilebilir. Atamada stoğu belirtilmiş
+    /// kalemlerde her zaman false'tur; kural sunucuda tektir, ekran yalnızca bu bayrağa bakar.</summary>
+    bool CanChangeStock = false);
 
 public sealed record KkdPreparationTaskRow(
     long Id,
@@ -369,6 +373,13 @@ public interface IKkdPreparationTaskService
     Task<KkdPreparationTaskRow> StartAsync(long taskId, KkdPreparationStartRequest request, long actor, CancellationToken ct = default);
     Task<KkdRouteCandidatesResult> GetRouteCandidatesAsync(long taskLineId, long actor, CancellationToken ct = default);
     Task<KkdPreparationTaskRow> ApplyRouteSplitAsync(long taskLineId, KkdRouteSplitRequest request, long actor, CancellationToken ct = default);
+
+    /// <summary>
+    /// Anlık teslimden sonra görevi kapatır: okutulmayan kalan miktar iptal edilir ve o miktar için tutulan
+    /// raf rezervasyonu serbest bırakılır. Tezgâh akışında personel malı alıp gittiği için "kalanı sonra
+    /// toplarım" durumu yoktur; kalan rezervasyon başkasının toplamasını engellememelidir.
+    /// </summary>
+    Task CloseAfterDeliveryAsync(long taskId, Guid idempotencyKey, long actor, CancellationToken ct = default);
 }
 
 /// <summary>Yanlış okutulan bir taramayı geri alır: gerçek stok hareketini tersine çevirir.</summary>

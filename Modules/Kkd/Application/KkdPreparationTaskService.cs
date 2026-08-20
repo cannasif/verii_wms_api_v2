@@ -565,6 +565,67 @@ public sealed class KkdPreparationTaskService(
         }, ct, IsolationLevel.Serializable);
     }
 
+    /// <summary>
+    /// Anlık teslimden sonra görevi kapatır. Tezgâh akışında talebe yazılan miktar bir tavandır; personel
+    /// ne kadar aldıysa okutma journal'ında odur ve kalanını almaya gelmeyecektir. Bu yüzden okutulmayan
+    /// kalan iptal edilir ve o miktar için tutulan raf rezervasyonu serbest bırakılır — aksi halde rezerve
+    /// stok, kimsenin toplayamayacağı şekilde görev üzerinde kilitli kalır.
+    /// </summary>
+    public async Task CloseAfterDeliveryAsync(long taskId, Guid idempotencyKey, long actor, CancellationToken ct = default)
+    {
+        ValidateKey(idempotencyKey);
+        await uow.ExecuteInTransactionAsync<object?>(async token =>
+        {
+            var task = await Tasks.Query(true)
+                .Include(x => x.Request).ThenInclude(x => x.Lines)
+                .Include(x => x.Lines).ThenInclude(x => x.RequestLine)
+                .Include(x => x.Lines).ThenInclude(x => x.Locations)
+                .SingleOrDefaultAsync(x => x.Id == taskId, token);
+            // Görev yoksa ya da zaten kapandıysa yapacak bir şey yok; teslim tekrar oynatılabilir olmalı.
+            if (task is null || task.Status is KkdPreparationTaskStatus.Completed or KkdPreparationTaskStatus.Cancelled)
+                return null;
+
+            var now = DateTimeOffset.UtcNow;
+            foreach (var line in task.Lines.Where(x => !x.IsDeleted))
+            {
+                if (line.RequestLine.StockId is { } stockId)
+                    await ReleaseLineReservationsAsync(
+                        task, line, stockId, line.RequestLine.UnitCode,
+                        $"{idempotencyKey}:close-{line.Id}", actor, now, token);
+                line.UpdatedBy = actor;
+                line.UpdatedDate = now.UtcDateTime;
+            }
+
+            // Yalnızca bu görevin taşıdığı kalemler kapatılır; aynı talebin başka bir görevdeki kalemi varsa
+            // ona dokunulmaz.
+            var ownedLineIds = task.Lines.Where(x => !x.IsDeleted).Select(x => x.RequestLineId).ToHashSet();
+            foreach (var requestLine in task.Request.Lines
+                         .Where(x => ownedLineIds.Contains(x.Id) && x.Status != KkdRequestLineStatus.Cancelled))
+            {
+                var open = requestLine.RequestedQuantity - requestLine.DeliveredQuantity - requestLine.CancelledQuantity;
+                if (open <= 0) continue;
+                requestLine.CancelledQuantity += open;
+                requestLine.UpdatedBy = actor;
+                requestLine.UpdatedDate = now.UtcDateTime;
+            }
+            task.Request.UpdatedBy = actor;
+            task.Request.UpdatedDate = now.UtcDateTime;
+            KkdRequestStateMachine.Refresh(task.Request, now);
+
+            task.Status = KkdPreparationTaskStatus.Completed;
+            task.CompletedAtUtc ??= now;
+            task.UpdatedBy = actor;
+            task.UpdatedDate = now.UtcDateTime;
+            await SaveAsync(token);
+            await audit.WriteAsync(new AuditLogWriteEntry(
+                "kkd.preparation-task.close-after-delivery", nameof(KkdPreparationTask), task.Id.ToString(),
+                "Succeeded", "kkd-request",
+                NewValues: new { task.Status, task.CompletedAtUtc },
+                ChangedFields: ["Status", "CompletedAtUtc"]), token);
+            return null;
+        }, ct, IsolationLevel.Serializable);
+    }
+
     /// <summary>Paylaşılan barkod çözücüyü StockId üzerinden çağırır — o stoğun/deponun o anki raf/seri bakiyelerini döner.</summary>
     private Task<ResolvedWarehouseBarcode> ResolveLineBalancesAsync(
         KkdPreparationTask task, long stockId, string? stockCodeSnapshot, CancellationToken ct) =>
@@ -671,6 +732,25 @@ public sealed class KkdPreparationTaskService(
             .Select(x => new { x.Id, DisplayName = x.Detail == null || (x.Detail.FirstName == "" && x.Detail.LastName == "")
                 ? x.Username : (x.Detail.FirstName + " " + x.Detail.LastName).Trim() })
             .ToDictionaryAsync(x => x.Id, x => x.DisplayName, ct);
+        var requestLineIds = tasks.SelectMany(x => x.Lines).Select(x => x.RequestLineId).Distinct().ToArray();
+        // Talebe grup olarak girmiş kalemin ilk çözümlemesinde önceki stok boştur; atamada stoğu verilmiş
+        // kalem için hiç çözümleme kaydı oluşmaz. Ayrım bu yüzden ek bir kolona gerek kalmadan buradan çıkar.
+        var groupOriginLineIds = requestLineIds.Length == 0
+            ? []
+            : (await uow.Repository<KkdRequestLineResolution>().Query()
+                .Where(x => requestLineIds.Contains(x.RequestLineId) && x.PreviousStockId == null)
+                .Select(x => x.RequestLineId)
+                .Distinct()
+                .ToArrayAsync(ct)).ToHashSet();
+        // Aynı talep kalemi birden fazla göreve bölünmüş olabilir; toplama bunlardan herhangi birinde
+        // başlamışsa stok artık değiştirilemez (bkz. KkdRequestService.ResolveLineAsync).
+        var pickedLineIds = requestLineIds.Length == 0
+            ? []
+            : (await TaskLines.Query()
+                .Where(x => requestLineIds.Contains(x.RequestLineId) && x.PreparedQuantity > 0)
+                .Select(x => x.RequestLineId)
+                .Distinct()
+                .ToArrayAsync(ct)).ToHashSet();
         var previousIds = tasks.Where(x => x.PreviousTaskId.HasValue).Select(x => x.PreviousTaskId!.Value).Distinct().ToArray();
         var previousNos = previousIds.Length == 0
             ? new Dictionary<long, string>()
@@ -721,8 +801,33 @@ public sealed class KkdPreparationTaskService(
                     var (code, name) = locationsById.GetValueOrDefault(loc.LocationId, (string.Empty, string.Empty));
                     return new KkdPreparationTaskLineLocationRow(
                         loc.LocationId, code, name, loc.ReservedQuantity, loc.PickedQuantity, loc.SerialNo, loc.LotNo);
-                }).ToArray())).ToArray())).ToArray();
+                }).ToArray(),
+                CanChangeStock(
+                    line.RequestLine,
+                    task.Request.Status,
+                    groupOriginLineIds.Contains(line.RequestLineId),
+                    pickedLineIds.Contains(line.RequestLineId)))).ToArray())).ToArray();
     }
+
+    /// <summary>
+    /// Toplama sırasında barkodla yanlış stoğa (ör. yanlış bedene) bağlanan kalem, hiçbir şey toplanmadığı
+    /// sürece düzeltilebilir. Koşullar <see cref="KkdRequestService.ResolveLineAsync"/> içindeki sunucu
+    /// kuralının aynısıdır; ekran kuralı tekrar etmesin diye tek bayrak olarak dönülür.
+    /// Tezgâh (sipariş) kanalında stok personel karşıdayken seçildiği için grup çözümlemesi hiç oluşmaz;
+    /// "ayağına olmadı" düzeltmesi asıl orada gerekir. Toplanmış kalemde kapı yine kapalıdır: mal bekleme
+    /// rafındayken beden değişmez, önce okutma geri alınır.
+    /// </summary>
+    internal static bool CanChangeStock(
+        KkdRequestLine line,
+        KkdRequestStatus requestStatus,
+        bool groupOrigin,
+        bool alreadyPicked) =>
+        line.StockId.HasValue
+        && (groupOrigin || !string.IsNullOrWhiteSpace(line.ExternalOrderNo))
+        && !alreadyPicked
+        && line.AllocatedQuantity == 0
+        && line.DeliveredQuantity == 0
+        && requestStatus is not (KkdRequestStatus.Completed or KkdRequestStatus.Cancelled);
 
     private void EnsureActive(KkdPreparationTask task)
     {

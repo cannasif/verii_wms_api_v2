@@ -22,6 +22,8 @@ public sealed class KkdController(
     IKkdRequestService requests,
     IKkdPreparationTaskService preparationTasks,
     IKkdPreparationScanPickService preparationScanPick,
+    IKkdPhysicalDeliveryService physicalDelivery,
+    IKkdOrderPickingService orderPicking,
     IKkdReportService reports,
     IKkdPolicyService policy,
     IWarehouseBarcodeResolver barcodeResolver,
@@ -372,6 +374,29 @@ public sealed class KkdController(
         await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
         return Ok(ApiResponse<IReadOnlyList<KkdPreparationScanRow>>.Ok(
             await preparationScanPick.GetRecentScansAsync(id, UserId(), ct)));
+    }
+
+    /// <summary>Tezgâh akışı: seçilen açık sipariş kalemlerinden talep üretir, görevi üstlenir ve toplamayı başlatır.</summary>
+    [HttpPost("material-requests/start-picking")]
+    public async Task<IActionResult> StartOrderPicking(KkdOrderPickingStartRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct);
+        var result = await orderPicking.StartAsync(request, UserId(), ct);
+        return Ok(ApiResponse<KkdOrderPickingStartResult>.Ok(
+            result,
+            result.PickingStarted
+                ? "Toplama başlatıldı; barkod okutabilirsiniz."
+                : "Kota aşımı nedeniyle toplama başlatılmadı; müdür onayı bekleniyor."));
+    }
+
+    /// <summary>Fiziksel teslim onayı: toplanan kalemleri tek işlemde dağıtım + ambar çıkışı + ERP gönderimine dönüştürür.</summary>
+    [HttpPost("preparation-tasks/{id:long}/deliver")]
+    public async Task<IActionResult> DeliverPreparationTask(long id, KkdPhysicalDeliveryRequest request, CancellationToken ct)
+    {
+        await Require("WMS.KKD.DISTRIBUTION.OPERATE", ct);
+        return Ok(ApiResponse<KkdPhysicalDeliveryResult>.Ok(
+            await physicalDelivery.DeliverAsync(id, request, UserId(), ct),
+            "Fiziksel teslim onaylandı; ambar çıkışı ve teslim fişi oluşturuldu."));
     }
 
     /// <summary>Yanlış okutulan bir taramayı geri alır: gerçek stok hareketi ters çevrilir, rezervasyon geri yüklenir.</summary>
