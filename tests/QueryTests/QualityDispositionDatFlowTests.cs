@@ -315,6 +315,158 @@ public sealed class QualityDispositionDatFlowTests
         Assert.Equal(["receipt-erp", "complete", "erp"], events);
     }
 
+    [Fact]
+    public async Task Recovery_retries_a_pre_send_receipt_failure_then_posts_its_DAT_once()
+    {
+        await using var db = CreateDbContext();
+        var (receipt, transfer, posting) = await AddFailedRecoveryScenarioAsync(
+            db,
+            QualityDispositionDatJob.PreSendFailureCode,
+            attemptCount: 1);
+        var events = new List<string>();
+        var job = new QualityDispositionDatJob(
+            new UnitOfWork(db, new HttpContextAccessor()),
+            new RecordingTransferOperations(db, events),
+            new RecordingErpPostingService(db, events),
+            new RecordingGoodsReceiptCoordinator(db, events),
+            NullLogger<QualityDispositionDatJob>.Instance);
+
+        await job.RetryPendingAsync();
+
+        Assert.Equal(["receipt-erp"], events);
+        Assert.Equal(ErpIntegrationStatus.Succeeded, receipt.ErpIntegrationStatus);
+        Assert.Equal(ErpPostingStatus.Succeeded, posting.Status);
+        Assert.Equal(2, posting.AttemptCount);
+        Assert.Equal(WarehouseTransferStatus.Draft, transfer.Status);
+
+        await job.RetryPendingAsync();
+        await job.RetryPendingAsync();
+
+        Assert.Equal(["receipt-erp", "complete", "erp"], events);
+        Assert.Equal(WarehouseTransferStatus.Completed, transfer.Status);
+        Assert.Equal(ErpIntegrationStatus.Succeeded, transfer.ErpIntegrationStatus);
+        Assert.Single(db.Set<ErpPostingRecord>().Where(x =>
+            x.SourceType == ErpPostingSourceType.GoodsReceipt
+            && x.SourceEntityId == receipt.Id));
+    }
+
+    [Theory]
+    [InlineData("NETSIS_BUSINESS_ERROR", 1)]
+    [InlineData(QualityDispositionDatJob.PreSendFailureCode,
+        QualityDispositionDatJob.AutomaticPreSendRetryLimit)]
+    public async Task Recovery_does_not_automatically_retry_unsafe_or_exhausted_receipt_failures(
+        string errorCode,
+        int attemptCount)
+    {
+        await using var db = CreateDbContext();
+        var (receipt, transfer, posting) = await AddFailedRecoveryScenarioAsync(
+            db,
+            errorCode,
+            attemptCount);
+        var events = new List<string>();
+        var job = new QualityDispositionDatJob(
+            new UnitOfWork(db, new HttpContextAccessor()),
+            new RecordingTransferOperations(db, events),
+            new RecordingErpPostingService(db, events),
+            new RecordingGoodsReceiptCoordinator(db, events),
+            NullLogger<QualityDispositionDatJob>.Instance);
+
+        await job.RetryPendingAsync();
+
+        Assert.Empty(events);
+        Assert.Equal(ErpIntegrationStatus.Failed, receipt.ErpIntegrationStatus);
+        Assert.Equal(ErpPostingStatus.Failed, posting.Status);
+        Assert.Equal(attemptCount, posting.AttemptCount);
+        Assert.Equal(WarehouseTransferStatus.Draft, transfer.Status);
+    }
+
+    private static async Task<(
+        GoodsReceiptHeader Receipt,
+        WarehouseTransferHeader Transfer,
+        ErpPostingRecord Posting)> AddFailedRecoveryScenarioAsync(
+        WmsDbContext db,
+        string errorCode,
+        int attemptCount)
+    {
+        var receipt = new GoodsReceiptHeader
+        {
+            BranchCode = "0",
+            DocumentNo = $"GR-FAILED-{Guid.NewGuid():N}",
+            Status = WarehouseOperationStatus.Processed,
+            ApprovalStatus = OperationApprovalStatus.NotRequired,
+            QualityStatus = OperationQualityStatus.InProgress,
+            ErpPostingPolicy = GoodsReceiptErpPostingPolicy.AfterAllApprovals,
+            ErpIntegrationStatus = ErpIntegrationStatus.Failed,
+            ReceivedBy = 72
+        };
+        var inspection = new QualityInspection
+        {
+            BranchCode = "0",
+            InspectionNo = $"QC-FAILED-{Guid.NewGuid():N}",
+            SourceDocumentType = "GoodsReceipt",
+            SourceDocumentNo = receipt.DocumentNo,
+            Status = QualityInspectionStatus.Quarantined,
+            DecidedAtUtc = DateTimeOffset.UtcNow
+        };
+        var inspectionLine = new QualityInspectionLine
+        {
+            BranchCode = "0",
+            Inspection = inspection,
+            StockId = 10,
+            StockCodeSnapshot = "STK-1",
+            Quantity = 1,
+            SampleQuantity = 1,
+            QuarantineQuantity = 1,
+            Decision = QualityDecision.Quarantined,
+            DecisionAtUtc = inspection.DecidedAtUtc
+        };
+        inspection.Lines.Add(inspectionLine);
+        var transfer = new WarehouseTransferHeader
+        {
+            BranchCode = "0",
+            DocumentNo = $"DAT-FAILED-{Guid.NewGuid():N}",
+            BusinessContext = WarehouseTransferBusinessContext.QualityDisposition,
+            Status = WarehouseTransferStatus.Draft,
+            ErpIntegrationStatus = ErpIntegrationStatus.Pending
+        };
+        db.AddRange(receipt, inspection, transfer);
+        await db.SaveChangesAsync();
+        inspection.SourceDocumentId = receipt.Id;
+        db.QualityInspectionDispositions.Add(new QualityInspectionDisposition
+        {
+            BranchCode = "0",
+            QualityInspection = inspection,
+            QualityInspectionLine = inspectionLine,
+            WarehouseTransferId = transfer.Id,
+            IdempotencyKey = Guid.NewGuid(),
+            SequenceNo = 1,
+            Decision = QualityDecision.Quarantined,
+            Quantity = 1,
+            SourceWarehouseId = 1,
+            SourceLocationId = 11,
+            TargetWarehouseId = 2,
+            TargetLocationId = 22,
+            DecisionBy = 72,
+            DecisionAtUtc = inspection.DecidedAtUtc.Value
+        });
+        var posting = new ErpPostingRecord
+        {
+            BranchCode = "0",
+            SourceType = ErpPostingSourceType.GoodsReceipt,
+            SourceEntityId = receipt.Id,
+            SourceDocumentNo = receipt.DocumentNo,
+            IdempotencyKey = Guid.NewGuid(),
+            RequestHash = new string('0', 64),
+            Status = ErpPostingStatus.Failed,
+            AttemptCount = attemptCount,
+            LastErrorCode = errorCode,
+            CompletedAtUtc = DateTimeOffset.UtcNow
+        };
+        db.Add(posting);
+        await db.SaveChangesAsync();
+        return (receipt, transfer, posting);
+    }
+
     private static WmsDbContext CreateDbContext()
     {
         var options = new DbContextOptionsBuilder<WmsDbContext>()
@@ -399,6 +551,18 @@ public sealed class QualityDispositionDatFlowTests
                 cancellationToken);
             events.Add("receipt-erp");
             receipt.ErpIntegrationStatus = ErpIntegrationStatus.Succeeded;
+            var posting = await db.Set<ErpPostingRecord>().SingleOrDefaultAsync(
+                x => x.SourceType == ErpPostingSourceType.GoodsReceipt
+                    && x.SourceEntityId == goodsReceiptId,
+                cancellationToken);
+            if (posting is not null)
+            {
+                posting.Status = ErpPostingStatus.Succeeded;
+                posting.AttemptCount++;
+                posting.LastErrorCode = null;
+                posting.LastErrorMessage = null;
+                posting.CompletedAtUtc = DateTimeOffset.UtcNow;
+            }
             await db.SaveChangesAsync(cancellationToken);
             return new ErpPostingResult(
                 1,
