@@ -1,3 +1,4 @@
+using verii_wms_api_v2.Modules.Location.Domain;
 using verii_wms_api_v2.Modules.ProductionTransfer.Application;
 using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
@@ -8,6 +9,105 @@ namespace verii_wms_api_v2.tests.QueryTests;
 
 public sealed class ProductionTransferUnpickMovementTests
 {
+    [Fact]
+    public void ResolveStagingLocationId_uses_waiting_location_not_planned_tracking_target()
+    {
+        const long waitingLocationId = 100;
+        const long plannedTargetLocationId = 900;
+        const long sourceLocationId = 68;
+        var tracking = new WarehouseTransferTracking
+        {
+            SerialNo = "QWR-3",
+            PickedQuantity = 1,
+            SourceLocationId = sourceLocationId,
+            TargetLocationId = plannedTargetLocationId,
+        };
+        var line = new WarehouseTransferLine
+        {
+            Id = 10,
+            DefaultTargetLocationId = plannedTargetLocationId,
+            Trackings = [tracking],
+        };
+        var taskLine = new WarehouseTransferTaskLine
+        {
+            Id = 1676,
+            WtLineId = 10,
+            TargetLocationId = waitingLocationId,
+            Line = line,
+        };
+        var header = new WarehouseTransferHeader
+        {
+            SourceStagingLocationId = waitingLocationId,
+            Lines = [line],
+        };
+
+        var staging = ProductionTransferUnpickMovement.ResolveStagingLocationId(
+            header, line, taskLine, tracking);
+
+        Assert.Equal(waitingLocationId, staging);
+        Assert.NotEqual(plannedTargetLocationId, staging);
+    }
+
+    [Theory]
+    [InlineData(LocationTypes.Shelf)]
+    [InlineData(LocationTypes.Cell)]
+    [InlineData(LocationTypes.Rack)]
+    [InlineData(LocationTypes.Receiving)]
+    public void IsAllowedUnpickTargetLocation_allows_normal_shelves_and_goods_receipt(string locationType)
+    {
+        var location = UnpickLocation(id: 8, locationType);
+
+        Assert.True(ProductionTransferUnpickMovement.IsAllowedUnpickTargetLocation(
+            location, waitingLocationId: 100, pickingStagingLocationId: 200, 30, 40));
+    }
+
+    [Theory]
+    [InlineData(LocationTypes.Staging)]
+    [InlineData(LocationTypes.Shipping)]
+    [InlineData(LocationTypes.Quarantine)]
+    [InlineData(LocationTypes.Virtual)]
+    [InlineData(LocationTypes.Zone)]
+    [InlineData(LocationTypes.Aisle)]
+    public void IsAllowedUnpickTargetLocation_rejects_operational_locations(string locationType)
+    {
+        var location = UnpickLocation(id: 8, locationType);
+
+        Assert.False(ProductionTransferUnpickMovement.IsAllowedUnpickTargetLocation(
+            location, waitingLocationId: 100, pickingStagingLocationId: 200, 30, 40));
+    }
+
+    [Fact]
+    public void IsAllowedUnpickTargetLocation_allows_configured_goods_receipt_even_when_type_is_staging()
+    {
+        var location = UnpickLocation(id: 30, LocationTypes.Staging);
+
+        Assert.True(ProductionTransferUnpickMovement.IsAllowedUnpickTargetLocation(
+            location, waitingLocationId: 100, pickingStagingLocationId: 200, 30, 40));
+        Assert.True(ProductionTransferUnpickMovement.IsAllowedUnpickTargetLocation(
+            UnpickLocation(id: 40, LocationTypes.Virtual), 100, 200, 30, 40));
+    }
+
+    [Fact]
+    public void IsAllowedUnpickTargetLocation_rejects_waiting_and_picking_staging()
+    {
+        Assert.False(ProductionTransferUnpickMovement.IsAllowedUnpickTargetLocation(
+            UnpickLocation(id: 100, LocationTypes.Cell), 100, 200, 30, 40));
+        Assert.False(ProductionTransferUnpickMovement.IsAllowedUnpickTargetLocation(
+            UnpickLocation(id: 200, LocationTypes.Receiving), 100, 200, 30, 40));
+    }
+
+    private static WarehouseLocation UnpickLocation(long id, string locationType) => new()
+    {
+        Id = id,
+        WarehouseId = 1,
+        Code = $"L{id}",
+        Name = $"Loc {id}",
+        LocationType = locationType,
+        IsActive = true,
+        IsPickable = true,
+        IsQuarantine = locationType == LocationTypes.Quarantine,
+    };
+
     [Fact]
     public void BuildMovementLine_moves_from_staging_to_selected_shelf()
     {

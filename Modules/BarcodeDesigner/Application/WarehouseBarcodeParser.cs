@@ -29,7 +29,8 @@ public static partial class WarehouseBarcodeParser
 
     public static ParsedWarehouseBarcode? TryParse(string raw)
     {
-        var value = (raw ?? string.Empty).Trim();
+        var original = (raw ?? string.Empty).Trim();
+        var value = original;
         if (value.StartsWith("]C1", StringComparison.OrdinalIgnoreCase)
             || value.StartsWith("]d2", StringComparison.OrdinalIgnoreCase))
             value = value[3..];
@@ -39,6 +40,7 @@ public static partial class WarehouseBarcodeParser
             ? ParseHumanReadable(value)
             : ParseScannerData(value);
         if (segments is null || segments.Count == 0) return null;
+        if (!IsStructuredGs1(original, segments)) return null;
 
         var productCode = First(segments, "240", "241", "01");
         var quantity = ParseQuantity(First(segments, "30", "37"));
@@ -50,6 +52,23 @@ public static partial class WarehouseBarcodeParser
             ParseGs1Date(First(segments, "11", "13")),
             ParseGs1Date(First(segments, "17", "15")),
             segments);
+    }
+
+    /// <summary>
+    /// Plain stock codes such as 100134-1 start with GS1 AI 10 and would otherwise be
+    /// read as a lot. Require a structured GS1 symbol (parentheses, FNC1, symbology
+    /// prefix, GTIN/item AI, or more than one AI) before treating the value as GS1.
+    /// </summary>
+    internal static bool IsStructuredGs1(string raw, IReadOnlyDictionary<string, string> segments)
+    {
+        if (raw.Contains('(', StringComparison.Ordinal)) return true;
+        if (raw.Contains(GroupSeparator)) return true;
+        if (raw.StartsWith("]C1", StringComparison.OrdinalIgnoreCase)
+            || raw.StartsWith("]d2", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (segments.ContainsKey("01") || segments.ContainsKey("240") || segments.ContainsKey("241"))
+            return true;
+        return segments.Count > 1;
     }
 
     private static Dictionary<string, string>? ParseHumanReadable(string value)

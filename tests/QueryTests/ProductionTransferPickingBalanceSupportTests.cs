@@ -1,3 +1,4 @@
+using verii_wms_api_v2.Modules.BarcodeDesigner.Application;
 using verii_wms_api_v2.Modules.ProductionTransfer.Application;
 using verii_wms_api_v2.Modules.StockBalance.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
@@ -230,6 +231,138 @@ public sealed class ProductionTransferPickingBalanceSupportTests
         var updated = ProductionTransferPickingBalanceSupport.ApplyRacklessCanPick(header, rows, balances);
 
         Assert.True(Assert.Single(updated).CanPick);
+    }
+
+    [Fact]
+    public void OverlayResolvedPickBalances_uses_reserved_pickable_when_available_is_zero()
+    {
+        var line = new WarehouseTransferLine
+        {
+            StockId = 13,
+            UnitCode = "ADET",
+            YapCodeId = 44,
+            DefaultSourceLocationId = 5,
+            ReservedQuantity = 7,
+        };
+        var row = new ProductionTransferPickingRowDto(
+            400, 20, 2, 5, "A1", 13, "100134-1", "Test", null, 7, 7, 0, true);
+        var reservedCandidate = new WarehouseBarcodeBalanceCandidate(
+            1, 9, 5, "A1", "Raf 1", 13, 44, "ADET", null, null, "Available", 7);
+        var resolved = new ResolvedWarehouseBarcode(
+            "100134-1",
+            "StockAlias",
+            13,
+            "100134-1",
+            "Test",
+            null,
+            null,
+            null,
+            "ADET",
+            null,
+            null,
+            null,
+            null,
+            false,
+            false,
+            false,
+            false,
+            ["Kullanılabilir raf bakiyesi"],
+            [],
+            null,
+            false);
+
+        var overlaid = ProductionTransferPickingBalanceSupport.OverlayResolvedPickBalances(
+            resolved, line, row, [reservedCandidate]);
+
+        Assert.True(overlaid.CanExecute);
+        Assert.Empty(overlaid.MissingFields);
+        Assert.Equal(7, Assert.Single(overlaid.BalanceCandidates).AvailableQuantity);
+        Assert.Equal(44, overlaid.YapCodeId);
+        Assert.Equal(5, overlaid.SuggestedLocationId);
+    }
+
+    [Fact]
+    public void OverlayResolvedPickBalances_strips_available_missing_when_reserved_without_candidates()
+    {
+        var line = new WarehouseTransferLine
+        {
+            StockId = 13,
+            UnitCode = "ADET",
+            DefaultSourceLocationId = 5,
+            ReservedQuantity = 7,
+        };
+        var row = new ProductionTransferPickingRowDto(
+            400, 20, 2, 5, "A1", 13, "100134-1", "Test", null, 7, 7, 0, true);
+        var resolved = new ResolvedWarehouseBarcode(
+            "100134-1",
+            "StockAlias",
+            13,
+            "100134-1",
+            "Test",
+            null,
+            null,
+            null,
+            "ADET",
+            null,
+            null,
+            null,
+            null,
+            false,
+            false,
+            false,
+            false,
+            ["Kullanılabilir raf bakiyesi"],
+            [],
+            null,
+            false);
+
+        var overlaid = ProductionTransferPickingBalanceSupport.OverlayResolvedPickBalances(
+            resolved, line, row, []);
+
+        Assert.True(overlaid.CanExecute);
+        Assert.Empty(overlaid.MissingFields);
+    }
+
+    [Fact]
+    public void OverlayResolvedPickBalances_keeps_available_shortage_when_line_has_no_reserve()
+    {
+        var line = new WarehouseTransferLine
+        {
+            StockId = 13,
+            UnitCode = "ADET",
+            DefaultSourceLocationId = 5,
+            ReservedQuantity = 0,
+        };
+        var row = new ProductionTransferPickingRowDto(
+            400, 20, 2, 5, "A1", 13, "100134-1", "Test", null, 7, 7, 0, true);
+        var resolved = new ResolvedWarehouseBarcode(
+            "100134-1",
+            "StockAlias",
+            13,
+            "100134-1",
+            "Test",
+            null,
+            null,
+            null,
+            "ADET",
+            null,
+            null,
+            null,
+            null,
+            false,
+            false,
+            false,
+            false,
+            ["Kullanılabilir raf bakiyesi"],
+            [],
+            null,
+            false);
+
+        var overlaid = ProductionTransferPickingBalanceSupport.OverlayResolvedPickBalances(
+            resolved, line, row, []);
+
+        Assert.False(overlaid.CanExecute);
+        Assert.Contains("Kullanılabilir raf bakiyesi", overlaid.MissingFields);
     }
 
     [Fact]

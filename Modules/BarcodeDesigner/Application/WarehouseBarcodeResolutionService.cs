@@ -87,7 +87,8 @@ public sealed class WarehouseBarcodeResolutionService(
         {
             var serialRows = await uow.Repository<LocationStockBalance>().Query()
                 .Where(x => x.BranchCode == branch
-                    && x.AvailableQuantity > 0
+                    && x.Quantity > 0
+                    && x.StockStatus == "Available"
                     && x.SerialNo == raw
                     && (!stockId.HasValue || x.StockId == stockId.Value)
                     && (!request.WarehouseId.HasValue || x.WarehouseId == request.WarehouseId.Value)
@@ -108,7 +109,9 @@ public sealed class WarehouseBarcodeResolutionService(
                 // For an item-level serial this is 1. For a pallet/plate serial it is the
                 // movable quantity represented by that serial; the effective tracking policy
                 // and remaining transfer quantity cap the accepted amount later.
-                quantity = serialBalance.AvailableQuantity;
+                quantity = serialBalance.AvailableQuantity > 0
+                    ? serialBalance.AvailableQuantity
+                    : serialBalance.Quantity;
             }
         }
         var unitCode = Clean(goodsReceiptLabel?.UnitCode

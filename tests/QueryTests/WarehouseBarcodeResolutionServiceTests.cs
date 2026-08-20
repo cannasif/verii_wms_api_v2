@@ -142,6 +142,62 @@ public sealed class WarehouseBarcodeResolutionServiceTests
     }
 
     [Fact]
+    public async Task Outbound_resolves_reserved_serial_when_available_quantity_is_zero()
+    {
+        await using var db = CreateDb();
+        var warehouse = new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" };
+        var stock = new Stock
+        {
+            BranchCode = "0",
+            ErpStockCode = "STK-001",
+            StockName = "Test stok",
+            BaseUnitCode = "AD"
+        };
+        db.AddRange(warehouse, stock);
+        await db.SaveChangesAsync();
+
+        var location = new WarehouseLocation
+        {
+            BranchCode = "0",
+            WarehouseId = warehouse.Id,
+            Code = "A1",
+            Name = "Raf 1",
+            IsActive = true,
+            IsPickable = true
+        };
+        db.Add(location);
+        await db.SaveChangesAsync();
+        db.Add(new LocationStockBalance
+        {
+            BranchCode = "0",
+            DimensionKey = "SERIAL-RESERVED",
+            WarehouseId = warehouse.Id,
+            LocationId = location.Id,
+            StockId = stock.Id,
+            UnitCode = "AD",
+            SerialNo = "UTG-1",
+            StockStatus = "Available",
+            Quantity = 1,
+            ReservedQuantity = 1,
+            AvailableQuantity = 0,
+            LastTransactionDate = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        await using var uow = new UnitOfWork(db, new HttpContextAccessor());
+        var resolver = new WarehouseBarcodeResolutionService(
+            uow,
+            new FixedTrackingPolicyResolver(stock.Id, stock.ErpStockCode, SerialQuantityRule.OneSerialPerLine));
+
+        var result = await resolver.ResolveAsync(new(
+            "UTG-1", "0", WarehouseBarcodePurpose.Outbound, warehouse.Id, stock.Id));
+
+        Assert.Equal("SerialBalance", result.Source);
+        Assert.Equal("UTG-1", result.SerialNo);
+        Assert.Equal(1, result.Quantity);
+    }
+
+    [Fact]
     public async Task Outbound_expected_location_resolves_serial_split_across_locations_from_selected_source()
     {
         await using var db = CreateDb();
@@ -267,6 +323,66 @@ public sealed class WarehouseBarcodeResolutionServiceTests
         Assert.NotEmpty(result.BalanceCandidates);
     }
 
+    [Fact]
+    public async Task Outbound_plain_stock_code_starting_with_gs1_lot_ai_stays_stock_alias()
+    {
+        await using var db = CreateDb();
+        var warehouse = new Warehouse { BranchCode = "0", WarehouseCode = 1, WarehouseName = "Merkez" };
+        var stock = new Stock
+        {
+            BranchCode = "0",
+            ErpStockCode = "100134-1",
+            StockName = "Test stok",
+            BaseUnitCode = "AD"
+        };
+        db.AddRange(warehouse, stock);
+        await db.SaveChangesAsync();
+
+        var location = new WarehouseLocation
+        {
+            BranchCode = "0",
+            WarehouseId = warehouse.Id,
+            Code = "A1",
+            Name = "Raf 1",
+            IsActive = true,
+            IsPickable = true
+        };
+        db.Add(location);
+        await db.SaveChangesAsync();
+        db.Add(new LocationStockBalance
+        {
+            BranchCode = "0",
+            DimensionKey = "NON-SERIAL",
+            WarehouseId = warehouse.Id,
+            LocationId = location.Id,
+            StockId = stock.Id,
+            UnitCode = "AD",
+            StockStatus = "Available",
+            Quantity = 310,
+            AvailableQuantity = 303,
+            ReservedQuantity = 7,
+            LastTransactionDate = DateTime.UtcNow
+        });
+        await db.SaveChangesAsync();
+
+        await using var uow = new UnitOfWork(db, new HttpContextAccessor());
+        var resolver = new WarehouseBarcodeResolutionService(
+            uow,
+            new FixedTrackingPolicyResolver(
+                stock.Id, stock.ErpStockCode, SerialQuantityRule.NotApplicable, requireSerial: false));
+
+        var result = await resolver.ResolveAsync(new(
+            "100134-1", "0", WarehouseBarcodePurpose.Outbound, warehouse.Id, stock.Id));
+
+        Assert.True(result.CanExecute);
+        Assert.Equal("StockAlias", result.Source);
+        Assert.Equal(stock.Id, result.StockId);
+        Assert.Null(result.LotNo);
+        Assert.Null(result.SerialNo);
+        var balance = Assert.Single(result.BalanceCandidates);
+        Assert.Equal(303, balance.AvailableQuantity);
+    }
+
     private static LocationStockBalance CreateSerialBalance(
         long warehouseId, long locationId, long stockId, string serialNo, decimal quantity, string dimensionKey) => new()
     {
@@ -292,7 +408,8 @@ public sealed class WarehouseBarcodeResolutionServiceTests
     private sealed class FixedTrackingPolicyResolver(
         long stockId,
         string stockCode,
-        SerialQuantityRule serialQuantityRule) : IStockTrackingPolicyResolver
+        SerialQuantityRule serialQuantityRule,
+        bool requireSerial = true) : IStockTrackingPolicyResolver
     {
         public Task<EffectiveStockTrackingPolicy> ResolveAsync(
             string branchCode,
@@ -304,8 +421,8 @@ public sealed class WarehouseBarcodeResolutionServiceTests
                 stockId,
                 stockCode,
                 null,
-                StockTrackingType.Serial,
-                true,
+                requireSerial ? StockTrackingType.Serial : StockTrackingType.None,
+                requireSerial,
                 serialQuantityRule,
                 false,
                 false,

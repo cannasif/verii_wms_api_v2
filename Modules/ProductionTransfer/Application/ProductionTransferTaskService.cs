@@ -1073,8 +1073,7 @@ public sealed class ProductionTransferTaskService(
 
             var link = await uow.Repository<ProductionTransferHeaderLink>().Query(true)
                 .SingleOrDefaultAsync(x => x.WarehouseTransferHeaderId == transferId, token);
-            if (kalanTask is not null
-                && link is not null
+            if (link is not null
                 && (ProductionWorkOrderTransferGrouping.IsUnlinkedProductionTransfer(link)
                     || ProductionWorkOrderTransferGrouping.IsProductionCancellationReturnTask(task)))
             {
