@@ -6,6 +6,7 @@ using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
+using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
 
 namespace verii_wms_api_v2.Modules.ProductionTransfer.Application;
 
@@ -29,7 +30,44 @@ internal static class ProductionTransferUnpickMovement
             throw AppException.BadRequest("Seçilen raf kaynak depoya ait olmalıdır.");
         if (!location.IsActive || !location.IsPickable)
             throw AppException.BadRequest("Seçilen raf aktif ve toplanabilir olmalıdır.");
+
+        var warehouseDefaults = await uow.Repository<WarehouseEntity>().Query()
+            .Where(x => x.Id == header.SourceWarehouseId)
+            .Select(x => new
+            {
+                x.DefaultGoodsReceiptLocationId,
+                x.DefaultProductionTransferLocationId,
+                x.ProductionPickingStagingLocationId
+            })
+            .SingleOrDefaultAsync(ct);
+
+        if (!IsAllowedUnpickTargetLocation(
+            location,
+            header.SourceStagingLocationId,
+            warehouseDefaults?.ProductionPickingStagingLocationId,
+            warehouseDefaults?.DefaultProductionTransferLocationId,
+            warehouseDefaults?.DefaultGoodsReceiptLocationId))
+            throw AppException.BadRequest("Hedef raf yalnızca depo rafı veya mal kabul rafı olabilir.");
+
         return location;
+    }
+
+    internal static bool IsAllowedUnpickTargetLocation(
+        WarehouseLocation location,
+        long? waitingLocationId,
+        long? pickingStagingLocationId,
+        long? defaultProductionTransferLocationId,
+        long? defaultGoodsReceiptLocationId)
+    {
+        if (waitingLocationId == location.Id) return false;
+        if (pickingStagingLocationId == location.Id) return false;
+        if (!location.IsActive || !location.IsPickable || location.IsQuarantine) return false;
+        if (defaultProductionTransferLocationId == location.Id) return true;
+        if (defaultGoodsReceiptLocationId == location.Id) return true;
+        return location.LocationType is LocationTypes.Shelf
+            or LocationTypes.Cell
+            or LocationTypes.Rack
+            or LocationTypes.Receiving;
     }
 
     internal static long ResolveStagingLocationId(
