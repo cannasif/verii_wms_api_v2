@@ -450,11 +450,14 @@ public sealed class NetsisItemSlipLine
     [JsonPropertyName("DEPO_KODU")]
     public int? DepoKodu { get; set; }
 
-    // NetOpenX model member names; the underscored SQL column aliases are not accepted here.
-    [JsonPropertyName("GirisDepoKodu")]
+    // NetOpenX ItemSlips/FatKalem uses DEPO_KODU for the source warehouse
+    // and Gir_Depo_Kodu for the destination warehouse.
+    [JsonPropertyName("Gir_Depo_Kodu")]
     public int? GirisDepoKodu { get; set; }
 
-    [JsonPropertyName("CikisDepoKodu")]
+    // Internal source-code mirror used by mapping validation and consolidation.
+    // FatKalem has no CikisDepoKodu wire member; DEPO_KODU above is authoritative.
+    [JsonIgnore]
     public int? CikisDepoKodu { get; set; }
 
     [JsonPropertyName("YapKod")]

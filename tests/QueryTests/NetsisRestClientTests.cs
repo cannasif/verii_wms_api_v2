@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
@@ -146,6 +147,37 @@ public sealed class NetsisRestClientTests
 
         Assert.True(result.BusinessSucceeded);
         Assert.Contains("\"TIPI\":2", payload);
+    }
+
+    [Fact]
+    public async Task Create_sends_local_transfer_source_and_destination_with_FatKalem_wire_members()
+    {
+        string? payload = null;
+        var handler = new QueueHandler(requestMessage =>
+        {
+            payload = requestMessage.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
+            return Json(HttpStatusCode.OK, """{"isSuccessful":true}""");
+        });
+        var request = SampleRequest();
+        request.FaturaTip = NetsisItemSlipDocumentTypes.LocalWarehouseTransfer;
+        request.FatUst.Tip = NetsisItemSlipDocumentTypes.LocalWarehouseTransfer;
+        request.FatUst.Tipi = NetsisItemSlipInvoiceType.Empty;
+        request.FatUst.DepoKodu = 2;
+        request.Kalems[0].DepoKodu = 2;
+        request.Kalems[0].CikisDepoKodu = 2;
+        request.Kalems[0].GirisDepoKodu = 1;
+
+        var result = await CreateClient(handler, new FakeTokenService())
+            .CreateItemSlipAsync(request, CancellationToken.None);
+
+        Assert.True(result.BusinessSucceeded);
+        Assert.NotNull(payload);
+        using var document = JsonDocument.Parse(payload!);
+        var line = document.RootElement.GetProperty("Kalems")[0];
+        Assert.Equal(2, line.GetProperty("DEPO_KODU").GetInt32());
+        Assert.Equal(1, line.GetProperty("Gir_Depo_Kodu").GetInt32());
+        Assert.False(line.TryGetProperty("CikisDepoKodu", out _));
+        Assert.False(line.TryGetProperty("GirisDepoKodu", out _));
     }
 
     [Fact]

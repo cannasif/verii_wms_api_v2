@@ -98,13 +98,41 @@ public sealed class ProductionTransferNetsisPayloadContractTests
         Assert.Equal("01/020", line.GetProperty("StokKodu").GetString());
         Assert.Equal(1m, line.GetProperty("STra_GCMIK").GetDecimal());
         Assert.Equal(1, line.GetProperty("DEPO_KODU").GetInt32());
-        Assert.Equal(1, line.GetProperty("CikisDepoKodu").GetInt32());
-        Assert.Equal(2, line.GetProperty("GirisDepoKodu").GetInt32());
+        Assert.Equal(2, line.GetProperty("Gir_Depo_Kodu").GetInt32());
+        Assert.False(line.TryGetProperty("CikisDepoKodu", out _));
+        Assert.False(line.TryGetProperty("GirisDepoKodu", out _));
         Assert.False(line.TryGetProperty("Cikis_Depo_Kodu", out _));
-        Assert.False(line.TryGetProperty("Gir_Depo_Kodu", out _));
         Assert.Equal("YAP-01", line.GetProperty("YapKod").GetString());
         Assert.Equal("SR-0001", line.GetProperty("SeriNo").GetString());
         Assert.Equal("PRJ-01", line.GetProperty("ProjeKodu").GetString());
+    }
+
+    [Fact]
+    public void Netsis_destination_warehouse_wire_member_round_trips_as_Gir_Depo_Kodu()
+    {
+        var source = new NetsisItemSlipLine
+        {
+            StokKodu = "01/025",
+            Miktar = 4,
+            DepoKodu = 2,
+            CikisDepoKodu = 2,
+            GirisDepoKodu = 1
+        };
+
+        var json = JsonSerializer.Serialize(source);
+        using var document = JsonDocument.Parse(json);
+        var root = document.RootElement;
+
+        Assert.Equal(2, root.GetProperty("DEPO_KODU").GetInt32());
+        Assert.Equal(1, root.GetProperty("Gir_Depo_Kodu").GetInt32());
+        Assert.False(root.TryGetProperty("CikisDepoKodu", out _));
+        Assert.False(root.TryGetProperty("GirisDepoKodu", out _));
+
+        var roundTrip = JsonSerializer.Deserialize<NetsisItemSlipLine>(json);
+        Assert.NotNull(roundTrip);
+        Assert.Equal(2, roundTrip!.DepoKodu);
+        Assert.Equal(1, roundTrip.GirisDepoKodu);
+        Assert.Null(roundTrip.CikisDepoKodu);
     }
 
     [Fact]
