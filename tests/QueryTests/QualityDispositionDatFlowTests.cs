@@ -1,5 +1,7 @@
 using System.Reflection;
 using Hangfire;
+using Hangfire.Common;
+using Hangfire.States;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -282,11 +284,18 @@ public sealed class QualityDispositionDatFlowTests
         await db.SaveChangesAsync();
 
         var events = new List<string>();
+        var unitOfWork = new UnitOfWork(db, new HttpContextAccessor());
+        var erp = new RecordingErpPostingService(db, events);
+        var coordinator = new GoodsReceiptErpPostingCoordinator(
+            unitOfWork,
+            erp,
+            new RejectingBackgroundJobClient(),
+            NullLogger<GoodsReceiptErpPostingCoordinator>.Instance);
         var job = new QualityDispositionDatJob(
-            new UnitOfWork(db, new HttpContextAccessor()),
+            unitOfWork,
             new RecordingTransferOperations(db, events),
-            new RecordingErpPostingService(db, events),
-            new RecordingGoodsReceiptCoordinator(db, events),
+            erp,
+            coordinator,
             NullLogger<QualityDispositionDatJob>.Instance);
 
         await job.RetryPendingAsync();
@@ -300,6 +309,10 @@ public sealed class QualityDispositionDatFlowTests
         Assert.Equal(["receipt-erp", "complete", "erp"], events);
         Assert.Equal(WarehouseTransferStatus.Completed, transfer.Status);
         Assert.Equal(ErpIntegrationStatus.Succeeded, transfer.ErpIntegrationStatus);
+
+        await job.RetryPendingAsync();
+
+        Assert.Equal(["receipt-erp", "complete", "erp"], events);
     }
 
     private static WmsDbContext CreateDbContext()
@@ -353,7 +366,15 @@ public sealed class QualityDispositionDatFlowTests
             return Success(ErpPostingSourceType.WarehouseTransfer, id, header.DocumentNo);
         }
 
-        public Task<ErpPostingResult> PostGoodsReceiptAsync(long id, Guid idempotencyKey, long userId, CancellationToken cancellationToken) => Unsupported();
+        public async Task<ErpPostingResult> PostGoodsReceiptAsync(
+            long id, Guid idempotencyKey, long userId, CancellationToken cancellationToken)
+        {
+            var header = await db.GoodsReceiptHeaders.SingleAsync(x => x.Id == id, cancellationToken);
+            events.Add("receipt-erp");
+            header.ErpIntegrationStatus = ErpIntegrationStatus.Succeeded;
+            await db.SaveChangesAsync(cancellationToken);
+            return Success(ErpPostingSourceType.GoodsReceipt, id, header.DocumentNo);
+        }
         public Task<ErpPostingResult> PostWarehouseInboundAsync(long id, Guid idempotencyKey, long userId, CancellationToken cancellationToken) => Unsupported();
         public Task<ErpPostingResult> PostWarehouseOutboundAsync(long id, Guid idempotencyKey, long userId, CancellationToken cancellationToken) => Unsupported();
         public Task<ErpPostingResult> PostShipmentAsync(long id, Guid idempotencyKey, long userId, CancellationToken cancellationToken) => Unsupported();
@@ -394,5 +415,14 @@ public sealed class QualityDispositionDatFlowTests
                 null,
                 DateTimeOffset.UtcNow);
         }
+    }
+
+    private sealed class RejectingBackgroundJobClient : IBackgroundJobClient
+    {
+        public string Create(Job job, IState state) =>
+            throw new InvalidOperationException("This scenario must use the recurring recovery path.");
+
+        public bool ChangeState(string jobId, IState state, string expectedState) =>
+            throw new InvalidOperationException("This scenario must not mutate a background job.");
     }
 }
