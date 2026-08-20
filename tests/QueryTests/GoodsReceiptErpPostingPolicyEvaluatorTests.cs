@@ -2,6 +2,7 @@ using System.Text.Json;
 using verii_wms_api_v2.Modules.ErpIntegration.Application;
 using verii_wms_api_v2.Modules.ErpIntegration.Infrastructure;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
+using verii_wms_api_v2.Modules.Quality.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using Xunit;
 
@@ -117,6 +118,68 @@ public sealed class GoodsReceiptErpPostingPolicyEvaluatorTests
             OperationApprovalStatus.Approved,
             OperationQualityStatus.Passed,
             GoodsReceiptErpPostingPolicy.AfterAllApprovals));
+    }
+
+    [Theory]
+    [InlineData(GoodsReceiptErpPostingPolicy.AfterQualityApproval)]
+    [InlineData(GoodsReceiptErpPostingPolicy.AfterAllApprovals)]
+    public void Conclusive_quarantine_decision_completes_the_purchase_receipt_quality_gate(
+        GoodsReceiptErpPostingPolicy postingPolicy)
+    {
+        var eligible = GoodsReceiptErpPostingPolicyEvaluator.IsEligible(
+            WarehouseOperationStatus.Processed,
+            OperationApprovalStatus.Approved,
+            OperationQualityStatus.InProgress,
+            postingPolicy,
+            hasConclusiveQualityInspection: true);
+
+        Assert.True(eligible);
+    }
+
+    [Fact]
+    public void Conclusive_quarantine_releases_an_any_quality_plan_gate()
+    {
+        var eligible = GoodsReceiptErpPostingPolicyEvaluator.IsEligible(
+            WarehouseOperationStatus.Processed,
+            OperationApprovalStatus.NotRequired,
+            OperationQualityStatus.InProgress,
+            GoodsReceiptErpPostingPolicy.AfterReceipt,
+            GoodsReceiptErpQualityGatePolicy.AnyQualityPlan,
+            hasRuleBasedQualityPlan: true,
+            hasManualQualityPlan: false,
+            hasConclusiveQualityInspection: true);
+
+        Assert.True(eligible);
+    }
+
+    [Fact]
+    public void Partial_quality_decision_is_not_released_by_the_conclusive_inspection_flag()
+    {
+        var eligible = GoodsReceiptErpPostingPolicyEvaluator.IsEligible(
+            WarehouseOperationStatus.Processed,
+            OperationApprovalStatus.Approved,
+            OperationQualityStatus.PartiallyCompleted,
+            GoodsReceiptErpPostingPolicy.AfterAllApprovals,
+            hasConclusiveQualityInspection: true);
+
+        Assert.False(eligible);
+    }
+
+    [Theory]
+    [InlineData(QualityInspectionStatus.Passed, true, true)]
+    [InlineData(QualityInspectionStatus.Failed, true, true)]
+    [InlineData(QualityInspectionStatus.Quarantined, true, true)]
+    [InlineData(QualityInspectionStatus.Released, true, true)]
+    [InlineData(QualityInspectionStatus.PartiallyDecided, true, false)]
+    [InlineData(QualityInspectionStatus.Quarantined, false, false)]
+    public void Only_fully_decided_inspections_are_conclusive_for_ERP(
+        QualityInspectionStatus status,
+        bool hasDecisionDate,
+        bool expected)
+    {
+        Assert.Equal(expected, GoodsReceiptQualityGate.IsConclusiveInspection(
+            status,
+            hasDecisionDate ? DateTimeOffset.UtcNow : null));
     }
 
     [Theory]

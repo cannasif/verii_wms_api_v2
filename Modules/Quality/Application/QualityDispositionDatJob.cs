@@ -16,6 +16,7 @@ public sealed class QualityDispositionDatJob(
     IUnitOfWork unitOfWork,
     IWarehouseTransferOperationService transferOperations,
     IErpPostingService erpPosting,
+    IGoodsReceiptErpPostingCoordinator goodsReceiptErpPosting,
     ILogger<QualityDispositionDatJob> logger) : IGoodsReceiptErpSuccessJob
 {
     private const int RecoveryBatchSize = 100;
@@ -81,7 +82,7 @@ public sealed class QualityDispositionDatJob(
 
     public async Task RetryPendingAsync(CancellationToken cancellationToken = default)
     {
-        var receiptIds = await (
+        var candidates = await (
                 from disposition in unitOfWork.Repository<QualityInspectionDisposition>().Query()
                 join inspection in unitOfWork.Repository<QualityInspection>().Query()
                     on disposition.QualityInspectionId equals inspection.Id
@@ -90,22 +91,44 @@ public sealed class QualityDispositionDatJob(
                 join transfer in unitOfWork.Repository<WarehouseTransferHeader>().Query()
                     on disposition.WarehouseTransferId equals transfer.Id
                 where inspection.SourceDocumentType == "GoodsReceipt"
+                    && inspection.DecidedAtUtc.HasValue
+                    && (inspection.Status == QualityInspectionStatus.Passed
+                        || inspection.Status == QualityInspectionStatus.Failed
+                        || inspection.Status == QualityInspectionStatus.Quarantined
+                        || inspection.Status == QualityInspectionStatus.Released)
                     && disposition.WarehouseTransferId.HasValue
-                    && receipt.ErpIntegrationStatus == ErpIntegrationStatus.Succeeded
+                    && (receipt.ErpIntegrationStatus == ErpIntegrationStatus.Pending
+                        || receipt.ErpIntegrationStatus == ErpIntegrationStatus.Succeeded)
                     && transfer.Status != WarehouseTransferStatus.Cancelled
                     && (transfer.Status != WarehouseTransferStatus.Completed
                         || transfer.ErpIntegrationStatus != ErpIntegrationStatus.Succeeded)
-                select receipt.Id)
+                select new
+                {
+                    receipt.Id,
+                    receipt.ErpIntegrationStatus
+                })
             .Distinct()
-            .OrderBy(x => x)
+            .OrderBy(x => x.Id)
             .Take(RecoveryBatchSize)
             .ToListAsync(cancellationToken);
 
-        foreach (var receiptId in receiptIds)
+        foreach (var candidate in candidates)
         {
             try
             {
-                await ProcessGoodsReceiptAsync(receiptId, 0, cancellationToken);
+                if (candidate.ErpIntegrationStatus == ErpIntegrationStatus.Pending)
+                {
+                    // This covers decisions committed before the quarantine-aware quality
+                    // gate was introduced, and transient enqueue failures after deployment.
+                    // A successful goods-receipt post enqueues the DAT follow-up itself.
+                    await goodsReceiptErpPosting.PostIfEligibleAsync(
+                        candidate.Id,
+                        0,
+                        cancellationToken);
+                    continue;
+                }
+
+                await ProcessGoodsReceiptAsync(candidate.Id, 0, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -118,7 +141,7 @@ public sealed class QualityDispositionDatJob(
                 logger.LogError(
                     exception,
                     "Pending quality DAT recovery failed. GoodsReceiptId={GoodsReceiptId}",
-                    receiptId);
+                    candidate.Id);
             }
         }
     }

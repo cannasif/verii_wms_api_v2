@@ -196,6 +196,7 @@ public sealed class QualityDispositionDatFlowTests
             new UnitOfWork(db, new HttpContextAccessor()),
             operations,
             erp,
+            new RecordingGoodsReceiptCoordinator(db, events),
             NullLogger<QualityDispositionDatJob>.Instance);
 
         await job.ProcessGoodsReceiptAsync(receipt.Id, 72);
@@ -211,6 +212,94 @@ public sealed class QualityDispositionDatFlowTests
 
         await job.ProcessGoodsReceiptAsync(receipt.Id, 72);
         Assert.Equal(["complete", "erp"], events);
+    }
+
+    [Fact]
+    public async Task Recovery_posts_a_conclusively_quarantined_receipt_before_its_DAT()
+    {
+        await using var db = CreateDbContext();
+        var receipt = new GoodsReceiptHeader
+        {
+            BranchCode = "0",
+            DocumentNo = "GR-QUARANTINE-1",
+            Status = WarehouseOperationStatus.Processed,
+            ApprovalStatus = OperationApprovalStatus.NotRequired,
+            QualityStatus = OperationQualityStatus.InProgress,
+            ErpPostingPolicy = GoodsReceiptErpPostingPolicy.AfterAllApprovals,
+            ErpIntegrationStatus = ErpIntegrationStatus.Pending,
+            ReceivedBy = 72
+        };
+        var inspection = new QualityInspection
+        {
+            BranchCode = "0",
+            InspectionNo = "QC-QUARANTINE-1",
+            SourceDocumentType = "GoodsReceipt",
+            SourceDocumentNo = receipt.DocumentNo,
+            Status = QualityInspectionStatus.Quarantined,
+            DecidedAtUtc = DateTimeOffset.UtcNow
+        };
+        var inspectionLine = new QualityInspectionLine
+        {
+            BranchCode = "0",
+            Inspection = inspection,
+            StockId = 10,
+            StockCodeSnapshot = "STK-1",
+            Quantity = 1,
+            SampleQuantity = 1,
+            QuarantineQuantity = 1,
+            Decision = QualityDecision.Quarantined,
+            DecisionAtUtc = inspection.DecidedAtUtc
+        };
+        inspection.Lines.Add(inspectionLine);
+        var transfer = new WarehouseTransferHeader
+        {
+            BranchCode = "0",
+            DocumentNo = "DAT-QC-QUARANTINE-1",
+            BusinessContext = WarehouseTransferBusinessContext.QualityDisposition,
+            Status = WarehouseTransferStatus.Draft,
+            ErpIntegrationStatus = ErpIntegrationStatus.Pending
+        };
+        db.AddRange(receipt, inspection, transfer);
+        await db.SaveChangesAsync();
+        inspection.SourceDocumentId = receipt.Id;
+        db.QualityInspectionDispositions.Add(new QualityInspectionDisposition
+        {
+            BranchCode = "0",
+            QualityInspection = inspection,
+            QualityInspectionLine = inspectionLine,
+            WarehouseTransferId = transfer.Id,
+            IdempotencyKey = Guid.NewGuid(),
+            SequenceNo = 1,
+            Decision = QualityDecision.Quarantined,
+            Quantity = 1,
+            SourceWarehouseId = 1,
+            SourceLocationId = 11,
+            TargetWarehouseId = 2,
+            TargetLocationId = 22,
+            DecisionBy = 72,
+            DecisionAtUtc = inspection.DecidedAtUtc.Value
+        });
+        await db.SaveChangesAsync();
+
+        var events = new List<string>();
+        var job = new QualityDispositionDatJob(
+            new UnitOfWork(db, new HttpContextAccessor()),
+            new RecordingTransferOperations(db, events),
+            new RecordingErpPostingService(db, events),
+            new RecordingGoodsReceiptCoordinator(db, events),
+            NullLogger<QualityDispositionDatJob>.Instance);
+
+        await job.RetryPendingAsync();
+
+        Assert.Equal(["receipt-erp"], events);
+        Assert.Equal(ErpIntegrationStatus.Succeeded, receipt.ErpIntegrationStatus);
+        Assert.Equal(WarehouseTransferStatus.Draft, transfer.Status);
+
+        await job.RetryPendingAsync();
+
+        Assert.Equal(["receipt-erp", "complete", "erp"], events);
+        Assert.Equal(WarehouseTransferStatus.Completed, transfer.Status);
+        Assert.Equal(ErpIntegrationStatus.Succeeded, transfer.ErpIntegrationStatus);
     }
 
     private static WmsDbContext CreateDbContext()
@@ -274,5 +363,36 @@ public sealed class QualityDispositionDatFlowTests
         private static ErpPostingResult Success(ErpPostingSourceType type, long id, string no) =>
             new(1, type, id, no, ErpPostingStatus.Succeeded, 1, no, null, null, null, null, null, DateTimeOffset.UtcNow);
         private static Task<ErpPostingResult> Unsupported() => throw new NotSupportedException();
+    }
+
+    private sealed class RecordingGoodsReceiptCoordinator(WmsDbContext db, List<string> events)
+        : IGoodsReceiptErpPostingCoordinator
+    {
+        public async Task<ErpPostingResult?> PostIfEligibleAsync(
+            long goodsReceiptId,
+            long actorUserId,
+            CancellationToken cancellationToken)
+        {
+            var receipt = await db.GoodsReceiptHeaders.SingleAsync(
+                x => x.Id == goodsReceiptId,
+                cancellationToken);
+            events.Add("receipt-erp");
+            receipt.ErpIntegrationStatus = ErpIntegrationStatus.Succeeded;
+            await db.SaveChangesAsync(cancellationToken);
+            return new ErpPostingResult(
+                1,
+                ErpPostingSourceType.GoodsReceipt,
+                receipt.Id,
+                receipt.DocumentNo,
+                ErpPostingStatus.Succeeded,
+                1,
+                receipt.DocumentNo,
+                null,
+                null,
+                null,
+                null,
+                null,
+                DateTimeOffset.UtcNow);
+        }
     }
 }

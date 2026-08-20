@@ -106,7 +106,8 @@ public static class GoodsReceiptErpPostingPolicyEvaluator
         GoodsReceiptErpPostingPolicy postingPolicy,
         GoodsReceiptErpQualityGatePolicy qualityGatePolicy = GoodsReceiptErpQualityGatePolicy.AnyQualityPlan,
         bool hasRuleBasedQualityPlan = false,
-        bool hasManualQualityPlan = false)
+        bool hasManualQualityPlan = false,
+        bool hasConclusiveQualityInspection = false)
     {
         if (operationStatus is not (WarehouseOperationStatus.Processed or WarehouseOperationStatus.Completed))
             return false;
@@ -121,7 +122,9 @@ public static class GoodsReceiptErpPostingPolicyEvaluator
         };
         var qualityDecisionCompleted = qualityStatus is
             OperationQualityStatus.Passed
-            or OperationQualityStatus.Failed;
+            or OperationQualityStatus.Failed
+            || qualityStatus == OperationQualityStatus.InProgress
+                && hasConclusiveQualityInspection;
         if (qualityGateApplies && !qualityDecisionCompleted)
             return false;
 
@@ -130,7 +133,9 @@ public static class GoodsReceiptErpPostingPolicyEvaluator
         var qualityApprovalCompleted = qualityStatus is
             OperationQualityStatus.NotRequired
             or OperationQualityStatus.Passed
-            or OperationQualityStatus.Failed;
+            or OperationQualityStatus.Failed
+            || qualityStatus == OperationQualityStatus.InProgress
+                && hasConclusiveQualityInspection;
 
         return postingPolicy switch
         {

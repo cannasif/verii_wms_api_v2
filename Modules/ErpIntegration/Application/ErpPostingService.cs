@@ -55,7 +55,12 @@ public sealed class ErpPostingService(
             .Include(x => x.SourceDocuments)
             .SingleOrDefaultAsync(x => x.Id == id, cancellationToken)
             ?? throw AppException.NotFound("Mal kabul kaydı bulunamadı.");
-        ValidateGoodsReceiptGate(header);
+        var hasConclusiveQualityInspection =
+            await GoodsReceiptQualityGate.HasConclusiveInspectionAsync(
+                unitOfWork,
+                header.Id,
+                cancellationToken);
+        ValidateGoodsReceiptGate(header, hasConclusiveQualityInspection);
 
         var targetWarehouse = await GetWarehouseAsync(header.TargetWarehouseId, cancellationToken);
         var sendSerialsToErp = await SendSerialsToErpAsync(cancellationToken);
@@ -1337,7 +1342,9 @@ public sealed class ErpPostingService(
         }
     }
 
-    private static void ValidateGoodsReceiptGate(GoodsReceiptHeader header)
+    private static void ValidateGoodsReceiptGate(
+        GoodsReceiptHeader header,
+        bool hasConclusiveQualityInspection)
     {
         var qualitySources = header.Lines.Where(x => x.RequireQualityControl)
             .Select(x => x.QualityRoutingSource).ToArray();
@@ -1356,7 +1363,8 @@ public sealed class ErpPostingService(
                 header.ErpPostingPolicy,
                 header.ErpQualityGatePolicy,
                 hasRuleBasedQualityPlan,
-                hasManualQualityPlan))
+                hasManualQualityPlan,
+                hasConclusiveQualityInspection))
             throw AppException.Conflict("Mal kabul onay veya kalite kapısı tamamlanmadan ERP irsaliyesi oluşturulamaz.");
 
         if (header.Status is not (WarehouseOperationStatus.Processed or WarehouseOperationStatus.Completed))
@@ -1369,7 +1377,9 @@ public sealed class ErpPostingService(
             or GoodsReceiptErpPostingPolicy.AfterAllApprovals
             && header.QualityStatus is not (OperationQualityStatus.NotRequired
                 or OperationQualityStatus.Passed
-                or OperationQualityStatus.Failed))
+                or OperationQualityStatus.Failed)
+            && !(header.QualityStatus == OperationQualityStatus.InProgress
+                && hasConclusiveQualityInspection))
             throw AppException.Conflict("Kalite kararı tamamlanmadan ERP irsaliyesi oluşturulamaz.");
     }
 

@@ -4,6 +4,7 @@ using Hangfire;
 using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.ErpIntegration.Domain;
 using verii_wms_api_v2.Modules.GoodsReceipt.Domain;
+using verii_wms_api_v2.Modules.Quality.Domain;
 using verii_wms_api_v2.Modules.WarehouseOperations.Domain;
 using verii_wms_api_v2.Shared.Application.Abstractions.Persistence;
 using verii_wms_api_v2.Shared.Application.Exceptions;
@@ -57,6 +58,11 @@ public sealed class GoodsReceiptErpPostingCoordinator(
         if (header.RequireQualityControl && qualitySources.Count > 0
             && !hasManualQualityPlan && !hasRuleBasedQualityPlan)
             hasRuleBasedQualityPlan = true;
+        var hasConclusiveQualityInspection =
+            await GoodsReceiptQualityGate.HasConclusiveInspectionAsync(
+                unitOfWork,
+                header.Id,
+                cancellationToken);
 
         if (!GoodsReceiptErpPostingPolicyEvaluator.IsEligible(
                 header.Status,
@@ -65,7 +71,8 @@ public sealed class GoodsReceiptErpPostingCoordinator(
                 header.ErpPostingPolicy,
                 header.ErpQualityGatePolicy,
                 hasRuleBasedQualityPlan,
-                hasManualQualityPlan))
+                hasManualQualityPlan,
+                hasConclusiveQualityInspection))
         {
             return null;
         }
@@ -130,4 +137,38 @@ public sealed class GoodsReceiptErpPostingCoordinator(
                 goodsReceiptId);
         }
     }
+}
+
+internal static class GoodsReceiptQualityGate
+{
+    internal static async Task<bool> HasConclusiveInspectionAsync(
+        IUnitOfWork unitOfWork,
+        long goodsReceiptId,
+        CancellationToken cancellationToken)
+    {
+        var inspectionStates = await unitOfWork.Repository<QualityInspection>().Query()
+            .Where(inspection => inspection.SourceDocumentType == "GoodsReceipt"
+                && inspection.SourceDocumentId == goodsReceiptId
+                && inspection.Status != QualityInspectionStatus.Cancelled)
+            .Select(inspection => new
+            {
+                inspection.Status,
+                inspection.DecidedAtUtc
+            })
+            .ToListAsync(cancellationToken);
+
+        return inspectionStates.Count > 0
+            && inspectionStates.All(inspection => IsConclusiveInspection(
+                inspection.Status,
+                inspection.DecidedAtUtc));
+    }
+
+    internal static bool IsConclusiveInspection(
+        QualityInspectionStatus status,
+        DateTimeOffset? decidedAtUtc) =>
+        decidedAtUtc.HasValue
+        && status is QualityInspectionStatus.Passed
+            or QualityInspectionStatus.Failed
+            or QualityInspectionStatus.Quarantined
+            or QualityInspectionStatus.Released;
 }
