@@ -745,7 +745,8 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
             new PermissionDefinition { Id=2512, BranchCode="0", Code="WMS.KKD.REQUESTS.VIEW", Name="Açık KKD taleplerini görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2513, BranchCode="0", Code="WMS.KKD.REQUESTS.CREATE", Name="KKD talebi oluştur", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2514, BranchCode="0", Code="WMS.KKD.REQUESTS.RESOLVE", Name="KKD talebinde stok ve beden seçimini çözümle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
-            new PermissionDefinition { Id=2515, BranchCode="0", Code="WMS.KKD.REQUESTS.CANCEL", Name="KKD talebini iptal et", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
+            new PermissionDefinition { Id=2515, BranchCode="0", Code="WMS.KKD.REQUESTS.CANCEL", Name="KKD talebini iptal et", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
+            new PermissionDefinition { Id=2516, BranchCode="0", Code="WMS.KKD.REQUESTS.ASSIGN", Name="KKD hazırlama görevini başkasına ata veya devret", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate });
         modelBuilder.Entity<PermissionDefinition>().HasData(
             new PermissionDefinition { Id=2600, BranchCode="0", Code="WMS.PROCUREMENT.VIEW", Name="Satınalma belgelerini görüntüle", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
             new PermissionDefinition { Id=2601, BranchCode="0", Code="WMS.PROCUREMENT.REQUEST.MANAGE", Name="Satınalma taleplerini yönet", IsActive=true, AvailableOnWeb=true, CreatedDate=seedDate },
@@ -794,7 +795,7 @@ public sealed class WmsDbContext(DbContextOptions<WmsDbContext> options) : DbCon
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2410,9).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2420,5).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2500,12).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
-        modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2512,4).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
+        modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2512,5).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(Enumerable.Range(2600,6).Select(i=>new PermissionGroupPermission { Id=i, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=i, CreatedDate=seedDate }));
         modelBuilder.Entity<PermissionGroupPermission>().HasData(new PermissionGroupPermission { Id=2700, BranchCode="0", PermissionGroupId=1001, PermissionDefinitionId=2700, CreatedDate=seedDate });
         modelBuilder.Entity<UserPermissionGroup>().HasData(new UserPermissionGroup { Id=1001, BranchCode="0", UserId=1, PermissionGroupId=1001, CreatedDate=seedDate });

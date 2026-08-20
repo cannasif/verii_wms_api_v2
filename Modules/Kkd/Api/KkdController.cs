@@ -289,7 +289,8 @@ public sealed class KkdController(
     [HttpPost("requests/{id:long}/preparation-tasks")]
     public async Task<IActionResult> AssignPreparationTasks(long id, KkdPreparationAssignRequest request, CancellationToken ct)
     {
-        await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
+        // Başkasına / havuza atama yalnızca yönetici izniyle; operatör claim kullanır.
+        await Require("WMS.KKD.REQUESTS.ASSIGN", ct);
         return Ok(ApiResponse<IReadOnlyList<KkdPreparationTaskRow>>.Ok(
             await preparationTasks.AssignAsync(id, request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.TasksAssigned)));
     }
@@ -313,7 +314,8 @@ public sealed class KkdController(
     [HttpPost("preparation-tasks/{id:long}/handoff")]
     public async Task<IActionResult> HandoffPreparationTask(long id, KkdPreparationHandoffRequest request, CancellationToken ct)
     {
-        await Require("WMS.KKD.REQUESTS.RESOLVE", ct);
+        // Görev devri atama yetkisidir; operatör yalnızca kendi üzerine alır.
+        await Require("WMS.KKD.REQUESTS.ASSIGN", ct);
         return Ok(ApiResponse<KkdPreparationTaskRow>.Ok(
             await preparationTasks.HandoffAsync(id, request, UserId(), ct), RequestMessage(KkdRequestMessageKeys.TaskHandedOver)));
     }

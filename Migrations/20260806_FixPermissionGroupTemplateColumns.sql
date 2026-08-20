@@ -269,7 +269,7 @@ BEGIN
         (groups.TemplateKey = N''KKD_OPERATORLERI'' AND permissions.Code IN (
             N''WMS.KKD.DEFINITIONS.VIEW'', N''WMS.KKD.EMPLOYEES.VIEW'', N''WMS.KKD.EMPLOYEES.MANAGE'',
             N''WMS.KKD.MATRICES.VIEW'', N''WMS.KKD.ENTITLEMENT.CHECK'', N''WMS.KKD.DISTRIBUTION.OPERATE'',
-            N''WMS.KKD.REPORTS.VIEW''))
+            N''WMS.KKD.REPORTS.VIEW'', N''WMS.KKD.REQUESTS.VIEW'', N''WMS.KKD.REQUESTS.RESOLVE''))
         OR
         (groups.TemplateKey = N''KKD_YONETICILERI'' AND permissions.Code LIKE N''WMS.KKD.%'')
         OR

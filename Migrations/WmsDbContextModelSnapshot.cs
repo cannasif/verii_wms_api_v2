@@ -2072,6 +2072,18 @@ namespace verii_wms_api_v2.Migrations
                         },
                         new
                         {
+                            Id = 2516L,
+                            AvailableOnMobile = false,
+                            AvailableOnWeb = true,
+                            BranchCode = "0",
+                            Code = "WMS.KKD.REQUESTS.ASSIGN",
+                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
+                            IsActive = true,
+                            IsDeleted = false,
+                            Name = "KKD hazırlama görevini başkasına ata veya devret"
+                        },
+                        new
+                        {
                             Id = 2600L,
                             AvailableOnMobile = false,
                             AvailableOnWeb = true,
@@ -3724,6 +3736,15 @@ namespace verii_wms_api_v2.Migrations
                             CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
                             IsDeleted = false,
                             PermissionDefinitionId = 2515L,
+                            PermissionGroupId = 1001L
+                        },
+                        new
+                        {
+                            Id = 2516L,
+                            BranchCode = "0",
+                            CreatedDate = new DateTime(2026, 7, 21, 0, 0, 0, 0, DateTimeKind.Utc),
+                            IsDeleted = false,
+                            PermissionDefinitionId = 2516L,
                             PermissionGroupId = 1001L
                         },
                         new
