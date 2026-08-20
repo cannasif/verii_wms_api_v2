@@ -56,7 +56,13 @@ public sealed record KkdOverrideRow(long Id, long EmployeeId, string EmployeeCod
     DateOnly ValidFrom, DateOnly? ValidTo, string Reason, long ApprovedByUserId, bool IsActive,
     DateTime? CreatedDate, DateTime? UpdatedDate, byte[] RowVersion);
 
-public sealed record KkdLookupRow(long Id, string Code, string Name, bool IsActive);
+public sealed record KkdLookupRow(
+    long Id,
+    string Code,
+    string Name,
+    bool IsActive,
+    long? DepartmentId = null,
+    string? DepartmentName = null);
 public sealed record KkdCustomerLookupRow(long Id, string Code, string Name);
 public sealed record KkdStockLookupRow(long Id, string Code, string Name, string UnitCode, string? GroupCode);
 public sealed record KkdStockBulkResolveRequest(IReadOnlyList<string> Codes);

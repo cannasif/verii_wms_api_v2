@@ -63,6 +63,43 @@ public sealed class KkdDefinitionWorkbookServiceTests
         Assert.Equal(2, await fixture.Db.KkdDepartments.CountAsync());
     }
 
+    [Theory]
+    [InlineData("Gün", "Day")]
+    [InlineData("Ay", "Month")]
+    [InlineData("Yıl", "Year")]
+    [InlineData("Günlük", "Day")]
+    [InlineData("Aylık", "Month")]
+    [InlineData("Yıllık", "Year")]
+    [InlineData("Yillik", "Year")]
+    [InlineData("Day", "Day")]
+    [InlineData("Month", "Month")]
+    [InlineData("Year", "Year")]
+    [InlineData("", null)]
+    public void ParsePeriodType_accepts_turkish_and_english_aliases(string input, string? expected)
+    {
+        var method = typeof(KkdDefinitionWorkbookService).GetMethod(
+            "ParsePeriodType",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.NotNull(method);
+        var actual = method!.Invoke(null, [input]);
+        Assert.Equal(expected, actual);
+    }
+
+    [Theory]
+    [InlineData("Haftalık")]
+    [InlineData("xyz")]
+    [InlineData("Quarter")]
+    public void ParsePeriodType_rejects_unknown_values(string input)
+    {
+        var method = typeof(KkdDefinitionWorkbookService).GetMethod(
+            "ParsePeriodType",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+        Assert.NotNull(method);
+        var ex = Assert.Throws<System.Reflection.TargetInvocationException>(() => method!.Invoke(null, [input]));
+        Assert.IsType<FormatException>(ex.InnerException);
+        Assert.Contains("Periyot Tipi", ex.InnerException!.Message, StringComparison.Ordinal);
+    }
+
     private static async Task<Fixture> CreateFixtureAsync()
     {
         var options = new DbContextOptionsBuilder<WmsDbContext>()

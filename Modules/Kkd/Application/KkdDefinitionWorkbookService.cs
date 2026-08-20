@@ -19,6 +19,7 @@ public sealed class KkdDefinitionWorkbookService(
     public const int MaxRowsPerSheet = 10_000;
     public const int MaxImportFileSize = 15 * 1024 * 1024;
     private const int TemplateDataLastRow = 10_001;
+    private static readonly CultureInfo TurkishCulture = CultureInfo.GetCultureInfo("tr-TR");
 
     private const string GuideSheet = "00_KILAVUZ";
     private const string DepartmentSheet = "01_DEPARTMANLAR";
@@ -681,14 +682,32 @@ public sealed class KkdDefinitionWorkbookService(
         _ => throw new FormatException("Dönem Tipi; İlk Hak, Ay Sonrası veya Tekrarlayan olmalıdır.")
     };
 
-    private static string? ParsePeriodType(string value) => Normalize(value) switch
+    private static string? ParsePeriodType(string value)
     {
-        "" => null,
-        "DAY" or "GUN" or "GÜN" => nameof(KkdPeriodType.Day),
-        "MONTH" or "AY" => nameof(KkdPeriodType.Month),
-        "YEAR" or "YIL" => nameof(KkdPeriodType.Year),
-        _ => throw new FormatException("Periyot Tipi; Gün, Ay veya Yıl olmalıdır.")
-    };
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        // Excel'de Gün/Günlük, Ay/Aylık, Yıl/Yıllık ve İngilizce Day/Month/Year gelir.
+        // tr-TR büyük harf + ASCII katlama: İ→I, Ü→U vb. (Invariant "Yıl"/"Aylık" için güvenilir değil).
+        var key = FoldTurkishToken(value);
+        return key switch
+        {
+            "DAY" or "GUN" or "GUNLUK" => nameof(KkdPeriodType.Day),
+            "MONTH" or "AY" or "AYLIK" => nameof(KkdPeriodType.Month),
+            "YEAR" or "YIL" or "YILLIK" => nameof(KkdPeriodType.Year),
+            _ => throw new FormatException("Periyot Tipi; Gün, Ay veya Yıl olmalıdır.")
+        };
+    }
+
+    private static string FoldTurkishToken(string value)
+    {
+        var upper = value.Trim().ToUpper(TurkishCulture);
+        return upper
+            .Replace('İ', 'I')
+            .Replace('Ü', 'U')
+            .Replace('Ö', 'O')
+            .Replace('Ş', 'S')
+            .Replace('Ç', 'C')
+            .Replace('Ğ', 'G');
+    }
 
     private static string NormalizePhaseType(string value) => ParsePhaseType(value);
     private static string? NormalizePeriodType(string? value) => string.IsNullOrWhiteSpace(value) ? null : ParsePeriodType(value);

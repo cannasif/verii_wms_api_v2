@@ -51,7 +51,15 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
 
     public async Task<IReadOnlyList<KkdLookupRow>> GetRolesAsync(long? departmentId, CancellationToken ct = default) =>
         await uow.Repository<KkdRole>().Query().Where(x => !departmentId.HasValue || x.DepartmentId == departmentId)
-            .OrderBy(x => x.Name).Select(x => new KkdLookupRow(x.Id, x.Code, x.Name, x.IsActive)).ToListAsync(ct);
+            .OrderBy(x => x.Name)
+            .Select(x => new KkdLookupRow(
+                x.Id,
+                x.Code,
+                x.Name,
+                x.IsActive,
+                x.DepartmentId,
+                x.Department != null ? x.Department.Name : null))
+            .ToListAsync(ct);
 
     public Task<PagedResponse<KkdCustomerLookupRow>> GetCustomersPagedAsync(PagedRequest request, CancellationToken ct = default)
     {
@@ -191,6 +199,14 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
         if (!await uow.Repository<CustomerEntity>().AnyAsync(x => x.Id == request.CustomerId, ct))
             Add(0, "customerId", "NOT_FOUND", "Seçilen entegre cari bulunamadı.");
 
+        if (request.IsActive)
+        {
+            var overlap = await FindOverlappingActiveMatrixAsync(id, request, ct);
+            if (overlap is { } hit)
+                Add(0, "effectiveFrom", "OVERLAP",
+                    $"Aynı cari, departman ve rol için tarihleri çakışan aktif matris var: {hit.Code} ({FormatMatrixRange(hit.EffectiveFrom, hit.EffectiveTo)}).");
+        }
+
         var stockIds = request.Rules.Where(x => x.StockId.HasValue).Select(x => x.StockId!.Value).Distinct().ToArray();
         var stocks = await LoadStocksAsync(stockIds, ct);
         var groupCodes = request.Rules.Where(x => !x.StockId.HasValue).Select(x => Normalize(x.GroupCode))
@@ -256,7 +272,9 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
 
     public async Task<long> UpsertRoleAsync(long? id, KkdRoleUpsertRequest request, long actor, CancellationToken ct = default)
     {
-        if (request.DepartmentId.HasValue && !await uow.Repository<KkdDepartment>().AnyAsync(x => x.Id == request.DepartmentId && x.IsActive, ct))
+        if (!request.DepartmentId.HasValue)
+            throw AppException.BadRequest("Rol için departman seçilmelidir.");
+        if (!await uow.Repository<KkdDepartment>().AnyAsync(x => x.Id == request.DepartmentId && x.IsActive, ct))
             throw AppException.BadRequest("Seçilen departman bulunamadı veya aktif değil.");
         var code = RequiredCode(request.Code, "Rol kodu", 50);
         var repository = uow.Repository<KkdRole>();
@@ -312,12 +330,13 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
         var repository = uow.Repository<KkdEntitlementMatrix>();
         if (await repository.AnyAsync(x => x.Code == code && (!id.HasValue || x.Id != id), ct))
             throw AppException.Conflict("Aynı matris kodu zaten tanımlı.");
-        if (request.IsActive && await repository.AnyAsync(x => x.CustomerId == request.CustomerId
-            && x.DepartmentId == request.DepartmentId && x.RoleId == request.RoleId && x.IsActive
-            && (!id.HasValue || x.Id != id)
-            && (!x.EffectiveTo.HasValue || !request.EffectiveFrom.HasValue || x.EffectiveTo >= request.EffectiveFrom)
-            && (!request.EffectiveTo.HasValue || !x.EffectiveFrom.HasValue || request.EffectiveTo >= x.EffectiveFrom), ct))
-            throw AppException.Conflict("Aynı cari, departman ve rol için tarihleri çakışan aktif bir KKD matrisi var.");
+        if (request.IsActive)
+        {
+            var overlap = await FindOverlappingActiveMatrixAsync(id, request, ct);
+            if (overlap is { } hit)
+                throw AppException.Conflict(
+                    $"Aynı cari, departman ve rol için tarihleri çakışan aktif bir KKD matrisi var: {hit.Code} ({FormatMatrixRange(hit.EffectiveFrom, hit.EffectiveTo)}).");
+        }
 
         var entity = id.HasValue
             ? await repository.Query(true).Include(x => x.Rules).ThenInclude(x => x.Phases).SingleOrDefaultAsync(x => x.Id == id, ct)
@@ -521,6 +540,31 @@ public sealed class KkdDefinitionService(IUnitOfWork uow) : IKkdDefinitionServic
         entity.DeletedBy = actor;
         entity.DeletedDate = DateTime.UtcNow;
         await uow.SaveChangesAsync(ct);
+    }
+
+    private async Task<(string Code, DateOnly? EffectiveFrom, DateOnly? EffectiveTo)?> FindOverlappingActiveMatrixAsync(
+        long? id, KkdMatrixUpsertRequest request, CancellationToken ct)
+    {
+        var overlap = await uow.Repository<KkdEntitlementMatrix>().Query()
+            .Where(x => x.CustomerId == request.CustomerId
+                && x.DepartmentId == request.DepartmentId
+                && x.RoleId == request.RoleId
+                && x.IsActive
+                && (!id.HasValue || x.Id != id)
+                && (!x.EffectiveTo.HasValue || !request.EffectiveFrom.HasValue || x.EffectiveTo >= request.EffectiveFrom)
+                && (!request.EffectiveTo.HasValue || !x.EffectiveFrom.HasValue || request.EffectiveTo >= x.EffectiveFrom))
+            .OrderBy(x => x.Code)
+            .Select(x => new { x.Code, x.EffectiveFrom, x.EffectiveTo })
+            .FirstOrDefaultAsync(ct);
+        return overlap is null ? null : (overlap.Code, overlap.EffectiveFrom, overlap.EffectiveTo);
+    }
+
+    private static string FormatMatrixRange(DateOnly? from, DateOnly? to)
+    {
+        if (!from.HasValue && !to.HasValue) return "süresiz";
+        var fromText = from?.ToString("dd.MM.yyyy") ?? "…";
+        var toText = to?.ToString("dd.MM.yyyy") ?? "…";
+        return $"{fromText} – {toText}";
     }
 
     private async Task<Dictionary<long, StockEntity>> LoadStocksAsync(IReadOnlyCollection<long> ids, CancellationToken ct)
