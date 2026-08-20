@@ -106,6 +106,31 @@ public sealed class QualityQuantityDecisionTests
     }
 
     [Fact]
+    public void Decision_result_appends_dat_follow_up_failure_after_erp_success()
+    {
+        var receipt = new GoodsReceiptHeader
+        {
+            Id = 18,
+            DocumentNo = "GR1202600000018",
+            Status = WarehouseOperationStatus.Completed,
+            QualityStatus = OperationQualityStatus.Failed,
+            ApprovalStatus = OperationApprovalStatus.Approved,
+            ErpIntegrationStatus = ErpIntegrationStatus.Succeeded,
+            ErpPostingPolicy = GoodsReceiptErpPostingPolicy.AfterQualityApproval
+        };
+
+        var result = QualityService.BuildDecisionResult(
+            receipt,
+            null,
+            null,
+            "Quality DAT ERP posting failed.");
+
+        Assert.Contains("daha önce oluşturulmuş", result.Message);
+        Assert.Contains("kalite DAT otomatik tamamlanamadı", result.Message);
+        Assert.Contains("Quality DAT ERP posting failed.", result.Message);
+    }
+
+    [Fact]
     public void Ten_units_can_be_split_into_five_accepted_and_five_quarantined()
     {
         var line = PendingLine(10);

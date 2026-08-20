@@ -39,7 +39,8 @@ public sealed class QualityService(
     IDocumentSeriesService documentSeries,
     IGoodsReceiptErpPostingCoordinator erpPosting,
     IStringLocalizer<QualityResource> localizer,
-    IStockTrackingPolicyResolver? stockTrackingPolicyResolver = null) : IQualityService, IQualityPolicyResolver, IQualityWarehouseRoutingResolver
+    IStockTrackingPolicyResolver? stockTrackingPolicyResolver = null,
+    IGoodsReceiptErpSuccessJob? qualityDatFollowUp = null) : IQualityService, IQualityPolicyResolver, IQualityWarehouseRoutingResolver
 {
     private static readonly IReadOnlySet<string> InspectionLineSummaryColumns =
         new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -1497,6 +1498,7 @@ public sealed class QualityService(
         }
         ErpPostingResult? posting = null;
         string? erpFailureMessage = null;
+        string? datFailureMessage = null;
         try
         {
             posting = await erpPosting.PostIfEligibleAsync(goodsReceiptId, actor, ct);
@@ -1510,7 +1512,23 @@ public sealed class QualityService(
         var receipt = await uow.Repository<GoodsReceiptHeader>().Query()
             .AsNoTracking()
             .SingleAsync(x => x.Id == goodsReceiptId, ct);
-        return BuildDecisionResult(receipt, posting, erpFailureMessage);
+        // Cross-warehouse quarantine DAT drafts wait for the purchase waybill. Once ERP
+        // succeeds, complete them in-request so stock lands on the target quarantine rack
+        // without waiting for Hangfire (which still remains as durable recovery).
+        if (qualityDatFollowUp is not null
+            && receipt.ErpIntegrationStatus == ErpIntegrationStatus.Succeeded
+            && string.IsNullOrWhiteSpace(erpFailureMessage))
+        {
+            try
+            {
+                await qualityDatFollowUp.ProcessGoodsReceiptAsync(goodsReceiptId, actor, ct);
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                datFailureMessage = Clean(exception.Message, 1000);
+            }
+        }
+        return BuildDecisionResult(receipt, posting, erpFailureMessage, datFailureMessage);
     }
 
     public async Task<ResolvedQualityPolicy> ResolveAsync(string branchCode,long stockId,string? stockGroupCode,CancellationToken ct=default)
@@ -2842,7 +2860,8 @@ public sealed class QualityService(
     internal static QualityDecisionResult BuildDecisionResult(
         GoodsReceiptHeader receipt,
         ErpPostingResult? posting,
-        string? erpFailureMessage = null)
+        string? erpFailureMessage = null,
+        string? datFailureMessage = null)
     {
         var createdNow = posting?.Status == Modules.ErpIntegration.Domain.ErpPostingStatus.Succeeded;
         var message = !string.IsNullOrWhiteSpace(erpFailureMessage)
@@ -2864,6 +2883,12 @@ public sealed class QualityService(
                             : receipt.ErpIntegrationStatus == ErpIntegrationStatus.Cancelled
                                 ? "Kalite kararı uygulandı; ancak bu mal kabulün ERP kaydı iptal durumunda."
                                 : "Kalite kararı uygulandı. Seçili ERP gönderim politikası nedeniyle Netsis alış irsaliyesi henüz oluşturulmadı.";
+        if (string.IsNullOrWhiteSpace(erpFailureMessage)
+            && !string.IsNullOrWhiteSpace(datFailureMessage))
+        {
+            message =
+                $"{message} Depolar arası kalite DAT otomatik tamamlanamadı: {datFailureMessage}";
+        }
         return new(
             receipt.Id,
             receipt.DocumentNo,
