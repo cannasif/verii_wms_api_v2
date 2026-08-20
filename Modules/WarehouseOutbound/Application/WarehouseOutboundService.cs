@@ -816,8 +816,9 @@ public sealed class WarehouseOutboundService(
         AllocatedDocumentNumber number,
         DateTime now,
         bool orderBased,
-        bool taskBased) =>
-        new()
+        bool taskBased)
+    {
+        var header = new WarehouseOutboundHeader
         {
             BranchCode = branch,
             CreatedBy = actor,
@@ -866,6 +867,14 @@ public sealed class WarehouseOutboundService(
             ShortagePolicy = policy.ShortagePolicy,
             OverPickPolicy = policy.OverPickPolicy
         };
+        if (request.StockAlreadyStaged)
+        {
+            header.ReservationPolicy = WarehouseOutboundReservationPolicy.None;
+            header.PackingPolicy = WarehouseOutboundPackingPolicy.NotRequired;
+            header.RequireLoadingConfirmation = false;
+        }
+        return header;
+    }
 
     private static Dictionary<string, WarehouseOutboundSourceDocument> CreateSourceDocuments(
         CreateWarehouseOutboundDraftRequest request,

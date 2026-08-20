@@ -161,11 +161,21 @@ public sealed class WarehouseOutboundOperationService(
             if (lines.Count != map.Count) throw AppException.BadRequest("Operasyon satırlarından biri bu sevke ait değil.");
 
             var movementRequest = BuildMovementRequest(header, lines, map, request, phase);
-            if (await uow.Repository<StockMovementOperation>().AnyAsync(
-                    x => x.IdempotencyKey == movementRequest.IdempotencyKey, token))
+            // Stok hazırlık rafına önceden taşınmışsa (KKD toplaması) kaynak ve hedef aynı raftır; bu adım
+            // bakiyeyi değiştirmez. Sıfır etkili hareket postalamak yerine yalnızca belge durumu ilerletilir.
+            var hasMovement = movementRequest.Lines.Count > 0;
+            if (hasMovement)
             {
-                var replay = await movements.PostAsync(movementRequest, token);
-                return Result(header, replay.OperationId, true);
+                if (await uow.Repository<StockMovementOperation>().AnyAsync(
+                        x => x.IdempotencyKey == movementRequest.IdempotencyKey, token))
+                {
+                    var replay = await movements.PostAsync(movementRequest, token);
+                    return Result(header, replay.OperationId, true);
+                }
+            }
+            else if (await HasReplayAsync(id, request.IdempotencyKey, token))
+            {
+                return Result(header, null, true);
             }
 
             EnsurePhaseState(header, phase);
@@ -175,7 +185,7 @@ public sealed class WarehouseOutboundOperationService(
             if (phase == WarehouseOutboundPhase.Pick)
                 await reservations.ConsumeAsync(header, map, $"WO:{header.Id}:RESERVE:PICK:{request.IdempotencyKey:N}", actor, token);
 
-            var movement = await movements.PostAsync(movementRequest, token);
+            long? movementId = hasMovement ? (await movements.PostAsync(movementRequest, token)).OperationId : null;
 
             foreach (var line in lines)
             {
@@ -213,8 +223,8 @@ public sealed class WarehouseOutboundOperationService(
             header.UpdatedBy = actor;
             header.UpdatedDate = DateTime.UtcNow;
             await uow.SaveChangesAsync(token);
-            await WriteAudit(header, phase.ToString().ToLowerInvariant(), movement.OperationId, request.Lines.Count, token);
-            return Result(header, movement.OperationId, false);
+            await WriteAudit(header, phase.ToString().ToLowerInvariant(), movementId, request.Lines.Count, token);
+            return Result(header, movementId, false);
         }, ct, IsolationLevel.Serializable);
     }
 
@@ -361,7 +371,7 @@ public sealed class WarehouseOutboundOperationService(
                 header.SourceWarehouseId, source,
                 phase == WarehouseOutboundPhase.Ship ? null : header.SourceWarehouseId,
                 target, line.UnitCode, item.LotNo, item.SerialNo, "Available");
-        }).ToList();
+        }).Where(row => !IsSameLocationTransfer(row)).ToList();
         return new(
             $"WO:{header.Id}:{phase}:{request.IdempotencyKey:N}",
             movementType,
@@ -373,6 +383,13 @@ public sealed class WarehouseOutboundOperationService(
             $"{phase} operation for {header.DocumentNo}",
             rows);
     }
+
+    /// <summary>Aynı depo ve aynı raf arasındaki transfer bakiyeyi değiştirmez; hareket kaydı üretilmez.</summary>
+    internal static bool IsSameLocationTransfer(StockMovementLineRequest row) =>
+        row.SourceLocationId.HasValue
+        && row.TargetLocationId.HasValue
+        && row.SourceLocationId == row.TargetLocationId
+        && row.SourceWarehouseId == row.TargetWarehouseId;
 
     private static void ApplyWarehouseOutboundInfo(WarehouseOutboundHeader header, WarehouseOutboundOperationRequest request, WarehouseOutboundPhase phase)
     {
