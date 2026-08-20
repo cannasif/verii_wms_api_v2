@@ -216,17 +216,28 @@ public sealed class QualityDispositionDatFlowTests
         Assert.Equal(["complete", "erp"], events);
     }
 
-    [Fact]
-    public async Task Recovery_posts_a_conclusively_quarantined_receipt_before_its_DAT()
+    [Theory]
+    [InlineData(
+        QualityInspectionStatus.Quarantined,
+        OperationQualityStatus.InProgress,
+        QualityDecision.Quarantined)]
+    [InlineData(
+        QualityInspectionStatus.Failed,
+        OperationQualityStatus.Failed,
+        QualityDecision.Rejected)]
+    public async Task Recovery_posts_a_conclusively_decided_receipt_before_its_cross_warehouse_DAT(
+        QualityInspectionStatus inspectionStatus,
+        OperationQualityStatus receiptQualityStatus,
+        QualityDecision decision)
     {
         await using var db = CreateDbContext();
         var receipt = new GoodsReceiptHeader
         {
             BranchCode = "0",
-            DocumentNo = "GR-QUARANTINE-1",
+            DocumentNo = $"GR-{decision.ToString().ToUpperInvariant()}-1",
             Status = WarehouseOperationStatus.Processed,
             ApprovalStatus = OperationApprovalStatus.NotRequired,
-            QualityStatus = OperationQualityStatus.InProgress,
+            QualityStatus = receiptQualityStatus,
             ErpPostingPolicy = GoodsReceiptErpPostingPolicy.AfterAllApprovals,
             ErpIntegrationStatus = ErpIntegrationStatus.Pending,
             ReceivedBy = 72
@@ -234,10 +245,10 @@ public sealed class QualityDispositionDatFlowTests
         var inspection = new QualityInspection
         {
             BranchCode = "0",
-            InspectionNo = "QC-QUARANTINE-1",
+            InspectionNo = $"QC-{decision.ToString().ToUpperInvariant()}-1",
             SourceDocumentType = "GoodsReceipt",
             SourceDocumentNo = receipt.DocumentNo,
-            Status = QualityInspectionStatus.Quarantined,
+            Status = inspectionStatus,
             DecidedAtUtc = DateTimeOffset.UtcNow
         };
         var inspectionLine = new QualityInspectionLine
@@ -248,15 +259,16 @@ public sealed class QualityDispositionDatFlowTests
             StockCodeSnapshot = "STK-1",
             Quantity = 1,
             SampleQuantity = 1,
-            QuarantineQuantity = 1,
-            Decision = QualityDecision.Quarantined,
+            QuarantineQuantity = decision == QualityDecision.Quarantined ? 1 : 0,
+            RejectedQuantity = decision == QualityDecision.Rejected ? 1 : 0,
+            Decision = decision,
             DecisionAtUtc = inspection.DecidedAtUtc
         };
         inspection.Lines.Add(inspectionLine);
         var transfer = new WarehouseTransferHeader
         {
             BranchCode = "0",
-            DocumentNo = "DAT-QC-QUARANTINE-1",
+            DocumentNo = $"DAT-QC-{decision.ToString().ToUpperInvariant()}-1",
             BusinessContext = WarehouseTransferBusinessContext.QualityDisposition,
             Status = WarehouseTransferStatus.Draft,
             ErpIntegrationStatus = ErpIntegrationStatus.Pending
@@ -272,7 +284,7 @@ public sealed class QualityDispositionDatFlowTests
             WarehouseTransferId = transfer.Id,
             IdempotencyKey = Guid.NewGuid(),
             SequenceNo = 1,
-            Decision = QualityDecision.Quarantined,
+            Decision = decision,
             Quantity = 1,
             SourceWarehouseId = 1,
             SourceLocationId = 11,
