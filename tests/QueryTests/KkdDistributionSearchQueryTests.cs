@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using verii_wms_api_v2.Modules.Identity.Infrastructure;
 using verii_wms_api_v2.Modules.Kkd.Application;
 using verii_wms_api_v2.Modules.Kkd.Domain;
+using verii_wms_api_v2.Modules.WarehouseOutbound.Domain;
 using verii_wms_api_v2.Shared;
 using Xunit;
 
@@ -15,7 +16,9 @@ public sealed class KkdDistributionSearchQueryTests
         using var db = SqlServerContext();
         var request = new PagedRequest { SortBy = "id", SortDirection = "desc" };
 
-        var sql = KkdDistributionService.BuildPagedQuery(request, db.Set<KkdDistribution>()).ToQueryString();
+        var sql = KkdDistributionService
+            .BuildPagedQuery(request, db.Set<KkdDistribution>(), db.Set<WarehouseOutboundHeader>())
+            .ToQueryString();
 
         Assert.Contains("RII_KKD_DISTRIBUTION", sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("RII_KKD_DISTRIBUTION_LINE", sql, StringComparison.OrdinalIgnoreCase);
@@ -27,7 +30,9 @@ public sealed class KkdDistributionSearchQueryTests
         using var db = SqlServerContext();
         var request = new PagedRequest { Search = "MUTI", SearchFields = ["employeeName"] };
 
-        var sql = KkdDistributionService.BuildPagedQuery(request, db.Set<KkdDistribution>()).ToQueryString();
+        var sql = KkdDistributionService
+            .BuildPagedQuery(request, db.Set<KkdDistribution>(), db.Set<WarehouseOutboundHeader>())
+            .ToQueryString();
 
         Assert.Contains("LIKE", sql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("[iIİıîÎ]", sql, StringComparison.Ordinal);

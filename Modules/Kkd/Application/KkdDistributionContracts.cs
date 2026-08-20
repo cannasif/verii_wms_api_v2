@@ -40,7 +40,9 @@ public sealed record KkdDistributionCreateRequest(
     IReadOnlyList<KkdDistributionLineCreateRequest> Lines,
     bool CreateWarehouseTask = false,
     IReadOnlyList<long>? AssignedUserIds = null,
-    long? KkdRequestId = null);
+    long? KkdRequestId = null,
+    /// <summary>Stok, hazırlama görevinde okutularak KKD bekleme rafına alınmıştır; ambar çıkışı stoğu yeniden toplamaz.</summary>
+    bool StockAlreadyStaged = false);
 
 public sealed record KkdDistributionCreateResult(
     long Id,
@@ -85,7 +87,15 @@ public sealed record KkdDistributionRow(
     DateTimeOffset? ExcessApprovedAtUtc,
     DateTime? CreatedDate,
     DateTimeOffset? CompletedAtUtc,
-    string RowVersion = "");
+    string RowVersion = "",
+    /// <summary>Bağlı ambar çıkışının belge numarası; liste kaydı iç kimlik yerine belgeyi gösterir.</summary>
+    string? WarehouseOutboundDocumentNo = null,
+    string? WarehouseOutboundStatus = null,
+    /// <summary>Ambar çıkışının ERP aktarım durumu. Aktarım başlamışsa dağıtım artık geri alınamaz.</summary>
+    string? ErpStatus = null,
+    /// <summary>Dolu ise kayıt talep kanalından, boş ise doğrudan sipariş kanalından gelmiştir.</summary>
+    long? KkdRequestId = null,
+    string? KkdRequestNo = null);
 
 public sealed record KkdDistributionLineDetail(
     long Id, int LineNo, long StockId, string StockCode, string StockName, string GroupCode,
@@ -97,7 +107,15 @@ public sealed record KkdDistributionDetail(
     long EmployeeId, string EmployeeCode, string EmployeeName, long CustomerId, long WarehouseId,
     long? WarehouseOutboundId, string ExcessApprovalStatus, string? ExcessApprovalReason,
     string? FailureReason, DateTime? CreatedDate, DateTimeOffset? CompletedAtUtc,
-    IReadOnlyList<KkdDistributionLineDetail> Lines, string RowVersion = "");
+    IReadOnlyList<KkdDistributionLineDetail> Lines, string RowVersion = "",
+    /// <summary>Teslim fişi ayrı numara serisi almaz; dağıtım belge numarası fiş numarası olarak kullanılır.</summary>
+    string? WarehouseOutboundDocumentNo = null,
+    string? DeliveredByName = null,
+    string? WarehouseOutboundStatus = null,
+    string? ErpStatus = null,
+    string? ErpDocumentNo = null,
+    long? KkdRequestId = null,
+    string? KkdRequestNo = null);
 
 public sealed record KkdDistributionContext(
     long EmployeeId,

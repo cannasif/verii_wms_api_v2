@@ -17,5 +17,7 @@ public static class KkdModule
         .AddScoped<IKkdReportService, KkdReportService>()
         .AddScoped<IKkdDistributionCompletionService, KkdDistributionCompletionService>()
         .AddScoped<IKkdDistributionService, KkdDistributionService>()
+        .AddScoped<IKkdPhysicalDeliveryService, KkdPhysicalDeliveryService>()
+        .AddScoped<IKkdOrderPickingService, KkdOrderPickingService>()
         .AddScoped<IWarehouseOutboundShipmentFinalizationHandler, KkdWarehouseOutboundShipmentFinalizationHandler>();
 }
