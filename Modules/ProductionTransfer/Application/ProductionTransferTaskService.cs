@@ -69,11 +69,18 @@ public sealed class ProductionTransferTaskService(
         long actor,
         CancellationToken ct = default)
     {
+        var actorWarehouseIds = await uow.Repository<UserWarehouseAssignment>().Query()
+            .Where(x => x.UserId == actor)
+            .Select(x => x.WarehouseId)
+            .Distinct()
+            .ToArrayAsync(ct);
+
         var links = await ProductionWorkOrderTransferGrouping.ApplyTabFilter(
                 uow.Repository<ProductionTransferHeaderLink>().Query()
                     .Where(x => Contexts.Contains(x.WarehouseTransferHeader.BusinessContext)),
                 tab,
-                actor)
+                actor,
+                actorWarehouseIds)
             .Include(x => x.WarehouseTransferHeader).ThenInclude(h => h.Lines)
             .Include(x => x.WarehouseTransferHeader).ThenInclude(h => h.Tasks.Where(task => !task.IsDeleted))
                 .ThenInclude(task => task.Assignments)
@@ -82,13 +89,23 @@ public sealed class ProductionTransferTaskService(
             .Take(1000)
             .ToListAsync(ct);
 
-        if (tab is ProductionWorkOrderTransferTab.Picking or ProductionWorkOrderTransferTab.MyAssignments)
+        if (tab is ProductionWorkOrderTransferTab.Picking)
         {
             links = links
                 .Where(x => ProductionWorkOrderTransferGrouping.MatchesTab(
                     ProductionWorkOrderTransferTab.Picking,
                     x.WarehouseTransferHeader,
                     x))
+                .ToList();
+        }
+        else if (tab is ProductionWorkOrderTransferTab.MyAssignments)
+        {
+            links = links
+                .Where(x => ProductionWorkOrderTransferGrouping.MatchesMyAssignments(
+                    x.WarehouseTransferHeader,
+                    x,
+                    actor,
+                    actorWarehouseIds))
                 .ToList();
         }
         else if (tab is ProductionWorkOrderTransferTab.Cancelled)

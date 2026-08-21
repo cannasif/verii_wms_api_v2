@@ -6,6 +6,9 @@ using verii_wms_api_v2.Modules.ProductionTransfer.Domain;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Application;
 using verii_wms_api_v2.Modules.WarehouseTransfer.Domain;
 using verii_wms_api_v2.Shared.Application.Exceptions;
+using StockEntity = verii_wms_api_v2.Modules.Stock.Domain.Stock;
+using WarehouseEntity = verii_wms_api_v2.Modules.Warehouse.Domain.Warehouse;
+using YapCodeEntity = verii_wms_api_v2.Modules.YapCode.Domain.YapCode;
 
 namespace verii_wms_api_v2.Modules.Production.Application;
 
@@ -87,6 +90,119 @@ public sealed partial class ProductionService
             .ThenBy(x => x.WorkOrderNumber, StringComparer.OrdinalIgnoreCase)
             .Take(boundedTake)
             .ToArray();
+    }
+
+    public async Task<PreparedNetsisProductionWorkOrder> GetCancelledWorkOrderAssignmentDetailAsync(
+        long cancellationId,
+        string branchCode,
+        CancellationToken ct = default)
+    {
+        var branch = branchCode.Trim();
+        if (!int.TryParse(branch, out var branchNumber))
+            throw AppException.BadRequest("Oturum şube kodu sayısal değildir.");
+        if (cancellationId <= 0)
+            throw AppException.BadRequest("İptal kaydı numarası zorunludur.");
+
+        var cancellation = await uow.Repository<ProductionWorkOrderAssignmentCancellation>().Query()
+            .AsNoTracking()
+            .Include(x => x.Lines.Where(line => !line.IsDeleted))
+            .FirstOrDefaultAsync(x => x.Id == cancellationId
+                && x.BranchCode == branch
+                && x.Status == ProductionWorkOrderAssignmentCancellationStatus.Active
+                && !x.IsDeleted, ct)
+            ?? throw AppException.NotFound("İptal edilen iş emri ataması bulunamadı.");
+
+        var template = await ResolveSourceWorkOrderTemplateAsync(
+            cancellation.WorkOrderNumber,
+            branch,
+            branchNumber,
+            (cancellation.SourceType, cancellation.SourceSystemCode),
+            ct);
+
+        var lines = cancellation.Lines
+            .Where(line => !line.IsDeleted)
+            .OrderBy(line => line.OperationNumber)
+            .ThenBy(line => line.Id)
+            .ToArray();
+        var stockIds = lines.Where(line => line.StockId.HasValue).Select(line => line.StockId!.Value).Distinct().ToArray();
+        var yapIds = lines.Where(line => line.YapCodeId.HasValue).Select(line => line.YapCodeId!.Value).Distinct().ToArray();
+        var stocks = stockIds.Length == 0
+            ? []
+            : await uow.Repository<StockEntity>().Query()
+                .AsNoTracking()
+                .Where(stock => stock.BranchCode == branch && stockIds.Contains(stock.Id))
+                .ToListAsync(ct);
+        var stockMap = stocks.ToDictionary(stock => stock.Id);
+        var yapCodes = yapIds.Length == 0
+            ? []
+            : await uow.Repository<YapCodeEntity>().Query()
+                .AsNoTracking()
+                .Where(yap => yap.BranchCode == branch && yapIds.Contains(yap.Id))
+                .ToListAsync(ct);
+        var yapMap = yapCodes.ToDictionary(yap => yap.Id);
+
+        var warehouseCodes = new[] { template?.IssueWarehouseCode ?? 0, template?.WarehouseCode ?? 0 }
+            .Where(code => code > 0)
+            .Distinct()
+            .ToArray();
+        var warehouses = warehouseCodes.Length == 0
+            ? []
+            : await uow.Repository<WarehouseEntity>().Query()
+                .AsNoTracking()
+                .Where(warehouse => warehouse.BranchCode == branch && warehouseCodes.Contains(warehouse.WarehouseCode))
+                .ToListAsync(ct);
+        var warehouseMap = warehouses.ToDictionary(warehouse => warehouse.WarehouseCode);
+        warehouseMap.TryGetValue(template?.IssueWarehouseCode ?? 0, out var sourceWarehouse);
+        warehouseMap.TryGetValue(template?.WarehouseCode ?? 0, out var targetWarehouse);
+
+        var materials = lines.Select(line =>
+        {
+            stockMap.TryGetValue(line.StockId ?? 0, out var stock);
+            yapMap.TryGetValue(line.YapCodeId ?? 0, out var yap);
+            return new PreparedNetsisProductionMaterial(
+                line.StockId,
+                stock?.ErpStockCode ?? (line.StockId.HasValue ? $"#{line.StockId}" : "—"),
+                stock?.StockName,
+                stock?.BaseUnitCode ?? "ADET",
+                line.YapCodeId,
+                yap?.ConfigurationCode,
+                line.OperationNumber,
+                line.CancelledQuantity,
+                0,
+                line.CancelledQuantity,
+                null);
+        }).ToArray();
+
+        return new PreparedNetsisProductionWorkOrder(
+            cancellation.SourceType,
+            cancellation.SourceSystemCode,
+            cancellation.WorkOrderNumber,
+            branchNumber,
+            template?.StockCode ?? string.Empty,
+            template?.StockName ?? string.Empty,
+            template?.UnitCode ?? "ADET",
+            template?.WorkOrderQuantity ?? materials.Sum(material => material.RequiredQuantity),
+            null,
+            null,
+            template?.ConfigurationCode,
+            sourceWarehouse?.Id,
+            template?.IssueWarehouseCode ?? 0,
+            sourceWarehouse?.WarehouseName,
+            targetWarehouse?.Id,
+            template?.WarehouseCode ?? 0,
+            targetWarehouse?.WarehouseName,
+            template?.WorkOrderDate,
+            template?.DeliveryDate,
+            template?.ProjectCode,
+            template?.IsClosed ?? false,
+            null,
+            null,
+            null,
+            [],
+            materials,
+            [],
+            ProductionSourceWorkOrderListingKind.ManagerCancelledAssignment,
+            Description: string.IsNullOrWhiteSpace(cancellation.Reason) ? template?.Description : cancellation.Reason.Trim());
     }
 
     public Task<ProductionWorkOrderAssignmentCancellationResult> CancelWorkOrderAssignmentAsync(

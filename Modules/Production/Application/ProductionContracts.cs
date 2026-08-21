@@ -355,6 +355,7 @@ public interface IProductionService
     Task<ProductionPlanDetail> ReleaseAsync(long id,ProductionTransitionRequest request,long actor,CancellationToken ct=default);
     Task DeleteDraftAsync(long id,long actor,CancellationToken ct=default);
     Task<IReadOnlyList<ProductionSourceWorkOrderRow>> GetCancelledWorkOrderAssignmentsAsync(string? search,string branchCode,int take=200,CancellationToken ct=default);
+    Task<PreparedNetsisProductionWorkOrder> GetCancelledWorkOrderAssignmentDetailAsync(long cancellationId,string branchCode,CancellationToken ct=default);
     Task<ProductionWorkOrderAssignmentCancellationResult> CancelWorkOrderAssignmentAsync(CancelProductionWorkOrderAssignmentRequest request,string branchCode,long actor,CancellationToken ct=default);
     Task<ProductionWorkOrderAssignmentCancellationResult> RestoreWorkOrderAssignmentAsync(RestoreProductionWorkOrderAssignmentRequest request,string branchCode,long actor,CancellationToken ct=default);
 }

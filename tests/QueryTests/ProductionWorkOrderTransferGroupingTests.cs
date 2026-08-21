@@ -151,10 +151,9 @@ public sealed class ProductionWorkOrderTransferGroupingTests
     private static bool MatchesMyAssignments(
         WarehouseTransferHeader header,
         ProductionTransferHeaderLink link,
-        long userId) =>
-        ProductionWorkOrderTransferGrouping.MatchesTab(
-            ProductionWorkOrderTransferTab.Picking, header, link)
-        && header.Tasks.Any(task => ProductionWorkOrderTransferGrouping.HasActionableAssignmentForUser(task, userId));
+        long userId,
+        IReadOnlyCollection<long>? actorWarehouseIds = null) =>
+        ProductionWorkOrderTransferGrouping.MatchesMyAssignments(header, link, userId, actorWarehouseIds);
 
     [Fact]
     public void MyAssignments_shows_only_transfers_with_current_user_assignment_in_picking()
@@ -576,8 +575,39 @@ public sealed class ProductionWorkOrderTransferGroupingTests
         };
 
         Assert.True(ProductionWorkOrderTransferGrouping.IsUnassignedCreatedPickTask(task, link, [task]));
-        Assert.True(ProductionWorkOrderTransferGrouping.IsAtanmayanlarUnassignedPickTask(task, link, [task]));
-        Assert.True(ProductionWorkOrderTransferGrouping.IsCancellableAtanmayanlarPickTask(task, link, [task]));
+        Assert.True(ProductionWorkOrderTransferGrouping.IsWarehousePoolPickTask(task, link, [task]));
+        Assert.False(ProductionWorkOrderTransferGrouping.IsAtanmayanlarUnassignedPickTask(task, link, [task]));
+        Assert.False(ProductionWorkOrderTransferGrouping.IsCancellableAtanmayanlarPickTask(task, link, [task]));
+    }
+
+    [Fact]
+    public void MatchesTab_picking_includes_warehouse_pool_pick()
+    {
+        var task = new WarehouseTransferTask
+        {
+            TaskType = WarehouseTransferTaskType.Pick,
+            Status = WarehouseTransferTaskStatus.Open,
+            WarehouseId = 1,
+            Description = "Transfer toplama emri",
+            Assignments = [],
+        };
+        var header = new WarehouseTransferHeader
+        {
+            Status = WarehouseTransferStatus.Draft,
+            Tasks = [task],
+        };
+        var link = new ProductionTransferHeaderLink
+        {
+            ProductionOrderNo = "WO-1",
+            WorkflowStatus = ProductionTransferWorkflowStatus.Planned,
+            WarehouseTransferHeader = header,
+        };
+
+        Assert.True(ProductionWorkOrderTransferGrouping.MatchesTab(
+            ProductionWorkOrderTransferTab.Picking, header, link));
+        Assert.True(ProductionWorkOrderTransferGrouping.MatchesMyAssignments(header, link, userId: 10, [1]));
+        Assert.False(ProductionWorkOrderTransferGrouping.MatchesMyAssignments(header, link, userId: 10, [2]));
+        Assert.False(ProductionWorkOrderTransferGrouping.MatchesMyAssignments(header, link, userId: 10));
     }
 
     [Fact]
@@ -607,7 +637,7 @@ public sealed class ProductionWorkOrderTransferGroupingTests
             Description = "Transfer toplama emri",
             Assignments = [],
         };
-        Assert.True(ProductionWorkOrderTransferGrouping.IsCancellableAtanmayanlarPickTask(
+        Assert.False(ProductionWorkOrderTransferGrouping.IsCancellableAtanmayanlarPickTask(
             createdTask,
             createdLink,
             [createdTask]));
@@ -673,7 +703,7 @@ public sealed class ProductionWorkOrderTransferGroupingTests
     }
 
     [Fact]
-    public void MatchesTab_picking_excludes_newly_created_unassigned_transfer()
+    public void MatchesTab_picking_includes_newly_created_warehouse_pool_transfer()
     {
         var task = new WarehouseTransferTask
         {
@@ -694,8 +724,9 @@ public sealed class ProductionWorkOrderTransferGroupingTests
             WarehouseTransferHeader = header,
         };
 
-        Assert.False(ProductionWorkOrderTransferGrouping.MatchesTab(
+        Assert.True(ProductionWorkOrderTransferGrouping.MatchesTab(
             ProductionWorkOrderTransferTab.Picking, header, link));
+        Assert.False(ProductionWorkOrderTransferGrouping.HasOnlyPostCancellationReturnUnassignedRemainder(header, link));
     }
 
     [Fact]

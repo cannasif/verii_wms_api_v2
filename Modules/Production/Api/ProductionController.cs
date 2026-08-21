@@ -63,6 +63,14 @@ public sealed class ProductionController(
             await service.GetCancelledWorkOrderAssignmentsAsync(search,BranchCode(),take,ct)));
     }
 
+    [HttpGet("work-orders/cancelled-assignments/{cancellationId:long}")]
+    public async Task<IActionResult> CancelledWorkOrderAssignmentDetail(long cancellationId,CancellationToken ct)
+    {
+        await Require("WMS.PRODUCTION.VIEW",ct);
+        return Ok(ApiResponse<PreparedNetsisProductionWorkOrder>.Ok(
+            await service.GetCancelledWorkOrderAssignmentDetailAsync(cancellationId,BranchCode(),ct)));
+    }
+
     [HttpPost("work-orders/cancel-assignment")]
     public async Task<IActionResult> CancelWorkOrderAssignment(
         CancelProductionWorkOrderAssignmentRequest request,CancellationToken ct)
