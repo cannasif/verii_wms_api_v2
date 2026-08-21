@@ -731,6 +731,11 @@ public sealed class ErpPostingService(
         return provider.GetLocalNow().DateTime;
     }
 
+    internal static string FormatNetsisDateTime(DateTime value) =>
+        value.ToString(
+            "yyyy-MM-ddTHH:mm:ss",
+            global::System.Globalization.CultureInfo.InvariantCulture);
+
     internal static string ResolveGoodsReceiptErpDocumentNo(GoodsReceiptHeader header)
     {
         var documentNo = Clean(header.ElectronicWaybillNo) ?? Clean(header.WaybillNo);
@@ -1212,8 +1217,10 @@ public sealed class ErpPostingService(
                 FisNo = documentNo,
                 BelgeNo = waybillNo,
                 Tarih = resolvedDocumentDate,
-                FiyatTarihi = resolvedDocumentDate.ToString("dd.MM.yyyy"),
-                SiparisTeslimTarihi = orderDeliveryDate?.ToString("dd.MM.yyyy"),
+                FiyatTarihi = FormatNetsisDateTime(resolvedDocumentDate),
+                SiparisTeslimTarihi = orderDeliveryDate.HasValue
+                    ? FormatNetsisDateTime(orderDeliveryDate.Value)
+                    : null,
                 FiiliTarih = actual,
                 ProjeKodu = NetsisItemSlipDefaults.NormalizeProjectCode(projectCode),
                 Tip = documentType,

@@ -36,16 +36,20 @@ public sealed class GoodsReceiptNetsisOrderLinkTests
     {
         var header = new NetsisItemSlipHeader
         {
-            FiyatTarihi = "30.07.2026",
-            SiparisTeslimTarihi = "05.08.2026",
+            FiyatTarihi = ErpPostingService.FormatNetsisDateTime(
+                new DateTime(2026, 7, 30, 14, 35, 12)),
+            SiparisTeslimTarihi = ErpPostingService.FormatNetsisDateTime(
+                new DateTime(2026, 8, 5, 9, 7, 6)),
             ProjeKodu = "PRJ-01"
         };
 
         var json = JsonSerializer.Serialize(header);
 
-        Assert.Contains("\"FIYATTARIHI\":\"30.07.2026\"", json);
-        Assert.Contains("\"SIPARIS_TEST\":\"05.08.2026\"", json);
+        Assert.Contains("\"FIYATTARIHI\":\"2026-07-30T14:35:12\"", json);
+        Assert.Contains("\"SIPARIS_TEST\":\"2026-08-05T09:07:06\"", json);
         Assert.Contains("\"Proje_Kodu\":\"PRJ-01\"", json);
+        Assert.DoesNotContain("30.07.2026", json);
+        Assert.DoesNotContain("05.08.2026", json);
     }
 
     [Fact]
@@ -63,6 +67,9 @@ public sealed class GoodsReceiptNetsisOrderLinkTests
         var result = ErpPostingService.ResolveGoodsReceiptDeliveryDate(provider);
 
         Assert.Equal(new DateTime(2026, 8, 14, 0, 15, 30), result);
+        Assert.Equal(
+            "2026-08-14T00:15:30",
+            ErpPostingService.FormatNetsisDateTime(result));
     }
 
     [Fact]
