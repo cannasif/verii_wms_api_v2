@@ -495,14 +495,19 @@ public sealed class WarehouseOutboundOperationService(
         var handlingUnitNo = Clean(request.HandlingUnitNo, 100);
         var lotNo = Clean(request.LotNo, 100);
         var serialNo = Clean(request.SerialNo, 200);
-        if (handlingUnitNo is null && lotNo is null && serialNo is null) return;
 
+        // Lot/seri/palet boş olsa bile, taslakta planlanmış “boş boyut” takip kaydı (ör. KKD
+        // StockAlreadyStaged) güncellenmelidir; aksi halde Pick satır miktarını artırır, Ship ise
+        // takip.PickedQuantity=0 görüp “kullanılabilir miktar 0” hatası verir.
         var tracking = line.Trackings.FirstOrDefault(x =>
             Equal(x.HandlingUnitNo, handlingUnitNo)
             && Equal(x.LotNo, lotNo)
             && Equal(x.SerialNo, serialNo));
         if (tracking is null)
         {
+            if (handlingUnitNo is null && lotNo is null && serialNo is null)
+                return;
+
             tracking = new WarehouseOutboundTracking
             {
                 WarehouseOutboundLineId = line.Id,
