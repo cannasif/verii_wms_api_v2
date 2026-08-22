@@ -108,13 +108,16 @@ public static class ProductionWorkOrderTransferGrouping
                     && !link.WarehouseTransferHeader.Tasks.Any(task => !task.IsDeleted
                         && task.Status != WarehouseTransferTaskStatus.Completed
                         && task.Status != WarehouseTransferTaskStatus.Cancelled
-                        && task.Assignments.Any(assignment => !assignment.IsDeleted)))
+                        && (task.Assignments.Any(assignment => !assignment.IsDeleted)
+                            || (task.TaskType == WarehouseTransferTaskType.Pick
+                                && task.ReleasedToWarehousePool
+                                && !task.Assignments.Any(assignment => !assignment.IsDeleted)))))
                 && (link.WarehouseTransferHeader.Status != WarehouseTransferStatus.Cancelled
                     || link.WarehouseTransferHeader.Tasks.Any(task => !task.IsDeleted
                         && task.TaskType == WarehouseTransferTaskType.CancellationReturn
                         && task.Status != WarehouseTransferTaskStatus.Completed
                         && task.Status != WarehouseTransferTaskStatus.Cancelled))),
-            // KKD Mine: kişiye atanmış açık görev VEYA (depo kısıtlı kullanıcı + kişisiz havuz görevi).
+            // KKD Mine: kişiye atanmış açık görev VEYA (depo kısıtlı kullanıcı + açıkça havuza bırakılmış görev).
             ProductionWorkOrderTransferTab.MyAssignments => ApplyTabFilter(query, ProductionWorkOrderTransferTab.Picking, currentUserId, warehouseIds)
                 .Where(link => link.WarehouseTransferHeader.Tasks.Any(task => !task.IsDeleted
                     && task.Status != WarehouseTransferTaskStatus.Completed
@@ -123,7 +126,8 @@ public static class ProductionWorkOrderTransferGrouping
                         || (warehouseRestricted
                             && task.TaskType == WarehouseTransferTaskType.Pick
                             && !task.Assignments.Any(assignment => !assignment.IsDeleted)
-                            && warehouseIds.Contains(task.WarehouseId))))),
+                            && warehouseIds.Contains(task.WarehouseId)
+                            && task.ReleasedToWarehousePool)))),
             _ => query
         };
     }
@@ -140,13 +144,17 @@ public static class ProductionWorkOrderTransferGrouping
 
     /// <summary>
     /// Depoya bırakılmış, henüz kimseye bağlanmamış açık toplama görevi (KKD havuz görevinin karşılığı).
-    /// İptal/eksik teslim kalanı değildir; Toplamada ve depo yetkilisinin Benim İşlerim'inde görünür.
+    /// Yalnızca release-to-pool ile işaretlenen işlerdir; kişiye/depoya atanmamış yeni kayıt Atanmayanlar’da kalır.
     /// </summary>
     public static bool IsWarehousePoolPickTask(
         WarehouseTransferTask task,
         ProductionTransferHeaderLink link,
         IReadOnlyList<WarehouseTransferTask> allTasks) =>
-        IsUnassignedCreatedPickTask(task, link, allTasks);
+        task.ReleasedToWarehousePool
+        && task.TaskType == WarehouseTransferTaskType.Pick
+        && HasNoActiveAssignment(task)
+        && IsOpenAtanmayanlarPickStatus(task)
+        && IsAtanmayanlarEligiblePickStructure(task, link, allTasks);
 
     public static bool MatchesMyAssignments(
         WarehouseTransferHeader header,
@@ -315,8 +323,10 @@ public static class ProductionWorkOrderTransferGrouping
         WarehouseTransferTask task,
         ProductionTransferHeaderLink link,
         IReadOnlyList<WarehouseTransferTask> allTasks) =>
-        IsPostCancellationReturnUnassignedPickTask(task, allTasks)
-        || IsUnlinkedReleasedDraftPickTask(task, link);
+        !task.ReleasedToWarehousePool
+        && (IsPostCancellationReturnUnassignedPickTask(task, allTasks)
+            || IsUnlinkedReleasedDraftPickTask(task, link)
+            || IsUnassignedCreatedPickTask(task, link, allTasks));
 
     public static bool IsCancellableAtanmayanlarPickTask(
         WarehouseTransferTask task,
@@ -350,7 +360,8 @@ public static class ProductionWorkOrderTransferGrouping
         WarehouseTransferTask task,
         ProductionTransferHeaderLink link) =>
         IsPostShortageHandoverPickStructure(task, link)
-        && IsOpenAtanmayanlarPickStatus(task);
+        && IsOpenAtanmayanlarPickStatus(task)
+        && !task.ReleasedToWarehousePool;
 
     private static bool IsOpenAtanmayanlarPickStatus(WarehouseTransferTask task) =>
         task.Status is not WarehouseTransferTaskStatus.Completed
@@ -385,6 +396,15 @@ public static class ProductionWorkOrderTransferGrouping
         && !IsUnlinkedReleasedDraftPickStructure(task, link)
         && !IsPostShortageHandoverPickStructure(task, link);
 
+    private static bool IsAtanmayanlarEligiblePickStructure(
+        WarehouseTransferTask task,
+        ProductionTransferHeaderLink link,
+        IReadOnlyList<WarehouseTransferTask> allTasks) =>
+        IsCancellationReturnKalanPickTask(task, allTasks)
+        || IsUnlinkedReleasedDraftPickStructure(task, link)
+        || IsUnassignedCreatedPickStructure(task, link, allTasks)
+        || IsPostShortageHandoverPickStructure(task, link);
+
     public static bool IsOpenPartialTransferRemainderLink(ProductionTransferHeaderLink link)
     {
         if (!link.AutoGenerated || !link.ParentWarehouseTransferHeaderId.HasValue) return false;
@@ -397,8 +417,14 @@ public static class ProductionWorkOrderTransferGrouping
 
     public static bool IsUnassignedOpenPartialTransferRemainder(
         WarehouseTransferHeader header,
-        ProductionTransferHeaderLink link) =>
-        IsOpenPartialTransferRemainderLink(link) && !HasActiveOpenTaskAssignment(header);
+        ProductionTransferHeaderLink link)
+    {
+        if (!IsOpenPartialTransferRemainderLink(link)) return false;
+        if (HasActiveOpenTaskAssignment(header)) return false;
+
+        var tasks = header.Tasks.Where(task => !task.IsDeleted).ToArray();
+        return !tasks.Any(task => IsWarehousePoolPickTask(task, link, tasks));
+    }
 
     public static bool HasActiveOpenTaskAssignment(WarehouseTransferHeader header) =>
         header.Tasks.Any(task => !task.IsDeleted

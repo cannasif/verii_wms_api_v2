@@ -21,7 +21,8 @@ public sealed record ProductionTransferTaskDto(
     long? OriginTaskId, long? OriginUserId, long? PreviousTaskId,
     IReadOnlyList<ProductionTransferTaskAssignmentDto> Assignments,
     IReadOnlyList<ProductionTransferTaskLineDto> Lines,
-    IReadOnlyList<string> AssignedUsernames);
+    IReadOnlyList<string> AssignedUsernames,
+    bool ReleasedToWarehousePool);
 public sealed record ProductionTransferWorkloadDto(
     long UserId, string Username, int AssignedTaskCount, int CompletedTaskCount,
     decimal PlannedQuantity, decimal ProcessedQuantity, decimal CompletionPercent);

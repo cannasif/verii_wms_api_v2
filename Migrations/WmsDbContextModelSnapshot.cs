@@ -27368,6 +27368,11 @@ namespace verii_wms_api_v2.Migrations
                     b.Property<byte>("Priority")
                         .HasColumnType("tinyint");
 
+                    b.Property<bool>("ReleasedToWarehousePool")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
                     b.Property<byte[]>("RowVersion")
                         .IsConcurrencyToken()
                         .IsRequired()

@@ -307,6 +307,7 @@ public sealed class ProductionTransferTaskService(
 
             task.WarehouseId = request.WarehouseId;
             task.Status = WarehouseTransferTaskStatus.Open;
+            task.ReleasedToWarehousePool = true;
             task.AcceptedAtUtc = null;
             task.AcceptedBy = null;
             task.StartedAtUtc = null;
@@ -315,7 +316,8 @@ public sealed class ProductionTransferTaskService(
             task.UpdatedDate = DateTime.UtcNow;
             await uow.SaveChangesAsync(token);
             await audit.WriteAsync(new("production-transfer.task.release-to-pool", nameof(WarehouseTransferTask), task.Id.ToString(), "Succeeded", "production-transfer",
-                NewValues: new { TransferId = transferId, TaskId = task.Id, request.WarehouseId }, ChangedFields: ["WarehouseId", "Assignments", "Status"]), token);
+                NewValues: new { TransferId = transferId, TaskId = task.Id, request.WarehouseId, task.ReleasedToWarehousePool },
+                ChangedFields: ["WarehouseId", "Assignments", "Status", "ReleasedToWarehousePool"]), token);
             return await MapAsync(transferId, token);
         }, ct, IsolationLevel.Serializable);
 
@@ -1465,7 +1467,8 @@ public sealed class ProductionTransferTaskService(
             }).ToList(),
             ProductionWorkOrderTransferGrouping.ResolveAssignedUsernames(
                 assignmentsByTaskId.GetValueOrDefault(task.Id) ?? [],
-                users))).ToList();
+                users),
+            task.ReleasedToWarehousePool)).ToList();
         var workloadRows = await uow.Repository<WarehouseTransferTask>().Query()
             .Where(x => Contexts.Contains(x.Header.BusinessContext) && x.BranchCode == header.BranchCode)
             .SelectMany(x => x.Assignments.Where(a => !a.IsDeleted).Select(a => new

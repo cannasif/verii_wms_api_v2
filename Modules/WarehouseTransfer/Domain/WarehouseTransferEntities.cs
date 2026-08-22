@@ -317,6 +317,11 @@ public sealed class WarehouseTransferTask : BaseEntity
     public DateTimeOffset? CompletedAtUtc { get; set; }
     public long? CompletedBy { get; set; }
     public string? Description { get; set; }
+    /// <summary>
+    /// Görevin açıkça release-to-pool işlemiyle depo havuzuna bırakıldığını belirtir.
+    /// Kişiye atanmadan oluşturulan açık görevlerde false kalır.
+    /// </summary>
+    public bool ReleasedToWarehousePool { get; set; }
     // AssignmentReturn görevleri için: hangi görevdeki hangi kullanıcının atamasının, bu iade
     // görevi tamamlandığında kaldırılacağı. Diğer görev tiplerinde null.
     public long? OriginTaskId { get; set; }
